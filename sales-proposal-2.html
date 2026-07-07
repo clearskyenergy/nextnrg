@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════════
+  ClearSky-OMEGA · Sales Proposal Builder — NextNRG Enterprise Workspace
+  © 2025 ClearSky Energy Solutions LLC. All rights reserved.
+  Proprietary and Confidential. Author: Tommy Gilmer.
+  Platform IP: ClearSky Energy Solutions LLC. Customer-facing exports branded to NextNRG.
+  ═══════════════════════════════════════════════════════════════════════════════
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="author" content="Tommy Gilmer · ClearSky Energy Solutions LLC">
+<meta name="copyright" content="© 2025 ClearSky Energy Solutions LLC. Proprietary.">
+<title>NextNRG Sales Proposal Builder · ClearSky-OMEGA</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',Arial,sans-serif;background:#060D14;color:#C8D8E8;min-height:100vh}
+:root{
+  --bg:#060D14;--surface:#0C1825;--panel:#111F2E;--card:#162535;
+  --border:#1E3347;--border2:#2A4560;
+  --gold:#C5A55A;--gold-dim:rgba(197,165,90,.12);
+  --cyan:#00C8FF;--cyan-dim:rgba(0,200,255,.10);
+  --green:#22D77A;--green-dim:rgba(34,215,122,.10);
+  --blue:#3B82F6;--text:#C8D8E8;--sub:#6B8FAD;--muted:#3A5570;
+}
+
+/* ── HEADER ── */
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:14px}
+.hdr-back{color:var(--sub);text-decoration:none;font-size:11px;letter-spacing:.08em}
+.hdr-back:hover{color:var(--text)}
+.hdr-title{font-size:13px;font-weight:700;color:var(--gold);letter-spacing:.04em}
+.hdr-sub{font-size:10px;color:var(--sub);margin-left:auto}
+
+/* ── MAIN LAYOUT ── */
+.main{display:grid;grid-template-columns:340px 1fr;height:calc(100vh - 45px)}
+
+/* ── LEFT PANEL ── */
+.lp{background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column}
+.sec{border-bottom:1px solid var(--border);padding:14px 16px}
+.sec-h{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:10px;font-weight:700}
+.field{margin-bottom:9px}
+.field label{display:block;font-size:9px;color:var(--sub);margin-bottom:3px;letter-spacing:.05em;text-transform:uppercase}
+.field input,.field select,.field textarea{width:100%;background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:7px 10px;font-size:11px;font-family:inherit}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--gold)}
+.field textarea{resize:vertical;min-height:60px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+/* model selector */
+.model-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
+.model-btn{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:10px 6px;text-align:center;cursor:pointer;transition:.2s}
+.model-btn:hover{border-color:var(--gold)}
+.model-btn.active{border-color:var(--gold);background:var(--gold-dim)}
+.model-btn-icon{font-size:18px;display:block;margin-bottom:4px}
+.model-btn-label{font-size:9px;color:var(--sub);letter-spacing:.04em;text-transform:uppercase}
+.model-btn.active .model-btn-label{color:var(--gold)}
+
+/* slider */
+.slider-row{display:flex;align-items:center;gap:10px}
+.slider-row input[type=range]{flex:1;-webkit-appearance:none;height:3px;background:var(--border2);border-radius:2px;outline:none}
+.slider-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--gold);cursor:pointer}
+.slider-val{font-size:11px;color:var(--gold);font-weight:700;min-width:40px;text-align:right}
+
+/* buttons */
+.btn-row{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0}
+.btn{padding:9px 14px;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;border:none;display:flex;align-items:center;gap:5px}
+.btn-primary{background:var(--gold);color:#060D14;flex:1;justify-content:center}
+.btn-primary:hover{opacity:.88}
+.btn-secondary{background:var(--panel);color:var(--text);border:1px solid var(--border)}
+.btn-secondary:hover{border-color:var(--gold);color:var(--gold)}
+.btn-ai{background:linear-gradient(135deg,#7C3AED,#3B82F6);color:#fff;flex:1;justify-content:center}
+.btn-ai:hover{opacity:.88}
+.btn-ai:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── RIGHT PANEL (preview) ── */
+.rp{overflow-y:auto;background:#1a1a1a;padding:24px;display:flex;flex-direction:column;gap:0}
+.preview-label{font-size:9px;color:var(--sub);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;padding:0 4px}
+
+/* ── PROPOSAL PAGES ── */
+.page{width:816px;min-height:1056px;background:#fff;margin:0 auto 24px;box-shadow:0 4px 32px rgba(0,0,0,.5);position:relative;color:#1a1a1a;font-family:'Inter',Arial,sans-serif;display:flex;flex-direction:column}
+
+/* PAGE 1 - COVER */
+.p1-bg{position:absolute;inset:0;background:linear-gradient(160deg,#060D14 0%,#0D1E30 50%,#0A1628 100%)}
+.p1-accent{position:absolute;top:0;right:0;width:280px;height:100%;background:linear-gradient(180deg,rgba(197,165,90,.15) 0%,transparent 60%);border-left:1px solid rgba(197,165,90,.2)}
+.p1-content{position:relative;z-index:1;padding:64px 56px;height:100%;display:flex;flex-direction:column;color:#E8F0FE}
+.p1-logo-area{display:flex;align-items:center;gap:12px;margin-bottom:auto}
+.p1-logo-mark{width:44px;height:44px;background:#C5A55A;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;color:#060D14;letter-spacing:-1px;flex-shrink:0}
+.p1-logo-text{font-size:15px;font-weight:800;color:#E8F0FE;letter-spacing:.02em}
+.p1-logo-sub{font-size:10px;color:rgba(232,240,254,.5);letter-spacing:.08em}
+.p1-hero{flex:1;display:flex;flex-direction:column;justify-content:center}
+.p1-eyebrow{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#C5A55A;margin-bottom:16px}
+.p1-headline{font-size:42px;font-weight:900;line-height:1.06;letter-spacing:-1.5px;color:#E8F0FE;margin-bottom:24px;max-width:520px}
+.p1-headline span{color:#C5A55A}
+.p1-model-badge{display:inline-flex;align-items:center;gap:8px;background:rgba(197,165,90,.15);border:1px solid rgba(197,165,90,.35);border-radius:20px;padding:7px 16px;font-size:11px;color:#C5A55A;font-weight:600;letter-spacing:.04em;margin-bottom:32px}
+.p1-divider{width:48px;height:2px;background:#C5A55A;margin-bottom:28px}
+.p1-meta{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:40px}
+.p1-meta-item label{font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:rgba(232,240,254,.4);display:block;margin-bottom:4px}
+.p1-meta-item span{font-size:13px;font-weight:600;color:#E8F0FE}
+.p1-stats{display:flex;gap:0;border-top:1px solid rgba(255,255,255,.08);padding-top:28px;margin-top:auto}
+.p1-stat{flex:1;border-right:1px solid rgba(255,255,255,.08);padding:0 24px}
+.p1-stat:first-child{padding-left:0}
+.p1-stat:last-child{border-right:none}
+.p1-stat-num{font-size:28px;font-weight:900;color:#C5A55A;letter-spacing:-1px;line-height:1}
+.p1-stat-label{font-size:9px;color:rgba(232,240,254,.45);margin-top:5px;line-height:1.4;letter-spacing:.03em}
+.p1-footer{border-top:1px solid rgba(255,255,255,.08);padding-top:16px;margin-top:16px;display:flex;justify-content:space-between;align-items:center}
+.p1-footer-text{font-size:9px;color:rgba(232,240,254,.3);letter-spacing:.04em}
+
+/* PAGE 2 - SITE MAP + AGREEMENT */
+.p2-header{background:#060D14;padding:24px 40px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.p2-logo-small{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:#C5A55A;letter-spacing:.02em}
+.p2-logo-mark-sm{width:28px;height:28px;background:#C5A55A;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;color:#060D14;letter-spacing:-1px}
+.p2-page-title{font-size:10px;color:rgba(197,165,90,.7);letter-spacing:.1em;text-transform:uppercase}
+.p2-body{padding:32px 40px;display:grid;grid-template-columns:1fr 1fr;gap:32px;min-height:860px}
+.p2-left{display:flex;flex-direction:column;gap:16px}
+.p2-right{display:flex;flex-direction:column;gap:16px}
+.p2-section-title{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#C5A55A;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb}
+
+/* site map canvas */
+.sitemap-area{background:#1a2535;border:1px solid #2a4560;border-radius:6px;position:relative;overflow:hidden}
+.sitemap-canvas{width:100%;height:240px;cursor:crosshair}
+.sitemap-toolbar{background:#111f2e;border-bottom:1px solid #2a4560;padding:6px 10px;display:flex;gap:6px;align-items:center}
+.sitemap-btn{background:#1e3347;border:1px solid #2a4560;color:#C8D8E8;padding:4px 10px;border-radius:3px;font-size:9px;cursor:pointer;font-family:inherit}
+.sitemap-btn:hover{border-color:#C5A55A;color:#C5A55A}
+.sitemap-btn.active{background:#C5A55A;color:#060D14;border-color:#C5A55A}
+.sitemap-addr{font-size:9px;color:rgba(197,165,90,.7);padding:5px 10px;border-top:1px solid #2a4560;font-style:italic}
+
+/* agreement terms */
+.term-card{background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:14px}
+.term-title{font-size:10px;font-weight:700;color:#1a1a1a;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.term-rows{display:flex;flex-direction:column;gap:6px}
+.term-row{display:flex;justify-content:space-between;align-items:flex-start;padding:5px 0;border-bottom:1px solid #f1f5f9}
+.term-row:last-child{border-bottom:none}
+.term-key{font-size:9px;color:#64748b;flex:1}
+.term-val{font-size:9px;font-weight:700;color:#1a1a1a;text-align:right;max-width:55%;line-height:1.4}
+.term-val.green{color:#16a34a}
+.term-val.blue{color:#1d4ed8}
+.term-val.gold{color:#b45309}
+
+.savings-bar{height:8px;background:#e5e7eb;border-radius:4px;margin:6px 0 2px;overflow:hidden}
+.savings-fill{height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);border-radius:4px;transition:.5s}
+
+/* PAGE 3 - PROCESS */
+.p3-header{background:#060D14;padding:24px 40px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.p3-body{padding:32px 40px 24px;flex:1 1 auto}
+.p3-title{font-size:24px;font-weight:900;color:#1a1a1a;letter-spacing:-1px;margin-bottom:4px}
+.p3-sub{font-size:12px;color:#64748b;margin-bottom:18px}
+.steps{display:flex;flex-direction:column;gap:0}
+.step{display:grid;grid-template-columns:52px 1fr;gap:16px;padding:13px 0;border-bottom:1px solid #f1f5f9;align-items:start}
+.step:first-child{padding-top:0}
+.step:last-child{padding-bottom:0}
+.step-num-col{display:flex;flex-direction:column;align-items:center;gap:4px}
+.step-circle{width:34px;height:34px;background:#060D14;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#C5A55A;flex-shrink:0}
+.step-connector{width:2px;height:20px;background:linear-gradient(180deg,#2a4560 0%,transparent 100%)}
+.step:last-child .step-connector{display:none}
+.step-content{}
+.step-label{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#C5A55A;font-weight:700;margin-bottom:2px}
+.step-title{font-size:14px;font-weight:800;color:#1a1a1a;margin-bottom:4px;letter-spacing:-.3px}
+.step-desc{font-size:10.5px;color:#64748b;line-height:1.45}
+.step-tag{display:inline-block;margin-top:5px;font-size:8.5px;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:10px;padding:2px 9px;font-weight:600}
+.p3-footer{background:#060D14;padding:24px 40px;display:flex;justify-content:space-between;align-items:center;margin-top:auto;flex-shrink:0}
+.p3-footer-logo{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:#C5A55A}
+.p3-footer-contact{font-size:10px;color:rgba(197,165,90,.6);text-align:right}
+
+/* ai status */
+.ai-status{font-size:10px;color:var(--cyan);padding:8px 10px;background:var(--cyan-dim);border:1px solid rgba(0,200,255,.2);border-radius:4px;margin-top:8px;display:none}
+
+/* page tabs */
+.page-tabs{display:flex;gap:4px;margin-bottom:12px}
+.page-tab{padding:6px 16px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;border:1px solid var(--border);color:var(--sub);background:var(--panel)}
+.page-tab.active{background:var(--gold);color:#060D14;border-color:var(--gold)}
+
+@media print{
+  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+  html,body{background:#fff!important;margin:0;padding:0;width:8.5in}
+  .hdr{display:none!important}
+  .lp{display:none!important}
+  .page-tabs{display:none!important}
+  .preview-label{display:none!important}
+  .rp{padding:0!important;background:#fff!important;overflow:visible!important;height:auto!important;display:block!important}
+  .main{display:block!important;height:auto!important;grid-template-columns:1fr!important}
+  .page{box-shadow:none!important;margin:0!important;page-break-after:always!important;break-after:page!important;width:8.5in!important;min-height:11in!important}
+  .page.print-hide{display:none!important}
+  .page.print-last{page-break-after:auto!important;break-after:auto!important}
+  canvas{display:none!important}
+  .sitemap-canvas-print{display:block!important;width:100%!important;height:220px!important;object-fit:cover!important}
+  @page{margin:0;size:8.5in 11in}
+}
+.sitemap-canvas-print{display:none}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <a href="/" class="hdr-back">← Portal</a>
+  <div class="hdr-title">📄 SALES PROPOSAL BUILDER</div>
+  <div class="hdr-sub">NextNRG</div>
+</div>
+
+<div class="main">
+
+<!-- ══ LEFT PANEL ══ -->
+<div class="lp">
+
+  <!-- Presented To -->
+  <div class="sec">
+    <div class="sec-h">📋 Proposal Details</div>
+    <div class="field">
+      <label>Prepared For (Customer / Company)</label>
+      <input type="text" id="customer-name" placeholder="Acme Manufacturing LLC" oninput="update()">
+    </div>
+    <div class="field">
+      <label>Site Address</label>
+      <input type="text" id="site-address" placeholder="1615 4th Street, Fulton, IL 61252" oninput="update()">
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>Prepared By (Agent)</label>
+        <input type="text" id="agent-name" placeholder="Tommy Gilmer" oninput="update()">
+      </div>
+      <div class="field">
+        <label>Date</label>
+        <input type="date" id="proposal-date" oninput="update()">
+      </div>
+    </div>
+    <div class="field">
+      <label>Agent Email / Phone</label>
+      <input type="text" id="agent-contact" placeholder="you@nextnrg.com · (000) 000-0000" oninput="update()">
+    </div>
+  </div>
+
+  <!-- Ownership Model -->
+  <div class="sec">
+    <div class="sec-h">⚡ Ownership Model</div>
+    <div class="model-grid">
+      <div class="model-btn active" id="model-clearsky" onclick="setModel('clearsky')">
+        <span class="model-btn-icon">🏢</span>
+        <div class="model-btn-label">NextNRG Owns</div>
+      </div>
+      <div class="model-btn" id="model-finance" onclick="setModel('finance')">
+        <span class="model-btn-icon">💳</span>
+        <div class="model-btn-label">Customer Finances</div>
+      </div>
+      <div class="model-btn" id="model-cash" onclick="setModel('cash')">
+        <span class="model-btn-icon">💰</span>
+        <div class="model-btn-label">Customer Cash</div>
+      </div>
+    </div>
+    <div id="model-desc" style="font-size:10px;color:var(--sub);line-height:1.5;padding:8px;background:var(--panel);border-radius:4px;border:1px solid var(--border)"></div>
+  </div>
+
+  <!-- Financial Inputs -->
+  <div class="sec">
+    <div class="sec-h">💡 Energy & System Parameters</div>
+    <div class="field">
+      <label>Monthly Peak Demand (kW)</label>
+      <input type="number" id="peak-demand" value="400" oninput="update()">
+    </div>
+    <div class="field">
+      <label>Monthly Utility Bill ($)</label>
+      <input type="number" id="monthly-bill" value="8500" oninput="update()">
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>System Size (kWh)</label>
+        <input type="number" id="sys-kwh" value="500" oninput="update()">
+      </div>
+      <div class="field">
+        <label>Power (kW)</label>
+        <input type="number" id="sys-kw" value="125" oninput="update()">
+      </div>
+    </div>
+    <div class="field">
+      <label>Demand Reduction % <span id="dr-val" style="color:var(--gold);font-weight:700">25%</span></label>
+      <div class="slider-row">
+        <input type="range" id="demand-reduction" min="10" max="40" value="25" oninput="document.getElementById('dr-val').textContent=this.value+'%';update()">
+      </div>
+    </div>
+    <div id="model-finance-inputs" style="display:none">
+      <div class="field">
+        <label>Finance Term (years)</label>
+        <input type="number" id="finance-term" value="10" min="5" max="20" oninput="update()">
+      </div>
+      <div class="field">
+        <label>Interest Rate (%)</label>
+        <input type="number" id="finance-rate" value="6.5" step="0.25" oninput="update()">
+      </div>
+    </div>
+    <div id="model-cash-inputs" style="display:none">
+      <div class="field">
+        <label>System Install Cost ($)</label>
+        <input type="number" id="cash-cost" placeholder="e.g. 190000" oninput="update()">
+      </div>
+    </div>
+    <div id="model-clearsky-inputs">
+      <div class="field">
+        <label>Customer Bill Savings % <span id="cs-save-val" style="color:var(--gold);font-weight:700">25%</span></label>
+        <div class="slider-row">
+          <input type="range" id="cs-savings-pct" min="20" max="35" value="25" oninput="document.getElementById('cs-save-val').textContent=this.value+'%';update()">
+        </div>
+      </div>
+      <div class="field">
+        <label>Customer Arbitrage Share % <span id="arb-val" style="color:var(--gold);font-weight:700">15%</span></label>
+        <div class="slider-row">
+          <input type="range" id="arb-share" min="5" max="30" value="15" oninput="document.getElementById('arb-val').textContent=this.value+'%';update()">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Site Map Tools -->
+  <div class="sec">
+    <div class="sec-h">🗺 Site Map (Page 2)</div>
+    <div class="field">
+      <label>Satellite Map Address</label>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="map-addr" placeholder="Enter address then load map" style="flex:1">
+        <button class="btn btn-secondary" onclick="loadSatellite()" style="padding:7px 10px;font-size:10px">Load</button>
+      </div>
+    </div>
+    <div style="margin-bottom:8px">
+      <button class="btn btn-secondary active" id="tool-bess" style="margin-right:4px;font-size:10px;padding:6px 10px">🔋 Place BESS</button>
+      <button class="btn btn-secondary" onclick="clearPlacements()" style="font-size:10px;padding:6px 10px">🗑 Clear</button>
+    </div>
+    <div class="field">
+      <label>Claude API Key (for AI site generation)</label>
+      <input type="password" id="claude-key" placeholder="sk-ant-api03-..." oninput="localStorage.setItem('cs_claude_key',this.value)">
+    </div>
+    <button class="btn btn-ai" onclick="generateAISite()" id="ai-btn">✨ AI Generate BESS Site</button>
+    <div id="ai-status" class="ai-status"></div>
+  </div>
+
+  <!-- Page Selection -->
+  <div class="sec">
+    <div class="sec-h">📑 Pages to Export</div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:not-allowed">
+        <input type="checkbox" id="export-page1" checked disabled style="width:14px;height:14px">
+        Page 1 · Cover <span style="margin-left:auto;font-size:9px;color:var(--gold)">REQUIRED</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text);cursor:pointer">
+        <input type="checkbox" id="export-page2" checked onchange="applyPageSelection()" style="width:14px;height:14px">
+        Page 2 · Site &amp; Agreement
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text);cursor:pointer">
+        <input type="checkbox" id="export-page3" checked onchange="applyPageSelection()" style="width:14px;height:14px">
+        Page 3 · Financials
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:not-allowed">
+        <input type="checkbox" id="export-page4" checked disabled style="width:14px;height:14px">
+        Page 4 · Process <span style="margin-left:auto;font-size:9px;color:var(--gold)">REQUIRED</span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Export -->
+  <div class="btn-row">
+    <button class="btn btn-secondary" onclick="applyPageSelection();window.print()">🖨 Print / PDF</button>
+    <button class="btn btn-primary" onclick="exportProposal()">📄 Export Proposal</button>
+  </div>
+
+</div>
+
+<!-- ══ RIGHT PANEL (PREVIEW) ══ -->
+<div class="rp">
+  <div class="preview-label">LIVE PREVIEW — 4-PAGE PROPOSAL</div>
+  <div class="page-tabs">
+    <div class="page-tab active" onclick="scrollToPage(0)">Page 1 · Cover</div>
+    <div class="page-tab" onclick="scrollToPage(1)">Page 2 · Site &amp; Agreement</div>
+    <div class="page-tab" onclick="scrollToPage(2)">Page 3 · Financials</div>
+    <div class="page-tab" onclick="scrollToPage(3)">Page 4 · Process</div>
+  </div>
+
+  <!-- PAGE 1: COVER -->
+  <div class="page" id="page1">
+    <div class="p1-bg"></div>
+    <div class="p1-accent"></div>
+    <div class="p1-content">
+      <div class="p1-logo-area">
+        <img src="/nextnrg-logo.png" style="width:52px;height:52px;object-fit:contain;border-radius:6px;background:#fff;padding:2px">
+        <div>
+          <div class="p1-logo-text">NextNRG</div>
+          <div class="p1-logo-sub">BATTERY ENERGY STORAGE · EV CHARGING · VPP</div>
+        </div>
+      </div>
+
+      <div class="p1-hero">
+        <div class="p1-eyebrow">Battery Energy Storage Proposal</div>
+        <h1 class="p1-headline">Reduce Your<br>Energy Bill.<br><span>Zero Complexity.</span></h1>
+        <div class="p1-model-badge" id="p1-model-badge">🏢 NextNRG Ownership Model</div>
+        <div class="p1-divider"></div>
+        <div class="p1-meta">
+          <div class="p1-meta-item">
+            <label>Prepared For</label>
+            <span id="p1-customer">—</span>
+          </div>
+          <div class="p1-meta-item">
+            <label>Site Address</label>
+            <span id="p1-address">—</span>
+          </div>
+          <div class="p1-meta-item">
+            <label>Prepared By</label>
+            <span id="p1-agent">—</span>
+          </div>
+          <div class="p1-meta-item">
+            <label>Date</label>
+            <span id="p1-date">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="p1-stats">
+        <div class="p1-stat">
+          <div class="p1-stat-num" id="p1-savings">$0</div>
+          <div class="p1-stat-label">Estimated Annual<br>Savings to Customer</div>
+        </div>
+        <div class="p1-stat">
+          <div class="p1-stat-num" id="p1-kwh">500 kWh</div>
+          <div class="p1-stat-label">Battery System<br>Capacity</div>
+        </div>
+        <div class="p1-stat">
+          <div class="p1-stat-num" id="p1-cost-num">$0</div>
+          <div class="p1-stat-label" id="p1-cost-label">Upfront Cost<br>to Customer</div>
+        </div>
+        <div class="p1-stat">
+          <div class="p1-stat-num" id="p1-itc">30% ITC</div>
+          <div class="p1-stat-label" id="p1-itc-label">Federal Tax<br>Credit Available</div>
+        </div>
+      </div>
+
+      <div class="p1-footer">
+        <div class="p1-footer-text">NEXTNRG &nbsp;·&nbsp; POWERED BY CLEARSKY-OMEGA</div>
+        <div class="p1-footer-text" id="p1-agent-contact"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAGE 2: SITE MAP + AGREEMENT -->
+  <div class="page" id="page2">
+    <div class="p2-header">
+      <div class="p2-logo-small">
+        <img src="/nextnrg-logo.png" style="width:28px;height:28px;object-fit:contain;background:#fff;border-radius:4px;padding:1px">
+        NextNRG
+      </div>
+      <div class="p2-page-title">SITE OVERVIEW &amp; AGREEMENT TERMS</div>
+    </div>
+    <div class="p2-body">
+      <div class="p2-left">
+        <div>
+          <div class="p2-section-title">📍 Proposed Site Layout</div>
+          <div class="sitemap-area">
+            <div class="sitemap-toolbar">
+              <span style="font-size:9px;color:#6B8FAD">Click map to place BESS units</span>
+              <span style="margin-left:auto;font-size:9px;color:#C5A55A">🔋 BESS</span>
+            </div>
+            <canvas id="sitemap-canvas" class="sitemap-canvas" width="320" height="220"
+              onclick="placeItem(event)"
+              onmousemove="previewItem(event)"></canvas>
+            <div class="sitemap-addr" id="p2-addr">No address entered</div>
+          </div>
+          <div style="font-size:9px;color:#6B8FAD;margin-top:6px;line-height:1.5;padding:8px;background:#f8fafc;border-radius:4px;border:1px solid #e5e7eb;color:#374151">
+            <strong style="color:#374151">Site Summary:</strong>
+            <span id="p2-site-summary"> Enter address and place BESS equipment on the map above.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="p2-right">
+        <div>
+          <div class="p2-section-title">📄 Agreement Terms Summary</div>
+          <div id="p2-terms"></div>
+        </div>
+        <div>
+          <div class="p2-section-title">💰 Customer Financial Benefit</div>
+          <div id="p2-financials"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAGE 3: FINANCIAL PERFORMANCE -->
+  <div class="page" id="page4">
+    <div class="p3-header">
+      <div class="p2-logo-small">
+        <img src="/nextnrg-logo.png" style="width:28px;height:28px;object-fit:contain;background:#fff;border-radius:4px;padding:1px">
+        NextNRG
+      </div>
+      <div class="p2-page-title">MODEL OUTPUTS, GRAPHS &amp; KEY FIGURES</div>
+    </div>
+    <div class="p3-body" style="padding:28px 40px">
+      <div style="font-size:13px;color:#475569;margin-bottom:20px;max-width:580px">
+        To complement the real value of installing a BESS — reducing energy costs, providing resiliency, and future-proofing your business — the following financial performance can be expected.
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 280px;gap:28px;align-items:start">
+        <!-- Chart area -->
+        <div>
+          <div style="font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#C5A55A;font-weight:700;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb">10-Year Cash Flow Projection</div>
+          <canvas id="fin-chart" width="460" height="260" style="width:100%;border-radius:6px;background:#f8fafc;border:1px solid #e5e7eb"></canvas>
+        </div>
+        <!-- KPI cards -->
+        <div style="display:flex;flex-direction:column;gap:10px" id="p4-kpis">
+        </div>
+      </div>
+    </div>
+    <div class="p3-footer">
+      <div class="p3-footer-logo">
+        <img src="/nextnrg-logo.png" style="width:28px;height:28px;object-fit:contain;background:#fff;border-radius:4px;padding:1px">
+        NextNRG
+      </div>
+      <div class="p3-footer-contact">
+        NextNRG<br>
+        <span id="p4-agent-line"></span>
+      </div>
+    </div>
+  </div>
+  <!-- PAGE 4: PROCESS -->
+  <div class="page" id="page3">
+    <div class="p3-header">
+      <div class="p2-logo-small">
+        <img src="/nextnrg-logo.png" style="width:28px;height:28px;object-fit:contain;background:#fff;border-radius:4px;padding:1px">
+        NextNRG
+      </div>
+      <div class="p2-page-title">HOW IT WORKS — 5 SIMPLE STEPS</div>
+    </div>
+    <div class="p3-body" style="padding:26px 40px 18px">
+      <div class="p3-title">From Quote to <span style="color:#C5A55A">Power</span> in 5 Steps</div>
+      <div class="p3-sub">NextNRG manages the entire process — you just show up for commissioning.</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-circle">1</div>
+            <div class="step-connector"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-label">Step One · Day 1</div>
+            <div class="step-title">Share Your Utility Bill</div>
+            <div class="step-desc">Provide your last 12 months of utility bills. NextNRG analyzes your peak demand patterns, time-of-use charges, and demand spikes to size the right battery system for maximum savings — no site visit required at this stage.</div>
+            <span class="step-tag">📄 Upload PDF or photo of utility bill</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-circle">2</div>
+            <div class="step-connector"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-label">Step Two · Week 1–2</div>
+            <div class="step-title">Site Map &amp; System Design</div>
+            <div class="step-desc">Our team conducts a brief site walk or works from your address to produce a site map showing the proposed BESS location, equipment footprint, conduit routing, and interconnection point. You review and approve the layout before any engineering begins.</div>
+            <span class="step-tag">🗺 Site map produced — like the one on page 2</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-circle">3</div>
+            <div class="step-connector"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-label">Step Three · Week 2–6</div>
+            <div class="step-title" id="p3-step3-title">Sign Agreement &amp; Process Financing</div>
+            <div class="step-desc" id="p3-step3-desc">Sign your site host or financing agreement. NextNRG submits interconnection applications to your utility, files for available rebates (ComEd BESH, SGIP, NJ BPU, etc.), and applies for applicable federal incentives including the 30% Investment Tax Credit.</div>
+            <span class="step-tag" id="p3-step3-tag">✅ No upfront payment required</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-circle">4</div>
+            <div class="step-connector"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-label">Step Four · Week 6–14</div>
+            <div class="step-title">Installation &amp; Commissioning</div>
+            <div class="step-desc">Licensed electricians and ClearSky's EPC team install the battery system, perform utility interconnection, and commission the system. We handle all inspections and AHJ approvals. Typical installation is 2–4 days with minimal disruption to your operations.</div>
+            <span class="step-tag">⚡ System goes live — savings begin immediately</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-circle">5</div>
+          </div>
+          <div class="step-content">
+            <div class="step-label">Step Five · Ongoing</div>
+            <div class="step-title">Sit Back &amp; Save</div>
+            <div class="step-desc" id="p3-step5-desc">ClearSky's EMS software monitors and optimizes your battery 24/7, dispatching it to shave demand peaks, participate in energy markets, and maximize your savings. You receive a monthly statement showing energy savings and any revenue share payments.</div>
+            <span class="step-tag">📊 Monthly savings reports delivered to your inbox</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="p3-footer">
+      <div class="p3-footer-logo">
+        <img src="/nextnrg-logo.png" style="width:28px;height:28px;object-fit:contain;background:#fff;border-radius:4px;padding:1px">
+        NextNRG
+      </div>
+      <div class="p3-footer-contact">
+        <span id="p3-contact-line">NextNRG</span><br>
+        <span id="p3-agent-line"></span>
+        <span style="display:block;margin-top:6px;font-size:8px;opacity:.6">Powered by ClearSky-OMEGA · © 2025 ClearSky Energy Solutions LLC</span>
+      </div>
+    </div>
+  </div>
+
+
+</div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════════════
+var _model = 'clearsky';
+var _tool  = 'bess';
+var _placements = [];   // {type, x, y}
+var _bgImage = null;    // satellite image data URL
+
+// ══════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════
+window.onload = function() {
+  // Set today's date
+  var today = new Date().toISOString().split('T')[0];
+  document.getElementById('proposal-date').value = today;
+
+  // Restore API key
+  var k = localStorage.getItem('cs_claude_key');
+  if (k) document.getElementById('claude-key').value = k;
+
+  setModel('clearsky');
+  update();
+  drawCanvas();
+  applyPageSelection();
+};
+
+function scrollToPage(idx) {
+  var pages = document.querySelectorAll('.page');
+  var tabs  = document.querySelectorAll('.page-tab');
+  if (pages[idx]) {
+    pages[idx].scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+  tabs.forEach(function(t,i){ t.classList.toggle('active', i===idx); });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MODEL
+// ══════════════════════════════════════════════════════════════════
+var MODEL_DESCS = {
+  clearsky: 'ClearSky installs, owns, and operates the battery. You receive a guaranteed reduction on your demand charges plus a share of energy arbitrage revenue — $0 capital required.',
+  finance:  'You finance the battery over a fixed term (5–20 years). During the term you keep the full utility bill savings, and ClearSky retains value stack revenue until payoff. After the term the battery is yours — or you can pay off the remaining balance early.',
+  cash:     'You purchase the battery outright. You own all value streams — demand savings, energy arbitrage, capacity market revenue, and all incentives including the 30% ITC and MACRS depreciation.'
+};
+
+var MODEL_LABELS = {
+  clearsky: '🏢 NextNRG Ownership Model — Site Host Agreement',
+  finance:  '💳 Customer Finance Model — 10-Year Revenue Split',
+  cash:     '💰 Customer Cash Purchase — Full Ownership'
+};
+
+function setModel(m) {
+  _model = m;
+  ['clearsky','finance','cash'].forEach(function(x) {
+    document.getElementById('model-'+x).classList.toggle('active', x===m);
+  });
+  document.getElementById('model-desc').textContent = MODEL_DESCS[m];
+  document.getElementById('model-finance-inputs').style.display  = (m==='finance')  ? 'block' : 'none';
+  document.getElementById('model-clearsky-inputs').style.display = (m==='clearsky') ? 'block' : 'none';
+  document.getElementById('model-cash-inputs').style.display     = (m==='cash')     ? 'block' : 'none';
+  update();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MAIN UPDATE
+// ══════════════════════════════════════════════════════════════════
+function update() {
+  var customer   = document.getElementById('customer-name').value || '—';
+  var address    = document.getElementById('site-address').value  || '—';
+  var agent      = document.getElementById('agent-name').value    || '—';
+  var agentCtx   = document.getElementById('agent-contact').value || '';
+  var dateVal    = document.getElementById('proposal-date').value;
+  var dateStr    = dateVal ? new Date(dateVal+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '—';
+  var kwh        = parseFloat(document.getElementById('sys-kwh').value)   || 500;
+  var kw         = parseFloat(document.getElementById('sys-kw').value)    || 125;
+  var bill       = parseFloat(document.getElementById('monthly-bill').value) || 8500;
+  var peakDmd    = parseFloat(document.getElementById('peak-demand').value)  || 400;
+  var drPct      = parseFloat(document.getElementById('demand-reduction').value) / 100 || 0.25;
+
+  // Savings calc
+  var demandSavingsMonthly = peakDmd * drPct * 14.20; // $14.20/kW ComEd avg
+  var annualDemandSavings  = demandSavingsMonthly * 12;
+  var annualArbitrage      = kwh * 0.87 * 1.0 * 365 * 0.11; // kWh * eff * cycles * days * spread
+  var totalAnnualRevenue   = annualDemandSavings + annualArbitrage;
+
+  // ── PAGE 1 ──
+  document.getElementById('p1-customer').textContent = customer;
+  document.getElementById('p1-address').textContent  = address;
+  document.getElementById('p1-agent').textContent    = agent;
+  document.getElementById('p1-date').textContent     = dateStr;
+  document.getElementById('p1-agent-contact').textContent = agentCtx;
+  document.getElementById('p1-model-badge').textContent   = MODEL_LABELS[_model];
+  document.getElementById('p1-kwh').textContent = kwh + ' kWh / ' + kw + ' kW';
+
+  // Cost stat & ITC stat — model-aware
+  var costEl   = document.getElementById('p1-cost-num');
+  var costLbl  = document.getElementById('p1-cost-label');
+  var itcEl    = document.getElementById('p1-itc');
+  var itcLbl   = document.getElementById('p1-itc-label');
+  if (_model === 'clearsky') {
+    costEl.textContent  = '$0';
+    costLbl.innerHTML   = 'Upfront Cost<br>to Customer';
+    itcEl.textContent   = '$0 Down';
+    itcLbl.innerHTML    = 'No Capital<br>Required';
+  } else if (_model === 'finance') {
+    var finTerm = parseFloat(document.getElementById('finance-term').value) || 10;
+    costEl.textContent  = '$0';
+    costLbl.innerHTML   = 'Down Payment<br>Required';
+    itcEl.textContent   = finTerm + '-Yr';
+    itcLbl.innerHTML    = 'Finance Term<br>w/ Low Payments';
+  } else {
+    var cashCost = parseFloat(document.getElementById('cash-cost').value) || 0;
+    var itcAmt   = cashCost * 0.30;
+    costEl.textContent  = cashCost ? '$' + Math.round(cashCost/1000) + 'K' : 'Enter Cost';
+    costLbl.innerHTML   = 'System Install<br>Cost';
+    itcEl.textContent   = itcAmt ? '$' + Math.round(itcAmt/1000) + 'K' : '30% ITC';
+    itcLbl.innerHTML    = 'Federal Tax<br>Credit (Est.)';
+  }
+
+  var custSavings = 0;
+  if (_model === 'clearsky') {
+    var csSavePct = parseFloat(document.getElementById('cs-savings-pct').value) / 100 || 0.25;
+    var arbShare  = parseFloat(document.getElementById('arb-share').value)       / 100 || 0.15;
+    custSavings = (annualDemandSavings * csSavePct) + (annualArbitrage * arbShare);
+  } else if (_model === 'finance') {
+    custSavings = annualDemandSavings; // they keep demand savings
+  } else {
+    custSavings = totalAnnualRevenue; // they keep everything
+  }
+  document.getElementById('p1-savings').textContent = '$' + Math.round(custSavings/1000) + 'K';
+
+  // ── PAGE 2 ADDR ──
+  document.getElementById('p2-addr').textContent = address !== '—' ? address : 'No address entered';
+  document.getElementById('p2-site-summary').textContent = address !== '—'
+    ? 'Proposed '+kwh+'kWh / '+kw+'kW BESS installation at '+address+'. System will reduce peak demand by approximately '+(drPct*100).toFixed(0)+'%, saving ~$'+Math.round(annualDemandSavings/1000)+'K/yr in demand charges.'
+    : ' Enter address and place BESS equipment on the map above.';
+
+  // ── PAGE 2 TERMS ──
+  buildTerms(customer, address, kwh, kw, bill, peakDmd, drPct, annualDemandSavings, annualArbitrage, custSavings, dateStr);
+
+  // ── PAGE 2 FINANCIALS ──
+  buildFinancials(bill, annualDemandSavings, annualArbitrage, custSavings, kwh);
+
+  // ── PAGE 3 ──
+  document.getElementById('p3-agent-line').textContent = agent + (agentCtx ? ' · ' + agentCtx : '');
+  updateProcessPage();
+  // ── PAGE 4 ──
+  if(document.getElementById('p4-agent-line')) document.getElementById('p4-agent-line').textContent = agent + (agentCtx ? ' · ' + agentCtx : '');
+  drawFinChart(kwh, kw, bill, peakDmd, drPct, custSavings);
+}
+
+function buildTerms(customer, address, kwh, kw, bill, peakDmd, drPct, demSavings, arbRevenue, custSavings, dateStr) {
+  var termsDiv = document.getElementById('p2-terms');
+  var html = '';
+
+  if (_model === 'clearsky') {
+    var csSavePct = parseFloat(document.getElementById('cs-savings-pct').value) || 25;
+    var arbShare  = parseFloat(document.getElementById('arb-share').value)      || 15;
+    html = '<div class="term-card"><div class="term-title">🏢 Site Host Agreement — Key Terms</div><div class="term-rows">'
+      + termRow('Agreement Type', 'Site Host Agreement (SHA)', 'blue')
+      + termRow('Term', '20 years from Commercial Operation Date', '')
+      + termRow('System Owner', 'NextNRG', 'gold')
+      + termRow('Customer Obligation', '$0 — No capital required', 'green')
+      + termRow('Demand Bill Reduction', csSavePct + '% of peak demand charges', 'green')
+      + termRow('Energy Arbitrage Share', arbShare + '% of net arbitrage revenue', 'green')
+      + termRow('Maintenance &amp; Ops', 'ClearSky (full lifecycle)', '')
+      + termRow('Battery Ownership at Term', 'Customer option to purchase at FMV', '')
+      + termRow('Interconnection', 'ClearSky files &amp; manages', '')
+      + termRow('Rebates &amp; Incentives', 'ClearSky retains all program rebates', '')
+      + '</div></div>';
+  } else if (_model === 'finance') {
+    var term = parseFloat(document.getElementById('finance-term').value) || 10;
+    var rate = parseFloat(document.getElementById('finance-rate').value) || 6.5;
+    var capex = kwh * 380;
+    var itc   = capex * 0.30;
+    var netCapex = capex - itc;
+    var monthly  = pmt(rate/100/12, term*12, -netCapex);
+    html = '<div class="term-card"><div class="term-title">💳 Financed Purchase — Key Terms</div><div class="term-rows">'
+      + termRow('Agreement Type', term+'-Year Equipment Finance', 'blue')
+      + termRow('System Owner', 'Customer (upon funding)', 'gold')
+      + termRow('Est. System Cost', '$'+Math.round(capex/1000)+'K installed', '')
+      + termRow('ITC (30%)', '-$'+Math.round(itc/1000)+'K credit to customer', 'green')
+      + termRow('Net Financed Amount', '$'+Math.round(netCapex/1000)+'K', '')
+      + termRow('Est. Monthly Payment', '$'+Math.round(monthly).toLocaleString()+'/mo', '')
+      + termRow('During Term: Demand Savings', 'Customer keeps 100%', 'green')
+      + termRow('During Term: Value Stack', 'ClearSky retains until payoff', '')
+      + termRow('After Payoff', 'Customer owns all value streams', 'green')
+      + termRow('End of Term Options', 'Keep battery or refinance', '')
+      + '</div></div>';
+  } else {
+    var capex2  = kwh * 380;
+    var itc2    = capex2 * 0.30;
+    var macrs   = capex2 * 0.85 * 0.21;
+    html = '<div class="term-card"><div class="term-title">💰 Cash Purchase — Key Terms</div><div class="term-rows">'
+      + termRow('Agreement Type', 'Direct Purchase / Bill of Sale', 'blue')
+      + termRow('System Owner', 'Customer (at closing)', 'gold')
+      + termRow('Est. System Cost', '$'+Math.round(capex2/1000)+'K installed', '')
+      + termRow('Federal ITC (30%)', '$'+Math.round(itc2/1000)+'K tax credit', 'green')
+      + termRow('MACRS Depreciation Benefit', '$'+Math.round(macrs/1000)+'K est.', 'green')
+      + termRow('Net Cost After Incentives', '$'+Math.round((capex2-itc2-macrs)/1000)+'K', '')
+      + termRow('All Value Streams', 'Customer owns 100%', 'green')
+      + termRow('O&amp;M (optional ClearSky SLA)', 'Available at market rate', '')
+      + termRow('Payback Period', calcPayback(capex2-itc2-macrs, demSavings+arbRevenue)+' years', '')
+      + '</div></div>';
+  }
+  termsDiv.innerHTML = html;
+}
+
+function buildFinancials(bill, demSavings, arbRevenue, custSavings, kwh) {
+  var finDiv = document.getElementById('p2-financials');
+  var annualBill = bill * 12;
+  var savePct = custSavings / annualBill * 100;
+
+  var html = '<div class="term-card">'
+    + '<div class="term-rows">'
+    + termRow('Current Annual Utility Cost', '$'+Math.round(annualBill/1000)+'K', '')
+    + termRow('Demand Charge Reduction (annual)', '$'+Math.round(demSavings), 'green')
+    + ((_model !== 'clearsky') ? termRow('Energy Arbitrage Revenue', '$'+Math.round(arbRevenue), 'green') : termRow('Customer Arbitrage Share', '$'+Math.round(arbRevenue * (parseFloat(document.getElementById('arb-share').value)||15)/100), 'green'))
+    + termRow('Total Annual Benefit to Customer', '$'+Math.round(custSavings), 'green')
+    + '</div>'
+    + '<div style="margin-top:12px">'
+    + '<div style="font-size:9px;color:#64748b;margin-bottom:4px">Annual savings as % of utility bill</div>'
+    + '<div class="savings-bar"><div class="savings-fill" style="width:'+Math.min(savePct,100).toFixed(1)+'%"></div></div>'
+    + '<div style="font-size:11px;font-weight:700;color:#16a34a">'+savePct.toFixed(1)+'% bill reduction</div>'
+    + '</div></div>';
+  finDiv.innerHTML = html;
+}
+
+function updateProcessPage() {
+  var step3t = document.getElementById('p3-step3-title');
+  var step3d = document.getElementById('p3-step3-desc');
+  var step3g = document.getElementById('p3-step3-tag');
+  var step5d = document.getElementById('p3-step5-desc');
+
+  if (_model === 'clearsky') {
+    step3t.textContent = 'Sign Site Host Agreement';
+    step3d.textContent = 'Sign the ClearSky Site Host Agreement (SHA). ClearSky handles everything from here — interconnection application, rebate filings (BESH, SGIP, NJ BPU etc.), engineering, permitting, and procurement. You receive a $0 invoice.';
+    step3g.textContent = '✅ $0 upfront — ClearSky funds the project';
+    step5d.textContent = 'NextNRG\'s EMS monitors and optimizes the battery 24/7. You see a guaranteed reduction in your demand charges every month, plus quarterly payments for your share of energy arbitrage revenue. NextNRG manages all program compliance and reporting.';
+  } else if (_model === 'finance') {
+    var term = document.getElementById('finance-term').value || 10;
+    step3t.textContent = 'Sign Finance Agreement';
+    step3d.textContent = 'Sign the equipment finance agreement. ClearSky facilitates financing through our lending partners. During the '+term+'-year term you benefit from 100% of your utility demand savings while ClearSky retains energy market revenue to support the project economics. After payoff, all value streams transfer to you.';
+    step3g.textContent = '💳 Low monthly payments — demand savings offset the cost';
+    step5d.textContent = 'Your battery reduces demand charges every month. ClearSky\'s team monitors the system and manages all utility compliance. At end of term you own the battery free and clear — or you can pay off early and capture all value streams sooner.';
+  } else {
+    step3t.textContent = 'Purchase Agreement &amp; Incentive Filing';
+    step3d.textContent = 'Sign the purchase agreement and provide your tax advisor information for the 30% ITC filing. ClearSky assists with all rebate applications and interconnection filings. You receive the full ITC credit on your next tax return, significantly reducing your net cost.';
+    step3g.textContent = '💰 ITC + MACRS can reduce net cost by 40%+';
+    step5d.textContent = 'You own the battery and all its revenue streams — demand savings, energy arbitrage, capacity market payments, and any utility program revenues. ClearSky offers optional O&M service agreements. Your battery typically pays itself back in 3–6 years.';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// CANVAS SITE MAP
+// ══════════════════════════════════════════════════════════════════
+function setTool(t) {
+  _tool = 'bess';
+}
+
+function placeItem(e) {
+  var canvas = document.getElementById('sitemap-canvas');
+  var rect   = canvas.getBoundingClientRect();
+  var scaleX = canvas.width / rect.width;
+  var scaleY = canvas.height / rect.height;
+  var x = (e.clientX - rect.left) * scaleX;
+  var y = (e.clientY - rect.top)  * scaleY;
+  _placements.push({ type: _tool, x: x, y: y });
+  drawCanvas();
+}
+
+var _previewX = -1, _previewY = -1;
+function previewItem(e) {
+  var canvas = document.getElementById('sitemap-canvas');
+  var rect   = canvas.getBoundingClientRect();
+  var scaleX = canvas.width / rect.width;
+  var scaleY = canvas.height / rect.height;
+  _previewX = (e.clientX - rect.left) * scaleX;
+  _previewY = (e.clientY - rect.top)  * scaleY;
+  drawCanvas();
+}
+
+function clearPlacements() {
+  _placements = [];
+  drawCanvas();
+}
+
+function drawCanvas() {
+  var canvas = document.getElementById('sitemap-canvas');
+  var ctx    = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  if (_bgImage) {
+    ctx.drawImage(_bgImage, 0, 0, W, H);
+    ctx.fillStyle = 'rgba(10,22,40,0.45)';
+    ctx.fillRect(0, 0, W, H);
+  } else {
+    ctx.fillStyle = '#0a1628';
+    ctx.fillRect(0, 0, W, H);
+    // Grid
+    ctx.strokeStyle = 'rgba(42,69,96,0.5)';
+    ctx.lineWidth = 0.5;
+    for (var gx = 0; gx < W; gx += 20) { ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke(); }
+    for (var gy = 0; gy < H; gy += 20) { ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(W,gy); ctx.stroke(); }
+    // No-map label
+    ctx.fillStyle = 'rgba(107,143,173,0.4)';
+    ctx.font = '11px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Enter address and click Load to show satellite view', W/2, H/2 - 12);
+    ctx.fillText('Then click map to place BESS equipment', W/2, H/2 + 8);
+    ctx.textAlign = 'left';
+  }
+
+  // Draw placements
+  _placements.forEach(function(p) {
+    drawEquipment(ctx, p.type, p.x, p.y, 1.0);
+  });
+
+  // Preview ghost
+  if (_previewX >= 0 && _previewY >= 0) {
+    ctx.globalAlpha = 0.45;
+    drawEquipment(ctx, _tool, _previewX, _previewY, 1.0);
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+function drawEquipment(ctx, type, x, y, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // ── BESS: drawn battery icon ──
+  var bw = 52, bh = 30;   // body width / height
+  var bx = x - bw / 2, by = y - bh / 2;
+  var tipW = 5, tipH = 12;
+
+  // Drop shadow
+  ctx.shadowColor = 'rgba(197,165,90,0.35)';
+  ctx.shadowBlur  = 8;
+
+  // Body fill (dark navy)
+  ctx.fillStyle = '#0D2040';
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 4);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Body border (gold)
+  ctx.strokeStyle = '#C5A55A';
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 4);
+  ctx.stroke();
+
+  // Positive terminal nub (right side)
+  ctx.fillStyle = '#C5A55A';
+  ctx.beginPath();
+  ctx.roundRect(bx + bw, by + (bh - tipH) / 2, tipW, tipH, [0, 2, 2, 0]);
+  ctx.fill();
+
+  // Negative terminal nub (left side, smaller)
+  ctx.fillStyle = '#6B8FAD';
+  ctx.beginPath();
+  ctx.roundRect(bx - 3, by + (bh - 8) / 2, 3, 8, [2, 0, 0, 2]);
+  ctx.fill();
+
+  // Internal cell dividers (3 cells)
+  ctx.strokeStyle = 'rgba(197,165,90,0.35)';
+  ctx.lineWidth = 1;
+  var cellW = bw / 3;
+  for (var ci = 1; ci < 3; ci++) {
+    var cx2 = bx + cellW * ci;
+    ctx.beginPath(); ctx.moveTo(cx2, by + 4); ctx.lineTo(cx2, by + bh - 4); ctx.stroke();
+  }
+
+  // Charge fill bar (shows 70% charge as green fill)
+  var fillPct = 0.70;
+  var fillW = (bw - 8) * fillPct;
+  var grad = ctx.createLinearGradient(bx + 4, 0, bx + 4 + fillW, 0);
+  grad.addColorStop(0, '#16a34a');
+  grad.addColorStop(1, '#22d77a');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(bx + 4, by + 5, fillW, bh - 10, 2);
+  ctx.fill();
+
+  // "BESS" label below
+  ctx.fillStyle = '#C5A55A';
+  ctx.font = 'bold 8px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('BESS', x, y + bh / 2 + 11);
+
+  ctx.restore();
+}
+
+function loadSatellite() {
+  var addr = document.getElementById('map-addr').value.trim();
+  if (!addr) { alert('Enter an address first'); return; }
+  var key = 'AIzaSyC0roZ_qMwtbVzqRLtNx9nrCeaGqrE1sNs';
+  var url  = 'https://maps.googleapis.com/maps/api/staticmap?center=' + encodeURIComponent(addr)
+           + '&zoom=18&size=320x220&maptype=satellite&key=' + key;
+  var img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = function() { _bgImage = img; drawCanvas(); };
+  img.onerror = function() { alert('Could not load satellite map. Check address or API key.'); };
+  img.src = url;
+  // Update site address on page 2
+  document.getElementById('p2-addr').textContent = addr;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// AI GENERATION
+// ══════════════════════════════════════════════════════════════════
+async function generateAISite() {
+  var key  = document.getElementById('claude-key').value.trim()
+           || localStorage.getItem('cs_claude_key') || '';
+  var addr = document.getElementById('site-address').value.trim()
+           || document.getElementById('map-addr').value.trim();
+  var kwh  = document.getElementById('sys-kwh').value || '500';
+  var kw   = document.getElementById('sys-kw').value  || '125';
+  if (!key) { alert('Enter your Claude API key in the left panel'); return; }
+
+  var btn    = document.getElementById('ai-btn');
+  var status = document.getElementById('ai-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  status.style.display = 'block';
+  status.textContent   = 'Claude is analyzing the site and placing equipment...';
+
+  try {
+    var prompt = 'You are a BESS site layout assistant. For a site at: "' + addr + '"\n'
+      + 'System: ' + kwh + 'kWh / ' + kw + 'kW BESS\n'
+      + 'Return ONLY a JSON object with BESS unit placements for a 320x220 pixel site map:\n'
+      + '{"placements":[{"type":"bess","x":160,"y":110}],'
+      + '"summary":"One sentence describing the proposed layout and why."}\n'
+      + 'Place BESS near the back/side of the property away from building entrance. '
+      + 'You may place multiple BESS units if the system is large. '
+      + 'Use realistic positioning for a commercial site. '
+      + 'Respond ONLY with the JSON.';
+
+    var resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 400,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    var data = await resp.json();
+    var txt  = (data.content || []).map(function(c){ return c.text || ''; }).join('').trim()
+               .replace(/^```json\s*/,'').replace(/\s*```$/,'').trim();
+    var result = JSON.parse(txt);
+
+    if (result.placements) {
+      _placements = result.placements;
+      drawCanvas();
+    }
+    if (result.summary) {
+      document.getElementById('p2-site-summary').textContent = result.summary;
+    }
+    status.textContent = '✅ Site layout generated by Claude AI';
+  } catch(e) {
+    status.textContent = '❌ Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✨ AI Generate BESS Site';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════════════
+function termRow(key, val, cls) {
+  return '<div class="term-row"><span class="term-key">'+key+'</span><span class="term-val '+(cls||'')+'">'+val+'</span></div>';
+}
+
+function pmt(r, n, pv) {
+  if (r === 0) return -pv / n;
+  return (-pv * r * Math.pow(1+r, n)) / (Math.pow(1+r, n) - 1);
+}
+
+function calcPayback(cost, annualRevenue) {
+  return annualRevenue > 0 ? (cost / annualRevenue).toFixed(1) : '—';
+}
+
+// ══════════════════════════════════════════════════════════════════
+// FINANCIAL CHART (PAGE 4)
+// ══════════════════════════════════════════════════════════════════
+function drawFinChart(kwh, kw, bill, peakDmd, drPct, custSavingsAnnual) {
+  var canvas = document.getElementById('fin-chart');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+  var PAD = {t:36, r:24, b:44, l:76};
+  var CW = W - PAD.l - PAD.r;
+  var CH = H - PAD.t - PAD.b;
+
+  // ── Data ──
+  var kwhNum   = kwh || 500;
+  var cashCostEl = document.getElementById('cash-cost');
+  var capex    = (_model === 'cash' && cashCostEl && parseFloat(cashCostEl.value))
+                   ? parseFloat(cashCostEl.value)
+                   : kwhNum * 380;
+  var itc      = capex * 0.30;
+  var netCapex = (_model === 'cash') ? capex - itc : 0; // only cash model has real upfront cost
+
+  var years    = 10;
+  var annRev   = custSavingsAnnual || 14000;
+  var annNoB   = annRev * 0.15; // small baseline w/o battery
+
+  // Build year-by-year arrays (index 0 = Yr 0 point, bars are years 1-10)
+  var cumulNo = [0], cumulBat = [-netCapex];
+  var barNo = [], barBat = [];
+  for (var y = 0; y < years; y++) {
+    barNo.push(annNoB);
+    barBat.push(annRev);
+    cumulNo.push(cumulNo[y] + annNoB);
+    cumulBat.push(cumulBat[y] + annRev);
+  }
+
+  // ── Scale ──
+  function fmtDollar(v) {
+    var neg = v < 0;
+    var abs = Math.abs(v);
+    var s = abs >= 1000000 ? '$'+(abs/1000000).toFixed(1)+'M'
+          : abs >= 1000    ? '$'+Math.round(abs/1000)+'K'
+          : '$'+Math.round(abs);
+    return neg ? '-'+s : s;
+  }
+
+  var allVals = cumulNo.concat(cumulBat).concat(barBat).concat(barNo);
+  var maxV = Math.max.apply(null, allVals);
+  var minV = Math.min.apply(null, allVals);
+  // Add padding above and below
+  var span = maxV - minV || 1;
+  maxV += span * 0.10;
+  minV -= span * 0.08;
+  var range = maxV - minV;
+
+  function yx(val) { return PAD.t + CH * (1 - (val - minV) / range); }
+  // Each year slot: 0..10 spaced evenly across CW
+  function xx(i)   { return PAD.l + (i / years) * CW; }
+  // Bar center = midpoint between year i and i+1
+  function bxCenter(i) { return PAD.l + ((i + 0.5) / years) * CW; }
+
+  var slotW   = CW / years;
+  var barW    = slotW * 0.28;
+
+  // ── Draw ──
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid & Y labels
+  var ticks = 6;
+  for (var t = 0; t <= ticks; t++) {
+    var tv = minV + (range / ticks) * t;
+    var ty = yx(tv);
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD.l, ty); ctx.lineTo(W - PAD.r, ty); ctx.stroke();
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '9px Arial';
+    ctx.textAlign = 'right';
+    ctx.fillText(fmtDollar(tv), PAD.l - 5, ty + 3);
+  }
+
+  // Zero line (dashed)
+  var y0 = yx(0);
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(PAD.l, y0); ctx.lineTo(W - PAD.r, y0); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Bars (years 1-10, drawn in middle of each slot)
+  for (var i = 0; i < years; i++) {
+    var cx = bxCenter(i);
+    var topNo  = yx(Math.max(barNo[i],  0));
+    var topBat = yx(Math.max(barBat[i], 0));
+    var bh_no  = Math.abs(y0 - topNo);
+    var bh_bat = Math.abs(y0 - topBat);
+
+    // No-battery bar (green, left of center)
+    ctx.fillStyle = 'rgba(34,197,94,0.40)';
+    ctx.fillRect(cx - barW - 1, topNo, barW, bh_no);
+
+    // BESS bar (blue, right of center)
+    ctx.fillStyle = 'rgba(59,130,246,0.40)';
+    ctx.fillRect(cx + 1, topBat, barW, bh_bat);
+  }
+
+  // Cumulative line — No Battery (dark gray)
+  ctx.strokeStyle = '#374151';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (var i2 = 0; i2 <= years; i2++) {
+    var px = xx(i2), py = yx(cumulNo[i2]);
+    if (i2 === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  // Cumulative line — BESS (blue) — draw line first, then dots on top
+  ctx.strokeStyle = '#3B82F6';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  for (var i3 = 0; i3 <= years; i3++) {
+    var px3 = xx(i3), py3 = yx(cumulBat[i3]);
+    if (i3 === 0) ctx.moveTo(px3, py3); else ctx.lineTo(px3, py3);
+  }
+  ctx.stroke();
+
+  // Dots on BESS cumulative (drawn after stroke so they're clean)
+  for (var i3b = 0; i3b <= years; i3b++) {
+    ctx.fillStyle = '#3B82F6';
+    ctx.beginPath();
+    ctx.arc(xx(i3b), yx(cumulBat[i3b]), 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // X axis labels
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '9px Arial';
+  ctx.textAlign = 'center';
+  for (var i4 = 0; i4 <= years; i4++) {
+    ctx.fillText('Yr '+i4, xx(i4), H - PAD.b + 14);
+  }
+
+  // Legend (two rows if needed — fit in PAD.t space)
+  var legendItems = [
+    {color:'rgba(34,197,94,0.5)',  label:'No Battery Yearly CF', line:false},
+    {color:'rgba(59,130,246,0.45)',label:'BESS Yearly CF',       line:false},
+    {color:'#374151',              label:'No Battery Cumulative', line:true},
+    {color:'#3B82F6',              label:'BESS Cumulative',       line:true}
+  ];
+  var lx = PAD.l, ly = 14;
+  legendItems.forEach(function(item) {
+    ctx.save();
+    if (item.line) {
+      ctx.strokeStyle = item.color; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(lx, ly+3); ctx.lineTo(lx+16, ly+3); ctx.stroke();
+    } else {
+      ctx.fillStyle = item.color;
+      ctx.fillRect(lx, ly-3, 16, 9);
+    }
+    ctx.fillStyle = '#374151'; ctx.font = '8px Arial'; ctx.textAlign = 'left';
+    ctx.fillText(item.label, lx + 20, ly + 4);
+    ctx.restore();
+    lx += 20 + ctx.measureText(item.label).width + 18;
+  });
+
+  // ── KPI Cards ──
+  var payback = annRev > 0 ? (netCapex / annRev) : 0;
+  var npv10   = -netCapex;
+  for (var y2 = 0; y2 < 10; y2++) npv10 += annRev;
+
+  var npvColor  = npv10  >= 0 ? '#16a34a' : '#dc2626';
+  var pbColor   = (payback <= 7) ? '#16a34a' : (payback <= 12 ? '#1d4ed8' : '#b45309');
+  var pbDisplay = netCapex > 0 ? payback.toFixed(1)+' yrs' : 'N/A';
+
+  var kpiDiv = document.getElementById('p4-kpis');
+  if (!kpiDiv) return;
+
+  var kpis;
+  if (_model === 'clearsky') {
+    kpis = [
+      {label:'ClearSky Funds 100%',         val:'$0 Down',                          color:'#16a34a'},
+      {label:'Est. Annual Customer Benefit', val:'$'+Math.round(annRev/1000)+'K/yr', color:'#16a34a'},
+      {label:'10-Year Customer Revenue',     val:'$'+Math.round(annRev*10/1000)+'K', color:'#16a34a'},
+      {label:'Utility Bill Reduction',       val:Math.round(drPct*100)+'%',           color:'#1d4ed8'},
+      {label:'Agreement Term',               val:'20 Years',                          color:'#374151'},
+      {label:'Upfront Risk to Customer',     val:'Zero',                              color:'#16a34a'}
+    ];
+  } else if (_model === 'finance') {
+    var finTerm = parseFloat(document.getElementById('finance-term').value) || 10;
+    kpis = [
+      {label:'Down Payment Required',        val:'$0',                                color:'#16a34a'},
+      {label:'Est. Annual Demand Savings',   val:'$'+Math.round(annRev/1000)+'K/yr', color:'#16a34a'},
+      {label:'Finance Term',                 val:finTerm+' Years',                    color:'#374151'},
+      {label:'Utility Bill Reduction',       val:Math.round(drPct*100)+'%',           color:'#1d4ed8'},
+      {label:'Battery Ownership at Payoff',  val:'Customer',                          color:'#16a34a'},
+      {label:'Federal ITC Available',        val:'30%',                               color:'#16a34a'}
+    ];
+  } else {
+    kpis = [
+      {label:'System Install Cost',          val:'$'+Math.round(capex/1000)+'K',      color:'#b45309'},
+      {label:'Federal ITC (30%)',            val:'-$'+Math.round(itc/1000)+'K',       color:'#16a34a'},
+      {label:'Net Cost After ITC',           val:'$'+Math.round(netCapex/1000)+'K',   color:'#374151'},
+      {label:'Est. Annual Revenue',          val:'$'+Math.round(annRev/1000)+'K/yr',  color:'#16a34a'},
+      {label:'Simple Payback',               val:pbDisplay,                            color:pbColor},
+      {label:'10-Year NPV',                  val:fmtDollar(npv10),                    color:npvColor}
+    ];
+  }
+
+  kpiDiv.innerHTML = kpis.map(function(k) {
+    return '<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px">'
+      +'<div style="font-size:9px;color:#64748b;letter-spacing:.04em;margin-bottom:3px">'+k.label+'</div>'
+      +'<div style="font-size:18px;font-weight:900;color:'+k.color+';letter-spacing:-0.5px">'+k.val+'</div>'
+      +'</div>';
+  }).join('');
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// PAGE SELECTION FOR EXPORT
+// ══════════════════════════════════════════════════════════════════
+function applyPageSelection() {
+  var includePage2 = document.getElementById('export-page2').checked; // Site & Agreement (dom id page2)
+  var includePage3 = document.getElementById('export-page3').checked; // Financials (dom id page4)
+
+  var el2 = document.getElementById('page2');
+  var el4 = document.getElementById('page4'); // financials page dom-id
+
+  if (el2) el2.classList.toggle('print-hide', !includePage2);
+  if (el4) el4.classList.toggle('print-hide', !includePage3);
+
+  // Recompute which visible page is last, so it doesn't force a trailing blank page break
+  var allPages = document.querySelectorAll('.page');
+  var lastVisible = null;
+  allPages.forEach(function(p) {
+    p.classList.remove('print-last');
+    if (!p.classList.contains('print-hide')) lastVisible = p;
+  });
+  if (lastVisible) lastVisible.classList.add('print-last');
+}
+
+function exportProposal() {
+  applyPageSelection();
+
+  // Snapshot both canvases
+  var siteCanvas = document.getElementById('sitemap-canvas');
+  var finCanvas  = document.getElementById('fin-chart');
+  var siteUrl = siteCanvas.toDataURL('image/png');
+  var finUrl  = finCanvas  ? finCanvas.toDataURL('image/png') : null;
+
+  var siteImg = document.createElement('img');
+  siteImg.src = siteUrl;
+  siteImg.className = 'sitemap-canvas-print';
+  siteImg.style.cssText = 'width:100%;height:220px;object-fit:cover;display:block';
+  siteCanvas.parentNode.replaceChild(siteImg, siteCanvas);
+
+  var finImg = null;
+  if (finCanvas && finUrl) {
+    finImg = document.createElement('img');
+    finImg.src = finUrl;
+    finImg.style.cssText = 'width:100%;border-radius:6px;border:1px solid #e5e7eb';
+    finCanvas.parentNode.replaceChild(finImg, finCanvas);
+  }
+
+  window.print();
+
+  // Restore canvases
+  siteImg.parentNode.replaceChild(siteCanvas, siteImg);
+  if (finImg && finCanvas) finImg.parentNode.replaceChild(finCanvas, finImg);
+  drawCanvas();
+}
+</script>
+</body>
+</html>
+HTMLEOF
