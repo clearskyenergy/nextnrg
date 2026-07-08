@@ -1,0 +1,1748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>NextNRG — BESS Pro Forma</title>
+<style>
+:root{
+  --navy:#0B1E35;--bg:#0D1B2A;--surface:#132338;--panel:#1A2E45;--border:#243B55;
+  --text:#E8F0FE;--sub:#8BA3C4;--gold:#C5A55A;--gold-pale:#F3EBCF;
+  --gold-faint:rgba(197,165,90,.07);--gold-glow:rgba(197,165,90,.18);
+  --green:#22C55E;--green-faint:rgba(34,197,94,.08);
+  --amber:#F59E0B;--red:#EF4444;--blue:#60A5FA;--purple:#A78BFA;
+  --radius:8px;--radius-lg:12px;--mono:'IBM Plex Mono',monospace;
+  --vh:1vh;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;overflow:hidden}
+
+/* ── App shell ── */
+#shell{display:flex;flex-direction:column;height:100vh;height:calc(var(--vh,1vh)*100)}
+
+/* ── Top bar ── */
+#topbar{
+  height:52px;flex-shrink:0;
+  background:var(--navy);border-bottom:2px solid var(--gold);
+  display:flex;align-items:center;padding:0 16px;gap:12px;
+  box-shadow:0 2px 20px rgba(0,0,0,.4);
+  position:relative;
+}
+.tb-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.tb-logo-icon{width:32px;height:32px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.tb-logo-text{font-size:13px;font-weight:700;color:var(--gold);letter-spacing:.5px}
+.tb-logo-sub{font-size:9px;color:var(--sub);font-weight:400}
+.tb-sep{flex:1}
+.tb-tag{font-size:9px;font-weight:700;color:var(--gold);background:var(--gold-faint);border:1px solid var(--gold-glow);border-radius:4px;padding:3px 8px;letter-spacing:.5px}
+#tb-save-btn{background:var(--gold);color:var(--navy);border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:800;cursor:pointer;letter-spacing:.3px;transition:opacity .15s}
+#tb-save-btn:hover{opacity:.85}
+#tb-export-btn{background:transparent;color:var(--gold);border:1px solid var(--gold-glow);border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;transition:all .15s}
+#tb-export-btn:hover{background:var(--gold-faint)}
+
+/* ── Main layout: stepper sidebar + content ── */
+#main{display:flex;flex:1;overflow:hidden}
+
+/* ── Step sidebar ── */
+#stepper{
+  width:220px;flex-shrink:0;background:var(--navy);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;padding:16px 0;overflow-y:auto;
+}
+.step-group-label{font-size:9px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.8px;padding:12px 16px 6px}
+.step-item{
+  display:flex;align-items:center;gap:10px;padding:10px 16px;
+  cursor:pointer;transition:all .12s;border-left:3px solid transparent;
+  position:relative;
+}
+.step-item:hover{background:var(--gold-faint)}
+.step-item.active{background:var(--gold-faint);border-left-color:var(--gold)}
+.step-item.done{opacity:.7}
+.step-num{
+  width:26px;height:26px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;
+  background:var(--surface);border:1.5px solid var(--border);color:var(--sub);
+  transition:all .2s;
+}
+.step-item.active .step-num{background:var(--gold);border-color:var(--gold);color:var(--navy)}
+.step-item.done .step-num{background:var(--green);border-color:var(--green);color:#fff;font-size:13px}
+.step-label{font-size:11px;font-weight:600;color:var(--sub)}
+.step-item.active .step-label{color:var(--text)}
+.step-item.done .step-label{color:var(--sub)}
+
+/* Score pill in sidebar */
+.step-score{
+  position:absolute;right:12px;top:50%;transform:translateY(-50%);
+  font-size:9px;font-weight:700;border-radius:10px;padding:2px 6px;
+}
+
+/* ── Content area ── */
+#content{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:0}
+
+/* ── Phase panels ── */
+.phase{display:none;padding:24px;max-width:880px}
+.phase.active{display:block;animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+.phase-header{margin-bottom:20px}
+.phase-eyebrow{font-size:10px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
+.phase-title{font-size:22px;font-weight:800;color:var(--text);margin-bottom:6px}
+.phase-desc{font-size:12px;color:var(--sub);line-height:1.6;max-width:600px}
+
+/* ── Form elements ── */
+.form-grid{display:grid;gap:14px}
+.form-grid-2{grid-template-columns:1fr 1fr}
+.form-grid-3{grid-template-columns:1fr 1fr 1fr}
+@media(max-width:640px){.form-grid-2,.form-grid-3{grid-template-columns:1fr}}
+
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:10px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.4px}
+.field input,.field select,.field textarea{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  color:var(--text);font-size:13px;padding:10px 12px;
+  font-family:inherit;transition:border-color .15s;outline:none;width:100%;
+}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--gold);box-shadow:0 0 0 3px var(--gold-glow)}
+.field input[type=number]{font-family:var(--mono)}
+.field .hint{font-size:9.5px;color:var(--sub);font-style:italic}
+.field select option{background:var(--navy)}
+.field textarea{resize:vertical;min-height:70px}
+
+/* ── Section cards ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 18px;margin-bottom:14px}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.card-title{font-size:11px;font-weight:800;color:var(--gold);text-transform:uppercase;letter-spacing:.6px}
+.card-badge{font-size:9px;font-weight:700;border-radius:4px;padding:2px 7px}
+
+/* ── Incentive / value-stack items ── */
+.inc-grid{display:flex;flex-direction:column;gap:6px}
+.inc-item{
+  display:flex;align-items:center;gap:10px;padding:9px 12px;
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);
+  border-radius:6px;cursor:pointer;transition:all .12s;
+}
+.inc-item:hover{background:var(--gold-faint);border-color:var(--gold-glow)}
+.inc-item.selected{background:var(--gold-faint);border-color:rgba(197,165,90,.35)}
+.inc-check{width:18px;height:18px;border-radius:4px;border:1.5px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .12s;font-size:11px}
+.inc-item.selected .inc-check{background:var(--gold);border-color:var(--gold);color:var(--navy);font-weight:800}
+.inc-label{flex:1;font-size:11px;color:var(--sub)}
+.inc-item.selected .inc-label{color:var(--text);font-weight:600}
+.inc-tag{font-size:8.5px;font-weight:700;border-radius:3px;padding:2px 5px}
+.inc-amt{font-size:11px;font-weight:700;font-family:var(--mono);color:var(--green)}
+
+/* ── Output / results ── */
+.output-grid{display:grid;gap:14px}
+.output-grid-2{grid-template-columns:1fr 1fr}
+@media(max-width:640px){.output-grid-2{grid-template-columns:1fr}}
+
+.kpi-card{
+  background:var(--navy);border:1px solid var(--border);border-radius:var(--radius-lg);
+  padding:18px 20px;
+}
+.kpi-label{font-size:9.5px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.kpi-value{font-size:28px;font-weight:900;font-family:var(--mono);line-height:1}
+.kpi-sub{font-size:10px;color:var(--sub);margin-top:4px}
+
+.verdict-box{
+  border-radius:var(--radius-lg);padding:22px;text-align:center;
+  border:2px solid;margin-bottom:16px;
+}
+.verdict-icon{font-size:44px;line-height:1;margin-bottom:8px}
+.verdict-word{font-size:26px;font-weight:900;letter-spacing:2px}
+.verdict-desc{font-size:12px;margin-top:8px;opacity:.85}
+
+/* PASS */
+.verdict-pass{border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.06)}
+.verdict-pass .verdict-word{color:var(--green)}
+/* CONDITIONAL */
+.verdict-cond{border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.06)}
+.verdict-cond .verdict-word{color:var(--amber)}
+/* FAIL */
+.verdict-fail{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.06)}
+.verdict-fail .verdict-word{color:var(--red)}
+
+/* Cash flow chart */
+#cf-bars{display:flex;align-items:flex-end;gap:4px;height:100px;margin:12px 0}
+.cf-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}
+.cf-bar-pos{background:var(--green);border-radius:3px 3px 0 0;min-height:4px;width:100%;transition:height .4s}
+.cf-bar-neg{background:var(--red);border-radius:0 0 3px 3px;min-height:4px;width:100%;transition:height .4s}
+.cf-yr{font-size:8px;color:var(--sub)}
+
+/* ── Navigation buttons ── */
+.nav-row{display:flex;justify-content:space-between;align-items:center;margin-top:24px;padding-top:16px;border-top:1px solid var(--border)}
+.btn-back{background:transparent;border:1px solid var(--border);color:var(--sub);border-radius:var(--radius);padding:10px 20px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+.btn-back:hover{border-color:var(--gold);color:var(--text)}
+.btn-next{background:var(--gold);color:var(--navy);border:none;border-radius:var(--radius);padding:11px 28px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;transition:opacity .15s;letter-spacing:.2px}
+.btn-next:hover{opacity:.87}
+.btn-next:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── Alert banners ── */
+.alert{border-radius:6px;padding:10px 14px;font-size:11px;margin-bottom:10px;display:flex;gap:8px;align-items:flex-start}
+.alert-warn{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);color:var(--amber)}
+.alert-ok{background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.2);color:var(--green)}
+.alert-err{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:var(--red)}
+.alert-info{background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.2);color:var(--blue)}
+
+/* ── Progress bar at top ── */
+#progress-bar{height:3px;background:var(--border);flex-shrink:0}
+#progress-fill{height:100%;background:var(--gold);transition:width .35s ease}
+
+/* ── Tables ── */
+.data-table{width:100%;border-collapse:collapse;font-size:11px}
+.data-table th{text-align:left;padding:8px 10px;font-size:9px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--border)}
+.data-table td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.04);color:var(--text)}
+.data-table tr:hover td{background:rgba(255,255,255,.02)}
+.data-table .num{font-family:var(--mono);text-align:right}
+.data-table .pos{color:var(--green)}
+.data-table .neg{color:var(--red)}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:rgba(197,165,90,.18);border-radius:2px}
+
+/* ── Mobile bottom nav ── */
+#mob-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:56px;background:var(--navy);border-top:1px solid var(--border);align-items:center;justify-content:space-between;padding:0 16px;z-index:500}
+@media(max-width:768px){
+  #stepper{display:none}
+  #mob-nav{display:flex}
+  #content{padding-bottom:56px}
+  .phase{padding:16px}
+  .form-grid-2,.form-grid-3{grid-template-columns:1fr}
+  .output-grid-2{grid-template-columns:1fr}
+  input,select,textarea{font-size:16px!important}
+}
+
+/* ── Tooltips ── */
+[data-tip]{position:relative;cursor:help}
+[data-tip]:hover::after{
+  content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
+  background:var(--navy);border:1px solid var(--border);color:var(--text);font-size:10px;
+  padding:6px 10px;border-radius:6px;white-space:nowrap;z-index:999;pointer-events:none;
+  max-width:240px;white-space:normal;line-height:1.4;
+}
+</style>
+</head>
+<body>
+<div id="shell">
+
+  <!-- Top bar -->
+  <div id="topbar">
+    <a class="tb-logo" href="javascript:void(0)">
+      <div class="tb-logo-icon">⚡</div>
+      <div>
+        <div class="tb-logo-text">CLEARSKY</div>
+        <div class="tb-logo-sub">Pro Forma Generator</div>
+      </div>
+    </a>
+    <div class="tb-sep"></div>
+    <a href="/" style="font-size:11px;font-weight:600;color:rgba(197,165,90,.6);text-decoration:none;padding:5px 10px;border:1px solid rgba(197,165,90,.2);border-radius:5px;transition:all .15s" onmouseover="this.style.color='#C5A55A'" onmouseout="this.style.color='rgba(197,165,90,.6)'">← Portal</a>
+    <span class="tb-tag" id="project-tag" onclick="resetForm()" title="Click to start a new pro forma" style="cursor:pointer">NEW PROJECT</span>
+    <div style="display:flex;gap:6px">
+    <button id="tb-export-btn" onclick="showExportMenu(event)" style="background:transparent;color:var(--gold);border:1px solid var(--gold-glow);border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;transition:all .15s;font-family:inherit">↓ Export ▾</button>
+  </div>
+  <!-- Export dropdown -->
+  <div id="export-menu" style="display:none;position:absolute;top:52px;right:90px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:999;min-width:160px;overflow:hidden">
+    <button onclick="exportResults();closeExportMenu()" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;text-align:left;font-family:inherit;border-bottom:1px solid var(--border)">📄 Export as TXT</button>
+    <button onclick="exportPDF();closeExportMenu()" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;text-align:left;font-family:inherit;border-bottom:1px solid var(--border)">🖨 Export as PDF</button>
+    <button onclick="exportExcel();closeExportMenu()" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;text-align:left;font-family:inherit">📊 Export as Excel (CSV)</button>
+  </div>
+    <button id="tb-save-btn" onclick="saveToFirebase()">💾 Save</button>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="progress-bar"><div id="progress-fill" style="width:0%"></div></div>
+
+  <!-- Main -->
+  <div id="main">
+
+    <!-- Step sidebar -->
+    <div id="stepper">
+      <div class="step-group-label">Site Intake</div>
+      <div class="step-item" data-step="0" onclick="goStep(0)">
+        <div class="step-num">1</div>
+        <div class="step-label">Project & Site</div>
+      </div>
+      <div class="step-item" data-step="1" onclick="goStep(1)">
+        <div class="step-num">2</div>
+        <div class="step-label">Charging Data</div>
+      </div>
+      <div class="step-item" data-step="2" onclick="goStep(2)">
+        <div class="step-num">3</div>
+        <div class="step-label">Utility Rates</div>
+      </div>
+
+      <div class="step-group-label" style="margin-top:8px">BESS Investment</div>
+      <div class="step-item" data-step="3" onclick="goStep(3)">
+        <div class="step-num">4</div>
+        <div class="step-label">BESS System</div>
+      </div>
+      <div class="step-item" data-step="4" onclick="goStep(4)">
+        <div class="step-num">5</div>
+        <div class="step-label">Incentives</div>
+      </div>
+      <div class="step-item" data-step="5" onclick="goStep(5)">
+        <div class="step-num">6</div>
+        <div class="step-label">Value Stack</div>
+      </div>
+
+      <div class="step-group-label" style="margin-top:8px">Output</div>
+      <div class="step-item" data-step="6" onclick="goStep(6)">
+        <div class="step-num">7</div>
+        <div class="step-label">Pro Forma</div>
+      </div>
+      <div class="step-item" data-step="7" onclick="goStep(7)">
+        <div class="step-num">8</div>
+        <div class="step-label">IRR &amp; Verdict</div>
+      </div>
+
+      <!-- sidebar summary -->
+      <div style="margin-top:auto;padding:14px 16px;border-top:1px solid var(--border)">
+        <div style="font-size:9px;color:var(--sub);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Quick Summary</div>
+        <div style="font-size:10px;color:var(--sub);line-height:1.8" id="sidebar-summary">
+          Fill in the steps to see your summary here.
+        </div>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div id="content">
+
+      <!-- ══ STEP 0: PROJECT & SITE ══ -->
+      <div class="phase active" id="phase-0">
+        <div class="phase-header">
+          <div class="phase-eyebrow">Step 1 of 8</div>
+          <div class="phase-title">Project &amp; Site Identification</div>
+          <div class="phase-desc">Tell us about the location. This identifies the deal in your pipeline and determines which incentive programs apply.</div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Project Details</div></div>
+          <div class="form-grid form-grid-2">
+            <div class="field">
+              <label>Project Name / Site ID</label>
+              <input type="text" id="projectName" placeholder="e.g. Marina Shopping Center — BESS" oninput="autoSave()">
+            </div>
+            <div class="field">
+              <label>Street Address</label>
+              <input type="text" id="address" placeholder="123 Main St" oninput="autoSave()">
+            </div>
+            <div class="field">
+              <label>City, State, ZIP</label>
+              <input type="text" id="cityState" placeholder="Chicago, IL 60644" oninput="autoSave()">
+            </div>
+            <div class="field">
+              <label>Utility Territory</label>
+              <select id="utility" onchange="onUtilityChange()">
+                <option value="">— select —</option>
+                <optgroup label="California">
+                  <option value="sce">SCE — Southern California Edison</option>
+                  <option value="pge">PG&amp;E — Northern California</option>
+                  <option value="sdge">SDG&amp;E — San Diego</option>
+                  <option value="ladwp">LADWP — Los Angeles</option>
+                </optgroup>
+                <optgroup label="Illinois">
+                  <option value="comed">ComEd — Northern Illinois</option>
+                  <option value="ameren">Ameren Illinois — Central/Southern IL</option>
+                </optgroup>
+                <optgroup label="Other">
+                  <option value="eversource_ct">Eversource CT</option>
+                  <option value="ui">United Illuminating CT</option>
+                  <option value="other">Other</option>
+                </optgroup>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Charging Station</div></div>
+          <div class="form-grid form-grid-3">
+            <div class="field">
+              <label>Station Type</label>
+              <select id="stationType" onchange="autoSave()">
+                <option value="dcfc">DCFC (Fast Charge)</option>
+                <option value="l2">Level 2</option>
+                <option value="mixed">Mixed DCFC + L2</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Number of Ports</label>
+              <input type="number" id="numPorts" placeholder="4" min="1" max="100" oninput="autoSave()">
+            </div>
+            <div class="field">
+              <label>Total Station kW Capacity</label>
+              <input type="number" id="stationKW" placeholder="240" oninput="autoSave()">
+              <span class="hint">e.g. 4 × 60kW = 240kW</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">CRM / Pipeline</div></div>
+          <div class="form-grid form-grid-2">
+            <div class="field">
+              <label>Monday.com Deal ID</label>
+              <input type="text" id="mondayId" placeholder="Optional — for CRM sync" oninput="autoSave()">
+            </div>
+            <div class="field">
+              <label>Deal Stage</label>
+              <select id="dealStage" onchange="autoSave()">
+                <option value="prospect">Prospect</option>
+                <option value="site_intake">Site Intake</option>
+                <option value="pro_forma_review">Pro Forma Review</option>
+                <option value="site_visit">Site Visit Scheduled</option>
+                <option value="proposal_sent">Proposal Sent</option>
+                <option value="loi">LOI / In Negotiation</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="nav-row">
+          <div></div>
+          <button class="btn-next" onclick="nextStep()">Next: Charging Data →</button>
+        </div>
+      </div>
+
+      <!-- ══ STEP 1: CHARGING DATA ══ -->
+      <div class="phase" id="phase-1">
+        <div class="phase-header">
+          <div class="phase-eyebrow">Step 2 of 8</div>
+          <div class="phase-title">EV Charging Performance Data</div>
+          <div class="phase-desc">Enter trailing 12-month averages from your operator data. The pro forma uses these to project Year 1 revenue with a growth curve.</div>
+        </div>
+
+        <div class="alert alert-info">ℹ️ Use the EVCS data you have — monthly averages are fine. Hilton Plaza benchmark: ~$4,900/mo gross revenue at 18% utilization.</div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Monthly Performance (Trailing Average)</div></div>
+          <div class="form-grid form-grid-3">
+            <div class="field">
+              <label data-tip="Total kWh dispensed to drivers per month">Avg Monthly kWh</label>
+              <input type="number" id="avgKwh" placeholder="11,868" oninput="calcDerived()">
+            </div>
+            <div class="field">
+              <label>Avg Monthly Sessions</label>
+              <input type="number" id="avgSessions" placeholder="576" oninput="calcDerived()">
+            </div>
+            <div class="field">
+              <label>Utilization Rate (%)</label>
+              <input type="number" id="utilRate" placeholder="15.8" step="0.1" oninput="autoSave()">
+              <span class="hint">Auto-calculates if you fill kWh + capacity above</span>
+            </div>
+            <div class="field">
+              <label>Avg Gross Revenue / Month ($)</label>
+              <input type="number" id="grossRevMonth" placeholder="4893" oninput="calcDerived()">
+            </div>
+            <div class="field">
+              <label>LCFS Revenue / Month ($) <span style="color:var(--sub);font-size:9px">(CA only)</span></label>
+              <input type="number" id="lcfsMonth" placeholder="709" oninput="autoSave()">
+            </div>
+            <div class="field">
+              <label>Revenue Share Paid / Month ($)</label>
+              <input type="number" id="revShareMonth" placeholder="0" oninput="calcDerived()">
+            </div>
+            <div class="field">
+              <label>Monthly Electricity Cost ($)</label>
+              <input type="number" id="elecCostMonth" placeholder="2500" oninput="calcDerived()">
+            </div>
+            <div class="field">
+              <label>YoY Growth Observed (%)</label>
+              <input type="number" id="yoyGrowth" placeholder="18" step="1" oninput="autoSave()">
+              <span class="hint">From EVCS data: Hilton +18%, Marina +22%, Poulsbo +32%</span>
+            </div>
+            <div class="field">
+              <label>Months of Data Available</label>
+              <input type="number" id="monthsData" placeholder="12" min="1" max="60" oninput="autoSave()">
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="derived-card">
+          <div class="card-header"><div class="card-title">Derived Metrics</div></div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px" id="derived-vals">
+            <div><div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Avg kWh / Session</div><div style="font-size:18px;font-weight:800;font-family:var(--mono);color:var(--text)" id="d-kwh-sess">—</div></div>
+            <div><div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Net Rev / Month</div><div style="font-size:18px;font-weight:800;font-family:var(--mono);color:var(--green)" id="d-net-rev">—</div></div>
+            <div><div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Revenue / kWh</div><div style="font-size:18px;font-weight:800;font-family:var(--mono);color:var(--text)" id="d-rev-kwh">—</div></div>
+          </div>
+        </div>
+
+        <div class="nav-row">
+          <button class="btn-back" onclick="prevStep()">← Back</button>
+          <button class="btn-next" onclick="nextStep()">Next: Utility Rates →</button>
+        </div>
+      </div>
+
+      <!-- ══ STEP 2: UTILITY RATES ══ -->
+      <div class="phase" id="phase-2">
+        <div class="phase-header">
+          <div class="phase-eyebrow">Step 3 of 8</div>
+          <div class="phase-title">Utility Rates &amp; Tariff</div>
+          <div class="phase-desc">These drive the demand charge savings calculation — the core of the BESS value case.</div>
+        </div>
+
+        <div class="alert alert-info" id="rate-alert">Select a utility on Step 1 to pre-fill benchmark rates.</div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Energy &amp; Demand Charges</div></div>
+          <div class="form-grid form-grid-3">
+            <div class="field">
+              <label>On-Peak Rate ($/kWh)</label>
+              <input type="number" id="onPeakRate" placeholder="0.22" step="0.001" oninput="calcDemandSavings()">
+            </div>
+            <div class="field">
+              <label>Off-Peak Rate ($/kWh)</label>
+              <input type="number" id="offPeakRate" placeholder="0.12" step="0.001" oninput="calcDemandSavings()">
+            </div>
+            <div class="field">
+              <label>Demand Charge ($/kW/mo)</label>
+              <input type="number" id="demandCharge" placeholder="15.50" step="0.01" oninput="calcDemandSavings()">
+            </div>
+            <div class="field">
+              <label>Monthly Peak Demand (kW)</label>
+              <input type="number" id="peakDemand" placeholder="240" oninput="calcDemandSavings()">
+            </div>
+            <div class="field">
+              <label>Fixed Monthly Charge ($)</label>
+              <input type="number" id="fixedCharge" placeholder="250" oninput="autoSave()">
+            </div>
+            <div class="field">
+              <label>TOU On-Peak Window</label>
+              <input type="text" id="touWindow" placeholder="e.g. M-F 4pm–9pm" oninput="autoSave()">
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Current Monthly Bill Summary</div></div>
+          <div class="form-grid form-grid-2">
+            <div class="field">
+              <label>Current Monthly Electricity Spend ($)</label>
+              <input type="number" id="currentMonthlyBill" placeholder="3,500" oninput="calcDemandSavings()">
+            </div>
+            <div class="field">
+              <label>Of Which: Demand Charges ($)</label>
+              <input type="number" id="currentDemandBill" placeholder="1,500" oninput="calcDemandSavings()">
+              <span class="hint">Check line item on utility bill</span>
+            </div>
+          </div>
+          <div id="demand-savings-preview" style="margin-top:14px;padding:12px;background:var(--green-faint);border:1px solid rgba(34,197,94,.2);border-radius:8px;display:none">
+            <div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Estimated BESS Demand Savings</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+              <div><div style="font-size:9px;color:var(--sub)">At 25% reduction</div><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--green)" id="sav-25">—</div></div>
+              <div><div style="font-size:9px;color:var(--sub)">At 30% reduction</div><div style="font-size:18px;font-weight:900;font-family:var(--mono);color:var(--green)" id="sav-30">—</div></div>
+              <div><div style="font-size:9px;color:var(--sub)">At 40% reduction</div><div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--green)" id="sav-40">—</div></div>
+            </div>
+            <div style="font-size:9px;color:var(--sub);margin-top:6px">Annual demand savings = reduction × monthly demand charge × 12</div>
+          </div>
+        </div>
+
+        <div class="nav-row">
+          <button class="btn-back" onclick="prevStep()">← Back</button>
+          <button class="btn-next" onclick="nextStep()">Next: BESS System →</button>
+        </div>
+      </div>
+
+      <!-- ══ STEP 3: BESS SYSTEM ══ -->
+      <div class="phase" id="phase-3">
+        <div class="phase-header">
+          <div class="phase-eyebrow">Step 4 of 8</div>
+          <div class="phase-title">BESS System Specifications</div>
+          <div class="phase-desc">Enter the battery system you're proposing. The installed cost drives the ITC calculation and IRR model.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">System Size &amp; Cost</div></div>
+          <div class="form-grid form-grid-3">
+            <div class="field">
+              <label>BESS Capacity (kWh)</label>
+              <input type="number" id="bessKwh" placeholder="1000" oninput="calcBESS()">
+            </div>
+            <div class="field">
+              <label>BESS Power Rating (kW)</label>
+              <input type="number" id="bessKw" placeholder="500" oninput="calcBESS()">
+            </div>
+            <div class="field">
+              <label>Installed Cost (all-in $)</label>
+              <input type="number" id="bessInstalled" placeholder="450000" oninput="calcBESS()">
+              <span class="hint">Equipment + install + commissioning</span>
+            </div>
+            <div class="field">
+              <label>Cost per kWh ($/kWh)</label>
+              <input type="number" id="bessPerKwh" placeholder="Auto" readonly style="opacity:.6">
+              <span class="hint">Auto-calculates from above</span>
+            </div>
+            <div class="field">
+              <label>Manufacturer / Model</label>
+              <input type="text" id="bessModel" placeholder="e.g. Gotion EDGE 1MWh" oninput="autoSave()">
+            </div>
+            <div class="field">
+              <label>Useful Life (years)</label>
+              <input type="number" id="bessLife" value="15" oninput="autoSave()">
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Performance Assumptions</div></div>
+          <div class="form-grid form-grid-3">
+            <div class="field">
+              <label>Demand Reduction Achievable (%)</label>
+              <input type="number" id="demandReduction" value="30" step="1" oninput="autoSave()">
+              <span class="hint">Typical BTM: 25-40%</span>
+            </div>
+            <div class="field">
+              <label>Annual Capacity Degradation (%)</label>
+              <input type="number" id="bessDegrad" value="2.5" step="0.1" oninput="autoSave()">
+              <span class="hint">LFP typical: 2-2.5%/yr</span>
+            </div>
+            <div class="field">
+              <label>Annual O&amp;M Cost ($)</label>
+              <input type="number" id="bessOM" placeholder="Auto ~1.5%" oninput="autoSave()">
+              <span class="hint">Auto = 1.5% of installed cost</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Certifications</div></div>
+          <div class="form-grid form-grid-3">
+            <div class="field">
+              <label>UL 9540 Listed?</label>
+              <select id="ul9540" onchange="autoSave()">
+                <option value="yes">Yes — confirmed</option>
+                <option value="pending">Pending — not yet confirmed</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>UL 9540A Test Data (>600 kWh)?</label>
+              <select id="ul9540a" onchange="autoSave()">
+                <option value="yes">Yes — obtained from vendor</option>
+                <option value="pending">Pending</option>
+                <option value="na">N/A — system ≤600 kWh</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Integrated Fire Suppression?</label>
+              <select id="fireSuppression" onchange="autoSave()">
+                <option value="yes">Yes — included in container</option>
+                <option value="separate">Separate system required</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+          </div>
+          <div id="cert-alerts" style="margin-top:10px"></div>
+        </div>
+
+        <div class="nav-row">
+          <button class="btn-back" onclick="prevStep()">← Back</button>
+          <button class="btn-next" onclick="nextStep()">Next: Incentives →</button>
+        </div>
+      </div>
+
+      <!-- ══ STEP 4: INCENTIVES ══ -->
+      <div class="phase" id="phase-4">
+        <div class="phase-header">
+          <div class="phase-eyebrow">Step 5 of 8</div>
+          <div class="phase-title">Available Incentives &amp; Rebates</div>
+          <div class="phase-desc">Check every incentive that applies to this site. Your installed cost and market drive which ones are available. These are one-time offsets to your net investment.</div>
+        </div>
+
+        <div id="incentives-container"></div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Net Capital After Incentives</div></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+            <div><div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">BESS Installed Cost</div><div style="font-size:18px;font-weight:800;font-family:var(--mono);color:var(--text)" id="inc-gross-cost">—</div></div>
+            <div><div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Total Incentives</div><div style="font-size:18px;font-weight:800;font-family:var(--mono);color:var(--green)" id="inc-total-incentives">—</div></div>
+            <div><div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Net Capital Required</div><div style="font-size:22px;font-weight:900;font-family:var(--mono);color:var(--gold)" id="inc-net-capital">—</div></div>
+          </div>
+        </div>
+
+        <div class="nav-row">
+          <button class="btn-back" onclick="prevStep()">← Back</button>
+          <button class="btn-next" onclick="nextStep()">Next: Value Stack →</button>
+        </div>
+      </div>
+
+      <!-- ══ STEP 5: VALUE STACK ══ -->
+      <div class="phase" id="phase-5">
+        <div class="phase-header">
+          <div class="phase-eyebrow">Step 6 of 8</div>
+          <div class="phase-title">Annual Value Stack</div>
+          <div class="phase-desc">Every dollar BESS generates annually. Some are auto-calculated from earlier inputs. Confirm or adjust each stream.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Revenue Streams (Annual)</div></div>
+          <div class="form-grid">
+            <div class="field">
+              <label>EV Charging Gross Revenue (annual $)</label>
+              <input type="number" id="vs-ev-rev" placeholder="Auto" oninput="calcValueStack()">
+              <span class="hint" id="vs-ev-hint">Auto-filled from Step 2 × 12</span>
+            </div>
+            <div class="field">
+              <label>LCFS Revenue / Annual $ <span style="font-weight:400;color:var(--sub)">(CA only)</span></label>
+              <input type="number" id="vs-lcfs" placeholder="0" oninput="calcValueStack()">
+              <span class="hint" id="vs-lcfs-hint">Auto-filled from Step 2 × 12</span>
+            </div>
+            <div class="field">
+              <label>BESS Demand Charge Savings (annual $)</label>
+              <input type="number" id="vs-demand-sav" placeholder="Auto" oninput="calcValueStack()">
+              <span class="hint" id="vs-demand-hint">Auto-filled from demand charge × reduction % × 12</span>
+            </div>
+            <div class="field">
+              <label>TOU Arbitrage Revenue (annual $)</label>
+              <input type="number" id="vs-tou" value="0" oninput="calcValueStack()">
+              <span class="hint">BESS charges off-peak, discharges on-peak. Enter if applicable.</span>
+            </div>
+            <div class="field">
+              <label>VPP / Ancillary Services Revenue (annual $)</label>
+              <input type="number" id="vs-vpp" value="0" oninput="calcValueStack()">
+              <span class="hint" id="vs-vpp-hint">ComEd: SDVPP/BYODLR. CA: CAISO AS markets. Enter expected annual value.</span>
+            </div>
+            <div class="field">
+              <label>Demand Response Revenue (annual $)</label>
+              <input type="number" id="vs-dr" value="0" oninput="calcValueStack()">
+              <span class="hint">PJM ELRP, SCE CDR, PG&E DBP — typically $50-200/kW-year</span>
+            </div>
+            <div class="field">
+              <label>Other Revenue (annual $)</label>
+              <input type="number" id="vs-other" value="0" oninput="calcValueStack()">
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Annual Operating Costs</div></div>
+          <div class="form-grid form-grid-2">
+            <div class="field">
+              <label>Electricity Cost (annual $)</label>
+              <input type="number" id="vs-elec" placeholder="Auto" oninput="calcValueStack()">
+            </div>
+            <div class="field">
+              <label>Revenue Share / Operator Fees (annual $)</label>
+              <input type="number" id="vs-revshare" placeholder="Auto" oninput="calcValueStack()">
+            </div>
+            <div class="field">
+              <label>BESS O&amp;M (annual $)</label>
+              <input type="number" id="vs-bessOM" placeholder="Auto" oninput="calcValueStack()">
+            </div>
+            <div class="field">
+              <label>EVSE O&amp;M (annual $)</label>
+              <input type="number" id="vs-evseOM" value="5000" oninput="calcValueStack()">
+            </div>
+            <div class="field">
+              <label>Insurance (annual $)</label>
+              <input type="number" id="vs-insurance" value="3000" oninput="calcValueStack()">
+            </div>
+            <div class="field">
+              <label>G&amp;A / Overhead (annual $)</label>
+              <input type="number" id="vs-ga" value="2400" oninput="calcValueStack()">
+            </div>
+          </div>
+        </div>
+
+        <!-- Value Stack Summary -->
+        <div id="vs-summary-card" class="card">
+          <div class="card-header"><div class="card-title">Value Stack Summary</div></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+            <div><div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Total Annual Revenue</div><div style="font-size:20px;font-weight:900;font-family:var(--mono);color:var(--green)" id="vs-total-rev">—</div></div>
+            <div><div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Total Annual Costs</div><div style="font-size:20px;font-weight:900;font-family:var(--mono);color:var(--red)" id="vs-total-costs">—</div></div>
+            <div><div style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Annual NOI (Year 1)</div><div style="font-size:24px;font-weight:900;font-family:var(--mono);color:var(--gold)" id="vs-noi">—</div></div>
+          </div>
+        </div>
+
+        <div class="nav-row">
+          <button class="btn-back" onclick="prevStep()">← Back</button>
+          <button class="btn-next" onclick="buildProForma();nextStep()">Generate Pro Forma →</button>
+        </div>
+      </div>
+
+      <!-- ══ STEP 6: PRO FORMA TABLE ══ -->
+      <div class="phase" id="phase-6">
+        <div class="phase-header">
+          <div class="phase-eyebrow">Step 7 of 8</div>
+          <div class="phase-title">10-Year Pro Forma</div>
+          <div class="phase-desc">Revenue grows at your observed YoY rate (capped at 20%) tapering to 3% by Year 5. Costs escalate at 3%/year. BESS degrades at 2.5%/year.</div>
+        </div>
+
+        <div class="card" style="overflow-x:auto">
+          <div id="proforma-table-wrap">
+            <div style="color:var(--sub);font-size:12px;padding:20px 0">Generate the pro forma by completing Steps 1–6 first.</div>
+          </div>
+        </div>
+
+        <div style="margin-top:14px">
+          <div class="card-title" style="margin-bottom:10px">Cash Flow by Year</div>
+          <div class="card">
+            <div id="cf-bars"></div>
+            <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--sub);padding:0 2px">
+              <span>Year 1</span><span>Year 5</span><span>Year 10</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="nav-row">
+          <button class="btn-back" onclick="prevStep()">← Back</button>
+          <button class="btn-next" onclick="nextStep()">See IRR &amp; Verdict →</button>
+        </div>
+      </div>
+
+      <!-- ══ STEP 7: IRR & VERDICT ══ -->
+      <div class="phase" id="phase-7">
+        <div class="phase-header">
+          <div class="phase-eyebrow">Step 8 of 8 — Output</div>
+          <div class="phase-title">IRR, NPV &amp; Investment Verdict</div>
+          <div class="phase-desc">Final investment decision metrics. Set your target hurdle rate to see if this site clears the bar.</div>
+        </div>
+
+        <div class="form-grid form-grid-2" style="margin-bottom:16px">
+          <div class="field">
+            <label>Target IRR / Hurdle Rate (%)</label>
+            <input type="number" id="targetIrr" value="15" step="0.5" oninput="calcIRR()">
+          </div>
+          <div class="field">
+            <label>Discount Rate for NPV (%)</label>
+            <input type="number" id="discountRate" value="10" step="0.5" oninput="calcIRR()">
+          </div>
+        </div>
+
+        <div id="verdict-box"></div>
+
+        <div class="output-grid output-grid-2">
+          <div class="kpi-card">
+            <div class="kpi-label">10-Year IRR</div>
+            <div class="kpi-value" id="out-irr" style="color:var(--gold)">—</div>
+            <div class="kpi-sub" id="out-irr-sub"></div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">NPV @ Discount Rate</div>
+            <div class="kpi-value" id="out-npv" style="color:var(--blue)">—</div>
+            <div class="kpi-sub" id="out-npv-sub"></div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Simple Payback</div>
+            <div class="kpi-value" id="out-payback" style="color:var(--text)">—</div>
+            <div class="kpi-sub">years to recover net capital</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">10-Year ROI</div>
+            <div class="kpi-value" id="out-roi" style="color:var(--text)">—</div>
+            <div class="kpi-sub">total return on net capital</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Net Capital Required</div>
+            <div class="kpi-value" id="out-capex" style="font-size:22px;color:var(--text)">—</div>
+            <div class="kpi-sub">after incentives</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">10-Year Total Cash Flow</div>
+            <div class="kpi-value" id="out-total-cf" style="font-size:22px;color:var(--text)">—</div>
+            <div class="kpi-sub">cumulative NOI</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <div class="card-header"><div class="card-title">Value Stack Breakdown (Year 1)</div></div>
+          <div id="value-stack-breakdown"></div>
+        </div>
+
+        <div class="nav-row">
+          <button class="btn-back" onclick="prevStep()">← Back</button>
+          <button class="btn-next" onclick="showExportMenu(event)">↓ Export &amp; Save ▾</button>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+
+  <!-- Mobile nav -->
+  <div id="mob-nav">
+    <button class="btn-back" onclick="prevStep()">← Back</button>
+    <span style="font-size:10px;color:var(--sub)" id="mob-step-label">Step 1 of 8</span>
+    <button class="btn-next" onclick="nextStep()" style="padding:8px 18px;font-size:12px">Next →</button>
+  </div>
+
+</div><!-- /shell -->
+
+<script>
+'use strict';
+
+// Suppress cross-origin "Script error." noise (CDN scripts, config.js from portal, etc.)
+window.addEventListener('unhandledrejection', function(e) {
+  if (e && e.reason && String(e.reason).includes('Script error')) e.preventDefault();
+});
+window.onerror = function(msg, src, line, col, err) {
+  if (msg === 'Script error.' || msg === 'Script error') return true;
+};
+
+// ── State ─────────────────────────────────────────────────────────────────
+var S = {
+  step: 0,
+  totalSteps: 8,
+  proforma: null,     // computed 10-year table
+  incentives: {},     // selected incentive keys
+};
+
+var UTILITY_RATES = {
+  sce:   {onPeak:0.28, offPeak:0.13, demand:19.10, fixed:350, label:'SCE TOU-8-D', touWindow:'M-F 4pm–9pm'},
+  pge:   {onPeak:0.25, offPeak:0.12, demand:21.50, fixed:250, label:'PG&E B-20', touWindow:'M-F 4pm–9pm'},
+  sdge:  {onPeak:0.26, offPeak:0.14, demand:18.00, fixed:300, label:'SDG&E AL-TOU', touWindow:'M-F 4pm–9pm'},
+  ladwp: {onPeak:0.20, offPeak:0.10, demand:14.00, fixed:200, label:'LADWP A-3', touWindow:'M-F 2pm–8pm'},
+  comed: {onPeak:0.11, offPeak:0.07, demand:15.50, fixed:150, label:'ComEd BESH-eligible', touWindow:'M-F 2pm–7pm'},
+  ameren:{onPeak:0.10, offPeak:0.07, demand:14.00, fixed:120, label:'Ameren IL LGS', touWindow:'M-F 2pm–8pm'},
+  eversource_ct:{onPeak:0.18, offPeak:0.12, demand:15.50, fixed:250, label:'Eversource EV-M', touWindow:'M-F noon–8pm'},
+  ui:    {onPeak:0.17, offPeak:0.11, demand:14.00, fixed:200, label:'UI C&I', touWindow:'M-F 1pm–7pm'},
+};
+
+var INCENTIVE_PROGRAMS = [
+  // Federal
+  {key:'itc30', label:'ITC — Investment Tax Credit (30%)', cat:'Federal', tag:'IRA §48E', color:'var(--blue)',
+   calcFn: function(d){ return d.bessInstalled * 0.30; },
+   desc:'30% of BESS installed cost. Requires 5+ yr useful life. Consult CPA.', markets:['all']},
+  {key:'itc_domestic', label:'ITC Domestic Content Adder (+10%)', cat:'Federal', tag:'IRA §48E(d)', color:'var(--blue)',
+   calcFn: function(d){ return d.bessInstalled * 0.10; },
+   desc:'Additional 10% if domestic content requirements met. Verify with manufacturer.', markets:['all']},
+  {key:'itc_energy_comm', label:'ITC Energy Community Adder (+10%)', cat:'Federal', tag:'IRA §48E(c)', color:'var(--blue)',
+   calcFn: function(d){ return d.bessInstalled * 0.10; },
+   desc:'Additional 10% if site is in designated energy community. Check IRS map.', markets:['all']},
+  {key:'macrs', label:'Bonus Depreciation — MACRS 5-yr (60%)', cat:'Federal', tag:'MACRS', color:'var(--blue)',
+   calcFn: function(d){ return d.bessInstalled * 0.60 * 0.25; },
+   desc:'BESS = 5-yr MACRS property. 60% bonus depreciation in 2025. Tax benefit ~60% × cost × tax rate.', markets:['all']},
+  {key:'sec30c', label:'EVSE Alt Fuel Tax Credit §30C (30%)', cat:'Federal', tag:'§30C', color:'var(--blue)',
+   calcFn: function(d){ return Math.min(100000, (d.stationKW * 1000) * 0.30); },
+   desc:'30% of EVSE cost, up to $100K per location. DCFC qualifies. Consult CPA.', markets:['all']},
+
+  // California
+  {key:'sgip', label:'SGIP Rebate — $0.25/Wh', cat:'California', tag:'CPUC SGIP', color:'var(--green)',
+   calcFn: function(d){ return d.bessKwh * 1000 * 0.25; },
+   desc:'Self-Generation Incentive Program. Current Step ~$0.25/Wh. cpuc.ca.gov/sgip', markets:['sce','pge','sdge','ladwp']},
+  {key:'sgip_equity', label:'SGIP Equity Resiliency — $1.00/Wh', cat:'California', tag:'CPUC SGIP Equity', color:'var(--green)',
+   calcFn: function(d){ return d.bessKwh * 1000 * 1.00; },
+   desc:'Income-qualified or disadvantaged community sites. $1.00/Wh — highest available CA incentive. Confirm eligibility at cpuc.ca.gov/sgip', markets:['sce','pge','sdge']},
+  {key:'nevi_ca', label:'NEVI — Up to 80% of EVSE costs', cat:'California', tag:'NEVI', color:'var(--green)',
+   calcFn: function(d){ return 0; },
+   desc:'National EV Infrastructure program. Enter amount from state DOT award.', markets:['sce','pge','sdge','ladwp'], manualEntry: true},
+
+  // Illinois / ComEd
+  {key:'besh', label:'ComEd BESH Rebate — $250/kWh', cat:'Illinois', tag:'§16-107.6 PUA', color:'var(--purple)',
+   calcFn: function(d){ return d.bessKwh * 250; },
+   desc:'ComEd Behind-the-Meter Energy Storage Hardware rebate. $250/kWh C&I. CRGA amendment 2026.', markets:['comed','ameren']},
+  {key:'il_dceo', label:'IL DCEO Clean Energy Incentives', cat:'Illinois', tag:'CEJA', color:'var(--purple)',
+   calcFn: function(d){ return 0; },
+   desc:'IL Dept. of Commerce CEJA programs for clean energy siting. Enter amount if awarded.', markets:['comed','ameren'], manualEntry:true},
+  {key:'comed_evse', label:'ComEd Smart Charge / EVSE Rebate', cat:'Illinois', tag:'ComEd', color:'var(--purple)',
+   calcFn: function(d){ return 0; },
+   desc:'ComEd Smart Charge program EVSE rebates. Check current availability with ComEd.', markets:['comed'], manualEntry:true},
+
+  // Other
+  {key:'nevi_other', label:'NEVI (State Program)', cat:'Other', tag:'NEVI', color:'var(--amber)',
+   calcFn: function(d){ return 0; },
+   desc:'Up to 80% of eligible EVSE costs. Contact your state DOT. Enter award amount.', markets:['eversource_ct','ui','other'], manualEntry:true},
+  {key:'utility_make_ready', label:'Utility Make-Ready / Infrastructure Grant', cat:'Other', tag:'Utility', color:'var(--amber)',
+   calcFn: function(d){ return 0; },
+   desc:'Some utilities fund make-ready infrastructure. Enter amount if available.', markets:['all'], manualEntry:true},
+];
+
+// ── Navigation ─────────────────────────────────────────────────────────────
+function goStep(n) {
+  if (n < 0 || n >= S.totalSteps) return;
+  // Update phases
+  document.querySelectorAll('.phase').forEach(function(p,i){ p.classList.toggle('active', i===n); });
+  // Update stepper
+  document.querySelectorAll('.step-item').forEach(function(el) {
+    var s = +el.dataset.step;
+    el.classList.toggle('active', s===n);
+    el.classList.toggle('done', s<n);
+    var num = el.querySelector('.step-num');
+    if (num) num.textContent = s<n ? '✓' : s+1;
+  });
+  S.step = n;
+  document.getElementById('progress-fill').style.width = ((n+1)/S.totalSteps*100)+'%';
+  document.getElementById('mob-step-label').textContent = 'Step '+(n+1)+' of '+S.totalSteps;
+  document.getElementById('content').scrollTop = 0;
+  updateSidebar();
+  // Run step-specific logic
+  if (n===4) renderIncentives();
+  if (n===5) prefillValueStack();
+  if (n===7) calcIRR();
+}
+
+function nextStep(){ goStep(S.step+1); }
+function prevStep(){ goStep(S.step-1); }
+
+// ── Utility change — prefill rates ─────────────────────────────────────────
+function onUtilityChange() {
+  var u = v('utility');
+  var rates = UTILITY_RATES[u];
+  if (!rates) return;
+  set('onPeakRate', rates.onPeak);
+  set('offPeakRate', rates.offPeak);
+  set('demandCharge', rates.demand);
+  set('fixedCharge', rates.fixed);
+  set('touWindow', rates.touWindow);
+  var alert = document.getElementById('rate-alert');
+  alert.className = 'alert alert-ok';
+  alert.textContent = '✓ Benchmark rates pre-filled for '+rates.label+' — verify against your actual utility bill.';
+  calcDemandSavings();
+  autoSave();
+}
+
+// ── Derived calcs ──────────────────────────────────────────────────────────
+function calcDerived() {
+  var kwh = num('avgKwh'), sess = num('avgSessions'), rev = num('grossRevMonth');
+  var elec = num('elecCostMonth'), revShare = num('revShareMonth');
+  if (kwh && sess) set_text('d-kwh-sess', (kwh/sess).toFixed(1)+' kWh');
+  else set_text('d-kwh-sess', '—');
+  var net = rev - elec - revShare;
+  set_text('d-net-rev', rev ? '$'+fmt(net) : '—');
+  if (kwh && rev) set_text('d-rev-kwh', '$'+(rev/kwh).toFixed(3)+'/kWh');
+  else set_text('d-rev-kwh', '—');
+  autoSave();
+}
+
+function calcDemandSavings() {
+  var demBill = num('currentDemandBill') || (num('demandCharge')||0)*(num('peakDemand')||0);
+  var el = document.getElementById('demand-savings-preview');
+  if (demBill > 0) {
+    el.style.display='block';
+    set_text('sav-25', '$'+fmt(Math.round(demBill*0.25*12))+'/yr');
+    set_text('sav-30', '$'+fmt(Math.round(demBill*0.30*12))+'/yr');
+    set_text('sav-40', '$'+fmt(Math.round(demBill*0.40*12))+'/yr');
+  } else {
+    el.style.display='none';
+  }
+  autoSave();
+}
+
+function calcBESS() {
+  var cost = num('bessInstalled'), kwh = num('bessKwh');
+  if (cost && kwh) {
+    var perKwh = cost/kwh;
+    document.getElementById('bessPerKwh').value = perKwh.toFixed(0);
+    // Auto-fill O&M at 1.5%
+    if (!document.getElementById('bessOM').dataset.manual) {
+      document.getElementById('bessOM').value = Math.round(cost*0.015);
+    }
+  }
+  // Cert alerts
+  var alerts = document.getElementById('cert-alerts');
+  alerts.innerHTML = '';
+  if (v('ul9540') === 'pending') alerts.innerHTML += '<div class="alert alert-warn">⚠️ UL 9540 listing pending — required for permit in all jurisdictions. Confirm with vendor before permit submission.</div>';
+  if (v('ul9540a') === 'pending') alerts.innerHTML += '<div class="alert alert-warn">⚠️ UL 9540A test data pending — required for systems >600 kWh per NFPA 855. Request from vendor.</div>';
+  if (v('fireSuppression') === 'no') alerts.innerHTML += '<div class="alert alert-err">✗ No fire suppression — NextNRG standard install requires integrated suppression. Add to system spec.</div>';
+  autoSave();
+}
+
+// ── Incentives ─────────────────────────────────────────────────────────────
+function renderIncentives() {
+  var u = v('utility') || 'other';
+  var d = getData();
+  var container = document.getElementById('incentives-container');
+  container.innerHTML = '';
+  var cats = {};
+  INCENTIVE_PROGRAMS.forEach(function(p) {
+    var applicable = p.markets.includes('all') || p.markets.includes(u);
+    if (!applicable) return;
+    if (!cats[p.cat]) cats[p.cat] = [];
+    cats[p.cat].push(p);
+  });
+  Object.entries(cats).forEach(function(entry) {
+    var cat = entry[0], programs = entry[1];
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '12px';
+    var catColor = cat==='Federal'?'var(--blue)':cat==='California'?'var(--green)':cat==='Illinois'?'var(--purple)':'var(--amber)';
+    card.innerHTML = '<div class="card-header"><div class="card-title" style="color:'+catColor+'">'+cat+' Programs</div></div><div class="inc-grid" id="inc-cat-'+cat.replace(/\s/g,'')+'"></div>';
+    container.appendChild(card);
+    var grid = card.querySelector('.inc-grid');
+    programs.forEach(function(p) {
+      var calcAmt = p.calcFn ? p.calcFn(d) : 0;
+      var selected = !!S.incentives[p.key];
+      var manualId = 'inc-manual-'+p.key;
+      var row = document.createElement('div');
+      row.className = 'inc-item'+(selected?' selected':'');
+      row.id = 'inc-row-'+p.key;
+      var amtHtml = p.manualEntry
+        ? '<input type="number" id="'+manualId+'" placeholder="Enter $" style="width:90px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 8px;font-size:11px;font-family:var(--mono)" oninput="updateIncentiveSummary()" onclick="event.stopPropagation()">'
+        : '<span class="inc-amt">'+( calcAmt>0 ? '$'+fmt(Math.round(calcAmt)) : 'N/A' )+'</span>';
+      row.innerHTML = '<div class="inc-check">'+(selected?'✓':'')+'</div>'
+        +'<div class="inc-label"><span style="font-weight:600">'+p.label+'</span><br><span style="font-size:9px;opacity:.7">'+p.desc+'</span></div>'
+        +'<span class="inc-tag" style="background:'+catColor+'22;color:'+catColor+';border:1px solid '+catColor+'44">'+p.tag+'</span>'
+        +amtHtml;
+      row.onclick = function(e) {
+        if (e.target.tagName==='INPUT') return;
+        S.incentives[p.key] = !S.incentives[p.key];
+        row.classList.toggle('selected', !!S.incentives[p.key]);
+        row.querySelector('.inc-check').textContent = S.incentives[p.key] ? '✓' : '';
+        updateIncentiveSummary();
+      };
+      grid.appendChild(row);
+    });
+  });
+  updateIncentiveSummary();
+}
+
+function updateIncentiveSummary() {
+  var d = getData();
+  var total = 0;
+  INCENTIVE_PROGRAMS.forEach(function(p) {
+    if (!S.incentives[p.key]) return;
+    if (p.manualEntry) {
+      var el = document.getElementById('inc-manual-'+p.key);
+      if (el) total += num(el) || 0;
+    } else {
+      total += p.calcFn ? p.calcFn(d) : 0;
+    }
+  });
+  var gross = d.bessInstalled || 0;
+  var net = Math.max(0, gross - total);
+  set_text('inc-gross-cost', '$'+fmt(Math.round(gross)));
+  set_text('inc-total-incentives', '−$'+fmt(Math.round(total)));
+  set_text('inc-net-capital', '$'+fmt(Math.round(net)));
+  S.netCapital = net;
+  S.totalIncentives = total;
+}
+
+// ── Value Stack ────────────────────────────────────────────────────────────
+function prefillValueStack() {
+  var d = getData();
+  // EV revenue
+  if (!v('vs-ev-rev') && d.grossRevMonth) {
+    set('vs-ev-rev', Math.round(d.grossRevMonth * 12));
+    document.getElementById('vs-ev-hint').textContent = 'Auto-filled: $'+fmt(d.grossRevMonth)+'/mo × 12';
+  }
+  // LCFS
+  if (!v('vs-lcfs') && d.lcfsMonth) {
+    set('vs-lcfs', Math.round(d.lcfsMonth * 12));
+    document.getElementById('vs-lcfs-hint').textContent = 'Auto-filled: $'+fmt(d.lcfsMonth)+'/mo × 12';
+  }
+  // Demand savings
+  var demBill = num('currentDemandBill') || (num('demandCharge')||0)*(num('peakDemand')||0);
+  var reduction = (num('demandReduction') || 30) / 100;
+  var annualDemSav = Math.round(demBill * reduction * 12);
+  if (!v('vs-demand-sav') && annualDemSav > 0) {
+    set('vs-demand-sav', annualDemSav);
+    document.getElementById('vs-demand-hint').textContent = 'Auto-filled: $'+fmt(demBill)+'/mo × '+Math.round(reduction*100)+'% × 12';
+  }
+  // Electricity cost
+  if (!v('vs-elec') && d.elecCostMonth) set('vs-elec', Math.round(d.elecCostMonth * 12));
+  // Rev share
+  if (!v('vs-revshare') && d.revShareMonth) set('vs-revshare', Math.round(d.revShareMonth * 12));
+  // BESS O&M
+  var bessOM = num('bessOM') || Math.round((d.bessInstalled||0)*0.015);
+  if (!v('vs-bessOM') && bessOM) set('vs-bessOM', bessOM);
+  // VPP hint
+  var util = v('utility');
+  if (util === 'comed') document.getElementById('vs-vpp-hint').textContent = 'ComEd: Rider SDVPP/BYODLR — typical $50-150/kW-year. Enter annual estimate.';
+  if (['sce','pge','sdge'].includes(util)) document.getElementById('vs-vpp-hint').textContent = 'CA: CAISO AS markets Reg-Up/Down — typical $5-15/MWh × annual cycles. Enter annual estimate.';
+  calcValueStack();
+}
+
+function calcValueStack() {
+  var rev = (num('vs-ev-rev')||0)+(num('vs-lcfs')||0)+(num('vs-demand-sav')||0)+(num('vs-tou')||0)+(num('vs-vpp')||0)+(num('vs-dr')||0)+(num('vs-other')||0);
+  var costs = (num('vs-elec')||0)+(num('vs-revshare')||0)+(num('vs-bessOM')||0)+(num('vs-evseOM')||0)+(num('vs-insurance')||0)+(num('vs-ga')||0);
+  var noi = rev - costs;
+  set_text('vs-total-rev', '$'+fmt(Math.round(rev)));
+  set_text('vs-total-costs', '$'+fmt(Math.round(costs)));
+  var noiEl = document.getElementById('vs-noi');
+  noiEl.textContent = '$'+fmt(Math.round(noi));
+  noiEl.style.color = noi >= 0 ? 'var(--gold)' : 'var(--red)';
+  S.yr1Revenue = rev;
+  S.yr1Costs = costs;
+  S.yr1NOI = noi;
+  autoSave();
+}
+
+// ── Pro Forma ──────────────────────────────────────────────────────────────
+function buildProForma() {
+  var d = getData();
+  var rev0 = S.yr1Revenue || 0;
+  var cost0 = S.yr1Costs || 0;
+  var degradRate = (num('bessDegrad') || 2.5) / 100;
+  // Revenue growth: observed YoY tapering to 3% by year 5
+  var yoy = Math.min(0.20, (num('yoyGrowth') || 5) / 100);
+
+  var years = 10;
+  var rows = [];
+  for (var yr = 1; yr <= years; yr++) {
+    var revGrowth = yr <= 4 ? yoy * Math.pow(0.7, yr-1) : 0.03;
+    var costGrowth = 0.03;
+    var degrad = Math.pow(1-degradRate, yr-1);
+    var prevRev = yr===1 ? rev0 : rows[yr-2].rev;
+    var prevCost = yr===1 ? cost0 : rows[yr-2].costs;
+    var rev = yr===1 ? rev0 : prevRev * (1+revGrowth);
+    var costs = yr===1 ? cost0 : prevCost * (1+costGrowth);
+    var noi = rev - costs;
+    rows.push({yr:yr, rev:Math.round(rev), costs:Math.round(costs), noi:Math.round(noi), degrad:degrad});
+  }
+  S.proforma = rows;
+
+  // Render table
+  var html = '<table class="data-table"><thead><tr>'
+    +'<th>Year</th><th class="num">Revenue</th><th class="num">Expenses</th><th class="num">NOI</th><th class="num">Cumulative</th>'
+    +'</tr></thead><tbody>';
+  var cumulative = 0;
+  rows.forEach(function(r) {
+    cumulative += r.noi;
+    var cSign = cumulative >= 0 ? 'pos' : 'neg';
+    html += '<tr>'
+      +'<td>Yr '+r.yr+'</td>'
+      +'<td class="num pos">$'+fmt(r.rev)+'</td>'
+      +'<td class="num neg">($'+fmt(r.costs)+')</td>'
+      +'<td class="num '+(r.noi>=0?'pos':'neg')+'">'+( r.noi>=0?'$':'($' )+fmt(Math.abs(r.noi))+(r.noi<0?')':'')+'</td>'
+      +'<td class="num '+cSign+'">'+(cumulative>=0?'$':'($')+fmt(Math.abs(cumulative))+(cumulative<0?')':'')+'</td>'
+      +'</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById('proforma-table-wrap').innerHTML = html;
+
+  // Cash flow bars
+  renderCFBars(rows);
+  calcIRR();
+}
+
+function renderCFBars(rows) {
+  var maxAbsNOI = Math.max.apply(null, rows.map(function(r){return Math.abs(r.noi);})) || 1;
+  var html = '';
+  rows.forEach(function(r) {
+    var pct = Math.round(Math.abs(r.noi)/maxAbsNOI*90);
+    var isPos = r.noi >= 0;
+    html += '<div class="cf-bar-wrap">'
+      +(isPos ? '<div class="cf-bar-pos" style="height:'+pct+'px"></div><div style="height:4px"></div>' : '<div style="height:4px"></div><div class="cf-bar-neg" style="height:'+pct+'px"></div>')
+      +'<div class="cf-yr">'+r.yr+'</div>'
+      +'</div>';
+  });
+  document.getElementById('cf-bars').innerHTML = html;
+}
+
+// ── IRR / NPV ──────────────────────────────────────────────────────────────
+function calcIRR() {
+  if (!S.proforma) return;
+  // Use bessInstalled as the base; subtract incentives if step 4 was completed
+  var bessInstalled = num('bessInstalled') || 0;
+  var incentives = (S.totalIncentives != null) ? S.totalIncentives : 0;
+  var netCap = bessInstalled > 0 ? Math.max(0, bessInstalled - incentives) : (S.netCapital || 0);
+  var target = (num('targetIrr') || 15) / 100;
+  var disc = (num('discountRate') || 10) / 100;
+  var cashflows = [-netCap].concat(S.proforma.map(function(r){return r.noi;}));
+  var irr = calcIRRval(cashflows);
+  var npv = calcNPV(disc, cashflows);
+  var totalCF = S.proforma.reduce(function(s,r){return s+r.noi;},0);
+  var payback = netCap > 0 && S.yr1NOI > 0 ? netCap / S.yr1NOI : null;
+  var roi = netCap > 0 ? totalCF / netCap : null;
+
+  set_text('out-irr', irr != null ? (irr*100).toFixed(1)+'%' : '—');
+  set_text('out-npv', npv != null ? (npv>=0?'$':'-$')+fmt(Math.abs(Math.round(npv))) : '—');
+  set_text('out-payback', payback ? payback.toFixed(1) : '—');
+  set_text('out-roi', roi ? (roi*100).toFixed(0)+'%' : '—');
+  set_text('out-capex', '$'+fmt(Math.round(netCap)));
+  set_text('out-total-cf', '$'+fmt(Math.round(totalCF)));
+  document.getElementById('out-irr-sub').textContent = 'Target: '+(target*100).toFixed(0)+'%';
+  document.getElementById('out-npv-sub').textContent = 'Discount rate: '+(disc*100).toFixed(0)+'%';
+
+  // Verdict
+  var box = document.getElementById('verdict-box');
+  if (netCap === 0 && bessInstalled === 0) {
+    box.innerHTML = '<div class="alert alert-warn">⚠️ Enter your BESS installed cost in Step 4 to calculate IRR.</div>';
+    return;
+  }
+  if (netCap === 0 && bessInstalled > 0) {
+    box.innerHTML = '<div class="alert alert-ok">✓ Incentives cover 100% of capital. Project is cash-flow positive from Day 1 — IRR is infinite. Focus on NPV and total cash flow.</div>';
+    set_text('out-irr', '∞');
+    return;
+  }
+  if (irr == null) {
+    box.innerHTML = '<div class="alert alert-warn">⚠️ IRR could not be calculated — check that annual NOI is positive. Revenue must exceed expenses for a positive IRR.</div>';
+  } else if (irr >= target) {
+    box.innerHTML = '<div class="verdict-box verdict-pass"><div class="verdict-icon">✓</div><div class="verdict-word">PASS</div><div class="verdict-desc">This site clears your '+(target*100).toFixed(0)+'% hurdle rate. IRR of '+(irr*100).toFixed(1)+'% on a net capital requirement of $'+fmt(Math.round(netCap))+'. Proceed to site visit and permit screening.</div></div>';
+  } else if (irr >= target * 0.75) {
+    box.innerHTML = '<div class="verdict-box verdict-cond"><div class="verdict-icon">△</div><div class="verdict-word">CONDITIONAL</div><div class="verdict-desc">IRR of '+(irr*100).toFixed(1)+'% is below your '+(target*100).toFixed(0)+'% hurdle but within range. Consider additional incentives, VPP revenue, or demand response enrollment to close the gap.</div></div>';
+  } else {
+    box.innerHTML = '<div class="verdict-box verdict-fail"><div class="verdict-icon">✗</div><div class="verdict-word">FAIL</div><div class="verdict-desc">IRR of '+(irr*100).toFixed(1)+'% does not meet the '+(target*100).toFixed(0)+'% hurdle. Rework the incentive stack, reduce installed cost, or identify a higher-revenue site.</div></div>';
+  }
+
+  // Value stack breakdown
+  renderVSBreakdown();
+}
+
+function calcIRRval(cfs) {
+  if (!cfs || cfs.length < 2) return null;
+  // Must have at least one negative and one positive cash flow
+  var hasNeg = cfs.some(function(c){return c<0;});
+  var hasPos = cfs.some(function(c){return c>0;});
+  if (!hasNeg || !hasPos) return null;
+
+  // Try multiple starting points to avoid divergence
+  var startRates = [-0.5, -0.2, 0.0, 0.1, 0.2, 0.5, 1.0, 2.0];
+  var best = null;
+
+  for (var s=0; s<startRates.length; s++) {
+    var rate = startRates[s];
+    var converged = false;
+    for (var i=0; i<200; i++) {
+      var pv=0, dpv=0;
+      for (var t=0; t<cfs.length; t++) {
+        var base = Math.pow(1+rate, t);
+        pv  += cfs[t] / base;
+        dpv -= t * cfs[t] / (base * (1+rate));
+      }
+      if (Math.abs(dpv) < 1e-14) break;
+      var step = pv / dpv;
+      // Dampen large steps to avoid divergence
+      if (Math.abs(step) > 0.5) step = 0.5 * (step > 0 ? 1 : -1);
+      var newRate = rate - step;
+      if (newRate <= -0.9999) newRate = -0.9999;
+      if (Math.abs(newRate - rate) < 1e-9) { rate = newRate; converged = true; break; }
+      rate = newRate;
+    }
+    if (converged && isFinite(rate) && rate > -0.9999) {
+      // Verify it actually gives ~0 NPV
+      var checkNPV = cfs.reduce(function(s,c,t){return s+c/Math.pow(1+rate,t);},0);
+      if (Math.abs(checkNPV) < Math.abs(cfs[0]) * 0.001) {
+        if (best === null || Math.abs(rate - 0.15) < Math.abs(best - 0.15)) {
+          best = rate; // prefer rate closest to 15% when multiple solutions
+        }
+      }
+    }
+  }
+  // Clamp to sane range: -99% to 999%
+  if (best !== null && (best < -0.999 || best > 9.99)) return null;
+  return best;
+}
+
+function calcNPV(disc, cfs) {
+  return cfs.reduce(function(s,cf,t){return s+cf/Math.pow(1+disc,t);},0);
+}
+
+function renderVSBreakdown() {
+  var streams = [
+    {label:'EV Charging Revenue', val:num('vs-ev-rev')||0, color:'var(--green)', icon:'⚡'},
+    {label:'LCFS Credits',         val:num('vs-lcfs')||0,     color:'var(--green)', icon:'🌿'},
+    {label:'Demand Charge Savings',val:num('vs-demand-sav')||0,color:'var(--green)',icon:'📉'},
+    {label:'TOU Arbitrage',        val:num('vs-tou')||0,      color:'var(--blue)',  icon:'🕐'},
+    {label:'VPP / Ancillary Svcs', val:num('vs-vpp')||0,      color:'var(--blue)',  icon:'🔋'},
+    {label:'Demand Response',      val:num('vs-dr')||0,       color:'var(--blue)',  icon:'⚙️'},
+  ];
+  var total = streams.reduce(function(s,r){return s+r.val;},0) || 1;
+  var html = '';
+  streams.filter(function(s){return s.val>0;}).forEach(function(s) {
+    var pct = (s.val/total*100).toFixed(0);
+    html += '<div style="display:grid;grid-template-columns:140px 1fr 70px;gap:10px;align-items:center;margin-bottom:8px">'
+      +'<div style="font-size:10px;color:var(--sub)">'+s.icon+' '+s.label+'</div>'
+      +'<div style="background:rgba(255,255,255,.06);border-radius:3px;height:6px">'
+        +'<div style="width:'+pct+'%;background:'+s.color+';height:100%;border-radius:3px"></div>'
+      +'</div>'
+      +'<div style="font-size:10px;font-weight:700;font-family:var(--mono);text-align:right;color:var(--text)">$'+fmt(s.val)+'</div>'
+      +'</div>';
+  });
+  document.getElementById('value-stack-breakdown').innerHTML = html || '<div style="color:var(--sub);font-size:11px">Complete Step 6 to see the breakdown.</div>';
+}
+
+// ── Export ─────────────────────────────────────────────────────────────────
+function exportResults() {
+  var d = getData();
+  var lines = [
+    'CLEARSKY BUILDERS LLC — BESS PRO FORMA EXPORT',
+    'Generated: '+new Date().toLocaleDateString(),
+    '',
+    '== PROJECT ==',
+    'Name: '+d.projectName,
+    'Address: '+d.address+', '+d.cityState,
+    'Utility: '+d.utility,
+    'Station Type: '+d.stationType,
+    'Ports: '+d.numPorts,
+    '',
+    '== BESS SYSTEM ==',
+    'Capacity: '+d.bessKwh+' kWh',
+    'Power: '+d.bessKw+' kW',
+    'Installed Cost: $'+(d.bessInstalled||0).toLocaleString(),
+    'Net Capital (after incentives): $'+fmt(Math.round(S.netCapital||d.bessInstalled||0)),
+    '',
+    '== YEAR 1 PRO FORMA ==',
+    'Annual Revenue: $'+fmt(Math.round(S.yr1Revenue||0)),
+    'Annual Expenses: $'+fmt(Math.round(S.yr1Costs||0)),
+    'Year 1 NOI: $'+fmt(Math.round(S.yr1NOI||0)),
+    '',
+  ];
+  if (S.proforma) {
+    lines.push('== 10-YEAR CASH FLOWS ==');
+    S.proforma.forEach(function(r){ lines.push('Year '+r.yr+': Revenue $'+fmt(r.rev)+' | Expenses $'+fmt(r.costs)+' | NOI $'+fmt(r.noi)); });
+    lines.push('');
+    var totalCF = S.proforma.reduce(function(s,r){return s+r.noi;},0);
+    lines.push('10-Year Total Cash Flow: $'+fmt(Math.round(totalCF)));
+  }
+  lines.push('');
+  lines.push('== CRM FIELDS (Monday.com) ==');
+  lines.push('Deal Name: '+d.projectName);
+  lines.push('Address: '+d.address);
+  lines.push('Monday Deal ID: '+(d.mondayId||''));
+  lines.push('Stage: '+(d.dealStage||''));
+  lines.push('BESS kWh: '+d.bessKwh);
+  lines.push('BESS Installed Cost: $'+(d.bessInstalled||0).toLocaleString());
+  lines.push('Net Capital: $'+fmt(Math.round(S.netCapital||0)));
+
+  var blob = new Blob([lines.join('\n')], {type:'text/plain'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = (d.projectName||'clearsky-proforma').replace(/[^a-z0-9]/gi,'_')+'_proforma.txt';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function saveToFirebase() {
+  // Save to localStorage for persistence between sessions
+  try {
+    var snap = JSON.stringify(collectAllInputs());
+    localStorage.setItem('clearsky_proforma_draft', snap);
+    var tag = document.getElementById('project-tag');
+    tag.textContent = '✓ SAVED';
+    setTimeout(function(){ tag.textContent = v('projectName') || 'NEW PROJECT'; }, 2000);
+  } catch(e) {
+    console.warn('Save failed:', e);
+  }
+}
+
+function collectAllInputs() {
+  var inputs = {};
+  document.querySelectorAll('input,select,textarea').forEach(function(el) {
+    if (el.id) inputs[el.id] = el.value;
+  });
+  inputs._incentives = S.incentives;
+  inputs._step = S.step;
+  return inputs;
+}
+
+function restoreFromSave() {
+  try {
+    var raw = localStorage.getItem('clearsky_proforma_draft');
+    if (!raw) return;
+    var snap = JSON.parse(raw);
+    Object.keys(snap).forEach(function(k) {
+      if (k.startsWith('_')) return;
+      var el = document.getElementById(k);
+      if (el) el.value = snap[k];
+    });
+    if (snap._incentives) S.incentives = snap._incentives;
+    // Recalculate derived values
+    calcDerived();
+    calcDemandSavings();
+    calcBESS();
+    calcValueStack();
+    updateSidebar();
+  } catch(e) {
+    console.warn('Restore failed:', e);
+  }
+}
+
+// ── Sidebar summary ────────────────────────────────────────────────────────
+function updateSidebar() {
+  var d = getData();
+  var lines = [];
+  if (d.projectName) lines.push('<strong style="color:var(--text)">'+d.projectName+'</strong>');
+  if (d.utility) lines.push(d.utility.toUpperCase());
+  if (d.bessKwh) lines.push(d.bessKwh+' kWh BESS');
+  if (d.bessInstalled) lines.push('$'+fmt(d.bessInstalled)+' installed');
+  if (S.yr1NOI) lines.push('Yr1 NOI: $'+fmt(Math.round(S.yr1NOI)));
+  if (S.netCapital) lines.push('Net cap: $'+fmt(Math.round(S.netCapital)));
+  var tag = document.getElementById('project-tag');
+  if (d.projectName) tag.textContent = d.projectName.slice(0,22)+(d.projectName.length>22?'…':'');
+  document.getElementById('sidebar-summary').innerHTML = lines.join('<br>') || 'Fill in the steps to see your summary here.';
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function v(id){ var el=document.getElementById(id); return el ? el.value : ''; }
+function num(idOrEl){
+  var el = typeof idOrEl==='string' ? document.getElementById(idOrEl) : idOrEl;
+  if (!el) return 0;
+  var n = parseFloat(el.value);
+  return isNaN(n) ? 0 : n;
+}
+function set(id, val){ var el=document.getElementById(id); if(el) el.value=val||''; }
+function set_text(id, txt){ var el=document.getElementById(id); if(el) el.textContent=txt; }
+function fmt(n){ return n==null?'—':Math.round(n).toLocaleString(); }
+
+function getData() {
+  return {
+    projectName:   v('projectName'),
+    address:       v('address'),
+    cityState:     v('cityState'),
+    utility:       v('utility'),
+    stationType:   v('stationType'),
+    numPorts:      num('numPorts'),
+    stationKW:     num('stationKW'),
+    mondayId:      v('mondayId'),
+    dealStage:     v('dealStage'),
+    avgKwh:        num('avgKwh'),
+    avgSessions:   num('avgSessions'),
+    grossRevMonth: num('grossRevMonth'),
+    lcfsMonth:     num('lcfsMonth'),
+    revShareMonth: num('revShareMonth'),
+    elecCostMonth: num('elecCostMonth'),
+    bessKwh:       num('bessKwh'),
+    bessKw:        num('bessKw'),
+    bessInstalled: num('bessInstalled'),
+  };
+}
+
+function showExportMenu(e) {
+  e.stopPropagation();
+  var menu = document.getElementById('export-menu');
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+  // Close on outside click
+  setTimeout(function() {
+    document.addEventListener('click', closeExportMenu, {once: true});
+  }, 10);
+}
+function closeExportMenu() {
+  var menu = document.getElementById('export-menu');
+  if (menu) menu.style.display = 'none';
+}
+
+function exportPDF() {
+  var d = getData();
+  var irr = document.getElementById('out-irr') ? document.getElementById('out-irr').textContent : '—';
+  var npv = document.getElementById('out-npv') ? document.getElementById('out-npv').textContent : '—';
+  var payback = document.getElementById('out-payback') ? document.getElementById('out-payback').textContent : '—';
+  var roi = document.getElementById('out-roi') ? document.getElementById('out-roi').textContent : '—';
+  var totalCF = document.getElementById('out-total-cf') ? document.getElementById('out-total-cf').textContent : '—';
+  var netCap = document.getElementById('out-capex') ? document.getElementById('out-capex').textContent : '—';
+
+  var proformaRows = '';
+  if (S.proforma) {
+    var cum = 0;
+    S.proforma.forEach(function(r) {
+      cum += r.noi;
+      proformaRows += '<tr>'
+        + '<td>Year ' + r.yr + '</td>'
+        + '<td style="color:#22C55E">$' + fmt(r.rev) + '</td>'
+        + '<td style="color:#EF4444">($' + fmt(r.costs) + ')</td>'
+        + '<td style="color:' + (r.noi >= 0 ? '#22C55E' : '#EF4444') + '">' + (r.noi >= 0 ? '$' : '($') + fmt(Math.abs(r.noi)) + (r.noi < 0 ? ')' : '') + '</td>'
+        + '<td style="color:' + (cum >= 0 ? '#22C55E' : '#EF4444') + '">' + (cum >= 0 ? '$' : '($') + fmt(Math.abs(Math.round(cum))) + (cum < 0 ? ')' : '') + '</td>'
+        + '</tr>';
+    });
+  }
+
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+    + '<title>NextNRG Pro Forma — ' + (d.projectName || 'Project') + '</title>'
+    + '<style>'
+    + 'body{font-family:Arial,sans-serif;color:#1A2332;padding:40px;max-width:900px;margin:0 auto;font-size:13px}'
+    + 'h1{color:#0B1E35;font-size:22px;margin-bottom:4px}'
+    + 'h2{color:#0B1E35;font-size:14px;margin:24px 0 10px;border-bottom:2px solid #C9A84C;padding-bottom:4px}'
+    + '.meta{color:#6B7A8D;font-size:12px;margin-bottom:28px}'
+    + '.kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}'
+    + '.kpi{background:#F4F1EC;border:1px solid #DDD8D0;border-radius:8px;padding:14px}'
+    + '.kpi-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#6B7A8D;margin-bottom:4px}'
+    + '.kpi-val{font-size:22px;font-weight:800;color:#0B1E35}'
+    + '.irr-val{color:#1DB954}'
+    + '.npv-val{color:#1B4F8A}'
+    + 'table{width:100%;border-collapse:collapse;font-size:12px}'
+    + 'th{background:#0B1E35;color:#E8C56A;padding:8px 10px;text-align:left;font-size:10px;letter-spacing:.4px}'
+    + 'td{padding:8px 10px;border-bottom:1px solid #EEE}'
+    + 'tr:nth-child(even) td{background:#F9F9F9}'
+    + '.footer{margin-top:40px;font-size:10px;color:#9CA3AF;border-top:1px solid #EEE;padding-top:12px}'
+    + '@media print{body{padding:20px}.no-print{display:none}}'
+    + '</style></head><body>'
+    + '<h1>BESS + EV Charging Pro Forma</h1>'
+    + '<h1 style="color:#C9A84C;font-size:16px">' + escHtmlPDF(d.projectName || 'Untitled Project') + '</h1>'
+    + '<div class="meta">'
+    + escHtmlPDF(d.address || '') + (d.cityState ? ', ' + escHtmlPDF(d.cityState) : '') + ' &nbsp;|&nbsp; '
+    + 'Utility: ' + escHtmlPDF(d.utility || '—') + ' &nbsp;|&nbsp; '
+    + escHtmlPDF(d.stationType || '') + ' · ' + (d.numPorts || '—') + ' ports &nbsp;|&nbsp; '
+    + 'Generated: ' + new Date().toLocaleDateString()
+    + '</div>'
+    + '<h2>Investment Returns</h2>'
+    + '<div class="kpi-grid">'
+    + '<div class="kpi"><div class="kpi-label">10-Year IRR</div><div class="kpi-val irr-val">' + irr + '</div></div>'
+    + '<div class="kpi"><div class="kpi-label">NPV @ ' + (document.getElementById('discountRate') ? document.getElementById('discountRate').value : '10') + '%</div><div class="kpi-val npv-val">' + npv + '</div></div>'
+    + '<div class="kpi"><div class="kpi-label">Simple Payback</div><div class="kpi-val">' + payback + ' yrs</div></div>'
+    + '<div class="kpi"><div class="kpi-label">10-Year ROI</div><div class="kpi-val">' + roi + '</div></div>'
+    + '<div class="kpi"><div class="kpi-label">Net Capital Required</div><div class="kpi-val">' + netCap + '</div></div>'
+    + '<div class="kpi"><div class="kpi-label">10-Year Total Cash Flow</div><div class="kpi-val">' + totalCF + '</div></div>'
+    + '</div>'
+    + '<h2>BESS System</h2>'
+    + '<table><tr><th>Parameter</th><th>Value</th></tr>'
+    + '<tr><td>Manufacturer / Model</td><td>' + escHtmlPDF(d.bessModel || '—') + '</td></tr>'
+    + '<tr><td>Capacity</td><td>' + (d.bessKwh || '—') + ' kWh</td></tr>'
+    + '<tr><td>Power Rating</td><td>' + (d.bessKw || '—') + ' kW</td></tr>'
+    + '<tr><td>Installed Cost</td><td>$' + fmt(d.bessInstalled || 0) + '</td></tr>'
+    + '<tr><td>Cost per kWh</td><td>$' + (d.bessInstalled && d.bessKwh ? (d.bessInstalled/d.bessKwh).toFixed(0) : '—') + '/kWh</td></tr>'
+    + '</table>'
+    + '<h2>Year 1 Value Stack</h2>'
+    + '<table><tr><th>Revenue Stream</th><th>Annual ($)</th></tr>'
+    + '<tr><td>EV Charging Revenue</td><td>$' + fmt(num('vs-ev-rev') || 0) + '</td></tr>'
+    + '<tr><td>LCFS Credits</td><td>$' + fmt(num('vs-lcfs') || 0) + '</td></tr>'
+    + '<tr><td>Demand Charge Savings</td><td>$' + fmt(num('vs-demand-sav') || 0) + '</td></tr>'
+    + '<tr><td>TOU Arbitrage</td><td>$' + fmt(num('vs-tou') || 0) + '</td></tr>'
+    + '<tr><td>VPP / Ancillary Services</td><td>$' + fmt(num('vs-vpp') || 0) + '</td></tr>'
+    + '<tr><td>Demand Response</td><td>$' + fmt(num('vs-dr') || 0) + '</td></tr>'
+    + '<tr><td style="font-weight:700">Total Revenue</td><td style="font-weight:700;color:#1DB954">$' + fmt(Math.round(S.yr1Revenue || 0)) + '</td></tr>'
+    + '<tr><td>Total Expenses</td><td style="color:#E53935">($' + fmt(Math.round(S.yr1Costs || 0)) + ')</td></tr>'
+    + '<tr><td style="font-weight:700">Year 1 NOI</td><td style="font-weight:700">$' + fmt(Math.round(S.yr1NOI || 0)) + '</td></tr>'
+    + '</table>'
+    + (S.proforma ? '<h2>10-Year Pro Forma</h2>'
+    + '<table><tr><th>Year</th><th>Revenue</th><th>Expenses</th><th>NOI</th><th>Cumulative</th></tr>'
+    + proformaRows + '</table>' : '')
+    + '<div class="footer">NextNRG · Powered by ClearSky-OMEGA · Miami Beach, FL · Generated ' + new Date().toLocaleDateString() + ' · Not a guarantee of returns. All values are projections.</div>'
+    + '<script>window.onload=function(){window.print()}</' + 'script>'
+    + '</body></html>';
+
+  var win = window.open('', '_blank', 'width=900,height=700');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+  } else {
+    alert('Pop-up blocked. Please allow pop-ups for this site and try again.');
+  }
+}
+
+function escHtmlPDF(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function exportExcel() {
+  var d = getData();
+  var rows = [];
+
+  // Header
+  rows.push(['CLEARSKY BUILDERS LLC - BESS Pro Forma']);
+  rows.push(['Project', d.projectName || '', 'Date', new Date().toLocaleDateString()]);
+  rows.push(['Address', (d.address || '') + ' ' + (d.cityState || ''), 'Utility', d.utility || '']);
+  rows.push(['Station Type', d.stationType || '', 'Ports', d.numPorts || '']);
+  rows.push([]);
+
+  // Returns
+  rows.push(['INVESTMENT RETURNS']);
+  rows.push(['Metric', 'Value']);
+  rows.push(['10-Year IRR', document.getElementById('out-irr').textContent]);
+  rows.push(['NPV @ ' + (document.getElementById('discountRate').value||10) + '%', document.getElementById('out-npv').textContent]);
+  rows.push(['Simple Payback (years)', document.getElementById('out-payback').textContent]);
+  rows.push(['10-Year ROI', document.getElementById('out-roi').textContent]);
+  rows.push(['Net Capital Required', document.getElementById('out-capex').textContent]);
+  rows.push(['10-Year Total Cash Flow', document.getElementById('out-total-cf').textContent]);
+  rows.push([]);
+
+  // BESS
+  rows.push(['BESS SYSTEM']);
+  rows.push(['Model', d.bessModel || '—']);
+  rows.push(['Capacity (kWh)', d.bessKwh || '']);
+  rows.push(['Power (kW)', d.bessKw || '']);
+  rows.push(['Installed Cost ($)', d.bessInstalled || '']);
+  rows.push(['Cost per kWh ($/kWh)', d.bessInstalled && d.bessKwh ? (d.bessInstalled/d.bessKwh).toFixed(0) : '']);
+  rows.push([]);
+
+  // Value stack
+  rows.push(['YEAR 1 VALUE STACK']);
+  rows.push(['Revenue Stream', 'Annual ($)']);
+  rows.push(['EV Charging Revenue', num('vs-ev-rev') || 0]);
+  rows.push(['LCFS Credits', num('vs-lcfs') || 0]);
+  rows.push(['Demand Charge Savings', num('vs-demand-sav') || 0]);
+  rows.push(['TOU Arbitrage', num('vs-tou') || 0]);
+  rows.push(['VPP / Ancillary Services', num('vs-vpp') || 0]);
+  rows.push(['Demand Response', num('vs-dr') || 0]);
+  rows.push(['Total Revenue', Math.round(S.yr1Revenue || 0)]);
+  rows.push(['Total Expenses', Math.round(S.yr1Costs || 0)]);
+  rows.push(['Year 1 NOI', Math.round(S.yr1NOI || 0)]);
+  rows.push([]);
+
+  // Pro forma
+  if (S.proforma) {
+    rows.push(['10-YEAR PRO FORMA']);
+    rows.push(['Year', 'Revenue ($)', 'Expenses ($)', 'NOI ($)', 'Cumulative ($)']);
+    var cum = 0;
+    S.proforma.forEach(function(r) {
+      cum += r.noi;
+      rows.push(['Year ' + r.yr, r.rev, r.costs, r.noi, Math.round(cum)]);
+    });
+    rows.push([]);
+  }
+
+  // Monday CRM
+  rows.push(['CRM / MONDAY.COM EXPORT']);
+  rows.push(['Field', 'Value']);
+  rows.push(['Deal Name', d.projectName || '']);
+  rows.push(['Address', (d.address || '') + ' ' + (d.cityState || '')]);
+  rows.push(['Monday Deal ID', d.mondayId || '']);
+  rows.push(['Stage', d.dealStage || '']);
+  rows.push(['BESS kWh', d.bessKwh || '']);
+  rows.push(['BESS Installed Cost', d.bessInstalled || '']);
+  rows.push(['Net Capital', document.getElementById('out-capex').textContent]);
+  rows.push(['10-Year IRR', document.getElementById('out-irr').textContent]);
+  rows.push(['10-Year NPV', document.getElementById('out-npv').textContent]);
+
+  // Convert to CSV
+  var csv = rows.map(function(row) {
+    return row.map(function(cell) {
+      var s = String(cell == null ? '' : cell);
+      if (s.indexOf(',') >= 0 || s.indexOf('"') >= 0 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0) {
+        s = '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    }).join(',');
+  }).join('\n');
+
+  var BOM = '﻿'; // UTF-8 BOM so Excel opens correctly
+  var blob = new Blob([BOM + csv], {type: 'text/csv;charset=utf-8'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = (d.projectName || 'clearsky-proforma').replace(/[^a-z0-9]/gi,'_') + '_proforma.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function resetForm() {
+  if (!confirm('Start a new pro forma? Your current data will be cleared.')) return;
+  // Clear all inputs
+  document.querySelectorAll('input,select,textarea').forEach(function(el) {
+    if (el.tagName === 'SELECT') el.selectedIndex = 0;
+    else el.value = '';
+  });
+  // Reset state
+  S.proforma = null;
+  S.incentives = {};
+  S.netCapital = null;
+  S.totalIncentives = 0;
+  S.yr1Revenue = 0;
+  S.yr1Costs = 0;
+  S.yr1NOI = 0;
+  // Reset number fields with defaults
+  set('bessLife', 15);
+  set('demandReduction', 30);
+  set('bessDegrad', 2.5);
+  set('targetIrr', 15);
+  set('discountRate', 10);
+  set('vs-evseOM', 5000);
+  set('vs-insurance', 3000);
+  set('vs-ga', 2400);
+  // Go back to step 1
+  document.getElementById('project-tag').textContent = 'NEW PROJECT';
+  goStep(0);
+  try { localStorage.removeItem('clearsky_proforma_draft'); } catch(e) {}
+}
+
+function autoSave() {
+  updateSidebar();
+  // Persist to localStorage for session continuity
+  try {
+    var d = getData();
+    // store a snapshot of key inputs
+    var snap = JSON.stringify(d);
+    // Firebase save would go here
+  } catch(e){}
+}
+
+// ── iOS vh fix ─────────────────────────────────────────────────────────────
+function setVH(){ document.documentElement.style.setProperty('--vh',window.innerHeight*0.01+'px'); }
+setVH();
+window.addEventListener('resize', setVH);
+window.addEventListener('orientationchange', function(){ setTimeout(setVH,200); });
+
+// ── Init ───────────────────────────────────────────────────────────────────
+goStep(0);
+// Restore any previously saved draft
+setTimeout(restoreFromSave, 100);
+</script>
+</body>
+</html>

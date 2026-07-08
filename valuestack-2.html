@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BESS Value Stack Calculator — NextNRG</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'IBM Plex Mono',monospace,'Courier New',monospace;background:#060D14;color:#C8D8E8;min-height:100vh}
+
+/* ── TOKENS ── */
+:root{
+  --bg:#060D14;--surface:#0C1825;--panel:#111F2E;--card:#162535;
+  --border:#1E3347;--border2:#2A4560;
+  --gold:#C5A55A;--gold-dim:rgba(197,165,90,.12);
+  --cyan:#00C8FF;--cyan-dim:rgba(0,200,255,.10);
+  --green:#22D77A;--green-dim:rgba(34,215,122,.10);
+  --red:#FF5A5A;--red-dim:rgba(255,90,90,.10);
+  --amber:#F5A623;--amber-dim:rgba(245,166,35,.10);
+  --text:#C8D8E8;--sub:#6B8FAD;--muted:#3A5570;
+}
+
+/* ── HEADER ── */
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:14px}
+.hdr-back{color:var(--sub);text-decoration:none;font-size:11px;letter-spacing:.08em}
+.hdr-back:hover{color:var(--text)}
+.hdr-title{font-size:13px;font-weight:700;color:var(--gold);letter-spacing:.05em}
+.hdr-sub{font-size:10px;color:var(--sub);margin-left:auto}
+
+/* ── LAYOUT ── */
+.layout{display:grid;grid-template-columns:320px 1fr;min-height:calc(100vh - 45px)}
+
+/* ── LEFT PANEL ── */
+.lp{background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column}
+.sec{border-bottom:1px solid var(--border);padding:14px 16px}
+.sec-h{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:10px;font-weight:700}
+.field{margin-bottom:10px}
+.field label{display:block;font-size:9px;color:var(--sub);margin-bottom:4px;letter-spacing:.06em;text-transform:uppercase}
+.field input,.field select{width:100%;background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:7px 10px;font-size:11px;font-family:inherit}
+.field input:focus,.field select:focus{outline:none;border-color:var(--gold)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.field-note{font-size:9px;color:var(--muted);margin-top:3px}
+
+/* toggle switch */
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:5px 0}
+.toggle-label{font-size:10px;color:var(--text)}
+.toggle-sub{font-size:9px;color:var(--sub)}
+.toggle{position:relative;width:34px;height:18px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;inset:0;background:var(--border2);border-radius:18px;cursor:pointer;transition:.2s}
+.toggle-slider:before{content:'';position:absolute;width:12px;height:12px;left:3px;top:3px;background:#4A6680;border-radius:50%;transition:.2s}
+.toggle input:checked + .toggle-slider{background:var(--gold)}
+.toggle input:checked + .toggle-slider:before{transform:translateX(16px);background:#fff}
+
+/* split slider */
+.split-row{display:flex;align-items:center;gap:8px;margin-top:4px}
+.split-row input[type=range]{flex:1;-webkit-appearance:none;height:3px;background:var(--border2);border-radius:2px;outline:none}
+.split-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--gold);cursor:pointer}
+.split-val{font-size:10px;color:var(--gold);min-width:32px;text-align:right;font-weight:700}
+
+/* ── RIGHT PANEL ── */
+.rp{overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+
+/* ── SUMMARY CARDS ── */
+.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.s-card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:14px}
+.s-card.green{border-color:rgba(34,215,122,.3);background:var(--green-dim)}
+.s-card.gold{border-color:rgba(197,165,90,.3);background:var(--gold-dim)}
+.s-card.cyan{border-color:rgba(0,200,255,.3);background:var(--cyan-dim)}
+.s-card.amber{border-color:rgba(245,166,35,.3);background:var(--amber-dim)}
+.s-label{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);margin-bottom:6px}
+.s-val{font-size:22px;font-weight:700;letter-spacing:-.5px}
+.s-val.green{color:var(--green)}
+.s-val.gold{color:var(--gold)}
+.s-val.cyan{color:var(--cyan)}
+.s-val.amber{color:var(--amber)}
+.s-note{font-size:9px;color:var(--sub);margin-top:4px}
+
+/* ── VALUE STACK TABLE ── */
+.stack-section{background:var(--card);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.stack-hdr{background:var(--panel);border-bottom:1px solid var(--border);padding:10px 14px;display:flex;align-items:center;gap:10px}
+.stack-hdr-title{font-size:11px;font-weight:700;color:var(--text);letter-spacing:.04em}
+.stack-hdr-right{margin-left:auto;font-size:9px;color:var(--sub)}
+
+table.stack{width:100%;border-collapse:collapse;font-size:10px}
+table.stack th{background:var(--panel);padding:8px 12px;text-align:left;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);border-bottom:1px solid var(--border);font-weight:600}
+table.stack th.r{text-align:right}
+table.stack td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+table.stack td.r{text-align:right;font-weight:700}
+table.stack tr:last-child td{border-bottom:none}
+table.stack tr:hover td{background:rgba(255,255,255,.02)}
+table.stack tr.total td{background:var(--panel);font-weight:700;font-size:11px;border-top:1px solid var(--border2)}
+
+.stream-name{font-weight:600;color:var(--text)}
+.stream-cat{font-size:8px;color:var(--sub);margin-top:2px}
+.on-badge{font-size:8px;background:var(--green-dim);color:var(--green);border:1px solid rgba(34,215,122,.3);border-radius:3px;padding:1px 6px}
+.off-badge{font-size:8px;background:var(--muted);color:var(--sub);border:1px solid var(--border);border-radius:3px;padding:1px 6px;opacity:.6}
+.cust-badge{font-size:8px;background:var(--cyan-dim);color:var(--cyan);border:1px solid rgba(0,200,255,.3);border-radius:3px;padding:1px 6px}
+
+.split-cell{display:flex;align-items:center;gap:6px}
+.split-mini{width:60px;-webkit-appearance:none;height:2px;background:var(--border2);border-radius:2px;outline:none}
+.split-mini::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:var(--gold);cursor:pointer}
+.split-pct{font-size:9px;color:var(--gold);min-width:26px}
+
+/* ── CAPEX / FINANCIALS ── */
+.fin-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.fin-card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:14px}
+.fin-title{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);margin-bottom:10px;font-weight:700}
+.fin-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)}
+.fin-row:last-child{border-bottom:none}
+.fin-key{font-size:10px;color:var(--sub)}
+.fin-val{font-size:10px;font-weight:700;color:var(--text)}
+.fin-val.green{color:var(--green)}
+.fin-val.red{color:var(--red)}
+.fin-val.gold{color:var(--gold)}
+
+/* ── CUSTOMER / NextNRG SPLIT ── */
+.split-section{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:16px}
+.split-title{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);margin-bottom:12px;font-weight:700}
+.split-bars{display:flex;flex-direction:column;gap:8px}
+.split-bar-row{display:grid;grid-template-columns:140px 1fr 80px 80px;gap:10px;align-items:center}
+.split-bar-label{font-size:10px;color:var(--text)}
+.split-bar-track{height:6px;background:var(--border2);border-radius:3px;overflow:hidden;position:relative}
+.split-bar-fill{height:100%;border-radius:3px;transition:.3s}
+.split-bar-fill.customer{background:var(--cyan)}
+.split-bar-fill.clearsky{background:var(--gold)}
+.split-bar-num{font-size:10px;font-weight:700;text-align:right}
+.split-bar-num.customer{color:var(--cyan)}
+.split-bar-num.clearsky{color:var(--gold)}
+
+/* ── INCENTIVES ── */
+.inc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.inc-card{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:11px}
+.inc-name{font-size:9px;color:var(--text);font-weight:600;margin-bottom:4px}
+.inc-val{font-size:14px;font-weight:700;color:var(--green)}
+.inc-note{font-size:8px;color:var(--sub);margin-top:3px;line-height:1.4}
+.inc-toggle{display:flex;align-items:center;gap:6px;margin-top:6px}
+.inc-toggle label{font-size:8px;color:var(--sub)}
+
+/* ── 10-YR PROJECTION ── */
+.proj-table{width:100%;border-collapse:collapse;font-size:9px}
+.proj-table th{background:var(--panel);padding:6px 10px;text-align:right;font-size:8px;color:var(--sub);border-bottom:1px solid var(--border)}
+.proj-table th:first-child{text-align:left}
+.proj-table td{padding:6px 10px;border-bottom:1px solid var(--border);text-align:right}
+.proj-table td:first-child{text-align:left;color:var(--sub)}
+.proj-table tr.highlight td{color:var(--green);font-weight:700}
+.proj-table tr.cumulative td{background:var(--panel);font-weight:700;color:var(--gold)}
+
+/* ── EXPORT BAR ── */
+.export-bar{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.export-title{font-size:10px;color:var(--sub);font-weight:700;margin-right:4px}
+.export-toggle{display:flex;align-items:center;gap:5px;font-size:9px;color:var(--sub)}
+.export-toggle input{accent-color:var(--gold)}
+.btn-export{background:var(--gold);color:#060D14;border:none;padding:8px 18px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit;letter-spacing:.06em;margin-left:auto}
+.btn-export:hover{opacity:.88}
+.btn-secondary{background:transparent;color:var(--text);border:1px solid var(--border2);padding:8px 14px;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn-secondary:hover{border-color:var(--gold);color:var(--gold)}
+
+/* ── CUSTOM PARTNER ── */
+.custom-section{background:var(--card);border:1px solid var(--border2);border-radius:6px;padding:14px}
+.custom-hdr{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.custom-title{font-size:10px;font-weight:700;color:var(--cyan)}
+.custom-streams{display:flex;flex-direction:column;gap:6px}
+.custom-stream{display:grid;grid-template-columns:1fr 80px 70px 80px auto;gap:8px;align-items:center}
+.custom-stream input{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:10px;font-family:inherit}
+.custom-stream select{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:10px;font-family:inherit}
+.btn-add-stream{background:transparent;color:var(--cyan);border:1px dashed rgba(0,200,255,.3);padding:6px 12px;border-radius:4px;font-size:9px;cursor:pointer;font-family:inherit;margin-top:6px}
+.btn-add-stream:hover{background:var(--cyan-dim)}
+.btn-del{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:2px 4px}
+
+/* ── FEE INPUT ── */
+.fee-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)}
+.fee-row:last-child{border-bottom:none}
+.fee-label{font-size:10px;color:var(--sub);flex:1}
+.fee-input{width:90px;background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:10px;font-family:inherit;text-align:right}
+.fee-unit{font-size:9px;color:var(--muted);width:50px}
+
+@media(max-width:900px){
+  .layout{grid-template-columns:1fr}
+  .lp{max-height:50vh}
+  .summary-grid{grid-template-columns:1fr 1fr}
+  .fin-grid{grid-template-columns:1fr}
+  .inc-grid{grid-template-columns:1fr 1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <a href="/" class="hdr-back">← Portal</a>
+  <div class="hdr-title">⚡ BESS VALUE STACK CALCULATOR</div>
+  <div class="hdr-sub">Real utility rates · Incentive stacking · Revenue split modeling</div>
+</div>
+
+<div class="layout">
+
+<!-- ══ LEFT PANEL ══ -->
+<div class="lp">
+
+  <!-- System Config -->
+  <div class="sec">
+    <div class="sec-h">⚡ BESS System</div>
+    <div class="field">
+      <label>State / Utility</label>
+      <select id="utility" onchange="recalc()">
+        <optgroup label="California">
+          <option value="CA_PGE">PG&E (California)</option>
+          <option value="CA_SCE">SCE (California)</option>
+          <option value="CA_SDGE">SDG&E (California)</option>
+        </optgroup>
+        <optgroup label="Washington State">
+          <option value="WA_PSE">Puget Sound Energy (WA)</option>
+          <option value="WA_SCL">Seattle City Light (WA)</option>
+        </optgroup>
+        <optgroup label="Oregon">
+          <option value="OR_PGE">Portland General Electric (OR)</option>
+          <option value="OR_PAC">PacifiCorp / RMP (OR)</option>
+        </optgroup>
+        <optgroup label="Illinois">
+          <option value="IL_COMED" selected>ComEd (Illinois)</option>
+          <option value="IL_AMEREN">Ameren Illinois</option>
+        </optgroup>
+        <optgroup label="New Jersey">
+          <option value="NJ_PSEG">PSEG (NJ)</option>
+          <option value="NJ_JCPL">JCP&L / FirstEnergy (NJ)</option>
+          <option value="NJ_ACE">Atlantic City Electric (NJ)</option>
+        </optgroup>
+      </select>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>System Size (kWh)</label>
+        <input type="number" id="kwh" value="5000" min="100" max="100000" onchange="recalc()">
+      </div>
+      <div class="field">
+        <label>Power (kW AC)</label>
+        <input type="number" id="kw" value="1250" min="50" onchange="recalc()">
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>Duration (hrs)</label>
+        <input type="number" id="duration" value="4" min="1" max="12" step="0.5" onchange="recalc()">
+      </div>
+      <div class="field">
+        <label>Cycles/Day</label>
+        <input type="number" id="cycles" value="1.0" min="0.5" max="3" step="0.25" onchange="recalc()">
+      </div>
+    </div>
+    <div class="field">
+      <label>Customer Monthly Demand (kW)</label>
+      <input type="number" id="peak-demand" value="800" onchange="recalc()">
+      <div class="field-note">Used for demand charge shaving calculation</div>
+    </div>
+    <div class="field">
+      <label>Customer Monthly kWh Usage</label>
+      <input type="number" id="monthly-kwh" value="150000" onchange="recalc()">
+    </div>
+  </div>
+
+  <!-- Value Streams Toggle -->
+  <div class="sec">
+    <div class="sec-h">📊 Value Streams (toggle on/off)</div>
+    <div id="stream-toggles"></div>
+  </div>
+
+  <!-- Revenue Split -->
+  <div class="sec">
+    <div class="sec-h">💰 Revenue Split — NextNRG / Customer</div>
+    <div id="split-controls"></div>
+  </div>
+
+  <!-- Fees -->
+  <div class="sec">
+    <div class="sec-h">📉 Program & Software Fees (annual)</div>
+    <div class="fee-row">
+      <span class="fee-label">EMS Software</span>
+      <input class="fee-input" id="fee-ems" value="18" onchange="recalc()">
+      <span class="fee-unit">$/kWh-yr</span>
+    </div>
+    <div class="fee-row">
+      <span class="fee-label">Aggregator Fee</span>
+      <input class="fee-input" id="fee-agg" value="5" onchange="recalc()">
+      <span class="fee-unit">% of revenue</span>
+    </div>
+    <div class="fee-row">
+      <span class="fee-label">O&M / Insurance</span>
+      <input class="fee-input" id="fee-om" value="8" onchange="recalc()">
+      <span class="fee-unit">$/kWh-yr</span>
+    </div>
+    <div class="fee-row">
+      <span class="fee-label">Interconnection (annual)</span>
+      <input class="fee-input" id="fee-inter" value="3600" onchange="recalc()">
+      <span class="fee-unit">$/yr</span>
+    </div>
+  </div>
+
+  <!-- CapEx -->
+  <div class="sec">
+    <div class="sec-h">🏗 CapEx Assumptions</div>
+    <div class="row2">
+      <div class="field">
+        <label>BESS Cost ($/kWh)</label>
+        <input type="number" id="capex-kwh" value="380" onchange="recalc()">
+      </div>
+      <div class="field">
+        <label>EPC Margin (%)</label>
+        <input type="number" id="capex-epc" value="18" onchange="recalc()">
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>Interconnect ($)</label>
+        <input type="number" id="capex-inter" value="45000" onchange="recalc()">
+      </div>
+      <div class="field">
+        <label>Permitting ($)</label>
+        <input type="number" id="capex-permit" value="18000" onchange="recalc()">
+      </div>
+    </div>
+  </div>
+
+  <!-- Tax Incentives -->
+  <div class="sec">
+    <div class="sec-h">🏛 Federal Tax Incentives</div>
+    <div id="incentive-toggles"></div>
+  </div>
+
+  <!-- Proposal Focus -->
+  <div class="sec">
+    <div class="sec-h">📋 Proposal Mode</div>
+    <div class="field">
+      <label>Focus Strategy</label>
+      <select id="proposal-mode" onchange="recalc()">
+        <option value="balanced">Balanced (all streams)</option>
+        <option value="demand">Demand Shaving + Rebates</option>
+        <option value="vpp">VPP / Value Stack Focus</option>
+        <option value="arbitrage">Energy Arbitrage Focus</option>
+        <option value="custom">Custom Mix</option>
+      </select>
+    </div>
+  </div>
+
+</div>
+<!-- end left panel -->
+
+<!-- ══ RIGHT PANEL ══ -->
+<div class="rp">
+
+  <!-- Summary Cards -->
+  <div class="summary-grid" id="summary-cards">
+    <div class="s-card green"><div class="s-label">Annual Revenue</div><div class="s-val green" id="sum-revenue">—</div><div class="s-note">All active streams</div></div>
+    <div class="s-card gold"><div class="s-label">NextNRG Annual</div><div class="s-val gold" id="sum-clearsky">—</div><div class="s-note">After fees</div></div>
+    <div class="s-card cyan"><div class="s-label">Customer Annual</div><div class="s-val cyan" id="sum-customer">—</div><div class="s-note">Payment to host</div></div>
+    <div class="s-card amber"><div class="s-label">Simple Payback</div><div class="s-val amber" id="sum-payback">—</div><div class="s-note">Years (after ITC)</div></div>
+  </div>
+
+  <!-- Value Stack Table -->
+  <div class="stack-section">
+    <div class="stack-hdr">
+      <div class="stack-hdr-title">Value Stack — Annual Revenue by Stream</div>
+      <div class="stack-hdr-right" id="utility-label">ComEd · PJM · Illinois</div>
+    </div>
+    <table class="stack">
+      <thead>
+        <tr>
+          <th style="width:35%">Revenue Stream</th>
+          <th class="r">Basis / Rate</th>
+          <th class="r">Annual $</th>
+          <th class="r">$/kWh</th>
+          <th class="r">NextNRG Split</th>
+          <th class="r">Customer Split</th>
+          <th style="width:60px">Active</th>
+        </tr>
+      </thead>
+      <tbody id="stack-tbody"></tbody>
+      <tfoot id="stack-tfoot"></tfoot>
+    </table>
+  </div>
+
+  <!-- Custom Partner Streams -->
+  <div class="custom-section">
+    <div class="custom-hdr">
+      <div class="custom-title">⚡ Custom Partner / Value Streams</div>
+      <div style="font-size:9px;color:var(--sub);margin-left:auto">Add non-utility revenue streams</div>
+    </div>
+    <div class="custom-streams" id="custom-streams"></div>
+    <button class="btn-add-stream" onclick="addCustomStream()">+ Add Custom Stream</button>
+  </div>
+
+  <!-- Financial Analysis -->
+  <div class="fin-grid">
+    <div class="fin-card">
+      <div class="fin-title">💰 CapEx Breakdown</div>
+      <div id="capex-rows"></div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-title">🏛 Tax Incentives Applied</div>
+      <div id="incentive-rows"></div>
+    </div>
+  </div>
+
+  <!-- Customer / NextNRG Revenue Split -->
+  <div class="split-section">
+    <div class="split-title">📊 Revenue Distribution — Who Gets What</div>
+    <div class="split-bars" id="split-bars"></div>
+  </div>
+
+  <!-- 10-Year Projection -->
+  <div class="stack-section">
+    <div class="stack-hdr">
+      <div class="stack-hdr-title">10-Year Cash Flow Projection</div>
+      <div class="stack-hdr-right">2.5% annual capacity degradation · 2% escalation</div>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="proj-table" id="proj-table"></table>
+    </div>
+  </div>
+
+  <!-- Export Controls -->
+  <div class="export-bar">
+    <span class="export-title">EXPORT:</span>
+    <label class="export-toggle"><input type="checkbox" id="exp-stack" checked> Value Stack</label>
+    <label class="export-toggle"><input type="checkbox" id="exp-capex" checked> CapEx</label>
+    <label class="export-toggle"><input type="checkbox" id="exp-incentives" checked> Incentives</label>
+    <label class="export-toggle"><input type="checkbox" id="exp-split" checked> Revenue Split</label>
+    <label class="export-toggle"><input type="checkbox" id="exp-projection" checked> 10-Yr Projection</label>
+    <label class="export-toggle"><input type="checkbox" id="exp-customer"> Customer View Only</label>
+    <button class="btn-secondary" onclick="exportCSV()">⬇ CSV</button>
+    <button class="btn-export" onclick="exportPDF()">📄 Export to Pro Forma</button>
+  </div>
+
+</div>
+<!-- end right panel -->
+
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// UTILITY DATA
+// ══════════════════════════════════════════════════════════════════
+var UTILITY_DATA = {
+  CA_PGE: { name:"PG&E (California)", state:"CA", iso:"CAISO",
+    demandRate:19.85, energyRate:0.248, offPeakRate:0.156, peakRate:0.412,
+    ancillaryFR:14.20, ancillaryRRS:6.80, ancillarySNS:4.20,
+    capacityPrice:28.50, arbitrageSpread:0.22,
+    programs:{
+      SGIP:{name:"SGIP Self-Generation Incentive",rate:400,unit:"$/kWh",cap:null,oneTime:true},
+      DRRP:{name:"Demand Response Reserve Program",rate:150,unit:"$/kW-yr",cap:null,oneTime:false},
+      NEM3:{name:"NEM 3.0 Export Credit",rate:0.08,unit:"$/kWh exported",cap:null,oneTime:false},
+    }},
+  CA_SCE: { name:"SCE (California)", state:"CA", iso:"CAISO",
+    demandRate:21.40, energyRate:0.262, offPeakRate:0.168, peakRate:0.438,
+    ancillaryFR:14.20, ancillaryRRS:6.80, ancillarySNS:4.20,
+    capacityPrice:31.20, arbitrageSpread:0.24,
+    programs:{
+      SGIP:{name:"SGIP Self-Generation Incentive",rate:400,unit:"$/kWh",cap:null,oneTime:true},
+      DRRP:{name:"Demand Response Reserve Program",rate:165,unit:"$/kW-yr",cap:null,oneTime:false},
+      PFLEX:{name:"Peak Time Rebate",rate:0.75,unit:"$/kWh curtailed",cap:null,oneTime:false},
+    }},
+  CA_SDGE: { name:"SDG&E (California)", state:"CA", iso:"CAISO",
+    demandRate:24.60, energyRate:0.298, offPeakRate:0.182, peakRate:0.491,
+    ancillaryFR:14.20, ancillaryRRS:6.80, ancillarySNS:4.20,
+    capacityPrice:29.80, arbitrageSpread:0.26,
+    programs:{
+      SGIP:{name:"SGIP Self-Generation Incentive",rate:400,unit:"$/kWh",cap:null,oneTime:true},
+      DR:{name:"SDG&E Demand Response",rate:140,unit:"$/kW-yr",cap:null,oneTime:false},
+    }},
+  WA_PSE: { name:"Puget Sound Energy (WA)", state:"WA", iso:"NWPP",
+    demandRate:8.40, energyRate:0.098, offPeakRate:0.072, peakRate:0.148,
+    ancillaryFR:9.80, ancillaryRRS:4.20, ancillarySNS:2.80,
+    capacityPrice:18.40, arbitrageSpread:0.06,
+    programs:{
+      WUTC_BESS:{name:"WA UTC Storage Incentive",rate:0.10,unit:"$/kWh capacity",cap:250000,oneTime:true},
+      DR:{name:"PSE Demand Response",rate:85,unit:"$/kW-yr",cap:null,oneTime:false},
+    }},
+  WA_SCL: { name:"Seattle City Light (WA)", state:"WA", iso:"NWPP",
+    demandRate:6.20, energyRate:0.072, offPeakRate:0.054, peakRate:0.112,
+    ancillaryFR:9.80, ancillaryRRS:4.20, ancillarySNS:2.80,
+    capacityPrice:16.80, arbitrageSpread:0.05,
+    programs:{
+      WUTC_BESS:{name:"WA UTC Storage Incentive",rate:0.10,unit:"$/kWh capacity",cap:250000,oneTime:true},
+      DR:{name:"SCL Demand Response",rate:70,unit:"$/kW-yr",cap:null,oneTime:false},
+    }},
+  OR_PGE: { name:"Portland General Electric (OR)", state:"OR", iso:"NWPP",
+    demandRate:9.80, energyRate:0.112, offPeakRate:0.082, peakRate:0.168,
+    ancillaryFR:10.20, ancillaryRRS:4.60, ancillarySNS:3.10,
+    capacityPrice:19.60, arbitrageSpread:0.07,
+    programs:{
+      OR_BESS:{name:"OR ODOE Energy Storage Program",rate:150,unit:"$/kWh",cap:500000,oneTime:true},
+      DR:{name:"PGE Demand Response",rate:95,unit:"$/kW-yr",cap:null,oneTime:false},
+    }},
+  OR_PAC: { name:"PacifiCorp / RMP (OR)", state:"OR", iso:"NWPP",
+    demandRate:8.60, energyRate:0.098, offPeakRate:0.071, peakRate:0.152,
+    ancillaryFR:10.20, ancillaryRRS:4.60, ancillarySNS:3.10,
+    capacityPrice:18.20, arbitrageSpread:0.06,
+    programs:{
+      OR_BESS:{name:"OR ODOE Energy Storage Program",rate:150,unit:"$/kWh",cap:500000,oneTime:true},
+      DR:{name:"PacifiCorp Demand Response",rate:88,unit:"$/kW-yr",cap:null,oneTime:false},
+    }},
+  IL_COMED: { name:"ComEd (Illinois)", state:"IL", iso:"PJM",
+    demandRate:14.20, energyRate:0.098, offPeakRate:0.068, peakRate:0.182,
+    ancillaryFR:16.40, ancillaryRRS:7.20, ancillarySNS:3.80,
+    capacityPrice:34.80, arbitrageSpread:0.11,
+    programs:{
+      BESH:{name:"ComEd BESH Rebate §16-107.6",rate:250,unit:"$/kWh",cap:null,oneTime:true},
+      BYODLR:{name:"BYODLR Rider (ICC 25-0678)",rate:120,unit:"$/kW-yr",cap:null,oneTime:false},
+      SDVPP:{name:"SDVPP Tariff (eff. Jul 16 2026)",rate:85,unit:"$/kW-yr",cap:null,oneTime:false},
+      PJM_DR:{name:"PJM Demand Response (ERS)",rate:42,unit:"$/MW-day",cap:null,oneTime:false},
+      PJM_REG:{name:"PJM Frequency Regulation",rate:7.20,unit:"$/MWh",cap:null,oneTime:false},
+      IPA_REC:{name:"Illinois REC / ZEC Credit",rate:18,unit:"$/MWh",cap:null,oneTime:false},
+    }},
+  IL_AMEREN: { name:"Ameren Illinois", state:"IL", iso:"MISO",
+    demandRate:12.80, energyRate:0.088, offPeakRate:0.061, peakRate:0.164,
+    ancillaryFR:13.20, ancillaryRRS:5.80, ancillarySNS:3.20,
+    capacityPrice:22.40, arbitrageSpread:0.09,
+    programs:{
+      IL_BESS:{name:"IL Standalone Storage Rebate (CEJA)",rate:250,unit:"$/kWh",cap:null,oneTime:true},
+      MISO_DR:{name:"MISO Demand Response",rate:28,unit:"$/MW-day",cap:null,oneTime:false},
+      MISO_REG:{name:"MISO Regulation Service",rate:13.20,unit:"$/MWh",cap:null,oneTime:false},
+      IPA_REC:{name:"Illinois REC Credit",rate:15,unit:"$/MWh",cap:null,oneTime:false},
+    }},
+  NJ_PSEG: { name:"PSEG (New Jersey)", state:"NJ", iso:"PJM",
+    demandRate:16.80, energyRate:0.142, offPeakRate:0.098, peakRate:0.228,
+    ancillaryFR:16.40, ancillaryRRS:7.20, ancillarySNS:3.80,
+    capacityPrice:34.80, arbitrageSpread:0.13,
+    programs:{
+      NJBPU_BESS:{name:"NJ BPU Energy Storage Incentive",rate:180,unit:"$/kWh",cap:null,oneTime:true},
+      SREC2:{name:"NJ SREC2 Storage Adder",rate:65,unit:"$/MWh",cap:null,oneTime:false},
+      DR:{name:"PSEG Demand Response",rate:145,unit:"$/kW-yr",cap:null,oneTime:false},
+      PJM_CAP:{name:"PJM Capacity Market RPM",rate:34.80,unit:"$/kW-yr",cap:null,oneTime:false},
+      PJM_REG:{name:"PJM Frequency Regulation",rate:16.40,unit:"$/MWh",cap:null,oneTime:false},
+    }},
+  NJ_JCPL: { name:"JCP&L / FirstEnergy (NJ)", state:"NJ", iso:"PJM",
+    demandRate:15.40, energyRate:0.134, offPeakRate:0.092, peakRate:0.214,
+    ancillaryFR:16.40, ancillaryRRS:7.20, ancillarySNS:3.80,
+    capacityPrice:34.80, arbitrageSpread:0.12,
+    programs:{
+      NJBPU_BESS:{name:"NJ BPU Energy Storage Incentive",rate:180,unit:"$/kWh",cap:null,oneTime:true},
+      DR:{name:"JCP&L Demand Response",rate:130,unit:"$/kW-yr",cap:null,oneTime:false},
+      PJM_CAP:{name:"PJM Capacity Market RPM",rate:34.80,unit:"$/kW-yr",cap:null,oneTime:false},
+      PJM_REG:{name:"PJM Frequency Regulation",rate:16.40,unit:"$/MWh",cap:null,oneTime:false},
+    }},
+  NJ_ACE: { name:"Atlantic City Electric (NJ)", state:"NJ", iso:"PJM",
+    demandRate:14.90, energyRate:0.128, offPeakRate:0.088, peakRate:0.206,
+    ancillaryFR:16.40, ancillaryRRS:7.20, ancillarySNS:3.80,
+    capacityPrice:34.80, arbitrageSpread:0.11,
+    programs:{
+      NJBPU_BESS:{name:"NJ BPU Energy Storage Incentive",rate:180,unit:"$/kWh",cap:null,oneTime:true},
+      DR:{name:"ACE Demand Response",rate:120,unit:"$/kW-yr",cap:null,oneTime:false},
+      PJM_CAP:{name:"PJM Capacity Market RPM",rate:34.80,unit:"$/kW-yr",cap:null,oneTime:false},
+      PJM_REG:{name:"PJM Frequency Regulation",rate:16.40,unit:"$/MWh",cap:null,oneTime:false},
+    }},
+};
+
+var FEDERAL_INCENTIVES = {
+  ITC:     {name:"ITC 30% (IRA §48)",             rate:0.30,  type:"pct_capex",  notes:"30% of installed cost"},
+  ITC_EC:  {name:"Energy Community Bonus +10%",    rate:0.10,  type:"pct_capex",  notes:"Former coal/fossil community"},
+  ITC_DOM: {name:"Domestic Content Bonus +10%",    rate:0.10,  type:"pct_capex",  notes:"Meets domestic content reqs"},
+  MACRS:   {name:"MACRS 5-yr Bonus Depreciation",  rate:0.85,  type:"pct_capex",  notes:"85% bonus depreciation 2026"},
+};
+
+// ══════════════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════════════
+var _streams = {};     // streamKey -> { on: bool, csplit: 0-100 }
+var _incentives = {};  // key -> bool
+var _customStreams = [];
+var _customId = 0;
+
+// ══════════════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════════════
+function fmt$(n) {
+  if (n === null || isNaN(n)) return '—';
+  if (Math.abs(n) >= 1000000) return '$' + (n/1000000).toFixed(2) + 'M';
+  if (Math.abs(n) >= 1000) return '$' + Math.round(n/1000) + 'K';
+  return '$' + Math.round(n).toLocaleString();
+}
+function fmtPct(n) { return n.toFixed(1) + '%'; }
+function gv(id) { return parseFloat(document.getElementById(id).value) || 0; }
+function gs(id) { return document.getElementById(id).value; }
+
+// ══════════════════════════════════════════════════════════════════
+// INIT TOGGLES
+// ══════════════════════════════════════════════════════════════════
+function initToggles() {
+  var utilKey = gs('utility');
+  var U = UTILITY_DATA[utilKey];
+
+  // Stream toggles
+  var allKeys = ['demand', 'arbitrage', 'freq_reg', 'spin_res', 'capacity'];
+  Object.keys(U.programs).forEach(function(k) { allKeys.push('prog_'+k); });
+  _customStreams.forEach(function(c) { allKeys.push('cust_'+c.id); });
+
+  allKeys.forEach(function(k) {
+    if (!_streams[k]) _streams[k] = { on: true, csplit: 50 };
+  });
+
+  renderStreamToggles(U);
+  renderSplitControls(U);
+
+  // Incentive toggles
+  var itDiv = document.getElementById('incentive-toggles');
+  itDiv.innerHTML = '';
+  Object.keys(FEDERAL_INCENTIVES).forEach(function(k) {
+    if (_incentives[k] === undefined) _incentives[k] = (k === 'ITC' || k === 'MACRS');
+    var inc = FEDERAL_INCENTIVES[k];
+    var row = document.createElement('div');
+    row.className = 'toggle-row';
+    row.innerHTML = '<div><div class="toggle-label">'+inc.name+'</div><div class="toggle-sub">'+inc.notes+'</div></div>'
+      + '<label class="toggle"><input type="checkbox" id="inc_'+k+'" '+((_incentives[k])?'checked':'')+' onchange="_incentives[\''+k+'\']=this.checked;recalc()">'
+      + '<span class="toggle-slider"></span></label>';
+    itDiv.appendChild(row);
+  });
+}
+
+function renderStreamToggles(U) {
+  var div = document.getElementById('stream-toggles');
+  div.innerHTML = '';
+
+  var coreStreams = [
+    {key:'demand', label:'Demand Charge Shaving', sub:'Peak demand reduction'},
+    {key:'arbitrage', label:'Energy Arbitrage', sub:'Buy low / sell high spread'},
+    {key:'freq_reg', label:'Frequency Regulation', sub:'ISO ancillary service'},
+    {key:'spin_res', label:'Spinning / Sync Reserve', sub:'ISO ancillary service'},
+    {key:'capacity', label:'Capacity Market', sub:'Resource adequacy payment'},
+  ];
+
+  coreStreams.forEach(function(s) {
+    if (!_streams[s.key]) _streams[s.key] = { on: true, csplit: 50 };
+    appendToggle(div, s.key, s.label, s.sub);
+  });
+
+  Object.keys(U.programs).forEach(function(k) {
+    var p = U.programs[k];
+    var key = 'prog_'+k;
+    if (!_streams[key]) _streams[key] = { on: true, csplit: p.oneTime ? 0 : 50 };
+    appendToggle(div, key, p.name, p.unit);
+  });
+}
+
+function appendToggle(div, key, label, sub) {
+  var s = _streams[key];
+  var row = document.createElement('div');
+  row.className = 'toggle-row';
+  row.innerHTML = '<div><div class="toggle-label">'+label+'</div><div class="toggle-sub">'+sub+'</div></div>'
+    + '<label class="toggle"><input type="checkbox" id="tog_'+key+'" '+(s.on?'checked':'')+' onchange="_streams[\''+key+'\'].on=this.checked;recalc()">'
+    + '<span class="toggle-slider"></span></label>';
+  div.appendChild(row);
+}
+
+function renderSplitControls(U) {
+  var div = document.getElementById('split-controls');
+  div.innerHTML = '<div style="font-size:9px;color:var(--sub);margin-bottom:8px">Slide to set NextNRG % of each revenue stream</div>';
+
+  var coreStreams = [
+    {key:'demand', label:'Demand Shaving'},
+    {key:'arbitrage', label:'Energy Arbitrage'},
+    {key:'freq_reg', label:'Freq. Regulation'},
+    {key:'spin_res', label:'Spin Reserve'},
+    {key:'capacity', label:'Capacity Market'},
+  ];
+  coreStreams.forEach(function(s) { appendSplit(div, s.key, s.label); });
+  Object.keys(U.programs).forEach(function(k) {
+    appendSplit(div, 'prog_'+k, U.programs[k].name.substring(0,25));
+  });
+}
+
+function appendSplit(div, key, label) {
+  if (!_streams[key]) _streams[key] = { on: true, csplit: 50 };
+  var s = _streams[key];
+  var row = document.createElement('div');
+  row.className = 'field';
+  row.innerHTML = '<label>'+label+'</label>'
+    + '<div class="split-row">'
+    + '<input type="range" class="split-mini" min="0" max="100" value="'+s.csplit+'" id="split_'+key+'" oninput="_streams[\''+key+'\'].csplit=parseInt(this.value);document.getElementById(\'spv_'+key+'\').textContent=this.value+\'%\';recalc()">'
+    + '<span class="split-val" id="spv_'+key+'">'+s.csplit+'%</span>'
+    + '</div>';
+  div.appendChild(row);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// CALCULATIONS
+// ══════════════════════════════════════════════════════════════════
+function calcStreams(U, kwh, kw, cycles, peakDemand, monthlyKwh) {
+  var rtEff = 0.87;
+  var usableKwh = kwh * rtEff;
+  var annualKwh = usableKwh * cycles * 365;
+  var streams = [];
+
+  // 1. Demand Charge Shaving
+  var demandReduction = Math.min(kw * 0.80, peakDemand * 0.25); // shave up to 25% of peak
+  var demandRevenue = demandReduction * U.demandRate * 12;
+  streams.push({ key:'demand', name:'Demand Charge Shaving',
+    cat:'Behind-the-meter', basis: fmt$(U.demandRate)+'/kW-mo × '+Math.round(demandReduction)+'kW × 12',
+    annual: demandRevenue, note:'Based on '+fmtPct(25)+' peak shave' });
+
+  // 2. Energy Arbitrage
+  var arbitrageRevenue = annualKwh * U.arbitrageSpread;
+  streams.push({ key:'arbitrage', name:'Energy Arbitrage',
+    cat:'Wholesale market', basis: '$'+U.arbitrageSpread.toFixed(3)+'/kWh × '+Math.round(annualKwh/1000)+'MWh',
+    annual: arbitrageRevenue, note:'Day-ahead price spread' });
+
+  // 3. Frequency Regulation (40% of time eligible)
+  var frHours = 365 * 24 * 0.40;
+  var frRevenue = (kw/1000) * U.ancillaryFR * frHours;
+  streams.push({ key:'freq_reg', name:'Frequency Regulation',
+    cat:'Ancillary services', basis: '$'+U.ancillaryFR+'/MWh × '+(kw/1000).toFixed(1)+'MW × '+Math.round(frHours)+'hrs',
+    annual: frRevenue, note:'40% capacity factor, '+U.iso });
+
+  // 4. Spinning/Sync Reserve (30% of time)
+  var srHours = 365 * 24 * 0.30;
+  var srRevenue = (kw/1000) * U.ancillaryRRS * srHours;
+  streams.push({ key:'spin_res', name:'Spinning / Sync Reserve',
+    cat:'Ancillary services', basis: '$'+U.ancillaryRRS+'/MWh × '+(kw/1000).toFixed(1)+'MW × '+Math.round(srHours)+'hrs',
+    annual: srRevenue, note:'30% capacity factor, '+U.iso });
+
+  // 5. Capacity Market
+  var capRevenue = kw * (U.capacityPrice / 1000) * 1000; // $/kW-yr
+  streams.push({ key:'capacity', name:'Capacity Market',
+    cat:'Wholesale market', basis: '$'+(U.capacityPrice)+'/kW-yr × '+kw+'kW',
+    annual: capRevenue, note:U.iso+' resource adequacy' });
+
+  // 6. Utility Programs
+  Object.keys(U.programs).forEach(function(k) {
+    var p = U.programs[k];
+    var key = 'prog_'+k;
+    var annual = 0;
+    var basis = '';
+    if (p.unit === '$/kWh') {
+      annual = p.oneTime ? (kwh * p.rate / 10) : (kwh * p.rate); // annualize one-time over 10yr
+      basis = '$'+p.rate+'/kWh × '+kwh+'kWh'+(p.oneTime?' (amort 10yr)':'');
+    } else if (p.unit === '$/kW-yr') {
+      annual = kw * p.rate;
+      basis = '$'+p.rate+'/kW-yr × '+kw+'kW';
+    } else if (p.unit === '$/MW-day') {
+      annual = (kw/1000) * p.rate * 365;
+      basis = '$'+p.rate+'/MW-day × '+(kw/1000).toFixed(1)+'MW';
+    } else if (p.unit === '$/MWh') {
+      annual = (annualKwh/1000) * p.rate;
+      basis = '$'+p.rate+'/MWh × '+Math.round(annualKwh/1000)+'MWh';
+    } else if (p.unit === '$/kWh capacity') {
+      annual = kwh * p.rate / 10;
+      basis = '$'+p.rate+'/kWh × '+kwh+'kWh (amort 10yr)';
+    } else if (p.unit === '$/kWh exported') {
+      annual = (annualKwh * 0.20) * p.rate; // 20% exported
+      basis = '$'+p.rate+'/kWh × '+Math.round(annualKwh*0.20/1000)+'MWh exported';
+    } else if (p.unit === '$/kWh curtailed') {
+      annual = (annualKwh * 0.15) * p.rate;
+      basis = '$'+p.rate+'/kWh × '+Math.round(annualKwh*0.15/1000)+'MWh curtailed';
+    }
+    if (p.cap) annual = Math.min(annual, p.cap / 10);
+    streams.push({ key:key, name:p.name, cat:'Utility program',
+      basis:basis, annual:annual, note:p.unit+(p.oneTime?' · One-time (amortized)':'') });
+  });
+
+  // 7. Custom streams
+  _customStreams.forEach(function(c) {
+    var annual = (parseFloat(c.rate)||0) * (parseFloat(c.quantity)||0);
+    streams.push({ key:'cust_'+c.id, name:c.name||'Custom Stream', cat:'Custom / Partner',
+      basis:'$'+(c.rate||0)+'/'+c.unit+' × '+(c.quantity||0), annual:annual, note:'Custom entry' });
+  });
+
+  return streams;
+}
+
+function recalc() {
+  var utilKey = gs('utility');
+  var U = UTILITY_DATA[utilKey];
+  if (!U) return;
+
+  var kwh = gv('kwh') || 5000;
+  var kw  = gv('kw')  || 1250;
+  var cycles = gv('cycles') || 1.0;
+  var peakDemand = gv('peak-demand') || 800;
+  var monthlyKwh = gv('monthly-kwh') || 150000;
+
+  // Update utility label
+  document.getElementById('utility-label').textContent = U.name + ' · ' + U.iso;
+
+  var streams = calcStreams(U, kwh, kw, cycles, peakDemand, monthlyKwh);
+
+  // Fees
+  var feeEms   = (gv('fee-ems')   || 18) * kwh;
+  var feeAggPct= (gv('fee-agg')   || 5) / 100;
+  var feeOm    = (gv('fee-om')    || 8) * kwh;
+  var feeInter = gv('fee-inter') || 3600;
+  var totalFeesFixed = feeEms + feeOm + feeInter;
+
+  // CapEx
+  var capexKwh   = gv('capex-kwh')   || 380;
+  var capexEpc   = (gv('capex-epc')  || 18) / 100;
+  var capexInter = gv('capex-inter') || 45000;
+  var capexPerm  = gv('capex-permit')|| 18000;
+
+  var equipCost  = kwh * capexKwh;
+  var epcCost    = equipCost * capexEpc;
+  var totalCapex = equipCost + epcCost + capexInter + capexPerm;
+
+  // Tax incentives
+  var itcRate = 0;
+  if (_incentives['ITC'])    itcRate += 0.30;
+  if (_incentives['ITC_EC']) itcRate += 0.10;
+  if (_incentives['ITC_DOM'])itcRate += 0.10;
+  var itcValue = totalCapex * itcRate;
+  var macrsValue = _incentives['MACRS'] ? totalCapex * 0.85 * 0.21 : 0; // assume 21% tax rate
+  var netCapex = totalCapex - itcValue;
+
+  // Build stack table
+  var tbody = document.getElementById('stack-tbody');
+  tbody.innerHTML = '';
+  var totalRevenue = 0;
+  var totalCs = 0;
+  var totalCust = 0;
+
+  streams.forEach(function(s) {
+    var st = _streams[s.key] || { on:true, csplit:50 };
+    var active = st.on;
+    var csplit = st.csplit;
+    var csRev  = active ? s.annual * csplit / 100 : 0;
+    var custRev= active ? s.annual * (100-csplit) / 100 : 0;
+    if (active) { totalRevenue += s.annual; totalCs += csRev; totalCust += custRev; }
+
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td><div class="stream-name">'+s.name+'</div><div class="stream-cat">'+s.cat+'</div></td>'
+      + '<td class="r" style="font-size:9px;color:var(--sub)">'+s.basis+'</td>'
+      + '<td class="r" style="color:'+(active?'var(--text)':'var(--muted)')+'">'+fmt$(active?s.annual:0)+'</td>'
+      + '<td class="r" style="font-size:9px;color:var(--sub)">'+fmt$(active ? s.annual/kwh : 0)+'</td>'
+      + '<td class="r"><div class="split-cell"><input type="range" class="split-mini" min="0" max="100" value="'+csplit+'" oninput="_streams[\''+s.key+'\'].csplit=parseInt(this.value);recalc()"><span class="split-pct">'+csplit+'%</span></div></td>'
+      + '<td class="r" style="color:var(--cyan)">'+fmt$(custRev)+'</td>'
+      + '<td style="text-align:center"><span class="'+(active?'on-badge':'off-badge')+'">'+(active?'ON':'OFF')+'</span></td>';
+    tbody.appendChild(tr);
+  });
+
+  // Total fees
+  var totalAggFee = totalRevenue * feeAggPct;
+  var totalFees = totalFeesFixed + totalAggFee;
+
+  // Net NextNRG after fees
+  var csNet = totalCs - totalFees;
+
+  var tfoot = document.getElementById('stack-tfoot');
+  tfoot.innerHTML = '<tr class="total">'
+    + '<td colspan="2">TOTAL ANNUAL REVENUE (active streams)</td>'
+    + '<td class="r" style="color:var(--green)">'+fmt$(totalRevenue)+'</td>'
+    + '<td class="r" style="color:var(--sub)">'+fmt$(totalRevenue/kwh)+'/kWh</td>'
+    + '<td class="r" style="color:var(--gold)">NextNRG: '+fmt$(totalCs)+'</td>'
+    + '<td class="r" style="color:var(--cyan)">Customer: '+fmt$(totalCust)+'</td>'
+    + '<td></td></tr>'
+    + '<tr class="total" style="font-size:9px">'
+    + '<td colspan="2" style="color:var(--sub)">Less: program fees & O&M</td>'
+    + '<td class="r" style="color:var(--red)">-'+fmt$(totalFees)+'</td>'
+    + '<td colspan="4" style="color:var(--sub)">EMS '+fmt$(feeEms)+' · O&M '+fmt$(feeOm)+' · Agg '+fmtPct(feeAggPct*100)+' · Interconnect '+fmt$(feeInter)+'</td>'
+    + '</tr>'
+    + '<tr class="total">'
+    + '<td colspan="2" style="color:var(--gold)">NET NextNRG Annual (after all fees)</td>'
+    + '<td class="r" style="color:'+(csNet>0?'var(--green)':'var(--red)')+'">'+fmt$(csNet)+'</td>'
+    + '<td colspan="4" style="color:var(--sub)">IRR calc below</td>'
+    + '</tr>';
+
+  // Summary cards
+  var payback = netCapex > 0 && csNet > 0 ? (netCapex / csNet) : 0;
+  document.getElementById('sum-revenue').textContent  = fmt$(totalRevenue);
+  document.getElementById('sum-clearsky').textContent = fmt$(csNet);
+  document.getElementById('sum-customer').textContent = fmt$(totalCust);
+  document.getElementById('sum-payback').textContent  = payback > 0 ? payback.toFixed(1) + ' yr' : '—';
+
+  // CapEx panel
+  var capexDiv = document.getElementById('capex-rows');
+  capexDiv.innerHTML = [
+    ['BESS Equipment', fmt$(equipCost)],
+    ['EPC / Installation ('+Math.round(capexEpc*100)+'%)', fmt$(epcCost)],
+    ['Interconnection', fmt$(capexInter)],
+    ['Permitting & Eng', fmt$(capexPerm)],
+    ['TOTAL CAPEX', fmt$(totalCapex)],
+    ['Less: ITC ('+Math.round(itcRate*100)+'%)', '-'+fmt$(itcValue)],
+    ['MACRS Tax Benefit', fmt$(macrsValue)],
+    ['NET CAPEX', fmt$(netCapex)],
+  ].map(function(r) {
+    var isTotal = r[0].includes('TOTAL') || r[0].includes('NET');
+    return '<div class="fin-row'+(isTotal?' '+'style="font-weight:700"':'')+'"><span class="fin-key">'+r[0]+'</span><span class="fin-val '+(isTotal?'gold':'')+'">'+r[1]+'</span></div>';
+  }).join('');
+
+  // Incentives panel
+  var incDiv = document.getElementById('incentive-rows');
+  var incRows = [];
+  if (_incentives['ITC'])    incRows.push(['ITC 30%', fmt$(totalCapex*0.30)]);
+  if (_incentives['ITC_EC']) incRows.push(['Energy Community +10%', fmt$(totalCapex*0.10)]);
+  if (_incentives['ITC_DOM'])incRows.push(['Domestic Content +10%', fmt$(totalCapex*0.10)]);
+  if (_incentives['MACRS'])  incRows.push(['MACRS Depreciation Benefit', fmt$(macrsValue)]);
+  // Utility one-time programs
+  Object.keys(U.programs).forEach(function(k) {
+    var p = U.programs[k];
+    if (p.oneTime && _streams['prog_'+k] && _streams['prog_'+k].on) {
+      var val = 0;
+      if (p.unit==='$/kWh') val = kwh * p.rate;
+      else if (p.unit==='$/kWh capacity') val = kwh * p.rate;
+      if (p.cap) val = Math.min(val, p.cap);
+      incRows.push([p.name, fmt$(val)]);
+    }
+  });
+  var totalInc = totalCapex * itcRate + macrsValue;
+  incRows.push(['TOTAL INCENTIVES', fmt$(totalInc)]);
+  incDiv.innerHTML = incRows.map(function(r) {
+    var isTotal = r[0]==='TOTAL INCENTIVES';
+    return '<div class="fin-row"><span class="fin-key">'+r[0]+'</span><span class="fin-val '+(isTotal?'green':'')+'">'+r[1]+'</span></div>';
+  }).join('');
+
+  // Split bars
+  var barsDiv = document.getElementById('split-bars');
+  var activeStreams = streams.filter(function(s){ return _streams[s.key] && _streams[s.key].on; });
+  barsDiv.innerHTML = '';
+  // Header
+  var hdr = document.createElement('div');
+  hdr.className = 'split-bar-row';
+  hdr.innerHTML = '<div style="font-size:8px;color:var(--sub)">STREAM</div>'
+    + '<div style="font-size:8px;color:var(--sub)">DISTRIBUTION</div>'
+    + '<div style="font-size:8px;color:var(--cyan);text-align:right">CUSTOMER</div>'
+    + '<div style="font-size:8px;color:var(--gold);text-align:right">CLEARSKY</div>';
+  barsDiv.appendChild(hdr);
+
+  activeStreams.forEach(function(s) {
+    var st = _streams[s.key] || {csplit:50};
+    var custPct = 100 - st.csplit;
+    var csPct   = st.csplit;
+    var custAmt = s.annual * custPct/100;
+    var csAmt   = s.annual * csPct/100;
+    var row = document.createElement('div');
+    row.className = 'split-bar-row';
+    row.innerHTML = '<div class="split-bar-label">'+s.name.substring(0,22)+'</div>'
+      + '<div><div class="split-bar-track"><div class="split-bar-fill customer" style="width:'+custPct+'%"></div></div></div>'
+      + '<div class="split-bar-num customer">'+fmt$(custAmt)+'</div>'
+      + '<div class="split-bar-num clearsky">'+fmt$(csAmt)+'</div>';
+    barsDiv.appendChild(row);
+  });
+
+  // Totals row
+  var totRow = document.createElement('div');
+  totRow.className = 'split-bar-row';
+  totRow.innerHTML = '<div style="font-size:10px;font-weight:700;color:var(--text)">TOTAL</div>'
+    + '<div></div>'
+    + '<div class="split-bar-num customer" style="font-size:12px">'+fmt$(totalCust)+'</div>'
+    + '<div class="split-bar-num clearsky" style="font-size:12px">'+fmt$(totalCs)+'</div>';
+  barsDiv.appendChild(totRow);
+
+  // 10-year projection
+  buildProjection(totalRevenue, totalCust, csNet, totalFees, netCapex, kwh, kw);
+}
+
+function buildProjection(yr1Revenue, yr1Cust, yr1CsNet, yr1Fees, netCapex, kwh, kw) {
+  var table = document.getElementById('proj-table');
+  var degr = 0.025;  // degradation
+  var esc  = 0.020;  // rate escalation
+
+  var html = '<thead><tr><th>Year</th>';
+  var cols = ['Total Revenue','Customer Payment','NextNRG Net','Cumulative CS Net','Degradation'];
+  cols.forEach(function(c){ html += '<th>'+c+'</th>'; });
+  html += '</tr></thead><tbody>';
+
+  var cumNet = -netCapex; // start negative (investment)
+  var paybackYear = null;
+
+  for (var y=1; y<=10; y++) {
+    var factor = Math.pow(1-degr, y-1) * Math.pow(1+esc, y-1);
+    var rev   = yr1Revenue * factor;
+    var cust  = yr1Cust   * factor;
+    var fees  = yr1Fees   * Math.pow(1+esc, y-1); // fees escalate
+    var csNet = (yr1CsNet + yr1Fees) * factor - fees; // recalc net
+    cumNet += csNet;
+    if (cumNet > 0 && paybackYear === null) paybackYear = y;
+    var isPayback = paybackYear === y;
+    html += '<tr class="'+(isPayback?'highlight':'')+(y===10?' cumulative':'')+'"><td>Y'+y+(isPayback?' ✓ PB':'')+'</td>'
+      + '<td>'+fmt$(rev)+'</td>'
+      + '<td>'+fmt$(cust)+'</td>'
+      + '<td style="color:'+(csNet>0?'var(--green)':'var(--red)')+'">'+fmt$(csNet)+'</td>'
+      + '<td style="color:'+(cumNet>0?'var(--green)':'var(--red)')+'">'+fmt$(cumNet)+'</td>'
+      + '<td style="color:var(--sub)">'+fmtPct((1-Math.pow(1-degr,y-1))*100)+'</td>'
+      + '</tr>';
+  }
+  html += '</tbody>';
+  table.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// CUSTOM STREAMS
+// ══════════════════════════════════════════════════════════════════
+function addCustomStream() {
+  var id = ++_customId;
+  _customStreams.push({ id:id, name:'', rate:0, quantity:0, unit:'yr', csplit:50 });
+  _streams['cust_'+id] = { on:true, csplit:50 };
+  renderCustomStreams();
+}
+
+function renderCustomStreams() {
+  var div = document.getElementById('custom-streams');
+  div.innerHTML = '';
+  _customStreams.forEach(function(c) {
+    var row = document.createElement('div');
+    row.className = 'custom-stream';
+    row.innerHTML = '<input type="text" placeholder="Stream name" value="'+(c.name||'')+'" onchange="updateCustom('+c.id+',\'name\',this.value)">'
+      + '<input type="number" placeholder="Rate $" value="'+(c.rate||'')+'" onchange="updateCustom('+c.id+',\'rate\',this.value)">'
+      + '<select onchange="updateCustom('+c.id+',\'unit\',this.value)"><option value="yr">/yr</option><option value="MWh">/MWh</option><option value="kW">/kW</option><option value="kWh">/kWh</option></select>'
+      + '<input type="number" placeholder="Qty" value="'+(c.quantity||'')+'" onchange="updateCustom('+c.id+',\'quantity\',this.value)">'
+      + '<button class="btn-del" onclick="deleteCustom('+c.id+')">✕</button>';
+    div.appendChild(row);
+  });
+}
+
+function updateCustom(id, field, val) {
+  var c = _customStreams.find(function(x){ return x.id===id; });
+  if (c) { c[field] = val; recalc(); }
+}
+
+function deleteCustom(id) {
+  _customStreams = _customStreams.filter(function(c){ return c.id !== id; });
+  delete _streams['cust_'+id];
+  renderCustomStreams();
+  recalc();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// EXPORT
+// ══════════════════════════════════════════════════════════════════
+function exportCSV() {
+  var utilKey = gs('utility');
+  var U = UTILITY_DATA[utilKey];
+  var kwh = gv('kwh'), kw = gv('kw'), cycles = gv('cycles');
+  var pd = gv('peak-demand'), mkwh = gv('monthly-kwh');
+  var streams = calcStreams(U, kwh, kw, cycles, pd, mkwh);
+
+  var csv = 'NextNRG BESS Value Stack Export\n';
+  csv += 'Utility,'+U.name+'\n';
+  csv += 'System,'+kwh+'kWh / '+kw+'kW\n\n';
+  csv += 'Stream,Annual Revenue ($),NextNRG %,NextNRG $,Customer $\n';
+
+  streams.forEach(function(s) {
+    var st = _streams[s.key] || {on:true,csplit:50};
+    if (!st.on) return;
+    var cs = s.annual * st.csplit/100;
+    var cu = s.annual * (100-st.csplit)/100;
+    csv += '"'+s.name+'",'+Math.round(s.annual)+','+st.csplit+'%,'+Math.round(cs)+','+Math.round(cu)+'\n';
+  });
+
+  var blob = new Blob([csv], {type:'text/csv'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href=url; a.download='NextNRG_ValueStack_'+utilKey+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 10000);
+}
+
+function exportPDF() {
+  window.print();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════════════════════════════════
+document.getElementById('utility').addEventListener('change', function() {
+  _streams = {};
+  initToggles();
+  recalc();
+});
+
+initToggles();
+recalc();
+</script>
+</body>
+</html>

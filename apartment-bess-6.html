@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Residential BESS Portfolio Analyzer — NextNRG</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'IBM Plex Mono',monospace,'Courier New',monospace;background:#060D14;color:#C8D8E8;min-height:100vh;font-size:12px}
+:root{
+  --bg:#060D14;--surface:#0C1825;--panel:#111F2E;--card:#162535;
+  --border:#1E3347;--border2:#2A4560;
+  --gold:#C5A55A;--gold-dim:rgba(197,165,90,.12);
+  --cyan:#00C8FF;--cyan-dim:rgba(0,200,255,.08);
+  --green:#22D77A;--green-dim:rgba(34,215,122,.08);
+  --red:#FF5A5A;--amber:#F5A623;--purple:#A78BFA;
+  --text:#C8D8E8;--sub:#6B8FAD;--muted:#3A5570;
+}
+
+/* ── HEADER ── */
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hdr-back{color:var(--sub);text-decoration:none;font-size:10px;letter-spacing:.08em}
+.hdr-back:hover{color:var(--text)}
+.hdr-title{font-size:12px;font-weight:700;color:var(--gold);letter-spacing:.04em}
+.hdr-sub{font-size:9px;color:var(--sub);margin-left:auto}
+
+/* ── TABS ── */
+.tabs{display:flex;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto}
+.tab{padding:10px 18px;font-size:10px;font-weight:700;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;letter-spacing:.05em;text-transform:uppercase}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--gold);border-bottom-color:var(--gold)}
+
+/* ── TAB PANELS ── */
+.panel{display:none;padding:18px}
+.panel.active{display:block}
+
+/* ── GRID LAYOUTS ── */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.grid-config{display:grid;grid-template-columns:340px 1fr;gap:18px;align-items:start}
+
+/* ── CARDS ── */
+.card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:14px}
+.card.gold{border-color:rgba(197,165,90,.35);background:var(--gold-dim)}
+.card.green{border-color:rgba(34,215,122,.3);background:var(--green-dim)}
+.card.cyan{border-color:rgba(0,200,255,.3);background:var(--cyan-dim)}
+.card.red{border-color:rgba(255,90,90,.3);background:rgba(255,90,90,.06)}
+.card-title{font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--sub);margin-bottom:8px;font-weight:700}
+.card-val{font-size:22px;font-weight:700;letter-spacing:-.5px;line-height:1}
+.card-val.gold{color:var(--gold)}
+.card-val.green{color:var(--green)}
+.card-val.cyan{color:var(--cyan)}
+.card-val.red{color:var(--red)}
+.card-val.amber{color:var(--amber)}
+.card-note{font-size:8px;color:var(--sub);margin-top:4px;line-height:1.4}
+
+/* ── FORM FIELDS ── */
+.sec{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:12px}
+.sec-h{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:10px;font-weight:700}
+.field{margin-bottom:8px}
+.field label{display:block;font-size:8px;color:var(--sub);margin-bottom:3px;letter-spacing:.05em;text-transform:uppercase}
+.field input,.field select{width:100%;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 9px;font-size:10px;font-family:inherit}
+.field input:focus,.field select:focus{outline:none;border-color:var(--gold)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+
+/* ── BADGES ── */
+.badge{display:inline-block;font-size:8px;padding:2px 7px;border-radius:3px;font-weight:700;letter-spacing:.04em}
+.badge.green{background:var(--green-dim);color:var(--green);border:1px solid rgba(34,215,122,.3)}
+.badge.amber{background:rgba(245,166,35,.12);color:var(--amber);border:1px solid rgba(245,166,35,.3)}
+.badge.red{background:rgba(255,90,90,.1);color:var(--red);border:1px solid rgba(255,90,90,.3)}
+.badge.cyan{background:var(--cyan-dim);color:var(--cyan);border:1px solid rgba(0,200,255,.3)}
+.badge.purple{background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.3)}
+.badge.gold{background:var(--gold-dim);color:var(--gold);border:1px solid rgba(197,165,90,.3)}
+
+/* ── TABLES ── */
+table.data{width:100%;border-collapse:collapse;font-size:10px}
+table.data th{background:var(--panel);padding:7px 10px;text-align:left;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);border-bottom:1px solid var(--border);font-weight:600}
+table.data th.r{text-align:right}
+table.data td{padding:8px 10px;border-bottom:1px solid var(--border)}
+table.data td.r{text-align:right;font-weight:600}
+table.data tr:last-child td{border-bottom:none}
+table.data tr:hover td{background:rgba(255,255,255,.015)}
+table.data tr.total td{background:var(--panel);font-weight:700;font-size:11px;border-top:1px solid var(--border2)}
+
+/* ── SELECTOR CARDS ── */
+.sel-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.sel-card{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:10px;cursor:pointer;transition:.15s}
+.sel-card:hover{border-color:var(--gold)}
+.sel-card.active{border-color:var(--gold);background:var(--gold-dim)}
+.sel-card-icon{font-size:18px;margin-bottom:4px}
+.sel-card-name{font-size:9px;font-weight:700;color:var(--text)}
+.sel-card-sub{font-size:8px;color:var(--sub);margin-top:2px;line-height:1.3}
+.sel-card.active .sel-card-name{color:var(--gold)}
+
+/* ── AGGREGATOR CARDS ── */
+.agg-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.agg-card{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:10px;cursor:pointer;transition:.15s}
+.agg-card:hover{border-color:var(--cyan)}
+.agg-card.active{border-color:var(--cyan);background:var(--cyan-dim)}
+.agg-card-name{font-size:10px;font-weight:700}
+.agg-card.active .agg-card-name{color:var(--cyan)}
+.agg-card-sub{font-size:8px;color:var(--sub);margin-top:3px;line-height:1.3}
+
+/* ── PROGRESS BAR ── */
+.bar-row{margin-bottom:8px}
+.bar-label{display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px}
+.bar-label span:first-child{color:var(--sub)}
+.bar-label span:last-child{font-weight:700}
+.bar-track{height:5px;background:var(--border2);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;transition:.4s}
+.bar-fill.gold{background:var(--gold)}
+.bar-fill.cyan{background:var(--cyan)}
+.bar-fill.green{background:var(--green)}
+.bar-fill.purple{background:var(--purple)}
+.bar-fill.amber{background:var(--amber)}
+
+/* ── STATE TABLE CUSTOM ── */
+.state-tag{display:inline-block;font-size:8px;padding:1px 6px;border-radius:3px;font-weight:700}
+.solar-yes{background:rgba(255,90,90,.15);color:var(--red)}
+.solar-no{background:var(--green-dim);color:var(--green)}
+
+/* ── MOLECULE PANEL ── */
+.mol-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.mol-side{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px}
+.mol-side.active{border-color:var(--purple);background:rgba(167,139,250,.06)}
+.mol-title{font-size:10px;font-weight:700;margin-bottom:8px}
+.mol-title.purple{color:var(--purple)}
+
+/* ── UNIT ANALYSIS ── */
+.unit-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)}
+.unit-row:last-child{border-bottom:none}
+.unit-key{font-size:9px;color:var(--sub);flex:1}
+.unit-val{font-size:10px;font-weight:700}
+
+/* ── BTN ── */
+.btn{padding:8px 14px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit;border:none;letter-spacing:.04em}
+.btn-gold{background:var(--gold);color:#060D14}
+.btn-gold:hover{opacity:.88}
+.btn-outline{background:transparent;color:var(--text);border:1px solid var(--border2)}
+.btn-outline:hover{border-color:var(--gold);color:var(--gold)}
+
+/* ── SECTION TITLE ── */
+.section-title{font-size:10px;font-weight:700;color:var(--text);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.section-title span{font-size:8px;color:var(--sub);font-weight:400}
+
+/* ── CAVEAT ── */
+.caveat{font-size:9px;color:var(--amber);background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.2);border-radius:4px;padding:8px 10px;line-height:1.5;margin-top:8px}
+
+/* ── SCROLLABLE ── */
+.scroll-x{overflow-x:auto}
+
+@media(max-width:900px){
+  .grid-config{grid-template-columns:1fr}
+  .grid4{grid-template-columns:1fr 1fr}
+  .sel-grid{grid-template-columns:1fr 1fr}
+}
+@media print{
+  body{background:#fff;color:#000;font-size:9px}
+  .hdr .btn,.tabs,.hdr-back{display:none!important}
+  .hdr{border-bottom:2px solid #000}
+  .hdr-title{color:#000}
+  .panel{display:block!important;page-break-before:always;padding:12px}
+  .panel:first-of-type{page-break-before:avoid}
+  .card,.sec,.stack-section{border:1px solid #999;background:#fff!important;break-inside:avoid}
+  .card-val{color:#000!important}
+  table.data th{background:#eee;color:#000}
+  .grid-config{grid-template-columns:1fr}
+  input,select{border:1px solid #ccc}
+  .caveat{color:#000;background:#f5f5f5}
+}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <a href="/" class="hdr-back">← Portal</a>
+  <div class="hdr-title">🏢 RESIDENTIAL BESS PORTFOLIO ANALYZER</div>
+  <div style="margin-left:auto;display:flex;gap:8px">
+    <button class="btn btn-outline" onclick="exportCSV()" style="padding:6px 12px;font-size:10px">⬇ Export CSV</button>
+    <button class="btn btn-outline" onclick="exportJSON()" style="padding:6px 12px;font-size:10px">⬇ JSON</button>
+    <button class="btn btn-gold" onclick="window.print()" style="padding:6px 12px;font-size:10px">🖨 Print / PDF</button>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('config')">⚙️ Configuration</div>
+  <div class="tab" onclick="showTab('portfolio')">📊 Portfolio Analysis</div>
+  <div class="tab" onclick="showTab('unit')">🏠 Per-Unit / Per-Site</div>
+  <div class="tab" onclick="showTab('owner')">⚡ Owner Meter (BTM)</div>
+  <div class="tab" onclick="showTab('molecule')">🔬 Molecule Optimization</div>
+  <div class="tab" onclick="showTab('proforma')">📈 Pro Forma</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- TAB 1: CONFIGURATION -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="panel active" id="tab-config">
+<div class="grid-config">
+
+<!-- LEFT: Inputs -->
+<div>
+
+  <div class="sec">
+    <div class="sec-h">🏢 Portfolio Configuration</div>
+    <div class="field"><label>Total Residential Units (auto — sum of states below)</label>
+      <input type="number" id="total-units" value="6000" readonly style="background:var(--panel);color:var(--gold);font-weight:700;cursor:not-allowed"></div>
+    <div class="row2">
+      <div class="field"><label>Avg Units per Site (incentive apps only)</label>
+        <input type="number" id="units-per-site" value="50" min="1" oninput="recalc()"></div>
+      <div class="field"><label>Unit Size (sq ft avg)</label>
+        <input type="number" id="unit-sqft" value="850" oninput="recalc()"></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h">⚡ Per-Unit Battery (Molecule Optimized)</div>
+    <div class="row2">
+      <div class="field"><label>Per-Unit Battery (kWh) ≤ 13</label>
+        <input type="number" id="unit-kwh" value="13" min="1" max="13" step="0.5" oninput="recalc()"></div>
+      <div class="field"><label>Per-Unit Power (kW)</label>
+        <input type="number" id="unit-kw" value="5" min="1" max="12" step="0.5" oninput="recalc()"></div>
+    </div>
+    <div class="caveat">⚡ Molecule Systems optimizes each individual unit meter up to 13 kWh — dispatch is coordinated across all units in a building for maximum VPP performance.</div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h">🏗 Owner Meter — Behind-the-Meter System</div>
+    <div class="row2">
+      <div class="field"><label>Owner BESS (MWh) ≤ 5</label>
+        <input type="number" id="owner-mwh" value="1" min="0" max="5" step="0.25" oninput="recalc()"></div>
+      <div class="field"><label>Owner Meter Power (kW)</label>
+        <input type="number" id="owner-kw" value="250" oninput="recalc()"></div>
+    </div>
+    <div class="field"><label>Owner Meter per Building?</label>
+      <select id="owner-per-building" onchange="recalc()">
+        <option value="1">Yes — one BTM system per building</option>
+        <option value="0">No — owner meter at select sites only</option>
+      </select></div>
+    <div id="owner-select-sites" style="display:none">
+      <div class="field"><label>Number of Sites with Owner Meter</label>
+        <input type="number" id="owner-sites-count" value="10" oninput="recalc()"></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h">🗺 Units by State</div>
+    <div style="font-size:9px;color:var(--sub);margin-bottom:8px">Add any of the 50 states, then enter exact unit counts. Sites are derived from Avg Units per Site above.</div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <select id="state-picker" style="flex:1;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 9px;font-size:10px;font-family:inherit"></select>
+      <button class="btn btn-gold" onclick="addState()" style="padding:6px 12px;font-size:10px">+ Add</button>
+    </div>
+    <div id="state-rows"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:4px">
+      <span style="font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.06em">Total Portfolio Units</span>
+      <span id="units-sum-display" style="font-size:12px;font-weight:700;color:var(--gold)">6,000</span>
+    </div>
+    <div id="investigate-warning" style="display:none" class="caveat"></div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h">💻 Compute Tier (per unit)</div>
+    <div class="sel-grid" id="compute-sel">
+      <div class="sel-card active" onclick="setCompute('t1')" id="ct-t1">
+        <div class="sel-card-icon">📡</div>
+        <div class="sel-card-name">Bandwidth Node</div>
+        <div class="sel-card-sub">$60/unit · $10/mo · Silent</div>
+      </div>
+      <div class="sel-card" onclick="setCompute('t2')" id="ct-t2">
+        <div class="sel-card-icon">🖥</div>
+        <div class="sel-card-name">Edge AI Box</div>
+        <div class="sel-card-sub">$450/unit · $80/mo · Low heat</div>
+      </div>
+      <div class="sel-card" onclick="setCompute('t3')" id="ct-t3">
+        <div class="sel-card-icon">🎮</div>
+        <div class="sel-card-name">Consumer GPU</div>
+        <div class="sel-card-sub">$2,000/unit · $225/mo · High heat</div>
+      </div>
+      <div class="sel-card" onclick="setCompute('t4')" id="ct-t4">
+        <div class="sel-card-icon">💾</div>
+        <div class="sel-card-name">Storage Node</div>
+        <div class="sel-card-sub">$120/unit · $6.50/mo · Silent</div>
+      </div>
+      <div class="sel-card" onclick="setCompute('t5')" id="ct-t5">
+        <div class="sel-card-icon">⚡</div>
+        <div class="sel-card-name">Energy Only</div>
+        <div class="sel-card-sub">$0/unit · $0/mo</div>
+      </div>
+    </div>
+    <div id="compute-effect" style="margin-top:8px;padding:8px 10px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);border-radius:4px;font-size:9px;color:var(--purple);line-height:1.5"></div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h">🔌 Aggregation Partner (Owner Meter Only)</div>
+    <div class="agg-grid" id="agg-grid">
+      <div class="agg-card active" onclick="setAgg('molecule')" id="agg-molecule">
+        <div class="agg-card-name">🔬 Molecule Systems</div>
+        <div class="agg-card-sub">AERA + DividendVPP · 70/20/10 split · USD payouts · Individual unit + owner meter optimization</div>
+      </div>
+      <div class="agg-card" onclick="setAgg('voltus')" id="agg-voltus">
+        <div class="agg-card-name">⚡ Voltus</div>
+        <div class="agg-card-sub">Owner meter BTM only · Demand response aggregation · ~80% net to asset owner</div>
+      </div>
+      <div class="agg-card" onclick="setAgg('cpower')" id="agg-cpower">
+        <div class="agg-card-name">🔋 CPower</div>
+        <div class="agg-card-sub">Owner meter BTM only · PJM/MISO/CAISO programs · ~80% net to asset owner</div>
+      </div>
+      <div class="agg-card" onclick="setAgg('syso')" id="agg-syso">
+        <div class="agg-card-name">🌐 Syso Systems</div>
+        <div class="agg-card-sub">Owner meter BTM only · Grid services optimization · ~82% net</div>
+      </div>
+      <div class="agg-card" onclick="setAgg('diy')" id="agg-diy">
+        <div class="agg-card-name">🛠 DIY / Self-Dispatch</div>
+        <div class="agg-card-sub">No aggregator · 55% realized capture rate · No rev-share fee</div>
+      </div>
+      <div class="agg-card" onclick="setAgg('other')" id="agg-other">
+        <div class="agg-card-name">➕ Other / Custom</div>
+        <div class="agg-card-sub">Set custom capture rate and revenue share below</div>
+      </div>
+    </div>
+    <div id="custom-agg-inputs" style="display:none;margin-top:10px">
+      <div class="row2">
+        <div class="field"><label>Realized Capture Rate (%)</label>
+          <input type="number" id="custom-capture" value="75" min="0" max="100" oninput="recalc()"></div>
+        <div class="field"><label>Asset Owner Share (%)</label>
+          <input type="number" id="custom-owner-share" value="80" min="0" max="100" oninput="recalc()"></div>
+      </div>
+    </div>
+    <div class="caveat" style="margin-top:8px">Note: Molecule Systems is used for individual unit meter optimization. The aggregation partner above applies to the <strong>owner meter BTM system only</strong>.</div>
+    <div id="agg-effect" style="margin-top:8px;padding:8px 10px;background:var(--cyan-dim);border:1px solid rgba(0,200,255,.25);border-radius:4px;font-size:9px;color:var(--cyan);line-height:1.5"></div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h">💰 CapEx Assumptions</div>
+    <div class="row2">
+      <div class="field"><label>Battery + Meter Installed ($/unit)</label>
+        <input type="number" id="capex-unit" value="9500" oninput="recalc()"></div>
+      <div class="field"><label>Owner BESS Installed ($/kWh)</label>
+        <input type="number" id="capex-owner-kwh" value="380" oninput="recalc()"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>NY Labor Multiplier</label>
+        <input type="number" id="mult-ny" value="1.15" step="0.05" oninput="recalc()"></div>
+      <div class="field"><label>NJ Labor Multiplier</label>
+        <input type="number" id="mult-nj" value="1.10" step="0.05" oninput="recalc()"></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h">📈 Annual Escalators</div>
+    <div class="row3">
+      <div class="field"><label>VPP/DR (%/yr)</label>
+        <input type="number" id="esc-vpp" value="2" step="0.5" oninput="recalc()"></div>
+      <div class="field"><label>TOU Arbitrage (%/yr)</label>
+        <input type="number" id="esc-tou" value="2" step="0.5" oninput="recalc()"></div>
+      <div class="field"><label>Compute (%/yr)</label>
+        <input type="number" id="esc-compute" value="5" step="0.5" oninput="recalc()"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- RIGHT: Live Summary -->
+<div>
+  <div class="section-title">📊 Live Portfolio Summary</div>
+
+  <div class="grid4" style="margin-bottom:14px">
+    <div class="card gold"><div class="card-title">Total Units</div><div class="card-val gold" id="s-units">6,000</div><div class="card-note">Residential meters</div></div>
+    <div class="card cyan"><div class="card-title">Unit Battery Capacity</div><div class="card-val cyan" id="s-unit-cap">78 MWh</div><div class="card-note">Portfolio total</div></div>
+    <div class="card cyan"><div class="card-title">Owner Meter Total</div><div class="card-val cyan" id="s-owner-cap">— MWh</div><div class="card-note">BTM fleet</div></div>
+    <div class="card green"><div class="card-title">Total Fleet MWh</div><div class="card-val green" id="s-total-cap">78 MWh</div><div class="card-note">All systems</div></div>
+  </div>
+
+  <div class="grid4" style="margin-bottom:14px">
+    <div class="card"><div class="card-title">Year-1 Revenue</div><div class="card-val gold" id="s-yr1-rev">$15M</div><div class="card-note">All streams gross</div></div>
+    <div class="card green"><div class="card-title">NextNRG Net Y1</div><div class="card-val green" id="s-cs-net">$12.9M</div><div class="card-note">After Molecule/agg fees</div></div>
+    <div class="card"><div class="card-title">Total CapEx</div><div class="card-val amber" id="s-capex">$63.6M</div><div class="card-note">Before incentives</div></div>
+    <div class="card"><div class="card-title">Simple Payback</div><div class="card-val amber" id="s-payback">— yrs</div><div class="card-note">Recurring cash only</div></div>
+  </div>
+
+  <div style="font-size:9px;color:var(--sub);line-height:1.5;padding:8px 10px;background:var(--panel);border:1px solid var(--border);border-radius:4px;margin-bottom:14px">
+    <strong style="color:var(--cyan)">How revenue scales:</strong> Recurring VPP/TOU dispatch and data-compute revenue depend only on <strong>total units × state rates</strong> — building size does not affect them (decentralized, each meter is its own resource). Only the one-time <strong>upfront rebate</strong> responds to Avg Units per Site, and only where a state caps its rebate per application/site. Per-unit-capped rebates (most states) are unaffected by site size too.
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-title">Revenue by Stream (Year 1)</div>
+    <div id="rev-bars" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-title">CapEx vs Net Cash — 5-Year View</div>
+    <div class="scroll-x">
+      <table class="data" id="summary-5yr">
+        <thead><tr>
+          <th>Stream</th><th class="r">Y1</th><th class="r">Y2</th><th class="r">Y3</th><th class="r">Y4</th><th class="r">Y5</th><th class="r">5-Yr Total</th>
+        </tr></thead>
+        <tbody id="summary-5yr-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="pct-sum-display" class="card">
+    <div class="card-title">State Distribution</div>
+    <div id="state-dist-bars" style="margin-top:6px"></div>
+  </div>
+</div>
+
+</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- TAB 2: PORTFOLIO ANALYSIS -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="tab-portfolio">
+  <div class="section-title">📊 Per-State Revenue Analysis <span>All figures Year 1 gross unless noted</span></div>
+
+  <div class="scroll-x" style="margin-bottom:18px">
+    <table class="data" id="state-table">
+      <thead><tr>
+        <th>State / Utility</th>
+        <th class="r">Units</th>
+        <th class="r">Sites</th>
+        <th class="r">Power (kW)</th>
+        <th class="r">Upfront Incentive</th>
+        <th class="r">VPP/DR Gross</th>
+        <th class="r">TOU Arbitrage Gross</th>
+        <th class="r">Combined Gross</th>
+        <th class="r">DIY Net</th>
+        <th class="r">Molecule Net</th>
+        <th class="r">$ Advantage</th>
+        <th>Solar Req?</th>
+        <th>Key Caveat</th>
+      </tr></thead>
+      <tbody id="state-tbody"></tbody>
+      <tfoot id="state-tfoot"></tfoot>
+    </table>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title">State Program Details</div>
+      <table class="data" id="program-table">
+        <thead><tr>
+          <th>State</th>
+          <th class="r">Upfront Rebate</th>
+          <th class="r">Rebate Cap</th>
+          <th class="r">VPP $/kW-yr</th>
+          <th class="r">TOU $/kW-yr</th>
+          <th>Program</th>
+        </tr></thead>
+        <tbody id="program-tbody"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-title">Revenue Mix by State (%)</div>
+      <div id="state-mix-bars" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- TAB 3: PER-UNIT / PER-SITE -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="tab-unit">
+  <div class="grid2">
+    <div>
+      <div class="section-title">🏠 Per-Unit Economics</div>
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">Per Residential Unit (Annual)</div>
+        <div id="per-unit-rows"></div>
+      </div>
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">Per Unit — Molecule Breakdown</div>
+        <div id="per-unit-mol-rows"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Unit Battery Specs</div>
+        <div id="unit-specs-rows"></div>
+      </div>
+    </div>
+    <div>
+      <div class="section-title">🏗 Per-Site / Building Economics</div>
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">Per Building / Site (Annual)</div>
+        <div id="per-site-rows"></div>
+      </div>
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">Per-Site CapEx</div>
+        <div id="per-site-capex-rows"></div>
+      </div>
+      <div class="caveat">
+        ⚡ <strong>Molecule Systems</strong> optimizes each individual unit meter independently up to 13 kWh.
+        All units within a building are coordinated as a virtual power plant cluster —
+        the building acts as a single dispatchable resource to the ISO while each apartment benefits individually.
+        Revenue is settled per unit and credited to each resident's account or passed to the building operator.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- TAB 4: OWNER METER -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="tab-owner">
+  <div class="section-title">⚡ Owner Meter — Behind-the-Meter Battery (up to 5 MWh per site)</div>
+
+  <div class="grid2" style="margin-bottom:14px">
+    <div class="card gold"><div class="card-title">Owner Fleet Capacity</div><div class="card-val gold" id="ow-capacity">—</div><div class="card-note">MWh across all sites</div></div>
+    <div class="card gold"><div class="card-title">Owner Fleet Power</div><div class="card-val gold" id="ow-power">—</div><div class="card-note">MW aggregated</div></div>
+    <div class="card green"><div class="card-title">Owner Meter Annual Revenue</div><div class="card-val green" id="ow-revenue">—</div><div class="card-note">Gross (VPP + arbitrage)</div></div>
+    <div class="card green"><div class="card-title">Net to NextNRG (Owner Meter)</div><div class="card-val green" id="ow-net">—</div><div class="card-note">After aggregator fee</div></div>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">Aggregator Comparison — Owner Meter</div>
+        <table class="data" id="agg-compare-table">
+          <thead><tr>
+            <th>Partner</th>
+            <th class="r">Capture Rate</th>
+            <th class="r">Owner Share</th>
+            <th class="r">Net to NextNRG (Y1)</th>
+            <th class="r">vs DIY</th>
+          </tr></thead>
+          <tbody id="agg-tbody"></tbody>
+        </table>
+      </div>
+      <div class="caveat" id="agg-note">
+        Select your aggregation partner on the Configuration tab. Molecule Systems (individual unit optimization) is always active for unit meters regardless of this selection. The aggregator above applies to the owner meter BTM system only.
+      </div>
+    </div>
+    <div>
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">Per-Site Owner Meter Economics</div>
+        <div id="owner-per-site-rows"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Owner Meter CapEx</div>
+        <div id="owner-capex-rows"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- TAB 5: MOLECULE OPTIMIZATION -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="tab-molecule">
+  <div class="section-title">🔬 Molecule Systems — DividendVPP Analysis</div>
+
+  <div class="caveat" style="margin-bottom:14px">
+    Molecule doesn't create a new revenue stream — it sits between the utility VPP dispatch signal and your battery portfolio, guaranteeing each dispatch event is executed and telemetry-verified, then runs cross-program optimization (Lightsmith) so each site is always in the best-paying program available that hour. Most VPP portfolios without execution software realize ~55% of modeled value due to missed events and static enrollment. Molecule targets 95% realized capture. Revenue share: 70% asset owner / 20% Molecule / 10% installer (NextNRG captures installer 10% as installer of record).
+  </div>
+
+  <div class="mol-compare" style="margin-bottom:18px">
+    <div class="mol-side">
+      <div class="mol-title">🛠 DIY Self-Dispatch</div>
+      <div id="mol-diy-rows"></div>
+    </div>
+    <div class="mol-side active">
+      <div class="mol-title purple">🔬 With Molecule DividendVPP</div>
+      <div id="mol-mol-rows"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-title">Molecule Advantage by State</div>
+    <table class="data" id="mol-state-table">
+      <thead><tr>
+        <th>State</th>
+        <th class="r">Gross Modeled</th>
+        <th class="r">DIY Net (55%)</th>
+        <th class="r">Molecule Net (95% × 80%)</th>
+        <th class="r">$ Advantage</th>
+        <th class="r">% Advantage</th>
+      </tr></thead>
+      <tbody id="mol-state-tbody"></tbody>
+      <tfoot id="mol-state-tfoot"></tfoot>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-title">DividendVPP Revenue Share Split</div>
+    <div id="mol-split-bars" style="margin-top:8px"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- TAB 6: PRO FORMA -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="tab-proforma">
+  <div class="section-title">📈 5-Year Pro Forma</div>
+
+  <div class="grid4" style="margin-bottom:14px">
+    <div class="card gold"><div class="card-title">Gross CapEx</div><div class="card-val gold" id="pf-capex">—</div></div>
+    <div class="card green"><div class="card-title">ITC (30%)</div><div class="card-val green" id="pf-itc">—</div></div>
+    <div class="card green"><div class="card-title">Net CapEx After ITC</div><div class="card-val amber" id="pf-net-capex">—</div></div>
+    <div class="card green"><div class="card-title">5-Year Total Cash</div><div class="card-val green" id="pf-5yr-cash">—</div></div>
+  </div>
+
+  <div class="scroll-x" style="margin-bottom:18px">
+    <table class="data" id="proforma-table">
+      <thead id="proforma-head"></thead>
+      <tbody id="proforma-body"></tbody>
+    </table>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title">Upfront Incentives by State</div>
+      <div id="pf-incentives"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Key Metrics</div>
+      <div id="pf-metrics"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// DATA
+// ══════════════════════════════════════════════════════════════════
+var STATE_DATA = {
+  AZ:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Arizona",util:"APS / SRP / TEP",upfront_kw:null,cap_site:null,vpp_kw:90,tou_kw:140,solar_req:false,mult:1.0,known:true,program:"APS / SRP residential battery pilots",caveat:"APS and SRP offer residential battery/demand-response pilots and storage incentives (varies by utility). No statewide standalone rebate. TOU arbitrage meaningful given AZ rate structures."},
+  CA:{inc_rate:150,inc_basis:"per_kwh",inc_cap:null,cap_basis:"none",name:"California",util:"PG&E / SCE / SDG&E",upfront_kw:200,cap_site:null,vpp_kw:300,tou_kw:180,solar_req:false,mult:1.2,known:true,program:"SGIP + DSGS + ELRP (VPP stack)",caveat:"SGIP ~$200/kWh standard (up to $1,100/kWh equity/RSSE, currently waitlisted). VPP via DSGS ($/kW seasonal) + ELRP stackable, Tesla-PG&E, SMUD My Energy Optimizer. Powerwall owners earn $300-700/yr. No solar pairing required for SGIP."},
+  CO:{inc_rate:350,inc_basis:"per_kwh",inc_cap:5000,cap_basis:"per_unit",name:"Colorado",util:"Xcel Energy",upfront_kw:350,cap_site:5000,vpp_kw:100,tou_kw:150,solar_req:true,mult:1.0,known:true,program:"Xcel Battery Connect + AVPP + 10% state credit",caveat:"Xcel Renewable Battery Connect requires on-site solar (battery-only NOT eligible). Xcel AVPP aggregator program (Docket 25A-0061E, DERs <=750kW). CO 10% state tax credit. Fort Collins separate $300/kWh battery-only rebate."},
+  CT:{inc_rate:400,inc_basis:"per_unit",inc_cap:16000,cap_basis:"per_unit",name:"Connecticut",util:"Eversource / United Illuminating",upfront_kw:null,cap_site:16000,vpp_kw:225,tou_kw:150,solar_req:false,mult:1.12,known:true,program:"Energy Storage Solutions (9-yr program)",caveat:"Up to $16,000 per residential installation via upfront + performance. ConnectedSolutions-style dispatch ~$225/kW-yr summer. 9-year PURA-approved statewide program. No solar pairing required."},
+  GA:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Georgia",util:"Georgia Power",upfront_kw:null,cap_site:null,vpp_kw:90,tou_kw:130,solar_req:false,mult:1.0,known:true,program:"Georgia Power solar+storage pilot (50 MW, Docket 56002)",caveat:"Georgia Power 50 MW customer-side solar+storage pilot approved 2025: customer-directed (performance pay) + utility-directed (upfront incentive). No standalone rebate. Solar-paired focus."},
+  HI:{inc_rate:0,inc_basis:"per_unit",inc_cap:null,cap_basis:"none",name:"Hawaii",util:"Hawaiian Electric (HECO)",upfront_kw:null,cap_site:null,vpp_kw:200,tou_kw:250,solar_req:false,mult:1.3,known:true,program:"HECO Battery Bonus + Bring Your Own Device",caveat:"HECO Battery Bonus pays upfront + monthly for battery dispatch (island grid, no mainland spinning reserve). Very high electricity rates make TOU arbitrage strong. Strongest non-CA storage market."},
+  IL:{inc_rate:300,inc_basis:"per_kwh",inc_cap:null,cap_basis:"none",name:"Illinois",util:"ComEd / Ameren",upfront_kw:300,cap_site:4500,vpp_kw:150,tou_kw:160,solar_req:false,mult:1.0,known:true,program:"ComEd BESH + Rider VPP/BYODLR + CRGA",caveat:"ComEd BESH $300/kWh residential storage rebate. SB 25 + CRGA (2026) mandate scheduled-dispatch VPP by ICC (est. June 30 2026). Rider VPP/BYODLR (Docket 25-0678). Strongest emerging near-term."},
+  ME:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Maine",util:"Central Maine Power / Versant",upfront_kw:null,cap_site:null,vpp_kw:100,tou_kw:130,solar_req:false,mult:1.08,known:true,program:"Efficiency Maine battery pilot + DR",caveat:"Efficiency Maine has explored residential storage demand response. CMP/Versant emerging programs. No large standing rebate. Emerging — verify current status."},
+  MD:{inc_rate:350,inc_basis:"per_kwh",inc_cap:5000,cap_basis:"per_unit",name:"Maryland",util:"BGE / Pepco / Delmarva / Potomac Edison",upfront_kw:null,cap_site:null,vpp_kw:100,tou_kw:150,solar_req:false,mult:1.1,known:true,program:"MD Energy Storage Tax Credit + utility VPP pilots (Case 9761)",caveat:"MD Energy Storage Income Tax Credit (30%, up to $5,000 residential). Utility VPP pilots filed 2025 (BGE, Pepco, Delmarva, Potomac Edison) pay up to $100/mo, higher for solar+storage. TOU methodology under revision."},
+  MA:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Massachusetts",util:"Eversource / National Grid / Unitil",upfront_kw:null,cap_site:null,vpp_kw:275,tou_kw:175,solar_req:false,mult:1.15,known:true,program:"ConnectedSolutions + SMART storage adder",caveat:"ConnectedSolutions ~$275/kW-yr (MA highest). SMART program adds storage adder for solar-paired. E.O. 654 targets 3.5 GW load management by 2035. Capped at 150% of site annual peak."},
+  MN:{inc_rate:400,inc_basis:"per_kwh",inc_cap:15000,cap_basis:"per_unit",name:"Minnesota",util:"Xcel Energy + Dept of Commerce",upfront_kw:1000,cap_site:15000,vpp_kw:100,tou_kw:130,solar_req:false,mult:1.05,known:true,program:"MN $430M distributed battery program + Xcel",caveat:"MN greenlit $430M distributed battery program (2026). Income-qualified pilot $1,000/kWh up to $15,000. Currently solar-paired (storage up to 50kWh). Xcel Capacity Connect 200MW. Check current solar-pairing rules."},
+  NV:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Nevada",util:"NV Energy",upfront_kw:null,cap_site:null,vpp_kw:100,tou_kw:150,solar_req:false,mult:1.02,known:true,program:"NV Energy Storage Incentive + demand response",caveat:"NV Energy offers battery storage incentive ($/kWh, higher for low-income) and demand response. Historically solar-paired. Verify current standalone eligibility."},
+  NH:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"New Hampshire",util:"Eversource / Liberty",upfront_kw:null,cap_site:null,vpp_kw:200,tou_kw:140,solar_req:false,mult:1.1,known:true,program:"NH ConnectedSolutions (Eversource) + battery pilots",caveat:"Eversource NH participates in ConnectedSolutions-style battery dispatch (~$200/kW-yr). Liberty Utilities battery pilots. Smaller program than MA/CT/RI."},
+  NJ:{inc_rate:200,inc_basis:"per_kwh",inc_cap:4000,cap_basis:"per_unit",name:"New Jersey",util:"PSE&G / JCP&L / ACE",upfront_kw:200,cap_site:4000,vpp_kw:90,tou_kw:175,solar_req:false,mult:1.1,known:true,program:"Garden State Energy Storage (GSESP) Phase 2",caveat:"GSESP Phase 2 (2026) — residential/BTM tier incentive amounts NOT YET FINALIZED by NJBPU. PSE&G RS-TOU-3P TOU rate launched June 2026. SREC-II $85/MWh stacks. Treat rebate as placeholder."},
+  NY:{inc_rate:250,inc_basis:"per_kwh",inc_cap:3500,cap_basis:"per_unit",name:"New York",util:"ConEd / NYSERDA",upfront_kw:250,cap_site:3500,vpp_kw:120,tou_kw:200,solar_req:false,mult:1.15,known:true,program:"NYSERDA Residential Storage + VDER + GREAT Act",caveat:"NYSERDA fixed $/kWh declining block (higher in NYC/ConEd). No solar pairing. GREAT Act (2026) mandates statewide VPP riders for home batteries. VDER export value only with solar."},
+  NC:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"North Carolina",util:"Duke Energy NC",upfront_kw:null,cap_site:null,vpp_kw:80,tou_kw:120,solar_req:false,mult:1.0,known:true,program:"Duke Energy PowerPair / EnergyWise battery DR",caveat:"Duke Energy offers residential battery demand response (EnergyWise / PowerPair pilot in NC). Modest performance pay. No large upfront rebate. Verify current enrollment status."},
+  OR:{inc_rate:300,inc_basis:"per_kwh",inc_cap:2500,cap_basis:"per_unit",name:"Oregon",util:"Portland General / Pacific Power",upfront_kw:150,cap_site:500,vpp_kw:95,tou_kw:120,solar_req:false,mult:1.05,known:true,program:"ODOE Solar+Storage Rebate + PGE/Pacific Power VPP",caveat:"Oregon Solar+Storage Rebate via ODOE-approved contractors (rebate passed to customer). Pacific Power & PGE residential battery VPP pilots. Rebate historically favors solar-paired."},
+  RI:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Rhode Island",util:"Rhode Island Energy",upfront_kw:null,cap_site:6875,vpp_kw:225,tou_kw:150,solar_req:false,mult:1.12,known:true,program:"ConnectedSolutions + REF battery adder",caveat:"ConnectedSolutions $225/kW-yr summer + $50/kW winter, capped $6,875/yr. Stack with REF $2,000 battery adder. Uniform statewide rate. No solar pairing required."},
+  SC:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"South Carolina",util:"Dominion/Duke SC",upfront_kw:null,cap_site:null,vpp_kw:80,tou_kw:120,solar_req:false,mult:1.0,known:true,program:"Duke Energy PowerPair / EnergyWise battery DR",caveat:"Duke Energy offers residential battery demand response (EnergyWise / PowerPair pilot in NC). Modest performance pay. No large upfront rebate. Verify current enrollment status."},
+  TX:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Texas",util:"ERCOT retail (Base Power, Tesla, EPE)",upfront_kw:null,cap_site:null,vpp_kw:120,tou_kw:180,solar_req:false,mult:1.0,known:true,program:"ERCOT VPP pilots (Tesla, Base Power, EPE, Sonnen-Solrite)",caveat:"No statewide rebate (no federal ITC either). ERCOT ADER pilot + utility VPPs: Tesla, Base Power-El Paso Electric (10MW pilot), Sonnen-Solrite battery VPP ($20/mo, $0.12/kWh). Revenue via wholesale/DR, not rebate."},
+  UT:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Utah",util:"Rocky Mountain Power",upfront_kw:null,cap_site:null,vpp_kw:90,tou_kw:110,solar_req:false,mult:1.0,known:true,program:"RMP Wattsmart Battery program",caveat:"Rocky Mountain Power Wattsmart Battery pays upfront + ongoing for dispatch rights (Soleil Lofts VPP pioneer). One of the better Mountain-West residential battery programs."},
+  VT:{inc_rate:0,inc_basis:"per_unit",inc_cap:10500,cap_basis:"per_unit",name:"Vermont",util:"Green Mountain Power",upfront_kw:null,cap_site:10500,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.08,known:true,program:"GMP Bring-Your-Own-Device + Powerwall lease",caveat:"GMP BYOD rebate up to ~$10,500 for battery dispatch rights. Pioneer residential VPP; saved $3M during 2025 heat waves. Performance-based demand response. No solar pairing required."},
+  VA:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Virginia",util:"Dominion Energy",upfront_kw:null,cap_site:null,vpp_kw:100,tou_kw:140,solar_req:false,mult:1.05,known:true,program:"Dominion VPP pilot (state-mandated, up to 450 MW)",caveat:"Virginia mandated Dominion VPP pilot (HB legislation, up to 450 MW). Program design in stakeholder process. No standing residential storage rebate yet. Emerging."},
+  WA:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Washington",util:"Puget Sound Energy / Seattle City Light",upfront_kw:null,cap_site:null,vpp_kw:85,tou_kw:110,solar_req:false,mult:1.05,known:true,program:"PSE / SCL demand response + WA Clean Energy",caveat:"Washington has utility demand-response battery pilots (PSE, Seattle City Light) but no large standalone residential storage rebate. Modest performance pay. WA Clean Energy Transformation Act drives DER. Verify current program status."},
+  AL:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Alabama",util:"Alabama Power",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  AK:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Alaska",util:"various (AK)",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  AR:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Arkansas",util:"Entergy Arkansas",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  DE:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Delaware",util:"Delmarva Power",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  FL:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Florida",util:"FPL / Duke FL",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  ID:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Idaho",util:"Idaho Power",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  IN:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Indiana",util:"Duke/AES Indiana",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  IA:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Iowa",util:"MidAmerican / Alliant",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  KS:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Kansas",util:"Evergy",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  KY:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Kentucky",util:"LG&E/KU",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  LA:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Louisiana",util:"Entergy Louisiana",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  MI:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Michigan",util:"DTE / Consumers",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  MS:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Mississippi",util:"Entergy Mississippi",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  MO:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Missouri",util:"Ameren/Evergy MO",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  MT:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Montana",util:"NorthWestern Energy",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  NE:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Nebraska",util:"various (NE public power)",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  NM:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"New Mexico",util:"PNM",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  ND:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"North Dakota",util:"various (ND)",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  OH:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Ohio",util:"AEP/FirstEnergy OH",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.03,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery rebate or VPP. PJM territory — wholesale participation via aggregator possible. Investigate AEP/FirstEnergy DR pilots before underwriting."},
+  OK:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Oklahoma",util:"OG&E/PSO",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  PA:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Pennsylvania",util:"PECO/PPL/FirstEnergy PA",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.05,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery rebate or VPP program. PJM wholesale participation possible via aggregator. Investigate utility-specific DR pilots (PECO/PPL) before underwriting."},
+  SD:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"South Dakota",util:"various (SD)",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  TN:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Tennessee",util:"TVA",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  WV:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"West Virginia",util:"Appalachian Power",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  WI:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Wisconsin",util:"We Energies/Focus on Energy",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+  WY:{inc_rate:0,inc_basis:"none",inc_cap:null,cap_basis:"none",name:"Wyoming",util:"Rocky Mountain Power WY",upfront_kw:null,cap_site:null,vpp_kw:null,tou_kw:null,solar_req:false,mult:1.0,known:false,program:"NEEDS INVESTIGATION",caveat:"No identified statewide residential battery storage rebate or residential VPP/DR program in 2026 research. Investigate utility-specific pilots, wholesale (ISO) aggregation options, and TOU rate structures before underwriting."},
+};
+
+var COMPUTE_TIERS = {
+  t1: { name:'Bandwidth Node',   capex:60,   monthly:10,  power:5 },
+  t2: { name:'Edge AI Box',      capex:450,  monthly:80,  power:25 },
+  t3: { name:'Consumer GPU',     capex:2000, monthly:225, power:300 },
+  t4: { name:'Storage Node',     capex:120,  monthly:6.5, power:8 },
+  t5: { name:'Energy Only',      capex:0,    monthly:0,   power:0 },
+};
+
+var AGG_DATA = {
+  molecule: { name:'Molecule DividendVPP', capture:0.95, owner_share:0.80, installer_share:0.10, note:'NextNRG captures 80% (70% asset owner + 10% installer of record)' },
+  voltus:   { name:'Voltus',               capture:0.88, owner_share:0.80, installer_share:0,    note:'Demand response focus, ~80% net to asset owner' },
+  cpower:   { name:'CPower',               capture:0.85, owner_share:0.80, installer_share:0,    note:'PJM/MISO/CAISO programs, ~80% net' },
+  syso:     { name:'Syso Systems',         capture:0.87, owner_share:0.82, installer_share:0,    note:'Grid services optimization, ~82% net' },
+  diy:      { name:'DIY Self-Dispatch',    capture:0.55, owner_share:1.00, installer_share:0,    note:'No aggregator, 55% realized capture, no fee' },
+  other:    { name:'Custom',               capture:0.75, owner_share:0.80, installer_share:0,    note:'Custom terms' },
+};
+
+var _compute = 't1';
+var _agg     = 'molecule';
+var _activeStates = { CO:1200, NY:1800, NJ:1200, IL:1800 };  // default portfolio
+var _lastResults = null;
+
+// ══════════════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════════════
+function gv(id){ return parseFloat(document.getElementById(id).value)||0; }
+function gs(id){ return document.getElementById(id).value; }
+function fmt$(n,dec){
+  if(n===null||n===undefined||isNaN(n)) return '—';
+  dec = dec||0;
+  if(Math.abs(n)>=1e9) return '$'+(n/1e9).toFixed(2)+'B';
+  if(Math.abs(n)>=1e6) return '$'+(n/1e6).toFixed(2)+'M';
+  if(Math.abs(n)>=1000) return '$'+Math.round(n/1000)+'K';
+  return '$'+n.toFixed(dec);
+}
+function fmtN(n){ return n===null?'—':Math.round(n).toLocaleString(); }
+function fmtPct(n){ return (n*100).toFixed(1)+'%'; }
+function fmtMWh(n){ return n>=1?(n.toFixed(2)+' MWh'):(Math.round(n*1000)+' kWh'); }
+
+function unitRow(key,val,cls){
+  return '<div class="unit-row"><span class="unit-key">'+key+'</span><span class="unit-val '+(cls||'')+'">'+val+'</span></div>';
+}
+
+function barRow(label,val,pct,cls){
+  return '<div class="bar-row"><div class="bar-label"><span>'+label+'</span><span>'+val+'</span></div>'
+    +'<div class="bar-track"><div class="bar-fill '+cls+'" style="width:'+Math.min(100,pct*100).toFixed(1)+'%"></div></div></div>';
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SELECTORS
+// ══════════════════════════════════════════════════════════════════
+function setCompute(t){
+  _compute = t;
+  ['t1','t2','t3','t4','t5'].forEach(function(x){
+    document.getElementById('ct-'+x).classList.toggle('active',x===t);
+  });
+  recalc();
+}
+
+function setAgg(a){
+  _agg = a;
+  ['molecule','voltus','cpower','syso','diy','other'].forEach(function(x){
+    document.getElementById('agg-'+x).classList.toggle('active',x===a);
+  });
+  document.getElementById('custom-agg-inputs').style.display=(a==='other')?'block':'none';
+  recalc();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MAIN RECALC
+// ══════════════════════════════════════════════════════════════════
+function recalc(){
+  // Inputs — exact unit counts per active state
+  var unitsByState = {};
+  var totalUnits = 0;
+  Object.keys(_activeStates).forEach(function(k){
+    var v = Math.round(_activeStates[k]) || 0;
+    unitsByState[k] = v;
+    totalUnits += v;
+  });
+
+  // Reflect computed total
+  document.getElementById('total-units').value = totalUnits;
+  document.getElementById('units-sum-display').textContent = totalUnits.toLocaleString();
+
+  // Flag any active states that need investigation
+  var investigate = [];
+  Object.keys(_activeStates).forEach(function(k){
+    if (STATE_DATA[k] && !STATE_DATA[k].known && (_activeStates[k]||0) > 0) investigate.push(STATE_DATA[k].name);
+  });
+  var invWarn = document.getElementById('investigate-warning');
+  if (investigate.length){
+    invWarn.style.display = 'block';
+    invWarn.innerHTML = '⚠️ <strong>Needs investigation:</strong> ' + investigate.join(', ') + '. Incentive rates ($/kW, cap, VPP, TOU) and program participation are unknown for these states and are modeled as $0 until researched. Enter known values by editing the state row.';
+  } else {
+    invWarn.style.display = 'none';
+  }
+
+  var unitsPerSite  = gv('units-per-site') || 50;
+  var unitKwh       = Math.min(13, gv('unit-kwh') || 13);
+  var unitKw        = gv('unit-kw')        || 5;
+  var ownerMwh      = Math.min(5, gv('owner-mwh') || 1);
+  var ownerKw       = gv('owner-kw')       || 250;
+  var ownerPerBldg  = gs('owner-per-building') === '1';
+  var ownerSites    = ownerPerBldg ? Math.ceil(totalUnits / unitsPerSite) : (gv('owner-sites-count') || 10);
+  var capexUnit     = gv('capex-unit')     || 9500;
+  var capexOwnerKwh = gv('capex-owner-kwh')|| 380;
+  var escVpp        = gv('esc-vpp')        / 100 || 0.02;
+  var escTou        = gv('esc-tou')        / 100 || 0.02;
+  var escCompute    = gv('esc-compute')    / 100 || 0.05;
+
+  document.getElementById('owner-select-sites').style.display = ownerPerBldg ? 'none' : 'block';
+
+  var CT = COMPUTE_TIERS[_compute];
+  var totalSites = 0;
+  Object.keys(unitsByState).forEach(function(k){ totalSites += Math.ceil((unitsByState[k]||0) / unitsPerSite); });
+
+  // Agg params
+  var aggD = AGG_DATA[_agg];
+  if (_agg === 'other') {
+    aggD = { capture: gv('custom-capture')/100||0.75, owner_share: gv('custom-owner-share')/100||0.80, installer_share:0, name:'Custom' };
+  }
+
+  // ── Per-state calculations ────────────────────────────────────
+  var stateResults = {};
+  var totalUpfront=0, totalVpp=0, totalTou=0, totalCapex=0;
+
+  Object.keys(unitsByState).forEach(function(k){
+    var S   = STATE_DATA[k];
+    var units = unitsByState[k] || 0;
+    if (units <= 0) return;
+    var sites = Math.ceil(units / unitsPerSite);
+    var powerKw = units * unitKw;
+    var kwhTotal = units * unitKwh;
+
+    // Null-safe recurring rates (these scale with UNITS, never site size)
+    var vk  = S.vpp_kw || 0;
+    var tk  = S.tou_kw || 0;
+
+    // ── Upfront incentive on the program's TRUE basis ──
+    // Basis can be per_kwh (SGIP/NYSERDA/BESH), per_kw, per_unit (fixed), or none (performance-only).
+    // Cap can bind per_unit (most residential rebates) or per_site (application-capped), or none.
+    var incRate  = S.inc_rate || 0;
+    var incBasis = S.inc_basis || 'none';
+    var incCap   = S.inc_cap;          // may be null = uncapped
+    var capBasis = S.cap_basis || 'none';
+    var upfrontUncapped = 0;
+    if (incBasis === 'per_kwh')      upfrontUncapped = incRate * kwhTotal;
+    else if (incBasis === 'per_kw')  upfrontUncapped = incRate * powerKw;
+    else if (incBasis === 'per_unit')upfrontUncapped = incRate * units;
+    var upfront = upfrontUncapped;
+    if (incCap !== null && incCap !== undefined) {
+      if (capBasis === 'per_unit')      upfront = Math.min(upfrontUncapped, incCap * units);
+      else if (capBasis === 'per_site') upfront = Math.min(upfrontUncapped, incCap * sites);
+    }
+
+    // ── Recurring VPP/TOU (decentralized — depends ONLY on units × rate) ──
+    var vpp     = powerKw * vk;
+    var tou     = powerKw * tk;
+    var combined= vpp + tou;
+
+    var diyNet  = combined * 0.55;
+    var molNet  = combined * 0.95 * 0.80;  // 95% capture, 80% net (70%+10% installer)
+
+    var capexBase = units * capexUnit;
+    var mult = (S && S.mult) || 1;
+    var capexAdj  = capexBase * mult;
+
+    stateResults[k] = { units, sites, powerKw, upfront, vpp, tou, combined, diyNet, molNet, capexAdj, S };
+    totalUpfront += upfront;
+    totalVpp     += vpp;
+    totalTou     += tou;
+    totalCapex   += capexAdj;
+  });
+
+  var totalCombined = totalVpp + totalTou;
+  var totalDiy      = totalCombined * 0.55;
+  var totalMol      = totalCombined * 0.95 * 0.80;
+
+  // ── Compute revenue ───────────────────────────────────────────
+  var computeAnnual = totalUnits * CT.monthly * 12;
+  var computeCapex  = totalUnits * CT.capex;
+
+  // ── Owner meter ──────────────────────────────────────────────
+  var ownerCapacityMwh  = ownerSites * ownerMwh;
+  var ownerFleetKw      = ownerSites * ownerKw;
+  // Use avg state rates (weighted by each state's share of total units) for owner meter
+  var avgVppKw = 0, avgTouKw = 0;
+  Object.keys(_activeStates).forEach(function(k){
+    var frac = totalUnits > 0 ? (unitsByState[k]||0) / totalUnits : 0;
+    avgVppKw += (STATE_DATA[k].vpp_kw || 0) * frac;
+    avgTouKw += (STATE_DATA[k].tou_kw || 0) * frac;
+  });
+  var ownerVpp     = ownerFleetKw * avgVppKw;
+  var ownerTou     = ownerFleetKw * avgTouKw;
+  var ownerGross   = ownerVpp + ownerTou;
+  var ownerNetAgg  = ownerGross * aggD.capture * (aggD.owner_share + aggD.installer_share);
+  var ownerCapex   = ownerSites * ownerMwh * 1000 * capexOwnerKwh;
+
+  // ── Unit battery totals ───────────────────────────────────────
+  var unitFleetMwh = totalUnits * unitKwh / 1000;
+  var totalFleetMwh = unitFleetMwh + ownerCapacityMwh;
+
+  // ── Year-1 NextNRG net ───────────────────────────────────────
+  var molChoice = totalMol; // with Molecule for unit meters
+  var csNetY1   = totalUpfront + molChoice + ownerNetAgg + computeAnnual;
+  var totalCapexAll = totalCapex + computeCapex + ownerCapex;
+  var payback   = csNetY1 > 0 ? totalCapexAll / csNetY1 : 0;
+
+  // ── 5-Year projection ─────────────────────────────────────────
+  var yr = [];
+  for (var y=1; y<=5; y++){
+    var fvpp     = totalMol      * Math.pow(1+escVpp, y-1);
+    var ftou     = 0;  // already in VPP net above (combined)
+    var fcompute = computeAnnual * Math.pow(1+escCompute, y-1);
+    var fownerNt = ownerNetAgg   * Math.pow(1+escVpp, y-1);
+    var fupfront = y===1 ? totalUpfront : 0;
+    yr.push({ vppMol:fvpp, compute:fcompute, owner:fownerNt, upfront:fupfront,
+               total: fvpp + fcompute + fownerNt + fupfront });
+  }
+  var total5yr = yr.reduce(function(s,y){ return s+y.total; }, 0);
+
+  // ══════════════════════════════════════════════════════════════
+  // UPDATE UI — SUMMARY CARDS
+  // ══════════════════════════════════════════════════════════════
+  document.getElementById('s-units').textContent     = fmtN(totalUnits);
+  document.getElementById('s-unit-cap').textContent  = fmtMWh(unitFleetMwh);
+  document.getElementById('s-owner-cap').textContent = ownerCapacityMwh > 0 ? fmtMWh(ownerCapacityMwh) : '—';
+  document.getElementById('s-total-cap').textContent = fmtMWh(totalFleetMwh);
+  document.getElementById('s-yr1-rev').textContent   = fmt$(totalUpfront + totalCombined + computeAnnual + ownerGross);
+  document.getElementById('s-cs-net').textContent    = fmt$(csNetY1);
+  document.getElementById('s-capex').textContent     = fmt$(totalCapexAll);
+  document.getElementById('s-payback').textContent   = payback > 0 ? payback.toFixed(1)+' yr' : '—';
+
+  // Compute effect banner
+  document.getElementById('compute-effect').innerHTML =
+    '<strong>'+CT.name+'</strong> selected → $'+CT.monthly+'/unit/mo × '+totalUnits.toLocaleString()+' units = <strong>'+fmt$(computeAnnual)+'/yr</strong> compute revenue. '
+    + 'Hardware capex: $'+CT.capex+'/unit × '+totalUnits.toLocaleString()+' = <strong>'+fmt$(computeCapex)+'</strong> one-time.'
+    + (CT.power>0 ? ' Power draw '+CT.power+'W/unit.' : ' No compute device — energy stack only.');
+
+  // Aggregator effect banner
+  var aggName = aggD.name || (AGG_DATA[_agg]?AGG_DATA[_agg].name:'Custom');
+  var aggNet = ownerGross * aggD.capture * (aggD.owner_share + aggD.installer_share);
+  var diyRefNet = ownerGross * 0.55 * 1.00;
+  document.getElementById('agg-effect').innerHTML =
+    '<strong>'+aggName+'</strong> on owner meter → '+fmtPct(aggD.capture)+' capture × '+fmtPct(aggD.owner_share+aggD.installer_share)+' net share. '
+    + 'Owner meter gross '+fmt$(ownerGross)+' → <strong>'+fmt$(aggNet)+'/yr net to NextNRG</strong>'
+    + (_agg!=='diy' ? ' ('+fmt$(aggNet-diyRefNet)+' vs DIY).' : ' (baseline DIY).');
+
+  // Rev bars
+  var revTotal = totalUpfront + totalMol + computeAnnual + ownerNetAgg;
+  document.getElementById('rev-bars').innerHTML =
+    barRow('Upfront Incentives (Y1)', fmt$(totalUpfront), totalUpfront/revTotal, 'amber') +
+    barRow('VPP + TOU (Molecule net)', fmt$(totalMol), totalMol/revTotal, 'cyan') +
+    barRow('Data Compute', fmt$(computeAnnual), computeAnnual/revTotal, 'purple') +
+    barRow('Owner Meter Net', fmt$(ownerNetAgg), ownerNetAgg/revTotal, 'gold');
+
+  // 5-yr summary table
+  var tbody5 = document.getElementById('summary-5yr-body');
+  tbody5.innerHTML = '';
+  var rows5 = [
+    {label:'Upfront Incentives', vals:yr.map(function(y){return y.upfront;})},
+    {label:'VPP + TOU (Molecule net)', vals:yr.map(function(y){return y.vppMol;})},
+    {label:'Data Compute', vals:yr.map(function(y){return y.compute;})},
+    {label:'Owner Meter Net', vals:yr.map(function(y){return y.owner;})},
+    {label:'TOTAL', vals:yr.map(function(y){return y.total;}), bold:true},
+  ];
+  rows5.forEach(function(r){
+    var tr = document.createElement('tr');
+    if(r.bold) tr.classList.add('total');
+    var cells = '<td>'+r.label+'</td>';
+    var sum=0;
+    r.vals.forEach(function(v){ sum+=v; cells+='<td class="r">'+fmt$(v)+'</td>'; });
+    cells += '<td class="r" style="color:var(--green)">'+fmt$(sum)+'</td>';
+    tr.innerHTML=cells;
+    tbody5.appendChild(tr);
+  });
+
+  // State distribution bars
+  var stateBarHtml = '';
+  Object.keys(_activeStates).forEach(function(k){
+    var units = unitsByState[k]||0;
+    var pct = totalUnits > 0 ? units/totalUnits : 0;
+    stateBarHtml += barRow(STATE_DATA[k].name + ' (' + units.toLocaleString() + ' units)', fmtPct(pct), pct, 'cyan');
+  });
+  document.getElementById('state-dist-bars').innerHTML = stateBarHtml || '<div style="font-size:9px;color:var(--sub)">No states added yet.</div>';
+
+  // ══════════════════════════════════════════════════════════════
+  // PORTFOLIO TAB
+  // ══════════════════════════════════════════════════════════════
+  var stbody = document.getElementById('state-tbody');
+  stbody.innerHTML = '';
+  Object.keys(stateResults).forEach(function(k){
+    var r=stateResults[k];
+    var tr=document.createElement('tr');
+    var advantage = r.molNet - r.diyNet;
+    tr.innerHTML='<td><strong>'+r.S.name+'</strong><br><span style="font-size:8px;color:var(--sub)">'+r.S.util+'</span></td>'
+      +'<td class="r">'+fmtN(r.units)+'</td>'
+      +'<td class="r">'+fmtN(r.sites)+'</td>'
+      +'<td class="r">'+fmtN(r.powerKw)+' kW</td>'
+      +'<td class="r" style="color:var(--amber)">'+fmt$(r.upfront)+'</td>'
+      +'<td class="r">'+fmt$(r.vpp)+'</td>'
+      +'<td class="r">'+fmt$(r.tou)+'</td>'
+      +'<td class="r" style="font-weight:700">'+fmt$(r.combined)+'</td>'
+      +'<td class="r" style="color:var(--sub)">'+fmt$(r.diyNet)+'</td>'
+      +'<td class="r" style="color:var(--green)">'+fmt$(r.molNet)+'</td>'
+      +'<td class="r" style="color:var(--cyan)">'+fmt$(advantage)+'</td>'
+      +'<td><span class="'+(r.S.solar_req?'state-tag solar-yes':'state-tag solar-no')+'">'+(r.S.solar_req?'YES':'NO')+'</span></td>'
+      +'<td style="font-size:8px;color:var(--sub);max-width:180px">'+r.S.caveat.substring(0,80)+'…</td>';
+    stbody.appendChild(tr);
+  });
+  var stfoot=document.getElementById('state-tfoot');
+  stfoot.innerHTML='<tr class="total"><td>TOTAL</td><td class="r">'+fmtN(totalUnits)+'</td><td class="r">'+fmtN(totalSites)+'</td>'
+    +'<td class="r">'+fmtN(totalUnits*unitKw)+' kW</td>'
+    +'<td class="r" style="color:var(--amber)">'+fmt$(totalUpfront)+'</td>'
+    +'<td class="r">'+fmt$(totalVpp)+'</td>'
+    +'<td class="r">'+fmt$(totalTou)+'</td>'
+    +'<td class="r">'+fmt$(totalCombined)+'</td>'
+    +'<td class="r" style="color:var(--sub)">'+fmt$(totalDiy)+'</td>'
+    +'<td class="r" style="color:var(--green)">'+fmt$(totalMol)+'</td>'
+    +'<td class="r" style="color:var(--cyan)">'+fmt$(totalMol-totalDiy)+'</td>'
+    +'<td colspan="2"></td></tr>';
+
+  // Program table
+  var ptbody=document.getElementById('program-tbody');
+  ptbody.innerHTML='';
+  Object.keys(_activeStates).forEach(function(k){
+    var S=STATE_DATA[k];
+    var tr=document.createElement('tr');
+    if (!S.known) {
+      tr.innerHTML='<td>'+S.name+'</td>'
+        +'<td class="r" colspan="4" style="color:var(--amber)">NEEDS INVESTIGATION — rates unknown</td>'
+        +'<td style="font-size:8px;color:var(--amber)">'+S.program+'</td>';
+    } else {
+      var incLabel = '—';
+      if (S.inc_basis === 'per_kwh')       incLabel = '$'+S.inc_rate+'/kWh';
+      else if (S.inc_basis === 'per_kw')   incLabel = '$'+S.inc_rate+'/kW';
+      else if (S.inc_basis === 'per_unit' && S.inc_rate>0) incLabel = '$'+S.inc_rate.toLocaleString()+'/unit';
+      else if (S.inc_basis === 'none')     incLabel = 'performance only';
+      var capLabel = '—';
+      if (S.inc_cap !== null && S.inc_cap !== undefined)
+        capLabel = '$'+S.inc_cap.toLocaleString()+'/'+(S.cap_basis==='per_site'?'site':'unit');
+      var vLabel = (S.vpp_kw===null||S.vpp_kw===undefined) ? '—' : '$'+S.vpp_kw+'/kW-yr';
+      var tLabel = (S.tou_kw===null||S.tou_kw===undefined) ? '—' : '$'+S.tou_kw+'/kW-yr';
+      tr.innerHTML='<td>'+S.name+'</td>'
+        +'<td class="r">'+incLabel+'</td>'
+        +'<td class="r">'+capLabel+'</td>'
+        +'<td class="r">'+vLabel+'</td>'
+        +'<td class="r">'+tLabel+'</td>'
+        +'<td style="font-size:8px;color:var(--sub)">'+S.program+'</td>';
+    }
+    ptbody.appendChild(tr);
+  });
+
+  // State mix bars
+  var smHtml='';
+  Object.keys(stateResults).forEach(function(k){
+    var r=stateResults[k];
+    var pct=r.combined/totalCombined;
+    smHtml+=barRow(r.S.name, fmtPct(pct), pct, 'gold');
+  });
+  document.getElementById('state-mix-bars').innerHTML=smHtml;
+
+  // ══════════════════════════════════════════════════════════════
+  // PER-UNIT TAB
+  // ══════════════════════════════════════════════════════════════
+  var perUnitVppGross = totalCombined / totalUnits;
+  var perUnitMolNet   = totalMol / totalUnits;
+  var perUnitCompute  = CT.monthly * 12;
+  var perUnitCapex    = totalCapex / totalUnits;
+  var perUnitRevY1    = perUnitVppGross + perUnitCompute;
+
+  document.getElementById('per-unit-rows').innerHTML =
+    unitRow('Battery Capacity', unitKwh+' kWh (≤13 kWh max)',  'cyan') +
+    unitRow('Power Rating', unitKw+' kW continuous', '') +
+    unitRow('Unit sq ft', fmtN(gv('unit-sqft'))+' sq ft', '') +
+    unitRow('VPP/TOU Gross (annual)', fmt$(perUnitVppGross), '') +
+    unitRow('Compute Revenue (annual)', fmt$(perUnitCompute), '') +
+    unitRow('Total Gross/Unit (Y1)', fmt$(perUnitRevY1), 'gold') +
+    unitRow('CapEx per Unit', fmt$(perUnitCapex), 'amber');
+
+  document.getElementById('per-unit-mol-rows').innerHTML =
+    unitRow('DIY Net (55% capture)', fmt$(perUnitVppGross*0.55), 'sub') +
+    unitRow('Molecule Net (80% × 95%)', fmt$(perUnitMolNet), 'green') +
+    unitRow('Molecule Advantage/Unit', fmt$(perUnitMolNet - perUnitVppGross*0.55), 'cyan') +
+    unitRow('Monthly to NextNRG/Unit', fmt$(perUnitMolNet/12, 2), 'gold');
+
+  document.getElementById('unit-specs-rows').innerHTML =
+    unitRow('Compute Tier', COMPUTE_TIERS[_compute].name, '') +
+    unitRow('Compute CapEx/Unit', fmt$(CT.capex), '') +
+    unitRow('Compute Power Draw', CT.power+'W active', '') +
+    unitRow('Unit + Compute CapEx', fmt$(capexUnit + CT.capex), 'amber');
+
+  // Per-site
+  var perSiteUnits  = unitsPerSite;
+  var perSiteMolNet = perUnitMolNet * perSiteUnits;
+  var perSiteCompute= perUnitCompute * perSiteUnits;
+  var perSiteRevY1  = perSiteMolNet + perSiteCompute;
+  var perSiteCapex  = (capexUnit + CT.capex) * perSiteUnits;
+
+  document.getElementById('per-site-rows').innerHTML =
+    unitRow('Units per Site', fmtN(perSiteUnits), '') +
+    unitRow('Site Battery Capacity', (perSiteUnits*unitKwh/1000).toFixed(2)+' MWh', 'cyan') +
+    unitRow('Site Power (unit meters)', (perSiteUnits*unitKw)+' kW', '') +
+    unitRow('VPP/TOU Net (Molecule)', fmt$(perSiteMolNet), 'green') +
+    unitRow('Compute Revenue', fmt$(perSiteCompute), 'purple') +
+    unitRow('Total Site Revenue (Y1)', fmt$(perSiteRevY1), 'gold') +
+    unitRow('Monthly Cash to NextNRG', fmt$(perSiteRevY1/12, 0), 'gold');
+
+  document.getElementById('per-site-capex-rows').innerHTML =
+    unitRow('Unit + Compute CapEx', fmt$(perSiteCapex), 'amber') +
+    unitRow('Est. Upfront Incentive', fmt$(totalUpfront/totalSites), 'green') +
+    unitRow('Net CapEx per Site', fmt$(perSiteCapex - totalUpfront/totalSites), '') +
+    unitRow('Simple Payback (site)', (perSiteRevY1 > 0 ? (perSiteCapex/perSiteRevY1).toFixed(1) : '—')+' yr', '');
+
+  // ══════════════════════════════════════════════════════════════
+  // OWNER METER TAB
+  // ══════════════════════════════════════════════════════════════
+  document.getElementById('ow-capacity').textContent = fmtMWh(ownerCapacityMwh);
+  document.getElementById('ow-power').textContent    = (ownerFleetKw/1000).toFixed(2)+' MW';
+  document.getElementById('ow-revenue').textContent  = fmt$(ownerGross);
+  document.getElementById('ow-net').textContent      = fmt$(ownerNetAgg);
+
+  // Aggregator comparison table
+  var atbody=document.getElementById('agg-tbody');
+  atbody.innerHTML='';
+  var diyRef = ownerGross * 0.55 * 1.00;
+  Object.keys(AGG_DATA).forEach(function(k){
+    var a=AGG_DATA[k];
+    var net=ownerGross*a.capture*(a.owner_share+a.installer_share);
+    var advantage=net-diyRef;
+    var isActive=k===_agg;
+    var tr=document.createElement('tr');
+    tr.style.background=isActive?'rgba(197,165,90,.06)':'';
+    tr.innerHTML='<td><strong'+(isActive?' style="color:var(--gold)"':'')+'>'+a.name+(isActive?' ✓':'')+' </strong><br><span style="font-size:8px;color:var(--sub)">'+a.note+'</span></td>'
+      +'<td class="r">'+fmtPct(a.capture)+'</td>'
+      +'<td class="r">'+fmtPct(a.owner_share+a.installer_share)+'</td>'
+      +'<td class="r" style="color:var(--green)">'+fmt$(net)+'</td>'
+      +'<td class="r" style="color:'+(advantage>0?'var(--green)':'var(--red)')+'">'+fmt$(advantage)+'</td>';
+    atbody.appendChild(tr);
+  });
+
+  // Owner per-site
+  var perSiteOwnerRev = ownerNetAgg / ownerSites;
+  var perSiteOwnerCap = ownerCapex  / ownerSites;
+  document.getElementById('owner-per-site-rows').innerHTML =
+    unitRow('Sites with Owner Meter', fmtN(ownerSites), '') +
+    unitRow('Owner Meter per Site', ownerMwh+' MWh / '+ownerKw+' kW', 'cyan') +
+    unitRow('Owner VPP Revenue/Site', fmt$(ownerVpp/ownerSites), '') +
+    unitRow('Owner TOU Revenue/Site', fmt$(ownerTou/ownerSites), '') +
+    unitRow('Gross Revenue/Site', fmt$((ownerVpp+ownerTou)/ownerSites), '') +
+    unitRow('Net to NextNRG/Site', fmt$(perSiteOwnerRev), 'green') +
+    unitRow('Monthly Cash/Site', fmt$(perSiteOwnerRev/12, 0), 'gold');
+
+  document.getElementById('owner-capex-rows').innerHTML =
+    unitRow('Owner Meter CapEx/site', fmt$(ownerMwh*1000*capexOwnerKwh), 'amber') +
+    unitRow('Total Owner Fleet CapEx', fmt$(ownerCapex), 'amber') +
+    unitRow('Payback (owner meters)', (perSiteOwnerRev>0?(perSiteOwnerCap/perSiteOwnerRev).toFixed(1):'—')+' yr', '');
+
+  // ══════════════════════════════════════════════════════════════
+  // MOLECULE TAB
+  // ══════════════════════════════════════════════════════════════
+  document.getElementById('mol-diy-rows').innerHTML =
+    unitRow('Gross Modeled', fmt$(totalCombined), '') +
+    unitRow('Realized Capture (DIY)', '55%', 'amber') +
+    unitRow('Net Revenue (DIY)', fmt$(totalDiy), 'amber') +
+    unitRow('Value Left on Table', fmt$(totalCombined-totalDiy), 'red') +
+    unitRow('Why?', 'Missed events, delayed telemetry, static enrollment', 'sub');
+
+  document.getElementById('mol-mol-rows').innerHTML =
+    unitRow('Gross Modeled', fmt$(totalCombined), '') +
+    unitRow('Realized Capture', '95% via AERA execution', 'green') +
+    unitRow('Captured Revenue', fmt$(totalCombined*0.95), 'green') +
+    unitRow('NextNRG Net (70% + 10% installer)', fmt$(totalMol), 'green') +
+    unitRow('Molecule Platform (20%)', fmt$(totalCombined*0.95*0.20), 'sub') +
+    unitRow('Net Advantage vs DIY', fmt$(totalMol-totalDiy), 'cyan') +
+    unitRow('Monthly Advantage', fmt$((totalMol-totalDiy)/12), 'cyan');
+
+  var mstbody=document.getElementById('mol-state-tbody');
+  mstbody.innerHTML='';
+  var sumGross=0,sumDiy=0,sumMol=0;
+  Object.keys(stateResults).forEach(function(k){
+    var r=stateResults[k];
+    sumGross+=r.combined; sumDiy+=r.diyNet; sumMol+=r.molNet;
+    var adv=r.molNet-r.diyNet;
+    var advPct=r.diyNet>0?adv/r.diyNet:0;
+    var tr=document.createElement('tr');
+    tr.innerHTML='<td>'+r.S.name+'</td>'
+      +'<td class="r">'+fmt$(r.combined)+'</td>'
+      +'<td class="r" style="color:var(--sub)">'+fmt$(r.diyNet)+'</td>'
+      +'<td class="r" style="color:var(--green)">'+fmt$(r.molNet)+'</td>'
+      +'<td class="r" style="color:var(--cyan)">'+fmt$(adv)+'</td>'
+      +'<td class="r" style="color:var(--cyan)">'+fmtPct(advPct)+'</td>';
+    mstbody.appendChild(tr);
+  });
+  var mstfoot=document.getElementById('mol-state-tfoot');
+  var totalAdv=sumMol-sumDiy;
+  mstfoot.innerHTML='<tr class="total"><td>TOTAL</td>'
+    +'<td class="r">'+fmt$(sumGross)+'</td>'
+    +'<td class="r" style="color:var(--sub)">'+fmt$(sumDiy)+'</td>'
+    +'<td class="r" style="color:var(--green)">'+fmt$(sumMol)+'</td>'
+    +'<td class="r" style="color:var(--cyan)">'+fmt$(totalAdv)+'</td>'
+    +'<td class="r" style="color:var(--cyan)">'+fmtPct(sumDiy>0?totalAdv/sumDiy:0)+'</td>'
+    +'</tr>';
+
+  var csTotal=totalMol;
+  var molShare=totalCombined*0.95*0.20;
+  var splitTotal=csTotal+molShare;
+  document.getElementById('mol-split-bars').innerHTML =
+    barRow('NextNRG (70% owner + 10% installer)', fmt$(csTotal), csTotal/(splitTotal||1), 'gold') +
+    barRow('Molecule Platform (20%)', fmt$(molShare), molShare/(splitTotal||1), 'purple');
+
+  // ══════════════════════════════════════════════════════════════
+  // PRO FORMA TAB
+  // ══════════════════════════════════════════════════════════════
+  var itcValue = totalCapexAll * 0.30;
+  var netCapexAfterItc = totalCapexAll - itcValue;
+  document.getElementById('pf-capex').textContent     = fmt$(totalCapexAll);
+  document.getElementById('pf-itc').textContent       = fmt$(itcValue);
+  document.getElementById('pf-net-capex').textContent = fmt$(netCapexAfterItc);
+  document.getElementById('pf-5yr-cash').textContent  = fmt$(total5yr);
+
+  var pfHead=document.getElementById('proforma-head');
+  pfHead.innerHTML='<tr><th>Revenue Stream</th>'
+    +['Y1','Y2','Y3','Y4','Y5','5-Yr Total'].map(function(y){return'<th class="r">'+y+'</th>';}).join('')
+    +'</tr>';
+
+  var pfBody=document.getElementById('proforma-body');
+  pfBody.innerHTML='';
+  var pfRows=[
+    {label:'Upfront Incentives', key:'upfront', color:'var(--amber)'},
+    {label:'VPP+TOU Net (Molecule)', key:'vppMol', color:'var(--green)'},
+    {label:'Data Compute', key:'compute', color:'var(--purple)'},
+    {label:'Owner Meter Net', key:'owner', color:'var(--gold)'},
+    {label:'TOTAL CASH TO CLEARSKY', key:'total', color:'var(--gold)', bold:true},
+  ];
+  pfRows.forEach(function(r){
+    var tr=document.createElement('tr');
+    if(r.bold) tr.classList.add('total');
+    var cells='<td'+(r.bold?' style="color:var(--gold)"':'')+'>'+r.label+'</td>';
+    var sum=0;
+    yr.forEach(function(y){ var v=y[r.key]; sum+=v; cells+='<td class="r" style="color:'+r.color+'">'+fmt$(v)+'</td>'; });
+    cells+='<td class="r" style="color:'+r.color+';font-weight:700">'+fmt$(sum)+'</td>';
+    tr.innerHTML=cells; pfBody.appendChild(tr);
+  });
+  // Net rows
+  ['<tr><td style="color:var(--sub)">Gross CapEx (all systems)</td><td class="r" colspan="5" style="color:var(--amber)">'+fmt$(totalCapexAll)+'</td><td></td></tr>',
+   '<tr><td style="color:var(--sub)">ITC (30%)</td><td class="r" colspan="5" style="color:var(--green)">+'+fmt$(itcValue)+'</td><td></td></tr>',
+   '<tr class="total"><td>5-YR NET CASH (after ITC)</td><td class="r" colspan="5" style="color:'+(total5yr-netCapexAfterItc>0?'var(--green)':'var(--red)')+'">'+fmt$(total5yr-netCapexAfterItc)+'</td><td></td></tr>',
+  ].forEach(function(h){ var t=document.createElement('tbody'); t.innerHTML=h; pfBody.appendChild(t.firstChild); });
+
+  // Incentives
+  var incHtml='';
+  Object.keys(stateResults).forEach(function(k){
+    var r=stateResults[k];
+    incHtml+=unitRow(r.S.name+' ('+r.sites+' sites)', fmt$(r.upfront), r.S.solar_req?'amber':'green');
+  });
+  incHtml+=unitRow('TOTAL UPFRONT', fmt$(totalUpfront), 'gold');
+  document.getElementById('pf-incentives').innerHTML=incHtml;
+
+  // Key metrics
+  document.getElementById('pf-metrics').innerHTML =
+    unitRow('5-Yr Cash Multiple', (total5yr/totalCapexAll).toFixed(2)+'x', 'gold') +
+    unitRow('Simple Payback', payback.toFixed(1)+' yr (recurring cash)', '') +
+    unitRow('IRR (approx, post-ITC)', ((csNetY1/netCapexAfterItc)*100).toFixed(1)+'% Y1 cash return', 'green') +
+    unitRow('Molecule vs DIY advantage', fmt$(totalMol-totalDiy)+'/yr', 'cyan') +
+    unitRow('Compute Tier', CT.name, '') +
+    unitRow('Aggregator (owner meter)', AGG_DATA[_agg]?AGG_DATA[_agg].name:'Custom', '') +
+    unitRow('Total Fleet MWh', fmtMWh(totalFleetMwh), 'cyan');
+
+  // ── Snapshot everything for export ──
+  _lastResults = {
+    inputs: {
+      totalUnits: totalUnits, unitsPerSite: unitsPerSite, unitKwh: unitKwh, unitKw: unitKw,
+      ownerMwh: ownerMwh, ownerKw: ownerKw, ownerSites: ownerSites, ownerPerBldg: ownerPerBldg,
+      capexUnit: capexUnit, capexOwnerKwh: capexOwnerKwh,
+      computeTier: CT.name, computeMonthly: CT.monthly, computeCapexUnit: CT.capex,
+      aggregator: aggD.name, aggCapture: aggD.capture, aggOwnerShare: (aggD.owner_share+aggD.installer_share),
+      escVpp: escVpp, escTou: escTou, escCompute: escCompute
+    },
+    states: stateResults,
+    totals: {
+      totalUnits: totalUnits, totalSites: totalSites,
+      totalUpfront: totalUpfront, totalVpp: totalVpp, totalTou: totalTou,
+      totalCombined: totalCombined, totalDiy: totalDiy, totalMol: totalMol,
+      computeAnnual: computeAnnual, computeCapex: computeCapex,
+      ownerCapacityMwh: ownerCapacityMwh, ownerFleetKw: ownerFleetKw,
+      ownerGross: ownerGross, ownerNetAgg: ownerNetAgg, ownerCapex: ownerCapex,
+      unitFleetMwh: unitFleetMwh, totalFleetMwh: totalFleetMwh,
+      totalCapex: totalCapex, totalCapexAll: totalCapexAll,
+      itcValue: itcValue, netCapexAfterItc: netCapexAfterItc,
+      csNetY1: csNetY1, payback: payback, total5yr: total5yr
+    },
+    projection: yr
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// TAB SWITCHING
+// ══════════════════════════════════════════════════════════════════
+function showTab(id){
+  document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  document.getElementById('tab-'+id).classList.add('active');
+  var tabs=document.querySelectorAll('.tab');
+  var map={'config':0,'portfolio':1,'unit':2,'owner':3,'molecule':4,'proforma':5};
+  if(map[id]!==undefined) tabs[map[id]].classList.add('active');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// STATE MANAGEMENT (add/remove/edit states)
+// ══════════════════════════════════════════════════════════════════
+function populateStatePicker(){
+  var sel = document.getElementById('state-picker');
+  sel.innerHTML = '';
+  Object.keys(STATE_DATA).forEach(function(k){
+    if (_activeStates[k] !== undefined) return; // already active
+    var o = document.createElement('option');
+    o.value = k;
+    o.textContent = STATE_DATA[k].name + (STATE_DATA[k].known ? '' : ' — needs investigation');
+    sel.appendChild(o);
+  });
+}
+
+function addState(){
+  var sel = document.getElementById('state-picker');
+  var k = sel.value;
+  if (!k || _activeStates[k] !== undefined) return;
+  _activeStates[k] = 0;
+  renderStateRows();
+  populateStatePicker();
+  recalc();
+}
+
+function removeState(k){
+  delete _activeStates[k];
+  renderStateRows();
+  populateStatePicker();
+  recalc();
+}
+
+function updateStateUnits(k, val){
+  _activeStates[k] = Math.max(0, Math.round(parseFloat(val) || 0));
+  recalc();
+}
+
+function renderStateRows(){
+  var div = document.getElementById('state-rows');
+  div.innerHTML = '';
+  Object.keys(_activeStates).forEach(function(k){
+    var S = STATE_DATA[k];
+    var row = document.createElement('div');
+    row.style.cssText = 'display:grid;grid-template-columns:1fr 90px auto;gap:6px;align-items:center;margin-bottom:5px';
+    var flag = S.known ? '' : ' <span style="color:var(--amber);font-size:8px">⚠ investigate</span>';
+    row.innerHTML =
+      '<div style="font-size:10px;color:var(--text)">'+S.name+flag+'<br><span style="font-size:8px;color:var(--sub)">'+S.util+'</span></div>'
+      + '<input type="number" min="0" value="'+(_activeStates[k]||0)+'" oninput="updateStateUnits(\''+k+'\',this.value)" style="background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 7px;font-size:10px;font-family:inherit">'
+      + '<button onclick="removeState(\''+k+'\')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:2px 5px">✕</button>';
+    div.appendChild(row);
+  });
+  if (!Object.keys(_activeStates).length) {
+    div.innerHTML = '<div style="font-size:9px;color:var(--sub);padding:6px">Add a state from the dropdown above to begin.</div>';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// EXPORT
+// ══════════════════════════════════════════════════════════════════
+function _dl(filename, text, mime){
+  var blob = new Blob([text], {type: mime || 'text/plain'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+}
+
+function _csvCell(v){
+  if (v === null || v === undefined) return '';
+  var s = String(v);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+function _row(arr){ return arr.map(_csvCell).join(',') + '\r\n'; }
+
+function exportCSV(){
+  recalc();
+  if (!_lastResults){ alert('Add at least one state first.'); return; }
+  var R = _lastResults, T = R.totals, I = R.inputs;
+  var d = new Date().toISOString().slice(0,10);
+  var csv = '';
+
+  csv += _row(['NextNRG Residential BESS Portfolio Analysis']);
+  csv += _row(['Generated', new Date().toLocaleString()]);
+  csv += '\r\n';
+
+  // ── Configuration ──
+  csv += _row(['CONFIGURATION']);
+  csv += _row(['Total units', I.totalUnits]);
+  csv += _row(['Avg units per site', I.unitsPerSite]);
+  csv += _row(['Per-unit battery (kWh)', I.unitKwh]);
+  csv += _row(['Per-unit power (kW)', I.unitKw]);
+  csv += _row(['Owner meter per site (MWh)', I.ownerMwh]);
+  csv += _row(['Owner meter power (kW)', I.ownerKw]);
+  csv += _row(['Owner meter sites', I.ownerSites]);
+  csv += _row(['Compute tier', I.computeTier]);
+  csv += _row(['Compute $/unit/mo', I.computeMonthly]);
+  csv += _row(['Aggregator (owner meter)', I.aggregator]);
+  csv += _row(['Aggregator capture rate', (I.aggCapture*100).toFixed(0)+'%']);
+  csv += _row(['CapEx per unit ($)', I.capexUnit]);
+  csv += _row(['Owner BESS ($/kWh)', I.capexOwnerKwh]);
+  csv += '\r\n';
+
+  // ── Per-state table ──
+  csv += _row(['PER-STATE ANALYSIS (Year 1)']);
+  csv += _row(['State','Utility','Units','Sites','Power (kW)','Upfront Rebate ($)',
+               'VPP/DR Gross ($)','TOU Gross ($)','Combined Gross ($)',
+               'DIY Net ($)','Molecule Net ($)','Molecule Advantage ($)',
+               'Solar Required','Data Known','Program','Caveat']);
+  Object.keys(R.states).forEach(function(k){
+    var r = R.states[k], S = r.S;
+    csv += _row([S.name, S.util, r.units, r.sites, r.powerKw, Math.round(r.upfront),
+                 Math.round(r.vpp), Math.round(r.tou), Math.round(r.combined),
+                 Math.round(r.diyNet), Math.round(r.molNet), Math.round(r.molNet-r.diyNet),
+                 S.solar_req?'YES':'NO', S.known?'YES':'NEEDS INVESTIGATION', S.program, S.caveat]);
+  });
+  csv += _row(['TOTAL','',T.totalUnits,T.totalSites,T.totalUnits*I.unitKw,Math.round(T.totalUpfront),
+               Math.round(T.totalVpp),Math.round(T.totalTou),Math.round(T.totalCombined),
+               Math.round(T.totalDiy),Math.round(T.totalMol),Math.round(T.totalMol-T.totalDiy),'','','','']);
+  csv += '\r\n';
+
+  // ── Revenue summary ──
+  csv += _row(['YEAR-1 REVENUE SUMMARY ($)']);
+  csv += _row(['Upfront incentives (one-time)', Math.round(T.totalUpfront)]);
+  csv += _row(['VPP+TOU gross', Math.round(T.totalCombined)]);
+  csv += _row(['VPP+TOU net (DIY 55%)', Math.round(T.totalDiy)]);
+  csv += _row(['VPP+TOU net (Molecule)', Math.round(T.totalMol)]);
+  csv += _row(['Data compute revenue', Math.round(T.computeAnnual)]);
+  csv += _row(['Owner meter gross', Math.round(T.ownerGross)]);
+  csv += _row(['Owner meter net (after aggregator)', Math.round(T.ownerNetAgg)]);
+  csv += _row(['NET CASH TO CLEARSKY (Y1)', Math.round(T.csNetY1)]);
+  csv += '\r\n';
+
+  // ── Owner meter ──
+  csv += _row(['OWNER METER (BEHIND-THE-METER)']);
+  csv += _row(['Fleet capacity (MWh)', T.ownerCapacityMwh.toFixed(2)]);
+  csv += _row(['Fleet power (MW)', (T.ownerFleetKw/1000).toFixed(2)]);
+  csv += _row(['Gross revenue ($)', Math.round(T.ownerGross)]);
+  csv += _row(['Net to NextNRG ($)', Math.round(T.ownerNetAgg)]);
+  csv += _row(['Owner CapEx ($)', Math.round(T.ownerCapex)]);
+  csv += '\r\n';
+
+  // ── CapEx & Pro Forma ──
+  csv += _row(['CAPEX & PRO FORMA']);
+  csv += _row(['Unit fleet battery (MWh)', T.unitFleetMwh.toFixed(1)]);
+  csv += _row(['Total fleet battery (MWh)', T.totalFleetMwh.toFixed(1)]);
+  csv += _row(['Gross CapEx (all systems) ($)', Math.round(T.totalCapexAll)]);
+  csv += _row(['ITC 30% ($)', Math.round(T.itcValue)]);
+  csv += _row(['Net CapEx after ITC ($)', Math.round(T.netCapexAfterItc)]);
+  csv += _row(['Simple payback (yrs)', T.payback.toFixed(1)]);
+  csv += _row(['5-year total cash ($)', Math.round(T.total5yr)]);
+  csv += _row(['5-year cash/capex multiple', (T.total5yr/T.totalCapexAll).toFixed(2)+'x']);
+  csv += '\r\n';
+
+  // ── 5-year projection ──
+  csv += _row(['5-YEAR PROJECTION ($)']);
+  csv += _row(['Stream','Year 1','Year 2','Year 3','Year 4','Year 5','5-Yr Total']);
+  var streams = [
+    ['Upfront incentives', 'upfront'],
+    ['VPP+TOU net (Molecule)', 'vppMol'],
+    ['Data compute', 'compute'],
+    ['Owner meter net', 'owner'],
+    ['TOTAL', 'total']
+  ];
+  streams.forEach(function(s){
+    var vals = R.projection.map(function(y){ return Math.round(y[s[1]]); });
+    var sum = vals.reduce(function(a,b){ return a+b; }, 0);
+    csv += _row([s[0]].concat(vals).concat([sum]));
+  });
+
+  _dl('NextNRG_BESS_Portfolio_'+d+'.csv', csv, 'text/csv');
+}
+
+function exportJSON(){
+  recalc();
+  if (!_lastResults){ alert('Add at least one state first.'); return; }
+  // Strip circular S refs down to essentials
+  var clean = JSON.parse(JSON.stringify(_lastResults));
+  var d = new Date().toISOString().slice(0,10);
+  _dl('NextNRG_BESS_Portfolio_'+d+'.json', JSON.stringify(clean, null, 2), 'application/json');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════════════════════════════════
+renderStateRows();
+populateStatePicker();
+recalc();
+</script>
+</body>
+</html>
