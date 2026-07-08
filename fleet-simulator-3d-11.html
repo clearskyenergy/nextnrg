@@ -1,0 +1,2517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NextNRG · 3D Fleet Simulator (Energy + Compute) · ClearSky-OMEGA</title>
+<style>
+  :root{
+    --bg:#070b14;--panel:#101a2c;--panel2:#0b1424;--line:#1d2c46;
+    --ink:#e8eef7;--muted:#8aa0be;--dim:#5f7595;
+    --energy:#f97316;--energy2:#fb923c;--grid:#38bdf8;--compute:#a78bfa;
+    --good:#22c55e;--warn:#fbbf24;--molecule:#2dd4bf;--armada:#818cf8;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1300px;margin:0 auto;padding:18px 16px 80px}
+  h1,h2,h3{margin:0;font-weight:600;letter-spacing:-0.01em}
+  .top{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:4px}
+  .brand{display:flex;align-items:center;gap:11px;text-decoration:none;color:var(--ink);flex:0 0 auto}
+  .wordmark{font-weight:700;font-size:15px;letter-spacing:0.13em}
+  .tagline{font-size:9.5px;color:var(--muted);letter-spacing:0.26em;text-transform:uppercase;margin-top:1px}
+  .backBtn{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:8px 14px;
+    font-size:13px;color:var(--ink);text-decoration:none;flex:0 0 auto;transition:border-color .15s}
+  .backBtn:hover{border-color:var(--energy);color:var(--energy2)}
+  .logo{width:38px;height:38px;border-radius:9px;background:linear-gradient(135deg,var(--energy),#ea580c);
+    display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:19px;flex:0 0 auto}
+  .top h1{font-size:19px}.top .sub{color:var(--muted);font-size:13px}
+  .grid{display:grid;grid-template-columns:320px 1fr;gap:16px;margin-top:16px}
+  @media(max-width:920px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:13px;
+    display:flex;align-items:center;gap:8px}
+  .card h2 .k{width:5px;height:14px;border-radius:3px;background:var(--energy)}
+  .field{margin-bottom:15px}
+  .field label{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between}
+  .field label b{color:var(--ink);font-weight:600}
+  select,input[type=text]{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:9px;padding:9px 11px;font-size:14px;font-family:inherit;outline:none}
+  select:focus,input[type=text]:focus{border-color:var(--energy)}
+  input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:5px;border-radius:5px;
+    background:var(--line);outline:none;margin:8px 0 2px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;
+    border-radius:50%;background:var(--energy);cursor:pointer;border:3px solid var(--panel)}
+  input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--energy);
+    cursor:pointer;border:3px solid var(--panel)}
+  .specBox{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 11px;margin-top:4px}
+  .specRow{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--muted);gap:8px}
+  .specRow b{color:var(--ink);font-weight:600;text-align:right}
+  .specRow.warn b{color:var(--warn)}
+  .segRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+  .seg{flex:1 1 auto;min-width:60px;text-align:center;background:var(--panel2);border:1px solid var(--line);
+    border-radius:9px;padding:8px 6px;font-size:12px;color:var(--muted);cursor:pointer;transition:all .12s}
+  .seg.on{border-color:var(--energy);color:var(--ink);background:rgba(249,115,22,.12)}
+  .seg .ico{font-size:16px;display:block;margin-bottom:2px}
+  .btn{width:100%;background:linear-gradient(135deg,var(--energy),#ea580c);color:#fff;border:none;
+    border-radius:10px;padding:12px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;
+    display:flex;align-items:center;justify-content:center;gap:8px;transition:transform .08s}
+  .btn:active{transform:scale(.98)}
+  .btn.sec{background:var(--panel2);border:1px solid var(--line);color:var(--ink)}
+  .btn.sm{padding:9px;font-size:13px}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:0;overflow:hidden;position:relative;margin-bottom:16px}
+  #scene{width:100%;height:520px;display:block;cursor:grab;touch-action:none}
+  #scene:active{cursor:grabbing}
+  .sceneHUD{position:absolute;top:12px;left:14px;right:14px;display:flex;justify-content:space-between;
+    align-items:flex-start;pointer-events:none;flex-wrap:wrap;gap:8px}
+  .hudL{background:rgba(7,11,20,.72);border:1px solid var(--line);border-radius:10px;padding:8px 12px;backdrop-filter:blur(6px)}
+  .hudL .clk{font-family:ui-monospace,monospace;font-size:20px;font-weight:700;color:var(--energy2)}
+  .hudL .md{font-size:12px;color:var(--muted);margin-top:1px}
+  .hudR{display:flex;gap:6px;pointer-events:auto;flex-wrap:wrap;justify-content:flex-end}
+  .chip{background:rgba(7,11,20,.72);border:1px solid var(--line);border-radius:8px;padding:6px 10px;
+    font-size:12px;color:var(--ink);cursor:pointer;backdrop-filter:blur(6px)}
+  .chip:active{transform:scale(.96)}
+  .chip.on{border-color:var(--energy);color:var(--energy2)}
+  .legend{position:absolute;bottom:12px;left:14px;display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted);
+    background:rgba(7,11,20,.72);border:1px solid var(--line);border-radius:9px;padding:7px 11px;backdrop-filter:blur(6px)}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .sw{width:10px;height:10px;border-radius:3px;display:inline-block}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+  @media(max-width:640px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 13px}
+  .tile .lab{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:5px}
+  .tile .val{font-size:22px;font-weight:700;letter-spacing:-0.02em}
+  .tile .val small{font-size:13px;font-weight:600;color:var(--muted)}
+  .tile .sub{font-size:11px;color:var(--dim);margin-top:2px}
+  .tile.e .val{color:var(--energy2)}.tile.g .val{color:var(--grid)}
+  .tile.c .val{color:var(--compute)}.tile.m .val{color:var(--good)}
+  .flowStage{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+  .flowHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px}
+  .flowHead h3{font-size:14px}
+  .pill{font-size:10px;padding:2px 8px;border-radius:12px;font-weight:600}
+  .pill.live{background:rgba(34,197,94,.15);color:var(--good)}
+  .pill.pend{background:rgba(251,191,36,.15);color:var(--warn)}
+  .fchain{display:flex;align-items:stretch;gap:0;position:relative;flex-wrap:nowrap;overflow-x:auto;padding-bottom:6px}
+  .fnode{flex:1 0 150px;min-width:150px;position:relative;perspective:600px}
+  .fcard{background:linear-gradient(160deg,var(--panel2),#0a1220);border:1px solid var(--line);border-radius:13px;
+    padding:13px;height:100%;transform:rotateY(-6deg) rotateX(2deg);transform-style:preserve-3d;
+    box-shadow:6px 8px 0 rgba(0,0,0,.28);transition:transform .3s}
+  .fcard:hover{transform:rotateY(0deg) rotateX(0deg)}
+  .fcard .nh{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:9px}
+  .fcard .ic{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    font-size:13px;font-weight:800;color:#070b14;box-shadow:0 3px 0 rgba(0,0,0,.3)}
+  .fcard .line{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);padding:2px 0;gap:6px}
+  .fcard .line b{color:var(--ink);font-weight:600;text-align:right}
+  .conn{flex:0 0 34px;display:flex;align-items:center;justify-content:center;position:relative}
+  .conn .arw{font-size:20px;color:var(--dim)}
+  .conn .pkt{position:absolute;width:9px;height:9px;border-radius:50%;top:50%;margin-top:-4px;box-shadow:0 0 10px currentColor}
+  .gt .ic{background:var(--energy2)}.mol .ic{background:var(--molecule)}
+  .arm .ic{background:var(--armada)}.rev .ic{background:var(--good)}
+  .gt .fcard{border-color:rgba(249,115,22,.35)}.mol .fcard{border-color:rgba(45,212,191,.35)}
+  .arm .fcard{border-color:rgba(129,140,248,.35)}.rev .fcard{border-color:rgba(34,197,94,.35)}
+  .revbar{display:flex;height:12px;border-radius:8px;overflow:hidden;margin:16px 0 8px;border:1px solid var(--line)}
+  .revseg{height:100%}
+  .revleg{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-size:12px}
+  .revleg .r{display:flex;justify-content:space-between;color:var(--muted)}
+  .revleg .r b{color:var(--ink)}
+  .revleg .r i{width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:6px;font-style:normal}
+  .deployRow{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .deployRow select{flex:1}
+  .deployRow input[type=number]{width:78px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:9px;padding:9px;font-size:14px;font-family:inherit;outline:none}
+  .deployList{margin-bottom:12px}
+  .dep{display:flex;justify-content:space-between;align-items:center;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:9px 11px;margin-bottom:7px;font-size:13px}
+  .dep .dn{font-weight:600}.dep .dm{color:var(--muted);font-size:11px}
+  .dep .dr{color:var(--good);font-weight:600;font-size:13px}
+  .dep .dx{color:var(--dim);cursor:pointer;margin-left:10px;font-size:15px}
+  .steps{list-style:none;padding:0;margin:0}
+  .steps li{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted)}
+  .steps li:last-child{border-bottom:none}
+  .steps .num{flex:0 0 22px;height:22px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--energy2)}
+  .steps b{color:var(--ink)}
+  .note{font-size:11px;color:var(--dim);margin-top:10px;line-height:1.5}
+  .disc{font-size:11px;color:var(--dim);margin-top:22px;padding-top:14px;border-top:1px solid var(--line);line-height:1.6}
+  .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <a class="brand" href="/" title="NextNRG — back to portal">
+      <svg width="46" height="42" viewBox="0 0 100 92" fill="none" aria-label="NextNRG">
+        <path d="M33 60 A 24 24 0 1 1 67 60" stroke="#e8eef7" stroke-width="11" stroke-linecap="round" fill="none"/>
+        <line x1="16" y1="60" x2="36" y2="60" stroke="#e8eef7" stroke-width="11" stroke-linecap="round"/>
+        <line x1="64" y1="60" x2="84" y2="60" stroke="#e8eef7" stroke-width="11" stroke-linecap="round"/>
+        <line x1="16" y1="79" x2="84" y2="79" stroke="#e8eef7" stroke-width="11" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <div class="wordmark">NextNRG</div>
+        <div class="tagline">Powered by ClearSky-OMEGA</div>
+      </div>
+    </a>
+    <div style="flex:1;min-width:200px">
+      <h1>3D Fleet Simulator</h1>
+      <div class="sub">Gotion BESS &rarr; Molecule (energy/VPP) &rarr; Armada (edge compute)</div>
+    </div>
+    <a class="backBtn" href="/">&lsaquo; Portal</a>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2><span class="k"></span>Building</h2>
+        <div class="field">
+          <label>Site name <b id="siteNameLbl">&mdash;</b></label>
+          <input type="text" id="siteName" placeholder="e.g. Lakeview Apartments, Chicago" maxlength="60">
+        </div>
+        <div class="field">
+          <label>Building type <b id="btName">Panel apartment block</b></label>
+          <div class="segRow" id="btSeg"></div>
+        </div>
+        <div class="field">
+          <label>Facade material <b id="facName">Concrete</b></label>
+          <div class="segRow" id="facSeg"></div>
+        </div>
+        <div class="field" id="fldUnit">
+          <label>Residential storage unit <b id="unitName">HOME 13</b></label>
+          <select id="unitSel"></select>
+          <div class="specBox" id="unitSpec"></div>
+        </div>
+        <div class="field">
+          <label id="unitsLbl">Housing units <b id="unitsVal">24</b></label>
+          <input type="range" id="unitsRange" min="4" max="400" value="24" step="1">
+          <div style="font-size:11px;color:var(--dim);margin-top:3px" id="massInfo"></div>
+        </div>
+        <div class="field" id="fldPart">
+          <label>Participation rate <b id="partVal">85%</b></label>
+          <input type="range" id="partRange" min="20" max="100" value="85" step="5">
+        </div>
+        <div class="field" id="fldEdge">
+          <label>Edge compute device / unit <b id="edgeName">Standard edge node</b></label>
+          <select id="edgeSel"></select>
+          <div class="specBox" id="edgeSpec"></div>
+        </div>
+        <div class="field">
+          <label>State / market <b id="regName">Illinois</b></label>
+          <select id="regSel"></select>
+          <div class="specBox" id="regSpec"></div>
+        </div>
+        <button class="btn" id="runBtn"><span>&#9654;</span> Run 24-hour simulation</button>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2><span class="k" style="background:var(--grid)"></span>Building-level systems</h2>
+        <div class="note" style="margin-top:0;margin-bottom:11px">Add shared Gotion equipment for the whole building &mdash; a container / cabinet battery and an Armada compute node that sit on-site. Toggle "open doors" in the viewer to see inside.</div>
+        <div class="field">
+          <label>Central battery <b id="bigBattName">None</b></label>
+          <select id="bigBattSel"></select>
+          <div class="specBox" id="bigBattSpec" style="display:none"></div>
+        </div>
+        <div class="field">
+          <label>Site compute node <b id="bigNodeName">None</b></label>
+          <select id="bigNodeSel"></select>
+          <div class="specBox" id="bigNodeSpec" style="display:none"></div>
+        </div>
+        <div class="note" style="margin:12px 0 8px;color:var(--muted)">On-site generation (DER) &mdash; offsets grid draw and adds value-stack revenue.</div>
+        <div class="field">
+          <label>Solar array <b id="derSolarName">None</b></label>
+          <select id="derSolarSel"></select>
+        </div>
+        <div class="field">
+          <label>Wind <b id="derWindName">None</b></label>
+          <select id="derWindSel"></select>
+        </div>
+        <div class="field">
+          <label>Generator / alt <b id="derGenName">None</b></label>
+          <select id="derGenSel"></select>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2><span class="k" style="background:var(--good)"></span>Customer deployments</h2>
+        <div class="note" style="margin-top:0;margin-bottom:11px">Add each customer site with its own state and unit count. Sites can be anywhere in the country.</div>
+        <input type="text" id="depName" placeholder="Site name (optional)" maxlength="50" style="margin-bottom:8px">
+        <div class="deployRow">
+          <select id="depState"></select>
+          <input type="number" id="depUnits" min="1" value="24" placeholder="units">
+        </div>
+        <button class="btn sec sm" id="depAdd" style="margin-bottom:12px">+ Add this deployment</button>
+        <div class="deployList" id="depList"></div>
+        <button class="btn sec sm" id="depSeed" style="margin-bottom:0">Use current building as a deployment</button>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2><span class="k" style="background:var(--molecule)"></span>Enrollment path</h2>
+        <ol class="steps">
+          <li><span class="num">1</span><div>Register the BESS fleet on <b>Molecule AERA</b> &mdash; one integration surface for every device.</div></li>
+          <li><span class="num">2</span><div>Bring your dispatch model or use <b>DividendVPP&trade;</b> for turnkey value-stack optimization.</div></li>
+          <li><span class="num">3</span><div>List spare capacity in the <b>Armada Marketplace</b>; deploy inference to edge nodes.</div></li>
+          <li><span class="num">4</span><div><b>Armada Bridge</b> monetizes GPU/compute; <b>Atlas</b> monitors the fleet.</div></li>
+        </ol>
+      </div>
+    </div>
+
+    <div>
+      <div class="tiles">
+        <div class="tile e"><div class="lab">Participating units</div><div class="val" id="tUnits">20</div><div class="sub" id="tUnitsSub">of 24 in building</div></div>
+        <div class="tile e"><div class="lab">Fleet storage</div><div class="val" id="tStore">0<small> MWh</small></div><div class="sub" id="tStoreSub">usable capacity</div></div>
+        <div class="tile c"><div class="lab">Compute power</div><div class="val" id="tCompute">0<small> kW</small></div><div class="sub">edge + site node</div></div>
+        <div class="tile m"><div class="lab">Fleet revenue / day</div><div class="val" id="tRev">$0</div><div class="sub">energy + compute</div></div>
+      </div>
+
+      <div class="stage">
+        <canvas id="scene"></canvas>
+        <div class="loading" id="loadMsg">Loading 3D scene&hellip;</div>
+        <div class="sceneHUD">
+          <div class="hudL">
+            <div class="clk" id="clk">00:00</div>
+            <div class="md" id="mode">drag to orbit &middot; scroll to zoom</div>
+            <div class="md" id="earnRate" style="display:none;color:var(--good);font-weight:600"></div>
+            <div class="md" id="earnTotal" style="display:none"><span style="color:var(--muted)">total today</span> <b id="earnTotalVal" style="color:#e8eef7;font-family:ui-monospace,monospace"></b></div>
+          </div>
+          <div class="hudR">
+            <div class="chip" id="doorChip">&#9707; open doors</div>
+            <div class="chip" id="focusChip">&#9673; focus equipment</div>
+            <div class="chip" id="sceneChip">&#9968; suburban</div>
+            <div class="chip" id="rotChip">&#8635; auto-rotate</div>
+            <div class="chip" id="snapChip">&#8615; save PDF report</div>
+          </div>
+        </div>
+        <div class="legend">
+          <span><i class="sw" style="background:#38bdf8"></i>Charging</span>
+          <span><i class="sw" style="background:#f97316"></i>Discharging</span>
+          <span><i class="sw" style="background:#a78bfa"></i>Compute</span>
+          <span><i class="sw" style="background:#334155"></i>Idle</span>
+        </div>
+      </div>
+
+      <div class="flowStage">
+        <div class="flowHead"><h3>Signal &rarr; execution &rarr; earnings</h3><span class="pill live">live flow</span></div>
+        <div class="fchain">
+          <div class="fnode gt"><div class="fcard">
+            <div class="nh"><span class="ic">G</span>Gotion BESS</div>
+            <div class="line"><span>Per unit</span><b id="fUnitKwh">13.0 kWh</b></div>
+            <div class="line"><span>Central</span><b id="fCentral">&mdash;</b></div>
+            <div class="line"><span>Fleet</span><b id="fFleet">0 MWh</b></div>
+          </div></div>
+          <div class="conn"><span class="arw">&rarr;</span><span class="pkt" id="pkt1" style="color:#38bdf8;background:#38bdf8"></span></div>
+          <div class="fnode mol"><div class="fcard">
+            <div class="nh"><span class="ic">M</span>Molecule</div>
+            <div class="line"><span>Program</span><b id="fProg">VPP</b></div>
+            <div class="line"><span>Dispatch/day</span><b id="fDisp">2</b></div>
+            <div class="line"><span>Realized</span><b id="fReal">95%</b></div>
+          </div></div>
+          <div class="conn"><span class="arw">&rarr;</span><span class="pkt" id="pkt2" style="color:#2dd4bf;background:#2dd4bf"></span></div>
+          <div class="fnode arm"><div class="fcard">
+            <div class="nh"><span class="ic">A</span>Armada</div>
+            <div class="line"><span>Edge/unit</span><b id="fEdgeW">300 W</b></div>
+            <div class="line"><span>Site node</span><b id="fSiteNode">&mdash;</b></div>
+            <div class="line"><span>DER gen</span><b id="fDER">&mdash;</b></div>
+            <div class="line"><span>Layer</span><b>Bridge</b></div>
+          </div></div>
+          <div class="conn"><span class="arw">&rarr;</span><span class="pkt" id="pkt3" style="color:#a78bfa;background:#a78bfa"></span></div>
+          <div class="fnode rev"><div class="fcard">
+            <div class="nh"><span class="ic">$</span>Earnings</div>
+            <div class="line"><span>Energy/day</span><b id="fEnRev">$0</b></div>
+            <div class="line"><span>Compute/day</span><b id="fCoRev">$0</b></div>
+            <div class="line"><span>Total/yr</span><b id="fYr">$0</b></div>
+          </div></div>
+        </div>
+        <div class="revbar" id="revbar"></div>
+        <div class="revleg" id="revleg"></div>
+      </div>
+
+      <div class="flowStage" id="portStage" style="display:none">
+        <div class="flowHead"><h3>Portfolio &mdash; <span id="portCount">0</span> deployments</h3><span class="pill pend">modeled projection</span></div>
+        <div class="tiles" style="margin-bottom:0">
+          <div class="tile e"><div class="lab">Total units</div><div class="val" id="pUnits">0</div></div>
+          <div class="tile m"><div class="lab">Fleet storage</div><div class="val" id="pStore">0<small> MWh</small></div></div>
+          <div class="tile c"><div class="lab">Edge compute</div><div class="val" id="pCompute">0<small> kW</small></div></div>
+          <div class="tile g"><div class="lab">Revenue / year</div><div class="val" id="pRevYr">$0</div></div>
+        </div>
+        <div class="note">Portfolio totals only the deployments you add. Revenue is a planning projection &mdash; actual earnings depend on enrolled programs, cleared market prices, dispatch performance, and compute utilization. States marked "needs investigation" have no confirmed 2026 residential VPP/rebate program and are modeled at wholesale/TOU value only.</div>
+      </div>
+
+      <div class="disc">
+        <b>Data sources.</b> Battery specs (HOME series, GRID-R racks, EDGE cabinets, GRID containers) from the uploaded Gotion ESS datasheet. State incentive/utility/VPP data from your 50-state ClearSky-OMEGA research model. Molecule Systems (AERA, DividendVPP) and Armada Edge Platform (Galleon, Bridge, Marketplace, Atlas) reflect published 2026 product descriptions. Compute uses representative edge-inference draw. All revenue outputs are illustrative planning estimates.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+var STATES=[
+  {c:"AL",name:"Alabama",util:"Alabama Power",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"AK",name:"Alaska",util:"various (AK)",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"AZ",name:"Arizona",util:"APS / SRP / TEP",vpp:90,tou:140,inc:0,mult:1,known:true,program:"APS / SRP residential battery pilots"},
+  {c:"AR",name:"Arkansas",util:"Entergy Arkansas",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"CA",name:"California",util:"PG&E / SCE / SDG&E",vpp:300,tou:180,inc:150,mult:1.2,known:true,program:"SGIP + DSGS + ELRP (VPP stack)"},
+  {c:"CO",name:"Colorado",util:"Xcel Energy",vpp:100,tou:150,inc:350,mult:1,known:true,program:"Xcel Battery Connect + AVPP + 10% state credit"},
+  {c:"CT",name:"Connecticut",util:"Eversource / United Illuminating",vpp:225,tou:150,inc:400,mult:1.12,known:true,program:"Energy Storage Solutions (9-yr program)"},
+  {c:"DE",name:"Delaware",util:"Delmarva Power",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"FL",name:"Florida",util:"FPL / Duke FL",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"GA",name:"Georgia",util:"Georgia Power",vpp:90,tou:130,inc:0,mult:1,known:true,program:"Georgia Power solar+storage pilot (50 MW, Docket 56002)"},
+  {c:"HI",name:"Hawaii",util:"Hawaiian Electric (HECO)",vpp:200,tou:250,inc:0,mult:1.3,known:true,program:"HECO Battery Bonus + Bring Your Own Device"},
+  {c:"ID",name:"Idaho",util:"Idaho Power",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"IL",name:"Illinois",util:"ComEd / Ameren",vpp:150,tou:160,inc:300,mult:1,known:true,program:"ComEd BESH + Rider VPP/BYODLR + CRGA"},
+  {c:"IN",name:"Indiana",util:"Duke/AES Indiana",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"IA",name:"Iowa",util:"MidAmerican / Alliant",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"KS",name:"Kansas",util:"Evergy",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"KY",name:"Kentucky",util:"LG&E/KU",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"LA",name:"Louisiana",util:"Entergy Louisiana",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"ME",name:"Maine",util:"Central Maine Power / Versant",vpp:100,tou:130,inc:0,mult:1.08,known:true,program:"Efficiency Maine battery pilot + DR"},
+  {c:"MD",name:"Maryland",util:"BGE / Pepco / Delmarva / Potomac Edison",vpp:100,tou:150,inc:350,mult:1.1,known:true,program:"MD Energy Storage Tax Credit + utility VPP pilots (Case 9761)"},
+  {c:"MA",name:"Massachusetts",util:"Eversource / National Grid / Unitil",vpp:275,tou:175,inc:0,mult:1.15,known:true,program:"ConnectedSolutions + SMART storage adder"},
+  {c:"MI",name:"Michigan",util:"DTE / Consumers",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"MN",name:"Minnesota",util:"Xcel Energy + Dept of Commerce",vpp:100,tou:130,inc:400,mult:1.05,known:true,program:"MN $430M distributed battery program + Xcel"},
+  {c:"MS",name:"Mississippi",util:"Entergy Mississippi",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"MO",name:"Missouri",util:"Ameren/Evergy MO",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"MT",name:"Montana",util:"NorthWestern Energy",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"NE",name:"Nebraska",util:"various (NE public power)",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"NV",name:"Nevada",util:"NV Energy",vpp:100,tou:150,inc:0,mult:1.02,known:true,program:"NV Energy Storage Incentive + demand response"},
+  {c:"NH",name:"New Hampshire",util:"Eversource / Liberty",vpp:200,tou:140,inc:0,mult:1.1,known:true,program:"NH ConnectedSolutions (Eversource) + battery pilots"},
+  {c:"NJ",name:"New Jersey",util:"PSE&G / JCP&L / ACE",vpp:90,tou:175,inc:200,mult:1.1,known:true,program:"Garden State Energy Storage (GSESP) Phase 2"},
+  {c:"NM",name:"New Mexico",util:"PNM",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"NY",name:"New York",util:"ConEd / NYSERDA",vpp:120,tou:200,inc:250,mult:1.15,known:true,program:"NYSERDA Residential Storage + VDER + GREAT Act"},
+  {c:"NC",name:"North Carolina",util:"Duke Energy NC",vpp:80,tou:120,inc:0,mult:1,known:true,program:"Duke Energy PowerPair / EnergyWise battery DR"},
+  {c:"ND",name:"North Dakota",util:"various (ND)",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"OH",name:"Ohio",util:"AEP/FirstEnergy OH",vpp:0,tou:0,inc:0,mult:1.03,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"OK",name:"Oklahoma",util:"OG&E/PSO",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"OR",name:"Oregon",util:"Portland General / Pacific Power",vpp:95,tou:120,inc:300,mult:1.05,known:true,program:"ODOE Solar+Storage Rebate + PGE/Pacific Power VPP"},
+  {c:"PA",name:"Pennsylvania",util:"PECO/PPL/FirstEnergy PA",vpp:0,tou:0,inc:0,mult:1.05,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"RI",name:"Rhode Island",util:"Rhode Island Energy",vpp:225,tou:150,inc:0,mult:1.12,known:true,program:"ConnectedSolutions + REF battery adder"},
+  {c:"SC",name:"South Carolina",util:"Dominion/Duke SC",vpp:80,tou:120,inc:0,mult:1,known:true,program:"Duke Energy PowerPair / EnergyWise battery DR"},
+  {c:"SD",name:"South Dakota",util:"various (SD)",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"TN",name:"Tennessee",util:"TVA",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"TX",name:"Texas",util:"ERCOT retail (Base Power, Tesla, EPE)",vpp:120,tou:180,inc:0,mult:1,known:true,program:"ERCOT VPP pilots (Tesla, Base Power, EPE, Sonnen-Solrite)"},
+  {c:"UT",name:"Utah",util:"Rocky Mountain Power",vpp:90,tou:110,inc:0,mult:1,known:true,program:"RMP Wattsmart Battery program"},
+  {c:"VT",name:"Vermont",util:"Green Mountain Power",vpp:0,tou:0,inc:0,mult:1.08,known:true,program:"GMP Bring-Your-Own-Device + Powerwall lease"},
+  {c:"VA",name:"Virginia",util:"Dominion Energy",vpp:100,tou:140,inc:0,mult:1.05,known:true,program:"Dominion VPP pilot (state-mandated, up to 450 MW)"},
+  {c:"WA",name:"Washington",util:"Puget Sound Energy / Seattle City Light",vpp:85,tou:110,inc:0,mult:1.05,known:true,program:"PSE / SCL demand response + WA Clean Energy"},
+  {c:"WV",name:"West Virginia",util:"Appalachian Power",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"WI",name:"Wisconsin",util:"We Energies/Focus on Energy",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"},
+  {c:"WY",name:"Wyoming",util:"Rocky Mountain Power WY",vpp:0,tou:0,inc:0,mult:1,known:false,program:"NEEDS INVESTIGATION"}
+];
+
+/* ===== building types ===== */
+var BTYPES=[
+  {id:"panel",name:"Panel apartment block",ico:"\u25a4",unitLabel:"Housing units"},
+  {id:"midrise",name:"Modern mid-rise",ico:"\u25a9",unitLabel:"Housing units"},
+  {id:"tower",name:"High-rise tower",ico:"\u25af",unitLabel:"Housing units"},
+  {id:"house",name:"Single / multi-family house",ico:"\u2302",unitLabel:"Dwellings"},
+  {id:"office",name:"Office building",ico:"\u25a0",unitLabel:"Tenant suites"},
+  {id:"cni",name:"Commercial & industrial",ico:"\u2699",unitLabel:"Dock bays",big:true},
+  {id:"hospital",name:"Hospital / medical",ico:"\u271a",unitLabel:"Beds",big:true},
+  {id:"muni",name:"Municipal / government",ico:"\u2691",unitLabel:"Staff offices",big:true},
+  {id:"land",name:"Land / substation site",ico:"\u26a1",unitLabel:"Battery + data pairs",big:true,land:true}
+];
+var UNITS=[
+  {id:"home5",name:"HOME 5",kwh:4.8,model:"HSD51-05P5L",v:"51.2V",cells:"LFP-100Ah",mods:1},
+  {id:"home10",name:"HOME 10",kwh:9.8,model:"HSD51-05P10L",v:"51.2V",cells:"LFP-200Ah",mods:2},
+  {id:"home13",name:"HOME 13",kwh:13.0,model:"HOME 13 (3 modules)",v:"51.2V",cells:"LFP",mods:3},
+  {id:"home15",name:"HOME 15",kwh:14.7,model:"HSD51-05P15L",v:"51.2V",cells:"LFP-300Ah",mods:3},
+  {id:"home20",name:"HOME 20",kwh:19.6,model:"HSD51-05P20L",v:"51.2V",cells:"LFP-400Ah",mods:4}
+];
+var EDGE=[
+  {id:"none",name:"None (storage only)",w:0,desc:"No compute node"},
+  {id:"micro",name:"Micro edge node",w:150,desc:"Smart-meter class inference"},
+  {id:"std",name:"Standard edge node",w:300,desc:"Armada-managed inference"},
+  {id:"gpu",name:"GPU edge node",w:650,desc:"Bridge GPUaaS, high inference"}
+];
+/* kind drives the 3D form: pack / cabinet / rack / container */
+var BIGBATT=[
+  {id:"none",name:"None",kwh:0,model:"\u2014",kind:""},
+  {id:"epd104",name:"Standard Pack EPD332",kwh:104.49,model:"EPD332-05P104",kind:"pack"},
+  {id:"edge160",name:"EDGE 160 cabinet",kwh:160,model:"ESD832-05P160",kind:"cabinet"},
+  {id:"edge220",name:"EDGE 220 cabinet",kwh:220,model:"ESD768-05P220",kind:"cabinet"},
+  {id:"rack380",name:"GRID-R rack (liquid)",kwh:380.1,model:"ERD1267-05P380",kind:"rack"},
+  {id:"rack450",name:"GRID-R rack (air)",kwh:450.6,model:"ERD1126-05P450",kind:"rack"},
+  {id:"edge760",name:"EDGE 760 C&I cabinet",kwh:760,model:"ESD1267-05P760-G",kind:"cabinet"},
+  {id:"grid2703",name:"GRID 2703 container",kwh:2703,model:"ESD1126-05P2703",kind:"container"},
+  {id:"grid4608",name:"GRID 4608 container",kwh:4608,model:"ESD1280-05P4608",kind:"container"},
+  {id:"grid5068",name:"GRID 5068 container",kwh:5068,model:"ESD1280-05P5068",kind:"container"}
+];
+/* node kind: rack / galleon / leviathan */
+var BIGNODE=[
+  {id:"none",name:"None",kw:0,model:"\u2014",kind:""},
+  {id:"cruiser",name:"Galleon Cruiser (20ft)",kw:35,model:"Armada Galleon",kind:"rack"},
+  {id:"triton",name:"Galleon Triton",kw:120,model:"Armada Galleon",kind:"galleon"},
+  {id:"leviathan",name:"Leviathan (1MW MDC)",kw:1000,model:"Armada Leviathan",kind:"leviathan"}
+];
+/* DER generation systems (on-site solar / wind / generator). kw = nameplate,
+   cf = capacity factor, cost = levelized $/kWh to generate. */
+var DERSOLAR=[
+  {id:"none",name:"None",kw:0,cf:0,cost:0},
+  {id:"s50",name:"Solar 50 kW (rooftop)",kw:50,cf:0.18,cost:0.04},
+  {id:"s150",name:"Solar 150 kW (carport/ground)",kw:150,cf:0.18,cost:0.04},
+  {id:"s500",name:"Solar 500 kW (ground array)",kw:500,cf:0.18,cost:0.04}
+];
+var DERWIND=[
+  {id:"none",name:"None",kw:0,cf:0,cost:0},
+  {id:"w50",name:"Wind 50 kW",kw:50,cf:0.30,cost:0.05},
+  {id:"w100",name:"Wind 100 kW",kw:100,cf:0.30,cost:0.05}
+];
+var DERGEN=[
+  {id:"none",name:"None",kw:0,cf:0,cost:0},
+  {id:"ng750",name:"NG Genset 750 kW",kw:750,cf:0.35,cost:0.12},
+  {id:"fc400",name:"Fuel Cell 400 kW",kw:400,cf:0.50,cost:0.09}
+];
+/* facade materials */
+var FACMATS=[
+  {id:"concrete",name:"Concrete",ico:"\u25a6",tint:0x9a9d98},
+  {id:"brick",name:"Brick",ico:"\u25a4",tint:0x8a4a38},
+  {id:"stucco",name:"Stucco",ico:"\u25a1",tint:0xd8d2c4},
+  {id:"siding",name:"Siding",ico:"\u2630",tint:0xc9cdd2},
+  {id:"glass",name:"Glass",ico:"\u25a3",tint:0x2b3a4d}
+];
+/* snapshot backdrops */
+var SCENES=[
+  {id:"studio",name:"studio",ico:"\u25cb",sky:"#0a0f1c",ground:0x0c1424,silhouette:null},
+  {id:"suburban",name:"suburban",ico:"\u2302",sky:"#b9d4e8",ground:0x6f7d5a,silhouette:"low"},
+  {id:"urban",name:"urban",ico:"\u25a4",sky:"#9fb3c8",ground:0x3a3f47,silhouette:"mid"},
+  {id:"city",name:"city",ico:"\u25af",sky:"#7f96b3",ground:0x2c313b,silhouette:"tall"},
+  {id:"industrial",name:"industrial",ico:"\u25a0",sky:"#c4bdaf",ground:0x494f4a,silhouette:"flat"},
+  {id:"dusk",name:"dusk",ico:"\u25d0",sky:"#3a2f4a",ground:0x241c30,silhouette:"tall"}
+];
+
+function stByCode(c){for(var i=0;i<STATES.length;i++){if(STATES[i].c===c)return STATES[i];}return STATES[0];}
+var S={btype:BTYPES[0],facMat:FACMATS[0],unit:UNITS[2],edge:EDGE[2],st:stByCode("IL"),units:24,part:85,
+       bigBatt:BIGBATT[0],bigNode:BIGNODE[0],
+       derSolar:DERSOLAR[0],derWind:DERWIND[0],derGen:DERGEN[0]};
+var DEPLOYMENTS=[];
+var doorsOpen=false, focusEquip=false, sceneIdx=1;
+var backdropGroup=null;
+var SIMSTATE={running:false,hour:0,earned:0};
+
+function $(id){return document.getElementById(id);}
+function money(n){
+  if(n>=1e9)return "$"+(n/1e9).toFixed(2)+"B";
+  if(n>=1e6)return "$"+(n/1e6).toFixed(2)+"M";
+  if(n>=1e3)return "$"+(n/1e3).toFixed(1)+"K";
+  return "$"+Math.round(n).toLocaleString();
+}
+function commas(n){return Math.round(n).toLocaleString();}
+function findBy(a,id){for(var i=0;i<a.length;i++){if(a[i].id===id)return a[i];}return a[0];}
+
+function fill(){
+  var u=$("unitSel"),e=$("edgeSel"),r=$("regSel"),ds=$("depState"),bb=$("bigBattSel"),bn=$("bigNodeSel"),i,o;
+  var dso=$("derSolarSel"),dwo=$("derWindSel"),dgo=$("derGenSel");
+  var seg=$("btSeg");
+  for(i=0;i<BTYPES.length;i++){
+    var s=document.createElement("div");s.className="seg"+(BTYPES[i].id==="panel"?" on":"");
+    s.setAttribute("data-id",BTYPES[i].id);
+    s.innerHTML='<span class="ico">'+BTYPES[i].ico+'</span>'+BTYPES[i].name.split(" ")[0];
+    s.title=BTYPES[i].name;seg.appendChild(s);
+  }
+  var fseg=$("facSeg");
+  for(i=0;i<FACMATS.length;i++){
+    var fs=document.createElement("div");fs.className="seg"+(FACMATS[i].id==="concrete"?" on":"");
+    fs.setAttribute("data-id",FACMATS[i].id);
+    fs.innerHTML='<span class="ico">'+FACMATS[i].ico+'</span>'+FACMATS[i].name;
+    fs.title=FACMATS[i].name;fseg.appendChild(fs);
+  }
+  for(i=0;i<UNITS.length;i++){o=document.createElement("option");o.value=UNITS[i].id;o.text=UNITS[i].name+" \u2014 "+UNITS[i].kwh+" kWh";u.appendChild(o);}
+  u.value="home13";
+  for(i=0;i<EDGE.length;i++){o=document.createElement("option");o.value=EDGE[i].id;o.text=EDGE[i].name+(EDGE[i].w?(" \u2014 "+EDGE[i].w+" W"):"");e.appendChild(o);}
+  e.value="std";
+  for(i=0;i<BIGBATT.length;i++){o=document.createElement("option");o.value=BIGBATT[i].id;o.text=BIGBATT[i].name+(BIGBATT[i].kwh?(" \u2014 "+commas(BIGBATT[i].kwh)+" kWh"):"");bb.appendChild(o);}
+  for(i=0;i<BIGNODE.length;i++){o=document.createElement("option");o.value=BIGNODE[i].id;o.text=BIGNODE[i].name+(BIGNODE[i].kw?(" \u2014 "+BIGNODE[i].kw+" kW"):"");bn.appendChild(o);}
+  for(i=0;i<DERSOLAR.length;i++){o=document.createElement("option");o.value=DERSOLAR[i].id;o.text=DERSOLAR[i].name;dso.appendChild(o);}
+  for(i=0;i<DERWIND.length;i++){o=document.createElement("option");o.value=DERWIND[i].id;o.text=DERWIND[i].name;dwo.appendChild(o);}
+  for(i=0;i<DERGEN.length;i++){o=document.createElement("option");o.value=DERGEN[i].id;o.text=DERGEN[i].name;dgo.appendChild(o);}
+  for(i=0;i<STATES.length;i++){
+    o=document.createElement("option");o.value=STATES[i].c;o.text=STATES[i].name+(STATES[i].known?"":" \u26a0");r.appendChild(o);
+    var o2=document.createElement("option");o2.value=STATES[i].c;o2.text=STATES[i].name;ds.appendChild(o2);
+  }
+  r.value="IL";ds.value="IL";
+}
+
+function unitYr(st,unit,edge){
+  var estKw=unit.kwh/3.5;
+  var vppYr=(st.vpp||0)*estKw, touYr=(st.tou||0)*estKw*0.35;
+  var energyYr=(vppYr+touYr)*(st.mult||1);
+  if(!st.known)energyYr=touYr*0.6;
+  var infHrs=edge.w?6:0;
+  var computeYr=(edge.w*infHrs/1000)*365*0.11*4;
+  return {energyYr:energyYr,computeYr:computeYr};
+}
+function centralYr(st,kwh){
+  if(!kwh)return 0;
+  var estKw=kwh/4;
+  var y=((st.vpp||0)*estKw*0.85+(st.tou||0)*estKw*0.3)*(st.mult||1);
+  if(!st.known)y=(st.tou||0)*estKw*0.3*0.6;
+  return y;
+}
+function nodeYr(kw){if(!kw)return 0;return kw*10*365*0.11*4;}
+
+/* Annual value of on-site DER generation for a site.
+   Generation offsets grid draw (avoided ~$0.11/kWh) net of levelized cost,
+   plus a value-stack adder on the nameplate (VPP/arbitrage on the state). */
+function derYr(st){
+  var gridCost=0.11;
+  function gen(sel){
+    if(!sel||!sel.kw)return 0;
+    var kwh=sel.kw*(sel.cf||0)*8760;
+    var avoided=kwh*(gridCost-(sel.cost||0));           /* net savings vs grid */
+    var stack=(st&&st.vpp?st.vpp:0)*sel.kw*0.25;         /* partial VPP credit on nameplate */
+    return Math.max(0,avoided)+Math.max(0,stack);
+  }
+  return gen(S.derSolar)+gen(S.derWind)+gen(S.derGen);
+}
+function derKw(){ return (S.derSolar?S.derSolar.kw:0)+(S.derWind?S.derWind.kw:0)+(S.derGen?S.derGen.kw:0); }
+
+function renderSpecs(){
+  var u=S.unit;
+  $("unitSpec").innerHTML='<div class="specRow"><span>Model</span><b>'+u.model+'</b></div>'+
+    '<div class="specRow"><span>Usable energy</span><b>'+u.kwh+' kWh</b></div>'+
+    '<div class="specRow"><span>Voltage</span><b>'+u.v+'</b></div>'+
+    '<div class="specRow"><span>Cells</span><b>'+u.cells+'</b></div>';
+  var e=S.edge;
+  $("edgeSpec").innerHTML='<div class="specRow"><span>Draw</span><b>'+(e.w?e.w+' W':'\u2014')+'</b></div>'+
+    '<div class="specRow"><span>Role</span><b>'+e.desc+'</b></div>';
+  var st=S.st;
+  $("regSpec").innerHTML='<div class="specRow"><span>Utility</span><b>'+st.util+'</b></div>'+
+    '<div class="specRow'+(st.known?'':' warn')+'"><span>Program</span><b>'+st.program+'</b></div>'+
+    '<div class="specRow"><span>VPP value</span><b>'+(st.vpp?('$'+st.vpp+'/kW-yr'):'\u2014')+'</b></div>'+
+    '<div class="specRow"><span>Upfront rebate</span><b>'+(st.inc?('$'+st.inc+'/kWh'):'\u2014')+'</b></div>';
+  var bb=S.bigBatt,bbBox=$("bigBattSpec");
+  if(bb.kwh){bbBox.style.display="block";
+    bbBox.innerHTML='<div class="specRow"><span>Model</span><b>'+bb.model+'</b></div>'+
+    '<div class="specRow"><span>Usable</span><b>'+commas(bb.kwh)+' kWh</b></div>'+
+    '<div class="specRow"><span>Form</span><b>'+bb.kind+'</b></div>';
+  }else bbBox.style.display="none";
+  var bn=S.bigNode,bnBox=$("bigNodeSpec");
+  if(bn.kw){bnBox.style.display="block";
+    bnBox.innerHTML='<div class="specRow"><span>Model</span><b>'+bn.model+'</b></div>'+
+    '<div class="specRow"><span>Draw</span><b>'+bn.kw+' kW</b></div>';
+  }else bnBox.style.display="none";
+  $("btName").textContent=S.btype.name;
+  $("unitsLbl").innerHTML=S.btype.unitLabel+' <b id="unitsVal">'+S.units+'</b>';
+  $("unitName").textContent=u.name;$("edgeName").textContent=e.name;$("regName").textContent=st.name;
+  $("bigBattName").textContent=bb.name;$("bigNodeName").textContent=bn.name;
+  if($("derSolarName"))$("derSolarName").textContent=S.derSolar.name;
+  if($("derWindName"))$("derWindName").textContent=S.derWind.name;
+  if($("derGenName"))$("derGenName").textContent=S.derGen.name;
+}
+
+function calc(){
+  var bt=S.btype;
+  /* big-meter categories: no per-unit HOME systems — the whole building is signed
+     on central equipment. Land sites: N battery+data pairs at wholesale + compute. */
+  if(bt.big){
+    var pairs=bt.land?Math.max(1,S.units):1;
+    var battKwh=S.bigBatt.kwh, nodeKw=S.bigNode.kw;
+    var totKwhB=pairs*battKwh;
+    var wholesaleMult=bt.land?1.1:1.0;   /* land sites clear wholesale, slight uplift */
+    var enDayB=pairs*centralYr(S.st,battKwh)*wholesaleMult/365;
+    var coDayB=pairs*nodeYr(nodeKw)/365;
+    var derDayB=derYr(S.st)/365;
+    return {pu:pairs,homeKwh:0,centralKwh:totKwhB,totKwh:totKwhB,enDay:enDayB+derDayB,coDay:coDayB,
+      tot:enDayB+derDayB+coDayB,computeKw:pairs*nodeKw,derKw:derKw(),infHrs:nodeKw?10:0,totYr:(enDayB+derDayB+coDayB)*365,
+      dispatch:2,big:true,land:!!bt.land,pairs:pairs};
+  }
+  var pu=Math.round(S.units*S.part/100);
+  var homeKwh=pu*S.unit.kwh, centralKwh=S.bigBatt.kwh, totKwh=homeKwh+centralKwh;
+  var uy=unitYr(S.st,S.unit,S.edge);
+  var enDay=(uy.energyYr*pu+centralYr(S.st,centralKwh))/365;
+  var coDay=(uy.computeYr*pu+nodeYr(S.bigNode.kw))/365;
+  var derDay=derYr(S.st)/365;
+  var computeKw=(S.edge.w*pu/1000)+S.bigNode.kw;
+  return {pu:pu,homeKwh:homeKwh,centralKwh:centralKwh,totKwh:totKwh,enDay:enDay+derDay,coDay:coDay,
+    tot:enDay+derDay+coDay,computeKw:computeKw,derKw:derKw(),infHrs:S.edge.w?6:0,totYr:(enDay+derDay+coDay)*365,dispatch:2};
+}
+function renderOut(){
+  var mi=$("massInfo");if(mi)mi.textContent=massingText();
+  var c=calc();
+  $("tUnits").textContent=commas(c.pu);
+  $("tUnitsSub").textContent=c.land?"battery + data pairs":(c.big?"site-level system(s)":"of "+S.units+" in building");
+  $("tStore").innerHTML=(c.totKwh/1000).toFixed(2)+'<small> MWh</small>';
+  $("tStoreSub").textContent=c.centralKwh?("incl "+commas(c.centralKwh)+" kWh central"):"per-unit HOME";
+  $("tCompute").innerHTML=Math.round(c.computeKw)+'<small> kW</small>';
+  $("tRev").textContent=money(c.tot);
+  $("fUnitKwh").textContent=S.unit.kwh.toFixed(1)+" kWh";
+  $("fCentral").textContent=c.centralKwh?(commas(c.centralKwh)+" kWh"):"\u2014";
+  $("fFleet").textContent=(c.totKwh/1000).toFixed(2)+" MWh";
+  $("fProg").textContent=S.st.known?"VPP":"TOU only";$("fReal").textContent=S.st.known?"95%":"n/a";
+  $("fDisp").textContent=c.dispatch;$("fEdgeW").textContent=(S.edge.w||0)+" W";
+  $("fSiteNode").textContent=S.bigNode.kw?(S.bigNode.kw+" kW"):"\u2014";
+  if($("fDER"))$("fDER").textContent=c.derKw?(c.derKw+" kW"):"\u2014";
+  $("fEnRev").textContent=money(c.enDay);$("fCoRev").textContent=money(c.coDay);$("fYr").textContent=money(c.totYr);
+  var tot=c.tot||1,enP=Math.round(c.enDay/tot*100),coP=100-enP;
+  $("revbar").innerHTML='<div class="revseg" style="width:'+enP+'%;background:var(--energy)"></div>'+
+    '<div class="revseg" style="width:'+coP+'%;background:var(--compute)"></div>';
+  $("revleg").innerHTML='<div class="r"><span><i style="background:var(--energy)"></i>Energy / VPP</span><b>'+money(c.enDay)+' &middot; '+enP+'%</b></div>'+
+    '<div class="r"><span><i style="background:var(--compute)"></i>Edge compute</span><b>'+money(c.coDay)+' &middot; '+coP+'%</b></div>';
+}
+
+/* ===== deployments ===== */
+function addDeployment(code,units,site){var st=stByCode(code);DEPLOYMENTS.push({code:code,name:st.name,units:units,site:site||""});renderDeployments();}
+function renderDeployments(){
+  var list=$("depList");list.innerHTML="";
+  if(!DEPLOYMENTS.length){$("portStage").style.display="none";return;}
+  var pf=S.part/100,totUnits=0,totKwh=0,totYr=0,totCompute=0;
+  for(var i=0;i<DEPLOYMENTS.length;i++){
+    var d=DEPLOYMENTS[i],st=stByCode(d.code),pu=Math.round(d.units*pf);
+    var uy=unitYr(st,S.unit,S.edge);
+    var yr=(uy.energyYr+uy.computeYr)*pu+centralYr(st,S.bigBatt.kwh)+nodeYr(S.bigNode.kw)+derYr(st);
+    totUnits+=d.units;totKwh+=pu*S.unit.kwh+S.bigBatt.kwh;totYr+=yr;totCompute+=S.edge.w*pu/1000+S.bigNode.kw;
+    var el=document.createElement("div");el.className="dep";
+    el.innerHTML='<div><div class="dn">'+(d.site?d.site+' \u2014 ':'')+d.name+' &middot; '+commas(d.units)+' units</div>'+
+      '<div class="dm">'+st.util+(st.known?'':' &middot; \u26a0 needs investigation')+'</div></div>'+
+      '<div style="display:flex;align-items:center"><span class="dr">'+money(yr)+'/yr</span>'+
+      '<span class="dx" data-i="'+i+'">&times;</span></div>';
+    list.appendChild(el);
+  }
+  var xs=list.getElementsByClassName("dx");
+  for(var k=0;k<xs.length;k++){xs[k].onclick=function(){DEPLOYMENTS.splice(parseInt(this.getAttribute("data-i"),10),1);renderDeployments();};}
+  $("portStage").style.display="block";$("portCount").textContent=DEPLOYMENTS.length;
+  $("pUnits").textContent=commas(totUnits);$("pStore").innerHTML=(totKwh/1000).toFixed(1)+'<small> MWh</small>';
+  $("pCompute").innerHTML=Math.round(totCompute)+'<small> kW</small>';$("pRevYr").textContent=money(totYr);
+}
+
+/* ================= 3D ================= */
+var THREEJS={ready:false};
+var scene,camera,renderer,buildingGroup,apartments=[],packMeshes=[],bigBattObj=null,bigNodeObj=null,groundMesh=null;
+var equipCenter={x:0,z:0};
+var orbit={az:-0.7,el:0.2,r:40,tAz:-0.7,tEl:0.2,tR:40,auto:true,_userZoom:false,tx:0,ty:4,tz:0,cx:0,cy:4,cz:0};
+var drag={on:false,x:0,y:0};
+var cols=4;
+
+function mat(hex,rough,metal,emis,ei){return new THREE.MeshStandardMaterial({color:hex,roughness:rough==null?0.8:rough,metalness:metal==null?0.05:metal,emissive:emis||0x000000,emissiveIntensity:ei==null?1:ei});}
+
+/* ===== procedural facade textures (canvas -> THREE.Texture), cached ===== */
+var TEXCACHE={};
+function cvTex(key,w,h,draw){
+  if(TEXCACHE[key])return TEXCACHE[key];
+  var c=document.createElement("canvas");c.width=w;c.height=h;
+  var ctx=c.getContext("2d");draw(ctx,w,h);
+  var t=new THREE.CanvasTexture(c);
+  t.wrapS=THREE.RepeatWrapping;t.wrapT=THREE.RepeatWrapping;
+  t.anisotropy=8; /* kills moir\u00e9 banding at glancing angles */
+  if(THREE.sRGBEncoding!==undefined)t.encoding=THREE.sRGBEncoding;
+  TEXCACHE[key]=t;return t;
+}
+function brickTex(){
+  return cvTex("brick",256,256,function(ctx,w,h){
+    ctx.fillStyle="#7d3b2e";ctx.fillRect(0,0,w,h);           /* mortar-tinted base */
+    var bw=64,bh=26,mortar=4;
+    for(var row=0;row<Math.ceil(h/(bh+mortar));row++){
+      var off=(row%2)*(bw/2);
+      for(var col=-1;col<Math.ceil(w/(bw+mortar))+1;col++){
+        var x=col*(bw+mortar)+off, y=row*(bh+mortar);
+        /* brick color jitter */
+        var r=150+Math.floor(Math.random()*40)-20;
+        var g=70+Math.floor(Math.random()*24)-12;
+        var b=55+Math.floor(Math.random()*20)-10;
+        ctx.fillStyle="rgb("+r+","+g+","+b+")";
+        ctx.fillRect(x,y,bw,bh);
+      }
+    }
+    /* mortar lines lighter */
+    ctx.strokeStyle="rgba(200,190,180,0.25)";ctx.lineWidth=mortar;
+    for(var yy=0;yy<h;yy+=bh+mortar){ctx.beginPath();ctx.moveTo(0,yy-mortar/2);ctx.lineTo(w,yy-mortar/2);ctx.stroke();}
+  });
+}
+function stuccoTex(){
+  return cvTex("stucco",128,128,function(ctx,w,h){
+    ctx.fillStyle="#d8d2c4";ctx.fillRect(0,0,w,h);
+    for(var i=0;i<2600;i++){
+      var x=Math.random()*w,y=Math.random()*h,a=Math.random()*0.06;
+      ctx.fillStyle="rgba(90,80,66,"+a+")";ctx.fillRect(x,y,2,2);
+    }
+  });
+}
+function concreteTex(){
+  return cvTex("concrete",128,128,function(ctx,w,h){
+    ctx.fillStyle="#9a9d98";ctx.fillRect(0,0,w,h);
+    for(var i=0;i<1800;i++){
+      var x=Math.random()*w,y=Math.random()*h,a=Math.random()*0.05;
+      ctx.fillStyle=(Math.random()>0.5?"rgba(40,44,48,":"rgba(220,224,228,")+a+")";ctx.fillRect(x,y,2,2);
+    }
+    /* faint panel seams */
+    ctx.strokeStyle="rgba(50,54,58,0.18)";ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.moveTo(w/2,0);ctx.lineTo(w/2,h);ctx.stroke();
+  });
+}
+function sidingTex(){
+  /* horizontal lap siding for houses */
+  return cvTex("siding",128,128,function(ctx,w,h){
+    ctx.fillStyle="#c9cdd2";ctx.fillRect(0,0,w,h);
+    var lap=16;
+    for(var y=0;y<h;y+=lap){
+      ctx.fillStyle="rgba(255,255,255,0.35)";ctx.fillRect(0,y,w,1);
+      ctx.fillStyle="rgba(60,66,72,0.22)";ctx.fillRect(0,y+lap-2,w,2);
+    }
+  });
+}
+/* returns a MeshStandardMaterial for a facade material id, tinted to base hex */
+function facadeMaterial(matId,tintHex,uw,uh){
+  var m,t;
+  /* clone the cached texture per material: repeat lives on the texture,
+     so sharing one instance makes different-sized walls stomp each other's tiling */
+  function tex(base,rx,ry){
+    var tt=base.clone();tt.needsUpdate=true;
+    tt.wrapS=THREE.RepeatWrapping;tt.wrapT=THREE.RepeatWrapping;
+    tt.anisotropy=8;tt.repeat.set(Math.max(1,Math.round(rx)),Math.max(1,Math.round(ry)));
+    return tt;
+  }
+  if(matId==="brick"){
+    m=new THREE.MeshStandardMaterial({map:tex(brickTex(),uw/1.6,uh/1.6),roughness:0.92,metalness:0.02});
+  }else if(matId==="stucco"){
+    m=new THREE.MeshStandardMaterial({map:tex(stuccoTex(),uw/2,uh/2),roughness:0.85,metalness:0.03,color:tintHex});
+  }else if(matId==="siding"){
+    m=new THREE.MeshStandardMaterial({map:tex(sidingTex(),uw/2.6,uh/1.9),roughness:0.7,metalness:0.03,color:tintHex});
+  }else if(matId==="glass"){
+    m=new THREE.MeshStandardMaterial({color:0x2b3a4d,roughness:0.15,metalness:0.75});
+  }else{ /* concrete / panel default */
+    m=new THREE.MeshStandardMaterial({map:tex(concreteTex(),uw/2.4,uh/2.4),roughness:0.82,metalness:0.04,color:tintHex});
+  }
+  return m;
+}
+
+function initThree(){
+  var cv=$("scene");
+  renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true,preserveDrawingBuffer:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+  renderer.shadowMap.enabled=true;
+  renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  renderer.toneMapping=THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure=1.05;
+  if(THREE.sRGBEncoding!==undefined)renderer.outputEncoding=THREE.sRGBEncoding;
+  scene=new THREE.Scene();scene.fog=new THREE.Fog(0x0a0f1c,60,160);
+  camera=new THREE.PerspectiveCamera(40,1,0.1,600);
+  /* soft sky/ground ambient for even fill */
+  var hemi=new THREE.HemisphereLight(0xbcd2ff,0x0a1424,0.55);scene.add(hemi);
+  scene.add(new THREE.AmbientLight(0xffffff,0.28));
+  /* key light with shadows */
+  var key=new THREE.DirectionalLight(0xfff2e0,1.15);key.position.set(34,54,30);
+  key.castShadow=true;
+  key.shadow.mapSize.width=2048;key.shadow.mapSize.height=2048;
+  key.shadow.camera.near=1;key.shadow.camera.far=200;
+  key.shadow.camera.left=-60;key.shadow.camera.right=60;
+  key.shadow.camera.top=60;key.shadow.camera.bottom=-60;
+  key.shadow.bias=-0.0004;key.shadow.normalBias=0.02;
+  scene.add(key);
+  /* cool rim/fill from opposite side */
+  var fl=new THREE.DirectionalLight(0x7fa8ff,0.4);fl.position.set(-30,20,-24);scene.add(fl);
+  /* warm ground bounce near entrance */
+  var warm=new THREE.PointLight(0xffcf9a,0.35,100);warm.position.set(0,9,32);scene.add(warm);
+  /* ground: matte plane that receives shadows */
+  var ground=new THREE.Mesh(new THREE.PlaneGeometry(280,280),
+    new THREE.MeshStandardMaterial({color:0x0c1424,roughness:1,metalness:0}));
+  ground.rotation.x=-Math.PI/2;ground.position.y=0;ground.receiveShadow=true;scene.add(ground);groundMesh=ground;
+  /* faint grid for scale, sunk just below ground to avoid z-fight */
+  var gh=new THREE.GridHelper(280,140,0x203150,0x142239);gh.position.y=0.005;
+  if(gh.material){gh.material.transparent=true;gh.material.opacity=0.5;}scene.add(gh);
+  buildingGroup=new THREE.Group();scene.add(buildingGroup);
+  resize();window.addEventListener("resize",resize);bindOrbit(cv);
+  THREEJS.ready=true;$("loadMsg").style.display="none";
+  buildBuilding();animate();
+}
+function resize(){var cv=$("scene");var w=cv.clientWidth||cv.parentNode.clientWidth;var h=520;
+  renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
+
+/* ---------- shared detail helpers ---------- */
+function addCorrugation(parent,w,h,z,color,ribs){
+  /* vertical ribs across a face to mimic shipping-container corrugation */
+  ribs=ribs||Math.max(6,Math.round(w*3));
+  var rm=mat(color,0.7,0.2);
+  var step=w/ribs;
+  for(var i=0;i<ribs;i++){
+    var rib=new THREE.Mesh(new THREE.BoxGeometry(step*0.55,h,0.04),rm);
+    rib.position.set(-w/2+step*(i+0.5),0,z);parent.add(rib);
+  }
+}
+function addVentGrille(parent,x,y,z,w,h){
+  var vm=mat(0x11161d,0.6,0.3);
+  var louvers=Math.max(4,Math.round(h*6));
+  for(var i=0;i<louvers;i++){
+    var lv=new THREE.Mesh(new THREE.BoxGeometry(w,h/louvers*0.6,0.03),vm);
+    lv.position.set(x,y-h/2+h/louvers*(i+0.5),z);parent.add(lv);
+  }
+}
+function addFan(parent,x,y,z,r){
+  var fm=mat(0x0c1119,0.5,0.4);
+  var ring=new THREE.Mesh(new THREE.BoxGeometry(r*2,r*2,0.04),fm);
+  ring.position.set(x,y,z);parent.add(ring);
+  var hub=new THREE.Mesh(new THREE.SphereGeometry(r*0.28,10,10),mat(0x1a2330,0.5,0.4));
+  hub.position.set(x,y,z+0.03);parent.add(hub);
+}
+function addPlacard(parent,x,y,z,hazard){
+  /* hazard placard: yellow (lithium/electric) */
+  var col=hazard==="li"?0xf5c033:(hazard==="elec"?0xf5c033:0xffffff);
+  var p=new THREE.Mesh(new THREE.PlaneGeometry(0.42,0.3),mat(col,0.5,0.1,col,0.15));
+  p.position.set(x,y,z+0.01);parent.add(p);
+  var bd=new THREE.Mesh(new THREE.PlaneGeometry(0.46,0.34),mat(0x141a10,0.7,0));
+  bd.position.set(x,y,z+0.005);parent.add(bd);
+}
+
+/* interior battery rack (rows of dark modules with green status LED) */
+function makeBatteryRack(w,h,d){
+  var g=new THREE.Group();
+  var frame=mat(0x1a1e26,0.6,0.3);
+  var body=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),frame);g.add(body);
+  var rows=Math.max(6,Math.round(h*5)),cw=Math.max(2,Math.round(w*3));
+  var modMat=mat(0x0d1017,0.55,0.35);
+  var leds=[];
+  for(var r=0;r<rows;r++){
+    for(var c=0;c<cw;c++){
+      var m=new THREE.Mesh(new THREE.BoxGeometry(w/cw*0.86,h/rows*0.82,0.05),modMat);
+      m.position.set(-w/2+w/cw*(c+0.5),-h/2+h/rows*(r+0.5),d/2+0.01);g.add(m);
+      if(c===cw-1){
+        var led=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.03,0.02),mat(0x22c55e,0.4,0.3,0x22c55e,0.9));
+        led.position.set(-w/2+w/cw*(c+0.85),-h/2+h/rows*(r+0.5),d/2+0.04);g.add(led);
+        leds.push(led);
+      }
+    }
+  }
+  g.userData={leds:leds};
+  return g;
+}
+
+/* ============ CONTAINER BESS (like reference images) ============ */
+function makeContainerBESS(kwh){
+  var g=new THREE.Group();
+  /* size scales with capacity: ~20ft base up to 40ft */
+  var L=Math.min(14,7.5+kwh/900), H=3.0, D=2.7;
+  var skin=0xcfd3d6;                 /* off-white container */
+  /* concrete plinth base */
+  var base=new THREE.Mesh(new THREE.BoxGeometry(L+0.8,0.4,D+0.8),mat(0x8a8d90,0.95,0));
+  base.position.set(0,0.2,0);g.add(base);
+  /* main body */
+  var body=new THREE.Mesh(new THREE.BoxGeometry(L,H,D),mat(skin,0.72,0.15));
+  body.position.set(0,0.4+H/2,0);g.add(body);
+  /* corrugated ends */
+  addCorrugation(g,D,H,0,0x0,0); /* placeholder to keep func ref */
+  /* front face detail group (doors, vents, placards) */
+  var fy=0.4+H/2, fz=D/2;
+  /* corrugated back + top ribs */
+  var topRib=mat(0xc2c6c9,0.7,0.2);
+  var tribs=Math.round(L*2.2);
+  for(var t=0;t<tribs;t++){
+    var tr=new THREE.Mesh(new THREE.BoxGeometry(L/tribs*0.55,0.05,D),topRib);
+    tr.position.set(-L/2+L/tribs*(t+0.5),0.4+H+0.02,0);g.add(tr);
+  }
+  /* corner castings */
+  var cc=mat(0x3a3f45,0.5,0.5);
+  var cxs=[-L/2,L/2],cys=[0.4+0.15,0.4+H-0.15],czs=[-D/2,D/2];
+  for(var a=0;a<2;a++)for(var b=0;b<2;b++)for(var c2=0;c2<2;c2++){
+    var box=new THREE.Mesh(new THREE.BoxGeometry(0.25,0.25,0.25),cc);
+    box.position.set(cxs[a],cys[b],czs[c2]);g.add(box);
+  }
+  /* FRONT: 4 access doors (2 pairs) + vent bank + placards */
+  var doorGroup=new THREE.Group();g.add(doorGroup);
+  var doors=[];
+  var doorW=L*0.16, doorH=H*0.82, doorY=fy;
+  var dm=mat(0xc8ccd0,0.68,0.2);
+  var startX=-L*0.34;
+  for(var dd=0;dd<4;dd++){
+    var pivot=new THREE.Group();
+    var hingeX=startX+dd*doorW*1.02 - doorW/2;
+    pivot.position.set(hingeX,doorY,fz+0.01);
+    var door=new THREE.Mesh(new THREE.BoxGeometry(doorW,doorH,0.08),dm);
+    door.position.set(doorW/2,0,0);pivot.add(door);
+    /* door corrugation ribs */
+    var dribs=5;
+    for(var q=0;q<dribs;q++){
+      var dr=new THREE.Mesh(new THREE.BoxGeometry(doorW*0.9,doorH*0.86/dribs*0.7,0.02),mat(0xb8bcc0,0.7,0.2));
+      dr.position.set(doorW/2,-doorH/2+doorH/dribs*(q+0.5),0.05);pivot.add(dr);
+    }
+    /* locking bars */
+    var barMat=mat(0x9aa0a6,0.5,0.5);
+    var bar1=new THREE.Mesh(new THREE.BoxGeometry(0.04,doorH*0.9,0.04),barMat);
+    bar1.position.set(doorW*0.2,0,0.06);pivot.add(bar1);
+    var bar2=new THREE.Mesh(new THREE.BoxGeometry(0.04,doorH*0.9,0.04),barMat);
+    bar2.position.set(doorW*0.8,0,0.06);pivot.add(bar2);
+    doorGroup.add(pivot);
+    doors.push({pivot:pivot, dir:(dd%2===0?1:-1), base:0});
+  }
+  /* placards on doors */
+  addPlacard(g,-L*0.28,fy+H*0.18,fz+0.09,"li");
+  addPlacard(g,-L*0.02,fy+H*0.16,fz+0.09,"haz");
+  addPlacard(g,L*0.10,fy,fz+0.09,"elec");
+  /* right-side vent/PCS bank */
+  addVentGrille(g,L*0.38,fy,fz+0.06,L*0.14,H*0.7);
+  addFan(g,L*0.30,fy+H*0.2,fz+0.07,0.18);
+  addFan(g,L*0.30,fy-H*0.05,fz+0.07,0.18);
+  /* INTERIOR: battery racks + PCS cabinet (revealed when doors open) */
+  var interior=new THREE.Group();g.add(interior);
+  var nRacks=Math.max(3,Math.round(L/2.2));
+  var rackW=L*0.62/nRacks, rackH=H*0.8, rackD=D*0.7;
+  var interiorLeds=[];
+  for(var rr=0;rr<nRacks;rr++){
+    var rack=makeBatteryRack(rackW*0.9,rackH,rackD);
+    rack.position.set(-L*0.28+rr*rackW*1.02,fy,0);
+    interior.add(rack);
+    interiorLeds=interiorLeds.concat(rack.userData.leds);
+  }
+  /* PCS / control cabinet at right end */
+  var pcs=new THREE.Mesh(new THREE.BoxGeometry(L*0.14,H*0.82,D*0.6),mat(0x2a3038,0.6,0.3));
+  pcs.position.set(L*0.34,fy,0);interior.add(pcs);
+  var screen=new THREE.Mesh(new THREE.PlaneGeometry(0.4,0.28),mat(0x0a1018,0.3,0.4,0x1f6feb,0.6));
+  screen.position.set(L*0.34,fy+H*0.2,D*0.301);interior.add(screen);
+  /* Gotion badge stripe on body */
+  var badge=new THREE.Mesh(new THREE.BoxGeometry(L*0.5,0.5,0.02),mat(0xf97316,0.5,0.2,0xf97316,0.25));
+  badge.position.set(-L*0.05,fy+H*0.05,-D/2-0.02);g.add(badge);
+  /* lightning bolt accent (like Sinexcel refs) */
+  var bolt=new THREE.Mesh(new THREE.BoxGeometry(0.18,H*0.6,0.03),mat(0xfbbf24,0.4,0.3,0xfbbf24,0.4));
+  bolt.rotation.z=0.35;bolt.position.set(-L*0.36,fy+H*0.02,-D/2-0.02);g.add(bolt);
+
+  g.userData={doors:doors, interiorLeds:interiorLeds, kind:"container", L:L,H:H,D:D};
+  return g;
+}
+
+/* ============ CABINET BESS (EDGE 160/220/760) — outdoor cabinet ============ */
+function makeCabinetBESS(kwh){
+  var g=new THREE.Group();
+  var W=Math.min(3.4,1.4+kwh/400), H=2.5, D=1.3;
+  var base=new THREE.Mesh(new THREE.BoxGeometry(W+0.3,0.25,D+0.3),mat(0x8a8d90,0.95,0));
+  base.position.set(0,0.12,0);g.add(base);
+  var body=new THREE.Mesh(new THREE.BoxGeometry(W,H,D),mat(0xe4e7ea,0.6,0.2));
+  body.position.set(0,0.25+H/2,0);g.add(body);
+  var fy=0.25+H/2, fz=D/2;
+  /* front doors (2) */
+  var doors=[];
+  var dm=mat(0xdfe3e6,0.6,0.2);
+  for(var dd=0;dd<2;dd++){
+    var pivot=new THREE.Group();
+    pivot.position.set((dd===0?-W*0.5:0)+0.0,fy,fz+0.01);
+    var dw=W*0.48;
+    var door=new THREE.Mesh(new THREE.BoxGeometry(dw,H*0.86,0.06),dm);
+    door.position.set(dw/2,0,0);pivot.add(door);
+    /* vent slots on door */
+    for(var v=0;v<8;v++){
+      var slot=new THREE.Mesh(new THREE.BoxGeometry(dw*0.7,0.03,0.02),mat(0x1a1f26,0.6,0.3));
+      slot.position.set(dw/2,H*0.3-v*0.09,0.04);pivot.add(slot);
+    }
+    pivot.add(door);
+    g.add(pivot);
+    doors.push({pivot:pivot,dir:(dd===0?1:-1),base:0});
+  }
+  /* interior modules */
+  var interiorLeds=[];
+  var rack=makeBatteryRack(W*0.8,H*0.8,D*0.7);
+  rack.position.set(0,fy,0);g.add(rack);
+  interiorLeds=rack.userData.leds;
+  /* top cooling */
+  addFan(g,W*0.3,fy+H*0.32,fz+0.03,0.14);
+  /* Gotion stripe */
+  var stripe=new THREE.Mesh(new THREE.BoxGeometry(W,0.12,0.02),mat(0xf97316,0.5,0.2,0xf97316,0.3));
+  stripe.position.set(0,fy+H*0.34,fz+0.03);g.add(stripe);
+  g.userData={doors:doors,interiorLeds:interiorLeds,kind:"cabinet",W:W,H:H,D:D};
+  return g;
+}
+
+/* ============ RACK BESS (GRID-R) — tall black rack ============ */
+function makeRackBESS(kwh){
+  var g=new THREE.Group();
+  var W=1.4,H=2.5,D=1.15;
+  var base=new THREE.Mesh(new THREE.BoxGeometry(W+0.2,0.2,D+0.2),mat(0x8a8d90,0.95,0));
+  base.position.set(0,0.1,0);g.add(base);
+  var frame=new THREE.Mesh(new THREE.BoxGeometry(W,H,D),mat(0x14181f,0.5,0.4));
+  frame.position.set(0,0.2+H/2,0);g.add(frame);
+  var fy=0.2+H/2,fz=D/2;
+  /* stacked modules front (open rack look) */
+  var interiorLeds=[];
+  var rows=8;
+  for(var r=0;r<rows;r++){
+    var m=new THREE.Mesh(new THREE.BoxGeometry(W*0.9,H*0.86/rows*0.85,0.08),mat(0x0d1017,0.5,0.4));
+    m.position.set(0,fy-H*0.43+H*0.86/rows*(r+0.5),fz+0.01);g.add(m);
+    var led=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.04,0.02),mat(0x22c55e,0.4,0.3,0x22c55e,0.9));
+    led.position.set(W*0.38,fy-H*0.43+H*0.86/rows*(r+0.5),fz+0.05);g.add(led);
+    interiorLeds.push(led);
+  }
+  var stripe=new THREE.Mesh(new THREE.BoxGeometry(W,0.1,0.02),mat(0xf97316,0.5,0.2,0xf97316,0.3));
+  stripe.position.set(0,fy+H*0.4,fz+0.02);g.add(stripe);
+  g.userData={doors:[],interiorLeds:interiorLeds,kind:"rack",W:W,H:H,D:D};
+  return g;
+}
+function makePackBESS(){
+  var g=new THREE.Group();
+  var W=1.3,H=0.55,D=0.95;
+  var body=new THREE.Mesh(new THREE.BoxGeometry(W,H,D),mat(0x1a2230,0.55,0.35));
+  body.position.set(0,0.05+H/2,0);g.add(body);
+  var top=new THREE.Mesh(new THREE.BoxGeometry(W*0.9,0.05,D*0.9),mat(0x0d1017,0.5,0.4));
+  top.position.set(0,0.05+H+0.02,0);g.add(top);
+  var interiorLeds=[];
+  for(var i=0;i<5;i++){
+    var led=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.04,0.02),mat(0x22c55e,0.4,0.3,0x22c55e,0.9));
+    led.position.set(-W*0.4+i*W*0.2,0.05+H*0.6,D/2+0.01);g.add(led);interiorLeds.push(led);
+  }
+  var stripe=new THREE.Mesh(new THREE.BoxGeometry(W,0.06,0.02),mat(0xf97316,0.5,0.2,0xf97316,0.3));
+  stripe.position.set(0,0.05+H*0.8,D/2+0.02);g.add(stripe);
+  g.userData={doors:[],interiorLeds:interiorLeds,kind:"pack",W:W,H:H,D:D};
+  return g;
+}
+function makeBigBattery(){
+  var bb=S.bigBatt;if(!bb.kwh)return null;
+  if(bb.kind==="container")return makeContainerBESS(bb.kwh);
+  if(bb.kind==="cabinet")return makeCabinetBESS(bb.kwh);
+  if(bb.kind==="rack")return makeRackBESS(bb.kwh);
+  return makePackBESS();
+}
+
+/* ============ AI COMPUTE NODE ============ */
+/* rack: single server rack; galleon: ruggedized container w/ server rows; leviathan: big MDC */
+function makeServerRack(w,h,d,accent){
+  var g=new THREE.Group();
+  var frame=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(0x0e1119,0.5,0.5));
+  g.add(frame);
+  /* U-slots with blinking status */
+  var us=Math.max(10,Math.round(h*10));
+  var leds=[];
+  for(var u=0;u<us;u++){
+    var srv=new THREE.Mesh(new THREE.BoxGeometry(w*0.9,h*0.94/us*0.8,0.05),mat(0x161a22,0.5,0.4));
+    srv.position.set(0,-h/2+h*0.94/us*(u+0.5)+h*0.02,d/2+0.01);g.add(srv);
+    /* two status leds per server */
+    var l1=new THREE.Mesh(new THREE.BoxGeometry(0.025,0.025,0.02),mat(accent,0.4,0.3,accent,0.9));
+    l1.position.set(-w*0.4,-h/2+h*0.94/us*(u+0.5)+h*0.02,d/2+0.04);g.add(l1);leds.push(l1);
+    var l2=new THREE.Mesh(new THREE.BoxGeometry(0.025,0.025,0.02),mat(0x22c55e,0.4,0.3,0x22c55e,0.8));
+    l2.position.set(-w*0.34,-h/2+h*0.94/us*(u+0.5)+h*0.02,d/2+0.04);g.add(l2);
+  }
+  g.userData={leds:leds};
+  return g;
+}
+function makeComputeNode(){
+  var bn=S.bigNode;if(!bn.kw)return null;
+  var g=new THREE.Group();var accent=0x818cf8;
+  if(bn.kind==="rack"){
+    /* single black rack on a pad */
+    var base=new THREE.Mesh(new THREE.BoxGeometry(1.4,0.2,1.4),mat(0x8a8d90,0.95,0));
+    base.position.set(0,0.1,0);g.add(base);
+    var rack=makeServerRack(1.2,2.3,1.1,accent);
+    rack.position.set(0,0.2+2.3/2,0);g.add(rack);
+    g.userData={nodeLeds:rack.userData.leds,doors:[],kind:"rack",W:1.4,H:2.5,D:1.4};
+    return g;
+  }
+  /* galleon / leviathan: ruggedized container with server rows + doors */
+  var L=(bn.kind==="leviathan")?9:5, H=2.9, D=2.6;
+  var base=new THREE.Mesh(new THREE.BoxGeometry(L+0.6,0.35,D+0.6),mat(0x8a8d90,0.95,0));
+  base.position.set(0,0.17,0);g.add(base);
+  var body=new THREE.Mesh(new THREE.BoxGeometry(L,H,D),mat(0x1c2233,0.6,0.35));
+  body.position.set(0,0.35+H/2,0);g.add(body);
+  var fy=0.35+H/2,fz=D/2;
+  /* corrugated ribs */
+  var tribs=Math.round(L*2);
+  for(var t=0;t<tribs;t++){
+    var tr=new THREE.Mesh(new THREE.BoxGeometry(L/tribs*0.5,0.05,D),mat(0x161b28,0.6,0.3));
+    tr.position.set(-L/2+L/tribs*(t+0.5),0.35+H+0.02,0);g.add(tr);
+  }
+  /* doors */
+  var doors=[];
+  var doorW=L*0.2, dm=mat(0x232b3d,0.6,0.35);
+  for(var dd=0;dd<3;dd++){
+    var pivot=new THREE.Group();
+    var hingeX=-L*0.3+dd*doorW*1.05 - doorW/2;
+    pivot.position.set(hingeX,fy,fz+0.01);
+    var door=new THREE.Mesh(new THREE.BoxGeometry(doorW,H*0.82,0.07),dm);
+    door.position.set(doorW/2,0,0);pivot.add(door);
+    g.add(pivot);doors.push({pivot:pivot,dir:(dd%2===0?1:-1),base:0});
+  }
+  /* cooling wall on right */
+  addVentGrille(g,L*0.4,fy,fz+0.05,L*0.12,H*0.72);
+  addFan(g,L*0.33,fy+H*0.18,fz+0.06,0.2);
+  addFan(g,L*0.33,fy-H*0.08,fz+0.06,0.2);
+  /* interior server rows */
+  var nodeLeds=[];
+  var nRacks=Math.max(3,Math.round(L/1.8));
+  for(var rr=0;rr<nRacks;rr++){
+    var rack=makeServerRack(L*0.6/nRacks*0.9,H*0.8,D*0.7,accent);
+    rack.position.set(-L*0.28+rr*(L*0.6/nRacks)*1.05,fy,0);g.add(rack);
+    nodeLeds=nodeLeds.concat(rack.userData.leds);
+  }
+  /* Armada indigo badge + AI accent */
+  var badge=new THREE.Mesh(new THREE.BoxGeometry(L*0.5,0.5,0.02),mat(0x818cf8,0.5,0.3,0x818cf8,0.3));
+  badge.position.set(-L*0.05,fy+H*0.05,-D/2-0.02);g.add(badge);
+  var vents2=new THREE.Group();
+  for(var vn=0;vn<3;vn++){
+    var vent=new THREE.Mesh(new THREE.BoxGeometry(L*0.5,0.08,0.02),mat(0x818cf8,0.4,0.3,0x818cf8,0.5));
+    vent.position.set(-L*0.05,fy+H*0.18+vn*0.28,-D/2-0.02);g.add(vent);
+  }
+  g.userData={nodeLeds:nodeLeds,doors:doors,kind:bn.kind,L:L,H:H,D:D};
+  return g;
+}
+
+/* ---------- realistic residential wall battery ---------- */
+function makeResidentialBattery(mods){
+  var g=new THREE.Group();
+  var w=0.42,inv=0.5;
+  /* inverter head (dark, like Fronius/BYD head unit) */
+  var head=new THREE.Mesh(new THREE.BoxGeometry(w,0.26,0.22),mat(0x20252c,0.5,0.3));
+  head.position.set(0,0,0);g.add(head);
+  var disp=new THREE.Mesh(new THREE.PlaneGeometry(0.14,0.1),mat(0x0a1018,0.3,0.4,0x1f6feb,0.6));
+  disp.position.set(-0.08,0,0.115);g.add(disp);
+  /* stacked white battery modules below head */
+  var leds=[];
+  var y=-0.16;
+  for(var i=0;i<mods;i++){
+    var m=new THREE.Mesh(new THREE.BoxGeometry(w,0.2,0.2),mat(0xe8ebee,0.5,0.15));
+    m.position.set(0,y-i*0.21,0);g.add(m);
+    /* seam line */
+    var seam=new THREE.Mesh(new THREE.BoxGeometry(w,0.01,0.205),mat(0x9aa0a6,0.5,0.2));
+    seam.position.set(0,y-i*0.21+0.1,0);g.add(seam);
+  }
+  /* status glow strip (meter state) */
+  var glowMat=mat(0x22c55e,0.4,0.3,0x22c55e,0.9);
+  var glow=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.05,0.02),glowMat);
+  glow.position.set(0.14,0,0.12);g.add(glow);
+  /* base foot */
+  var foot=new THREE.Mesh(new THREE.BoxGeometry(w+0.06,0.05,0.24),mat(0x20252c,0.6,0.2));
+  foot.position.set(0,y-(mods-1)*0.21-0.12,0);g.add(foot);
+  g.userData={glowMat:glowMat};
+  return g;
+}
+
+/* ---------- apartment cell (realistic: 2 windows + balcony door + sills) ---------- */
+function makeCell(x,y,uw,uh,ud,participating,opts){
+  opts=opts||{};
+  var g=new THREE.Group();g.position.set(x,y,0);
+  var frontMat=opts.facMat ? facadeMaterial(opts.facMat.id,opts.facade||opts.facMat.tint,uw,uh)
+                           : mat(opts.facade||0x8a8f96,0.82,0.05);
+  /* sides/back/top get a clean flat tint — prevents texture banding on non-front faces */
+  var sideTint=opts.facMat ? (opts.facMat.id==="brick"?0x84483a:(opts.facMat.id==="glass"?0x2b3a4d:opts.facMat.tint))
+                           : (opts.facade||0x8a8f96);
+  var sideMat=mat(sideTint,0.84,0.05);
+  var shellMat=frontMat; /* emissive state applies to the visible front */
+  /* BoxGeometry material order: +x, -x, +y, -y, +z(front), -z(back) — back is textured too since it has windows */
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(uw,uh,ud),[sideMat,sideMat,sideMat,sideMat,frontMat,frontMat]));
+  /* dark interior room behind openings */
+  var room=new THREE.Mesh(new THREE.BoxGeometry(uw*0.86,uh*0.74,ud*0.5),
+    new THREE.MeshStandardMaterial({color:0x0a1018,side:THREE.BackSide,roughness:0.95}));
+  room.position.set(0,0,ud*0.2);g.add(room);
+  var fz=ud*0.5;
+  var glassMat=new THREE.MeshStandardMaterial({color:0x9fd8ff,transparent:true,opacity:0.22,roughness:0.1,metalness:0.6});
+  var frameMat=mat(0x222a35,0.6,0.35);
+  var sillMat=mat(0xb9bec4,0.75,0.1);
+  /* interior glow (meter state), sized to the window band */
+  var glowMat=new THREE.MeshBasicMaterial({color:0x14233c,transparent:true,opacity:0.9});
+  var glow=new THREE.Mesh(new THREE.PlaneGeometry(uw*0.55,uh*0.34),glowMat);
+  glow.position.set(-uw*0.08,uh*0.1,ud*0.44);g.add(glow);
+  /* --- two properly-sized windows, upper-center of the unit --- */
+  var winW=uw*0.21, winH=uh*0.36, winY=uh*0.12;
+  var winXs=[-uw*0.26,-uw*0.02];
+  for(var wq=0;wq<2;wq++){
+    var wx=winXs[wq];
+    /* frame surround */
+    var fr=new THREE.Mesh(new THREE.BoxGeometry(winW+0.07,winH+0.07,0.05),frameMat);
+    fr.position.set(wx,winY,fz+0.005);g.add(fr);
+    /* glass */
+    var gl=new THREE.Mesh(new THREE.PlaneGeometry(winW,winH),glassMat);
+    gl.position.set(wx,winY,fz+0.035);g.add(gl);
+    /* center mullion */
+    var mull=new THREE.Mesh(new THREE.BoxGeometry(0.03,winH,0.03),frameMat);
+    mull.position.set(wx,winY,fz+0.04);g.add(mull);
+    /* horizontal transom */
+    var trans=new THREE.Mesh(new THREE.BoxGeometry(winW,0.03,0.03),frameMat);
+    trans.position.set(wx,winY+winH*0.18,fz+0.04);g.add(trans);
+    /* window sill */
+    var sill=new THREE.Mesh(new THREE.BoxGeometry(winW+0.12,0.045,0.1),sillMat);
+    sill.position.set(wx,winY-winH/2-0.04,fz+0.04);g.add(sill);
+  }
+  /* --- balcony door (glazed) on the right side, floor-to-lintel --- */
+  var doorW=uw*0.17, doorH=uh*0.6, doorX=uw*0.28, doorY=-uh*0.5+doorH/2+0.04;
+  var dfr=new THREE.Mesh(new THREE.BoxGeometry(doorW+0.06,doorH+0.06,0.05),frameMat);
+  dfr.position.set(doorX,doorY,fz+0.005);g.add(dfr);
+  var dgl=new THREE.Mesh(new THREE.PlaneGeometry(doorW,doorH),glassMat);
+  dgl.position.set(doorX,doorY,fz+0.035);g.add(dgl);
+  var dmull=new THREE.Mesh(new THREE.BoxGeometry(doorW,0.03,0.03),frameMat);
+  dmull.position.set(doorX,doorY+doorH*0.15,fz+0.04);g.add(dmull);
+  /* door handle */
+  var handle=new THREE.Mesh(new THREE.BoxGeometry(0.025,0.09,0.03),mat(0x9aa0a6,0.4,0.7));
+  handle.position.set(doorX-doorW*0.38,doorY,fz+0.05);g.add(handle);
+  if(opts.balcony){
+    /* balcony slab under the door + rail */
+    var slab=new THREE.Mesh(new THREE.BoxGeometry(uw*0.92,0.07,0.5),mat(0x6f747c,0.8,0.05));
+    slab.position.set(0,-uh*0.46,fz+0.24);g.add(slab);
+    var rail=new THREE.Mesh(new THREE.BoxGeometry(uw*0.92,uh*0.24,0.03),mat(opts.railColor||0x3a4658,0.5,0.5));
+    rail.position.set(0,-uh*0.32,fz+0.48);g.add(rail);
+    for(var vb=0;vb<6;vb++){
+      var vbar=new THREE.Mesh(new THREE.BoxGeometry(0.025,uh*0.24,0.025),mat(0x2a3444,0.6,0.4));
+      vbar.position.set(-uw*0.4+vb*(uw*0.8/5),-uh*0.32,fz+0.49);g.add(vbar);
+    }
+    /* handrail cap */
+    var cap=new THREE.Mesh(new THREE.BoxGeometry(uw*0.94,0.035,0.06),mat(0x545e6c,0.5,0.4));
+    cap.position.set(0,-uh*0.2,fz+0.48);g.add(cap);
+  }
+  /* floor slab band between stories (thin lighter strip at unit base) */
+  var band=new THREE.Mesh(new THREE.BoxGeometry(uw+0.02,0.07,ud+0.02),mat(0x7d838c,0.8,0.06));
+  band.position.set(0,-uh/2+0.035,0);g.add(band);
+  /* --- rear facade: two windows on the back face (no balcony) --- */
+  var bz=-ud*0.5;
+  var bWinW=uw*0.2, bWinH=uh*0.32, bWinY=uh*0.08;
+  var bXs=[-uw*0.22,uw*0.22];
+  for(var bq=0;bq<2;bq++){
+    var bx=bXs[bq];
+    var bfr=new THREE.Mesh(new THREE.BoxGeometry(bWinW+0.07,bWinH+0.07,0.05),frameMat);
+    bfr.position.set(bx,bWinY,bz-0.005);g.add(bfr);
+    var bgl=new THREE.Mesh(new THREE.PlaneGeometry(bWinW,bWinH),glassMat);
+    bgl.rotation.y=Math.PI;
+    bgl.position.set(bx,bWinY,bz-0.035);g.add(bgl);
+    var bmull=new THREE.Mesh(new THREE.BoxGeometry(0.03,bWinH,0.03),frameMat);
+    bmull.position.set(bx,bWinY,bz-0.04);g.add(bmull);
+    var bsill=new THREE.Mesh(new THREE.BoxGeometry(bWinW+0.1,0.04,0.09),sillMat);
+    bsill.position.set(bx,bWinY-bWinH/2-0.035,bz-0.04);g.add(bsill);
+  }
+  var packRef=null;
+  if(participating){
+    var rb=makeResidentialBattery(S.unit.mods||2);
+    rb.scale.set(0.62,0.62,0.62);
+    var pz=opts.balcony?(fz+0.32):(fz+0.12);
+    rb.position.set(-uw*0.36,-uh*0.14,pz);g.add(rb);
+    packRef={glowMat:rb.userData.glowMat};
+  }
+  return {group:g,glowMat:glowMat,shellMat:shellMat,pack:packRef,part:participating};
+}
+
+/* triangular prism gable roof built from custom BufferGeometry.
+   Ridge runs along the Z (depth) axis; apex centered over width w. */
+function makeGableRoof(w,d,riseH,color){
+  var g=new THREE.Group();
+  var hw=w/2, hd=d/2, oh=0.25; /* overhang */
+  var W=hw+oh, D=hd+oh;
+  /* 6 vertices: two eaves (front/back) at y=0, ridge apex at y=riseH */
+  /* left eave line (x=-W) and right eave line (x=+W), ridge at x=0,y=riseH */
+  var verts=new Float32Array([
+    /* left slope quad (2 tris): eaveL_front, eaveL_back, ridge_back, ridge_front */
+    -W,0,-D,  -W,0,D,  0,riseH,D,
+    -W,0,-D,  0,riseH,D,  0,riseH,-D,
+    /* right slope quad */
+     W,0,D,  W,0,-D,  0,riseH,-D,
+     W,0,D,  0,riseH,-D,  0,riseH,D
+  ]);
+  var geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(verts,3));
+  geo.computeVertexNormals();
+  var slope=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:color,roughness:0.75,metalness:0.05,side:THREE.DoubleSide}));
+  g.add(slope);
+  /* two triangular gable end-walls (front & back) filling the triangle */
+  var gableCol=0xc9cdd2;
+  var endGeoF=new THREE.BufferGeometry();
+  endGeoF.setAttribute('position',new THREE.BufferAttribute(new Float32Array([-hw,0,hd, hw,0,hd, 0,riseH*0.92,hd]),3));
+  endGeoF.computeVertexNormals();
+  g.add(new THREE.Mesh(endGeoF,new THREE.MeshStandardMaterial({color:gableCol,roughness:0.8,metalness:0.05,side:THREE.DoubleSide})));
+  var endGeoB=new THREE.BufferGeometry();
+  endGeoB.setAttribute('position',new THREE.BufferAttribute(new Float32Array([-hw,0,-hd, hw,0,-hd, 0,riseH*0.92,-hd]),3));
+  endGeoB.computeVertexNormals();
+  g.add(new THREE.Mesh(endGeoB,new THREE.MeshStandardMaterial({color:gableCol,roughness:0.8,metalness:0.05,side:THREE.DoubleSide})));
+  /* ridge cap beam */
+  var ridge=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.1,d+oh*2),mat(0x3d454f,0.7,0.1));
+  ridge.position.set(0,riseH,0);g.add(ridge);
+  /* small chimney */
+  var chim=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.7,0.4),mat(0x5a4a42,0.9,0.05));
+  chim.position.set(w*0.22,riseH*0.7,d*0.1);g.add(chim);
+  return g;
+}
+function addRoofDetail(cx,topY,w,d,style){
+  if(style==="pitch"){
+    var roof=makeGableRoof(w,d,w*0.34,0x6a4f3a);
+    roof.position.set(cx,topY,0);buildingGroup.add(roof);
+  }else{
+    /* flat roof: gravel deck flush on top of the cells */
+    var deck=new THREE.Mesh(new THREE.BoxGeometry(w+0.06,0.09,d+0.06),mat(0x565c63,0.95,0.02));
+    deck.position.set(cx,topY+0.045,0);buildingGroup.add(deck);
+    /* perimeter parapet walls (4 thin walls, not a floating lid) */
+    var pMat=mat(0x8b9097,0.85,0.04), pH=0.42, pT=0.14;
+    var pf=new THREE.Mesh(new THREE.BoxGeometry(w+0.2,pH,pT),pMat);
+    pf.position.set(cx,topY+pH/2,d/2+0.03);buildingGroup.add(pf);
+    var pb=new THREE.Mesh(new THREE.BoxGeometry(w+0.2,pH,pT),pMat);
+    pb.position.set(cx,topY+pH/2,-d/2-0.03);buildingGroup.add(pb);
+    var pl=new THREE.Mesh(new THREE.BoxGeometry(pT,pH,d+0.2),pMat);
+    pl.position.set(cx-w/2-0.03,topY+pH/2,0);buildingGroup.add(pl);
+    var pr=new THREE.Mesh(new THREE.BoxGeometry(pT,pH,d+0.2),pMat);
+    pr.position.set(cx+w/2+0.03,topY+pH/2,0);buildingGroup.add(pr);
+    /* parapet coping caps */
+    var cMat=mat(0x6b7178,0.7,0.15);
+    var cf=new THREE.Mesh(new THREE.BoxGeometry(w+0.3,0.05,pT+0.08),cMat);
+    cf.position.set(cx,topY+pH+0.025,d/2+0.03);buildingGroup.add(cf);
+    var cb=new THREE.Mesh(new THREE.BoxGeometry(w+0.3,0.05,pT+0.08),cMat);
+    cb.position.set(cx,topY+pH+0.025,-d/2-0.03);buildingGroup.add(cb);
+    /* HVAC units + roof access bulkhead sitting ON the deck */
+    var hv=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.45,0.9),mat(0x9aa0a6,0.6,0.3));
+    hv.position.set(cx+w*0.22,topY+0.09+0.225,d*0.12);buildingGroup.add(hv);
+    addFan(buildingGroup,cx+w*0.22,topY+0.09+0.46,d*0.12,0.16);
+    var hv2=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.35,0.7),mat(0x9aa0a6,0.6,0.3));
+    hv2.position.set(cx-w*0.24,topY+0.09+0.175,-d*0.1);buildingGroup.add(hv2);
+    var bulk=new THREE.Mesh(new THREE.BoxGeometry(1.0,0.75,0.9),mat(0x7d838c,0.8,0.05));
+    bulk.position.set(cx-w*0.05,topY+0.09+0.375,-d*0.18);buildingGroup.add(bulk);
+    var bdoor=new THREE.Mesh(new THREE.PlaneGeometry(0.4,0.55),mat(0x2b333d,0.7,0.1));
+    bdoor.position.set(cx-w*0.05,topY+0.09+0.32,-d*0.18+0.46);buildingGroup.add(bdoor);
+  }
+}
+
+/* ===== dedicated house model (matches reference OBJ: 2-story, porch, gable roof, dormers) ===== */
+function buildHouse(n){
+  /* n dwellings -> scale footprint; keep 1.84:1 width:depth from the reference */
+  var stories=(n<=2)?2:(n<=4?2:3);
+  var W=Math.min(11,6+n*0.6), D=W/1.84, storyH=2.0;
+  var wallH=stories*storyH;
+  var fm=S.facMat;
+  var wallMat=facadeMaterial(fm.id, fm.id==="siding"?fm.tint:(fm.id==="concrete"?0xcfd3d6:fm.tint), W, wallH);
+  /* main body */
+  /* per-face materials: front/back tiled to W, sides tiled to D — no stretched banding */
+  var sideWallMat=facadeMaterial(fm.id, fm.id==="siding"?fm.tint:(fm.id==="concrete"?0xcfd3d6:fm.tint), D, wallH);
+  var body=new THREE.Mesh(new THREE.BoxGeometry(W,wallH,D),
+    [sideWallMat,sideWallMat,sideWallMat,sideWallMat,wallMat,wallMat]);
+  body.position.set(0,wallH/2,0);buildingGroup.add(body);
+  /* foundation base */
+  var found=new THREE.Mesh(new THREE.BoxGeometry(W+0.2,0.5,D+0.2),mat(0x6b6f72,0.9,0.03));
+  found.position.set(0,0.25,0);buildingGroup.add(found);
+
+  /* windows grid on front + sides + status battery packs */
+  var packs=[];
+  var winMat=new THREE.MeshStandardMaterial({color:0x9fd8ff,transparent:true,opacity:0.35,roughness:0.1,metalness:0.6});
+  var frameMat=mat(0x2b3038,0.6,0.3);
+  var pu=Math.round(n*S.part/100);
+  var winCols=Math.max(3,Math.round(W/2.4));
+  for(var s=0;s<stories;s++){
+    var wy=storyH*0.5+s*storyH+0.25;
+    for(var c=0;c<winCols;c++){
+      var wx=-W/2+W/(winCols+1)*(c+1);
+      /* window with shutters (reference has shutters) */
+      var win=new THREE.Mesh(new THREE.PlaneGeometry(0.7,1.0),winMat);
+      win.position.set(wx,wy,D/2+0.01);buildingGroup.add(win);
+      var fr=new THREE.Mesh(new THREE.BoxGeometry(0.8,1.1,0.04),frameMat);
+      fr.position.set(wx,wy,D/2+0.005);buildingGroup.add(fr);
+      /* shutters */
+      var shL=new THREE.Mesh(new THREE.BoxGeometry(0.16,1.0,0.05),mat(0x2f3d4a,0.7,0.1));
+      shL.position.set(wx-0.48,wy,D/2+0.02);buildingGroup.add(shL);
+      var shR=new THREE.Mesh(new THREE.BoxGeometry(0.16,1.0,0.05),mat(0x2f3d4a,0.7,0.1));
+      shR.position.set(wx+0.48,wy,D/2+0.02);buildingGroup.add(shR);
+      /* matching rear window (no shutters) */
+      var bwin=new THREE.Mesh(new THREE.PlaneGeometry(0.7,1.0),winMat);
+      bwin.rotation.y=Math.PI;bwin.position.set(wx,wy,-D/2-0.01);buildingGroup.add(bwin);
+      var bfr2=new THREE.Mesh(new THREE.BoxGeometry(0.8,1.1,0.04),frameMat);
+      bfr2.position.set(wx,wy,-D/2-0.005);buildingGroup.add(bfr2);
+    }
+  }
+  /* front porch with columns + steps + porch roof (reference key feature) */
+  var porchD=1.4, porchW=W*0.62, porchH=storyH*0.95;
+  var porchFloor=new THREE.Mesh(new THREE.BoxGeometry(porchW,0.15,porchD),mat(0x8a7f70,0.8,0.05));
+  porchFloor.position.set(0,0.5,D/2+porchD/2);buildingGroup.add(porchFloor);
+  /* steps */
+  for(var st=0;st<3;st++){
+    var step=new THREE.Mesh(new THREE.BoxGeometry(porchW*0.5,0.12,0.3),mat(0x7a6f60,0.85,0.05));
+    step.position.set(0,0.5-0.13*(st+1),D/2+porchD+0.15+st*0.28);buildingGroup.add(step);
+  }
+  /* columns */
+  var colXs=[-porchW/2+0.3, porchW/2-0.3, 0];
+  for(var cc=0;cc<colXs.length;cc++){
+    var col=new THREE.Mesh(new THREE.BoxGeometry(0.22,porchH,0.22),mat(0xe8ebee,0.7,0.05));
+    col.position.set(colXs[cc],0.5+porchH/2,D/2+porchD-0.15);buildingGroup.add(col);
+  }
+  /* porch roof */
+  var porchRoof=new THREE.Mesh(new THREE.BoxGeometry(porchW+0.3,0.14,porchD+0.3),mat(0x54606f,0.75,0.05));
+  porchRoof.position.set(0,0.5+porchH,D/2+porchD/2);buildingGroup.add(porchRoof);
+  /* front door */
+  var fdoor=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.5,0.08),mat(0x3a2a20,0.6,0.1));
+  fdoor.position.set(0,0.5+0.75,D/2+0.04);buildingGroup.add(fdoor);
+
+  /* gable roof over the whole house */
+  var roof=makeGableRoof(W,D,W*0.32,0x6a4f3a);
+  roof.position.set(0,wallH,0);buildingGroup.add(roof);
+  /* dormers on the front roof slope (reference has 2-3 dormers) */
+  var nD=Math.min(3,Math.max(2,Math.round(W/4)));
+  for(var dm=0;dm<nD;dm++){
+    var dx=-W*0.28+dm*(W*0.56/(nD-1||1));
+    var dormer=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.8,0.6),wallMat);
+    dormer.position.set(dx,wallH+W*0.1,D*0.18);buildingGroup.add(dormer);
+    var dwin=new THREE.Mesh(new THREE.PlaneGeometry(0.5,0.5),winMat);
+    dwin.position.set(dx,wallH+W*0.1,D*0.18+0.31);buildingGroup.add(dwin);
+    /* little dormer gable */
+    var dr=makeGableRoof(1.0,0.7,0.35,0x5a4230);
+    dr.position.set(dx,wallH+W*0.1+0.4,D*0.18);dr.scale.set(1,1,1);buildingGroup.add(dr);
+  }
+  /* residential battery packs mounted on side walls for participating dwellings */
+  for(var p=0;p<pu&&p<n;p++){
+    var rb=makeResidentialBattery(S.unit.mods||2);
+    rb.scale.set(0.75,0.75,0.75);
+    var side=(p%2===0)?1:-1;
+    var yy=storyH*0.5+(p%stories)*storyH+0.1;
+    rb.position.set(side*(W/2+0.15), yy, -D*0.2+ (Math.floor(p/2)%2)*D*0.3);
+    rb.rotation.y=side>0?-Math.PI/2:Math.PI/2;
+    buildingGroup.add(rb);
+    packs.push({glowMat:rb.userData.glowMat, group:rb});
+  }
+  /* register as apartments for the sim to animate (map to window glow) */
+  apartments=[];packMeshes=packs;
+  for(var q=0;q<pu;q++){apartments.push({glowMat:winMat,shellMat:wallMat,pack:packs[q]||null,part:true});}
+  /* garage door on ground (reference has one) */
+  if(W>7){
+    var garage=new THREE.Mesh(new THREE.BoxGeometry(W*0.24,storyH*0.7,0.1),mat(0xdfe3e6,0.6,0.1));
+    garage.position.set(W*0.28,0.5+storyH*0.35,D/2+0.03);buildingGroup.add(garage);
+    for(var gl=0;gl<4;gl++){
+      var gline=new THREE.Mesh(new THREE.BoxGeometry(W*0.24,0.02,0.11),mat(0x9aa0a6,0.6,0.1));
+      gline.position.set(W*0.28,0.5+storyH*0.1+gl*storyH*0.16,D/2+0.03);buildingGroup.add(gline);
+    }
+  }
+  return {W:W,D:D,wallH:wallH};
+}
+
+/* ===== massing planner: floors x units-per-floor using basic building-code logic =====
+   - walk-up rule: <=12 units caps at 3 stories (no elevator required, IBC-style)
+   - 13-20 units caps at 5 stories (single-stair / small elevator building)
+   - each type has a max height and a target width:height aspect
+   - double-loaded corridor (units both sides of a central hall) once a floor
+     holds 6+ units, which is how real apartment plates are laid out */
+function planMassing(n,bt){
+  var cfgs={
+    panel:{maxF:8,aspect:1.7,minF:2},
+    midrise:{maxF:6,aspect:1.5,minF:2},
+    tower:{maxF:24,aspect:0.6,minF:4},
+    office:{maxF:12,aspect:1.25,minF:2}
+  };
+  var cfg=cfgs[bt]||cfgs.panel;
+  var maxF=cfg.maxF;
+  if(n<=12)maxF=Math.min(maxF,3);
+  else if(n<=20)maxF=Math.min(maxF,5);
+  var start=Math.max(1,Math.min(cfg.minF,maxF));
+  var best=null;
+  for(var f=start;f<=maxF;f++){
+    var upf=Math.ceil(n/f);
+    var dbl=upf>=6;
+    var colsF=dbl?Math.ceil(upf/2):upf;
+    var w=colsF*2.55, h=f*1.9;
+    var score=Math.abs((w/h)-cfg.aspect);
+    score+=((f*upf-n)/n)*0.15;   /* penalize empty slots on the top floor */
+    if(!best||score<best.score)best={f:f,upf:upf,dbl:dbl,cols:colsF,score:score};
+  }
+  return best;
+}
+function massingText(){
+  var bt=S.btype.id;
+  if(bt==="house"){
+    var st=(S.units<=4)?2:3;
+    return st+" stories \u00b7 single-family form";
+  }
+  if(bt==="cni"){var bays=Math.max(4,Math.min(30,S.units));return bays+" dock bays \u00b7 single-story big-box";}
+  if(bt==="hospital"){var hf=(S.units<=80)?2:3;return hf+" floors \u00b7 medical block \u00b7 whole-meter";}
+  if(bt==="muni"){return "2 floors \u00b7 civic hall \u00b7 whole-meter";}
+  if(bt==="land"){var pr=Math.max(1,S.units);return pr+" battery + data pair"+(pr>1?"s":"")+" \u00b7 fenced substation yard";}
+  var p=planMassing(S.units,S.btype.id);
+  return p.f+" floors \u00d7 "+p.upf+" units/floor"+(p.dbl?" \u00b7 double-loaded corridor":" \u00b7 single-loaded");
+}
+
+/* ===== shared: place central battery + node beside a structure ===== */
+function placeSiteEquipment(totalW,zRef){
+  equipCenter={x:0,z:0};
+  if(S.bigBatt.kwh){
+    bigBattObj=makeBigBattery();
+    var bw=(bigBattObj.userData.L||bigBattObj.userData.W||2);
+    var bx=totalW/2+bw/2+2.4;
+    bigBattObj.position.set(bx,0,zRef);buildingGroup.add(bigBattObj);
+    equipCenter.x=bx;equipCenter.z=zRef;
+  }
+  if(S.bigNode.kw){
+    bigNodeObj=makeComputeNode();
+    var nw=(bigNodeObj.userData.L||bigNodeObj.userData.W||2);
+    var nx=-(totalW/2+nw/2+2.4);
+    bigNodeObj.position.set(nx,0,zRef);buildingGroup.add(bigNodeObj);
+    if(!S.bigBatt.kwh){equipCenter.x=nx;equipCenter.z=zRef;}
+  }
+}
+
+/* ===== perimeter security fence (substation style) ===== */
+function makeFence(w,d){
+  var g=new THREE.Group();
+  var postM=mat(0x2e4a6b,0.6,0.4), railM=mat(0x35557a,0.6,0.4);
+  var panelM=new THREE.MeshStandardMaterial({color:0x9db6cf,transparent:true,opacity:0.3,roughness:0.4,metalness:0.5,side:THREE.DoubleSide});
+  var curbM=mat(0x8a8d90,0.9,0);
+  function side(len,cx,cz,rotY){
+    var s=new THREE.Group();
+    var curb=new THREE.Mesh(new THREE.BoxGeometry(len,0.18,0.3),curbM);curb.position.set(0,0.09,0);s.add(curb);
+    var n=Math.max(2,Math.round(len/2.4));
+    for(var i=0;i<=n;i++){
+      var p=new THREE.Mesh(new THREE.BoxGeometry(0.1,1.6,0.1),postM);
+      p.position.set(-len/2+len/n*i,0.98,0);s.add(p);
+    }
+    var r1=new THREE.Mesh(new THREE.BoxGeometry(len,0.06,0.06),railM);r1.position.set(0,1.7,0);s.add(r1);
+    var r2=new THREE.Mesh(new THREE.BoxGeometry(len,0.06,0.06),railM);r2.position.set(0,0.4,0);s.add(r2);
+    var panel=new THREE.Mesh(new THREE.PlaneGeometry(len,1.15),panelM);panel.position.set(0,1.03,0);s.add(panel);
+    s.position.set(cx,0,cz);s.rotation.y=rotY;g.add(s);
+  }
+  side(w,0,-d/2,0);side(w,0,d/2,0);side(d,-w/2,0,Math.PI/2);side(d,w/2,0,Math.PI/2);
+  return g;
+}
+/* small utility cabin with blue gable roof (PCS boost / switch station look) */
+function makeCabin(w,h,d,roofCol){
+  var g=new THREE.Group();
+  var base=new THREE.Mesh(new THREE.BoxGeometry(w+0.4,0.3,d+0.4),mat(0x8a8d90,0.95,0));
+  base.position.set(0,0.15,0);g.add(base);
+  var body=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(0xe9ecef,0.65,0.1));
+  body.position.set(0,0.3+h/2,0);g.add(body);
+  var door=new THREE.Mesh(new THREE.PlaneGeometry(0.8,h*0.7),mat(0xb9c2cc,0.6,0.2));
+  door.position.set(0,0.3+h*0.4,d/2+0.01);g.add(door);
+  var roof=makeGableRoof(w+0.5,d+0.5,w*0.22,roofCol||0x3f6f9e);
+  roof.position.set(0,0.3+h,0);g.add(roof);
+  return g;
+}
+/* transmission takeoff: two poles, crossarm, insulators, transformer */
+function makeTakeoff(){
+  var g=new THREE.Group();
+  var poleM=mat(0x4a525c,0.7,0.3);
+  for(var i=0;i<2;i++){
+    var pole=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,5.4,7),poleM);
+    pole.position.set(i===0?-1.1:1.1,2.7,0);g.add(pole);
+  }
+  var cross=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.12,0.12),poleM);
+  cross.position.set(0,4.9,0);g.add(cross);
+  for(var k=0;k<3;k++){
+    var ins=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.45,6),mat(0x8fa3b8,0.4,0.3));
+    ins.position.set(-1.1+k*1.1,5.2,0);g.add(ins);
+  }
+  var xf=new THREE.Mesh(new THREE.BoxGeometry(1.5,1.4,1.1),mat(0x54606c,0.6,0.35));
+  xf.position.set(0,0.7,1.3);g.add(xf);
+  for(var f=0;f<4;f++){
+    var fin=new THREE.Mesh(new THREE.BoxGeometry(0.06,1.1,0.7),mat(0x49545f,0.6,0.35));
+    fin.position.set(-0.62+f*0.41,0.7,1.95);g.add(fin);
+  }
+  return g;
+}
+
+/* ===== C&I big-box factory / warehouse ===== */
+function buildFactory(n){
+  var bays=Math.max(4,Math.min(30,n));
+  var L=bays*2.1+8, H=5.2, D=13;
+  var wall=mat(0xe6e9ec,0.7,0.12);
+  var body=new THREE.Mesh(new THREE.BoxGeometry(L,H,D),wall);
+  body.position.set(0,H/2,0);buildingGroup.add(body);
+  /* vertical panel ribs on front + ends */
+  var ribM=mat(0xd7dbdf,0.7,0.12);
+  var ribs=Math.round(L/1.4);
+  for(var r=0;r<ribs;r++){
+    var rib=new THREE.Mesh(new THREE.BoxGeometry(0.08,H*0.96,0.05),ribM);
+    rib.position.set(-L/2+L/ribs*(r+0.5),H/2,D/2+0.03);buildingGroup.add(rib);
+  }
+  /* clerestory window strip along the top of the front */
+  var strip=new THREE.Mesh(new THREE.PlaneGeometry(L*0.94,0.7),
+    new THREE.MeshStandardMaterial({color:0x2a3a4c,roughness:0.2,metalness:0.6}));
+  strip.position.set(0,H*0.78,D/2+0.06);buildingGroup.add(strip);
+  /* dock doors + bumpers + numbers along the front */
+  var doorM=mat(0xc7ccd1,0.6,0.2), bumpM=mat(0x14171b,0.8,0.1), numM=mat(0x2a5da8,0.5,0.2,0x2a5da8,0.2);
+  var dockW=1.5, dockH=2.6;
+  for(var b=0;b<bays;b++){
+    var dx=-L/2+4+b*((L-8)/Math.max(1,bays-1));
+    var door=new THREE.Mesh(new THREE.BoxGeometry(dockW,dockH,0.08),doorM);
+    door.position.set(dx,dockH/2+0.5,D/2+0.05);buildingGroup.add(door);
+    for(var seg2=1;seg2<4;seg2++){
+      var seam=new THREE.Mesh(new THREE.BoxGeometry(dockW,0.03,0.09),mat(0xa9afb5,0.6,0.2));
+      seam.position.set(dx,0.5+dockH*seg2/4,D/2+0.05);buildingGroup.add(seam);
+    }
+    var b1=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.35,0.14),bumpM);
+    b1.position.set(dx-dockW/2+0.1,0.75,D/2+0.12);buildingGroup.add(b1);
+    var b2=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.35,0.14),bumpM);
+    b2.position.set(dx+dockW/2-0.1,0.75,D/2+0.12);buildingGroup.add(b2);
+    var num=new THREE.Mesh(new THREE.PlaneGeometry(0.34,0.26),numM);
+    num.position.set(dx,dockH+0.85,D/2+0.06);buildingGroup.add(num);
+  }
+  /* glass office corner at the left end */
+  var office=new THREE.Mesh(new THREE.BoxGeometry(4.2,H*0.8,0.35),
+    new THREE.MeshStandardMaterial({color:0x27374a,roughness:0.15,metalness:0.7}));
+  office.position.set(-L/2+2.6,H*0.4,D/2+0.16);buildingGroup.add(office);
+  /* roof: white deck + rows of vent slats */
+  var deck=new THREE.Mesh(new THREE.BoxGeometry(L+0.1,0.12,D+0.1),mat(0xf2f4f6,0.85,0.03));
+  deck.position.set(0,H+0.06,0);buildingGroup.add(deck);
+  var slatM=mat(0x3b444e,0.7,0.2);
+  var groups=Math.round(L/5);
+  for(var gv=0;gv<groups;gv++){
+    for(var s3=0;s3<4;s3++){
+      var slat=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.08,0.14),slatM);
+      slat.position.set(-L/2+3+gv*5+s3*0.28,H+0.18,-D*0.22+((gv%2)*D*0.44));
+      slat.rotation.y=0.5;buildingGroup.add(slat);
+    }
+  }
+  /* truck apron with stripes leading to each dock */
+  var apron=new THREE.Mesh(new THREE.BoxGeometry(L+6,0.05,9),mat(0x2b2f35,0.97,0));
+  apron.position.set(0,0.026,D/2+4.6);buildingGroup.add(apron);
+  for(var st2=0;st2<bays;st2++){
+    var sx=-L/2+4+st2*((L-8)/Math.max(1,bays-1));
+    var line=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.055,7),mat(0xd8d8d8,0.8,0));
+    line.position.set(sx+dockW*0.7,0.03,D/2+4.6);buildingGroup.add(line);
+  }
+  apartments=[];
+  return {W:L,D:D,H:H};
+}
+
+/* ===== hospital / medical block ===== */
+function buildHospitalB(n){
+  var floors=(n<=80)?2:3, fH=2.4;
+  var W=Math.min(30,16+n*0.07), D=W*0.55, H=floors*fH;
+  /* brick piers alternating with glass curtain bands */
+  var pierMat=facadeMaterial("brick",0x8a4a38,2,H);
+  var glassMat=new THREE.MeshStandardMaterial({color:0x39516b,roughness:0.15,metalness:0.7});
+  var body=new THREE.Mesh(new THREE.BoxGeometry(W,H,D),mat(0xdfe3e7,0.7,0.1));
+  body.position.set(0,H/2,0);buildingGroup.add(body);
+  var piers=Math.round(W/4);
+  for(var p2=0;p2<=piers;p2++){
+    var px=-W/2+W/piers*p2;
+    var pier=new THREE.Mesh(new THREE.BoxGeometry(1.3,H,0.25),pierMat);
+    pier.position.set(px,H/2,D/2+0.1);buildingGroup.add(pier);
+    var pierB=new THREE.Mesh(new THREE.BoxGeometry(1.3,H,0.25),pierMat);
+    pierB.position.set(px,H/2,-D/2-0.1);buildingGroup.add(pierB);
+  }
+  /* glass bands between piers, one per floor */
+  for(var fl2=0;fl2<floors;fl2++){
+    var gy=fH*0.55+fl2*fH;
+    var band=new THREE.Mesh(new THREE.PlaneGeometry(W*0.985,fH*0.62),glassMat);
+    band.position.set(0,gy,D/2+0.02);buildingGroup.add(band);
+    var bandB=new THREE.Mesh(new THREE.PlaneGeometry(W*0.985,fH*0.62),glassMat);
+    bandB.rotation.y=Math.PI;bandB.position.set(0,gy,-D/2-0.02);buildingGroup.add(bandB);
+    /* horizontal mullions */
+    for(var ml=0;ml<3;ml++){
+      var mull=new THREE.Mesh(new THREE.BoxGeometry(W*0.985,0.035,0.03),mat(0xc2c8ce,0.5,0.4));
+      mull.position.set(0,gy-fH*0.31+ml*fH*0.31,D/2+0.035);buildingGroup.add(mull);
+    }
+    /* white spandrel band between floors */
+    var spand=new THREE.Mesh(new THREE.BoxGeometry(W+0.05,0.35,D+0.05),mat(0xf2f4f6,0.75,0.05));
+    spand.position.set(0,fH*(fl2+1)-0.05,0);buildingGroup.add(spand);
+  }
+  /* entrance volume: white block + canopy + red cross */
+  var entryV=new THREE.Mesh(new THREE.BoxGeometry(W*0.24,H*0.75,2.2),mat(0xf4f6f8,0.6,0.08));
+  entryV.position.set(W*0.14,H*0.375,D/2+1.05);buildingGroup.add(entryV);
+  var canop=new THREE.Mesh(new THREE.BoxGeometry(W*0.36,0.14,3.6),mat(0xf4f6f8,0.6,0.1));
+  canop.position.set(W*0.1,fH*1.02,D/2+2.3);buildingGroup.add(canop);
+  for(var cc2=0;cc2<2;cc2++){
+    var col2=new THREE.Mesh(new THREE.BoxGeometry(0.18,fH,0.18),mat(0xd9dde1,0.6,0.2));
+    col2.position.set(W*0.1+(cc2===0?-W*0.13:W*0.13),fH*0.5,D/2+3.7);buildingGroup.add(col2);
+  }
+  var crossBg=new THREE.Mesh(new THREE.PlaneGeometry(1.0,1.0),mat(0xc8332b,0.5,0.1,0xc8332b,0.35));
+  crossBg.position.set(W*0.14,H*0.62,D/2+2.17);buildingGroup.add(crossBg);
+  var cV=new THREE.Mesh(new THREE.PlaneGeometry(0.22,0.7),mat(0xffffff,0.4,0.05,0xffffff,0.35));
+  cV.position.set(W*0.14,H*0.62,D/2+2.18);buildingGroup.add(cV);
+  var cH2=new THREE.Mesh(new THREE.PlaneGeometry(0.7,0.22),mat(0xffffff,0.4,0.05,0xffffff,0.35));
+  cH2.position.set(W*0.14,H*0.62,D/2+2.18);buildingGroup.add(cH2);
+  /* flat roof, parapet, helipad */
+  var deck2=new THREE.Mesh(new THREE.BoxGeometry(W+0.1,0.12,D+0.1),mat(0xf2f4f6,0.85,0.03));
+  deck2.position.set(0,H+0.06,0);buildingGroup.add(deck2);
+  var heli=new THREE.Mesh(new THREE.CylinderGeometry(2.1,2.1,0.06,24),mat(0x3b444e,0.85,0.05));
+  heli.position.set(-W*0.22,H+0.16,0);buildingGroup.add(heli);
+  var hV1=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.02,1.4),mat(0xf2f4f6,0.6,0.05));
+  hV1.position.set(-W*0.22-0.45,H+0.2,0);buildingGroup.add(hV1);
+  var hV2=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.02,1.4),mat(0xf2f4f6,0.6,0.05));
+  hV2.position.set(-W*0.22+0.45,H+0.2,0);buildingGroup.add(hV2);
+  var hBar=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.02,0.22),mat(0xf2f4f6,0.6,0.05));
+  hBar.position.set(-W*0.22,H+0.2,0);buildingGroup.add(hBar);
+  apartments=[];
+  return {W:W,D:D,H:H};
+}
+
+/* ===== municipal / government civic hall ===== */
+function buildMuniB(n){
+  var W=Math.min(24,14+n*0.04), D=W*0.5, fH=2.3, H=2*fH;
+  var wallMat2=facadeMaterial("stucco",0xd8d2c4,3,H);
+  var body=new THREE.Mesh(new THREE.BoxGeometry(W,H,D),wallMat2);
+  body.position.set(0,H/2,0);buildingGroup.add(body);
+  /* window grid both floors */
+  var winM=new THREE.MeshStandardMaterial({color:0x9fd8ff,transparent:true,opacity:0.3,roughness:0.1,metalness:0.6});
+  var frM=mat(0x4a525c,0.6,0.3);
+  var wc=Math.round(W/2.6);
+  for(var f3=0;f3<2;f3++){
+    for(var c3=0;c3<wc;c3++){
+      var wx2=-W/2+W/(wc+1)*(c3+1);
+      var wy2=fH*0.55+f3*fH;
+      var wfr=new THREE.Mesh(new THREE.BoxGeometry(0.85,1.25,0.06),frM);
+      wfr.position.set(wx2,wy2,D/2+0.01);buildingGroup.add(wfr);
+      var wgl=new THREE.Mesh(new THREE.PlaneGeometry(0.72,1.12),winM);
+      wgl.position.set(wx2,wy2,D/2+0.05);buildingGroup.add(wgl);
+    }
+  }
+  /* center portico: 4 columns + pediment + steps */
+  var portW=Math.min(7,W*0.34);
+  for(var pc=0;pc<4;pc++){
+    var colP=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.18,H*0.92,10),mat(0xefe9dd,0.6,0.05));
+    colP.position.set(-portW/2+portW/3*pc,H*0.46,D/2+1.5);buildingGroup.add(colP);
+  }
+  var ped=makeGableRoof(portW+1.2,2.4,portW*0.16,0xcfc7b8);
+  ped.position.set(0,H*0.94,D/2+1.2);buildingGroup.add(ped);
+  var portRoof=new THREE.Mesh(new THREE.BoxGeometry(portW+1.2,0.16,2.6),mat(0xd9d2c4,0.7,0.05));
+  portRoof.position.set(0,H*0.92,D/2+1.3);buildingGroup.add(portRoof);
+  for(var s4=0;s4<4;s4++){
+    var stp=new THREE.Mesh(new THREE.BoxGeometry(portW+1.4-s4*0.2,0.13,0.34),mat(0xc9c2b4,0.85,0.03));
+    stp.position.set(0,0.065+s4*0.13,D/2+2.9-s4*0.3);buildingGroup.add(stp);
+  }
+  var doorM2=new THREE.Mesh(new THREE.BoxGeometry(1.5,2.0,0.08),mat(0x3a2f26,0.6,0.1));
+  doorM2.position.set(0,1.0,D/2+0.05);buildingGroup.add(doorM2);
+  /* cornice + low parapet */
+  var corn=new THREE.Mesh(new THREE.BoxGeometry(W+0.5,0.22,D+0.5),mat(0xcfc7b8,0.7,0.05));
+  corn.position.set(0,H+0.11,0);buildingGroup.add(corn);
+  /* flagpole with flag */
+  var pole=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,5.4,7),mat(0xb9c2cc,0.4,0.6));
+  pole.position.set(-W*0.42,2.7,D/2+3.4);buildingGroup.add(pole);
+  var flag=new THREE.Mesh(new THREE.PlaneGeometry(1.0,0.6),
+    new THREE.MeshStandardMaterial({color:0xc8332b,roughness:0.7,metalness:0.05,side:THREE.DoubleSide}));
+  flag.position.set(-W*0.42+0.55,5.0,D/2+3.4);buildingGroup.add(flag);
+  apartments=[];
+  return {W:W,D:D,H:H};
+}
+
+/* ===== land / substation yard: fenced pad with N battery+data pairs ===== */
+var landPairs=[];
+function buildLandSite(pairs){
+  landPairs=[];apartments=[];
+  /* size each pair by the selected models */
+  var battKwh=S.bigBatt.kwh||2703, nodeKw=S.bigNode.kw||120;
+  var probe=makeContainerBESS(battKwh);
+  var bL=probe.userData.L, bD=probe.userData.D;
+  var cols2=(pairs<=2)?1:2;
+  var rows2=Math.ceil(pairs/cols2);
+  var slotW=bL+5.5+3;              /* battery + node + gap */
+  var slotD=bD+4.5;
+  var padW=cols2*slotW+6, padD=rows2*slotD+8;
+  /* concrete pad */
+  var pad=new THREE.Mesh(new THREE.BoxGeometry(padW,0.12,padD),mat(0xb9bcbf,0.92,0.02));
+  pad.position.set(0,0.06,0);buildingGroup.add(pad);
+  /* gravel border */
+  var grav=new THREE.Mesh(new THREE.BoxGeometry(padW+2.4,0.06,padD+2.4),mat(0x8f8a80,0.98,0));
+  grav.position.set(0,0.03,0);buildingGroup.add(grav);
+  /* pairs grid */
+  var idx2=0;
+  for(var r2=0;r2<rows2;r2++){
+    for(var c4=0;c4<cols2;c4++){
+      if(idx2>=pairs)break;
+      var cx2=-padW/2+3+slotW*c4+slotW/2;
+      var cz2=-padD/2+4+slotD*r2+bD/2;
+      var batt=makeContainerBESS(battKwh);
+      batt.position.set(cx2-2.6,0.12,cz2);buildingGroup.add(batt);
+      var node=makeComputeNode();
+      if(!node){S.bigNode=findBy(BIGNODE,"triton");node=makeComputeNode();}
+      var nL=node.userData.L||node.userData.W||3;
+      node.position.set(cx2+bL/2-nL/2+1.2+3.2,0.12,cz2);
+      buildingGroup.add(node);
+      landPairs.push({batt:batt,node:node});
+      idx2++;
+    }
+  }
+  /* PCS boost cabin + switch station cabins along the near edge */
+  var cab1=makeCabin(3.2,2.2,2.4,0x3f6f9e);
+  cab1.position.set(-padW*0.22,0.12,padD/2-2.6);buildingGroup.add(cab1);
+  var cab2=makeCabin(4.4,2.4,2.6,0x3f6f9e);
+  cab2.position.set(padW*0.2,0.12,padD/2-2.8);buildingGroup.add(cab2);
+  /* transmission takeoff + transformer in the far corner */
+  var take=makeTakeoff();
+  take.position.set(-padW/2+3.4,0.12,-padD/2+2.6);buildingGroup.add(take);
+  /* two yard light poles */
+  var lp1=makeStreetlight();lp1.position.set(padW/2-1.6,0.12,0);buildingGroup.add(lp1);
+  var lp2=makeStreetlight();lp2.position.set(-padW/2+1.6,0.12,padD*0.25);buildingGroup.add(lp2);
+  /* perimeter fence */
+  buildingGroup.add(makeFence(padW+3.6,padD+3.6));
+  equipCenter={x:0,z:0};
+  return {W:padW,D:padD,H:3};
+}
+
+function buildBuilding(){
+  while(buildingGroup.children.length)buildingGroup.remove(buildingGroup.children[0]);
+  apartments=[];packMeshes=[];bigBattObj=null;bigNodeObj=null;landPairs=[];
+  var n=S.units,bt=S.btype.id;
+  /* LAND / SUBSTATION: fenced yard of battery + data pairs */
+  if(bt==="land"){
+    var li=buildLandSite(Math.max(1,Math.min(12,n)));
+    /* no street/trees detail for a substation yard */
+    applyDoors();enableShadows(buildingGroup);buildBackdrop();
+    var spanL=Math.max(li.W,li.D)+16;
+    orbit.tR=Math.max(26,Math.min(95,spanL*1.35));
+    if(!orbit._userZoom)orbit.r=orbit.tR;
+    return;
+  }
+  /* C&I / HOSPITAL / MUNICIPAL: whole-meter buildings with site equipment only */
+  if(bt==="cni"||bt==="hospital"||bt==="muni"){
+    var bi;
+    if(bt==="cni")bi=buildFactory(n);
+    else if(bt==="hospital")bi=buildHospitalB(n);
+    else bi=buildMuniB(n);
+    placeSiteEquipment(bi.W,bi.D*0.15);
+    buildGroundDetail(bi.W,bi.D);
+    applyDoors();enableShadows(buildingGroup);buildBackdrop();
+    var spanB=Math.max(bi.W,bi.H*2)+16;
+    orbit.tR=Math.max(26,Math.min(95,spanB*1.15));
+    if(!orbit._userZoom)orbit.r=orbit.tR;
+    return;
+  }
+  /* HOUSE: dedicated realistic model */
+  if(bt==="house"){
+    var hi=buildHouse(n);
+    var totalW=hi.W;
+    equipCenter={x:0,z:0};
+    if(S.bigBatt.kwh){
+      bigBattObj=makeBigBattery();
+      var bw=(bigBattObj.userData.L||bigBattObj.userData.W||2);
+      var bx=totalW/2+bw/2+2.4;
+      bigBattObj.position.set(bx,0,hi.D*0.1);buildingGroup.add(bigBattObj);
+      equipCenter.x=bx;equipCenter.z=hi.D*0.1;
+    }
+    if(S.bigNode.kw){
+      bigNodeObj=makeComputeNode();
+      var nw=(bigNodeObj.userData.L||bigNodeObj.userData.W||2);
+      var nx=-(totalW/2+nw/2+2.4);
+      bigNodeObj.position.set(nx,0,hi.D*0.1);buildingGroup.add(bigNodeObj);
+      if(!S.bigBatt.kwh){equipCenter.x=nx;equipCenter.z=hi.D*0.1;}
+    }
+    buildGroundDetail(hi.W,hi.D);
+    applyDoors();enableShadows(buildingGroup);buildBackdrop();
+    var span=Math.max(hi.W,hi.wallH)+16;
+    orbit.tR=Math.max(22,Math.min(90,span*1.6));
+    if(!orbit._userZoom)orbit.r=orbit.tR;
+    return;
+  }
+  var facade=0x8a8f96,railColor=0x3a4658,balcony=true,door=false,roof="flat";
+  var uw=2.5,uh=1.9,ud=2.3,gap=0.05,corr=1.15;
+  if(bt==="panel"){facade=0x9a9d98;railColor=0xb98a3a;uw=2.5;uh=1.85;}
+  else if(bt==="midrise"){facade=0xd8d2c4;railColor=0x555a63;uw=2.6;uh=1.8;}
+  else if(bt==="tower"){facade=0xc8ccd2;railColor=0x707783;uw=2.4;uh=1.7;}
+  else if(bt==="office"){facade=0x7f95ad;railColor=0x54606f;balcony=false;uw=2.7;uh=1.7;}
+
+  /* massing plan: floors x units/floor, double-loaded corridor when the plate is big enough */
+  var plan=planMassing(n,bt);
+  var rows=plan.f, upf=plan.upf, dbl=plan.dbl;
+  cols=plan.cols;
+  var totalW=cols*(uw+gap)-gap,totalH=rows*(uh+gap)-gap;
+  var totalD=dbl?(2*ud+corr):ud;
+  var zoff=dbl?(corr/2+ud/2):0;
+  /* thinner, better-proportioned ground floor; slightly inset from the facade */
+  var plinthH=uh*0.42;
+  var x0=-totalW/2+uw/2,y0=uh/2+0.02+plinthH;
+  var pu=Math.round(n*S.part/100);
+
+  /* ground floor: sits flush to the ground, matches the full footprint depth */
+  var plinthCol=(bt==="office")?0x3a4658:0x7a7f84;
+  var plinth=new THREE.Mesh(new THREE.BoxGeometry(totalW+0.15,plinthH,totalD+0.12),mat(plinthCol,0.88,0.04));
+  plinth.position.set(0,plinthH/2,0);buildingGroup.add(plinth);
+  var sillB=new THREE.Mesh(new THREE.BoxGeometry(totalW+0.22,0.14,totalD+0.2),mat(0x2a323c,0.9,0.05));
+  sillB.position.set(0,0.07,0);buildingGroup.add(sillB);
+  /* recessed glass entrance flush in the ground floor face */
+  var entryW=Math.min(1.8,totalW*0.22);
+  var entry=new THREE.Mesh(new THREE.BoxGeometry(entryW,plinthH*0.78,0.06),
+    mat(0x0c141f,0.25,0.5,0x2a5da8,0.55));
+  entry.position.set(0,plinthH*0.42,totalD/2+0.065);buildingGroup.add(entry);
+  var canopy=new THREE.Mesh(new THREE.BoxGeometry(entryW+0.4,0.07,0.5),mat(0x323b47,0.7,0.1));
+  canopy.position.set(0,plinthH*0.82,totalD/2+0.22);buildingGroup.add(canopy);
+  for(var gw=0;gw<2;gw++){
+    var gwin=new THREE.Mesh(new THREE.PlaneGeometry(totalW*0.2,plinthH*0.5),
+      mat(0x9fd8ff,0.15,0.5,0x1a3a5c,0.3));
+    gwin.position.set((gw===0?-1:1)*(entryW*0.6+totalW*0.14),plinthH*0.52,totalD/2+0.062);
+    buildingGroup.add(gwin);
+  }
+  /* corridor end-caps for double-loaded plates (fill the hallway gap at both ends) */
+  if(dbl){
+    var capMat=mat(facade,0.84,0.05);
+    var capL=new THREE.Mesh(new THREE.BoxGeometry(0.3,totalH,corr),capMat);
+    capL.position.set(-totalW/2-0.13,y0+totalH/2-uh/2,0);buildingGroup.add(capL);
+    var capR=new THREE.Mesh(new THREE.BoxGeometry(0.3,totalH,corr),capMat);
+    capR.position.set(totalW/2+0.13,y0+totalH/2-uh/2,0);buildingGroup.add(capR);
+    /* corridor roof strip (the hallway between the two unit rows) */
+    var corrRoof=new THREE.Mesh(new THREE.BoxGeometry(totalW,totalH,corr*0.98),mat(0x39424e,0.9,0.03));
+    corrRoof.position.set(0,y0+totalH/2-uh/2,0);buildingGroup.add(corrRoof);
+  }
+
+  var opts={facade:facade,railColor:railColor,balcony:balcony,door:door,facMat:S.facMat};
+  /* place units floor by floor: front row first, then back row (double-loaded) */
+  var idx=0;
+  for(var row=0;row<rows;row++){
+    var placedFloor=0;
+    var floorCount=Math.min(upf,n-row*upf);
+    if(floorCount<=0)break;
+    var frontCount=dbl?Math.ceil(floorCount/2):floorCount;
+    var backCount=floorCount-frontCount;
+    /* center each face's row */
+    var fx0=-(frontCount*(uw+gap)-gap)/2+uw/2;
+    for(var fc=0;fc<frontCount;fc++){
+      var cellF=makeCell(fx0+fc*(uw+gap),y0+row*(uh+gap),uw,uh,ud,idx<pu,opts);
+      cellF.group.position.z=zoff;
+      buildingGroup.add(cellF.group);apartments.push(cellF);
+      if(cellF.pack)packMeshes.push(cellF.pack);
+      idx++;
+    }
+    var bx0=-(backCount*(uw+gap)-gap)/2+uw/2;
+    for(var bc=0;bc<backCount;bc++){
+      var cellB=makeCell(bx0+bc*(uw+gap),y0+row*(uh+gap),uw,uh,ud,idx<pu,opts);
+      cellB.group.position.z=-zoff;
+      cellB.group.rotation.y=Math.PI;   /* back row faces outward (-z) */
+      buildingGroup.add(cellB.group);apartments.push(cellB);
+      if(cellB.pack)packMeshes.push(cellB.pack);
+      idx++;
+    }
+  }
+  addRoofDetail(0,y0+totalH-uh/2,totalW,totalD,roof);
+
+  /* place central battery to the right */
+  equipCenter={x:0,z:0};
+  if(S.bigBatt.kwh){
+    bigBattObj=makeBigBattery();
+    var bw=(bigBattObj.userData.L||bigBattObj.userData.W||2);
+    var bx=totalW/2+bw/2+2.2;
+    bigBattObj.position.set(bx,0,totalD*0.1);buildingGroup.add(bigBattObj);
+    equipCenter.x=bx;equipCenter.z=totalD*0.1;
+  }
+  /* site compute node to the left */
+  if(S.bigNode.kw){
+    bigNodeObj=makeComputeNode();
+    var nw=(bigNodeObj.userData.L||bigNodeObj.userData.W||2);
+    var nx=-(totalW/2+nw/2+2.2);
+    bigNodeObj.position.set(nx,0,totalD*0.1);buildingGroup.add(bigNodeObj);
+    if(!S.bigBatt.kwh){equipCenter.x=nx;equipCenter.z=totalD*0.1;}
+  }
+  buildGroundDetail(totalW,totalD);
+  applyDoors();
+  enableShadows(buildingGroup);
+  buildBackdrop();
+  var span=Math.max(totalW,totalH)+14;
+  orbit.tR=Math.max(24,Math.min(95,span*1.5));
+  if(!orbit._userZoom)orbit.r=orbit.tR;
+}
+
+/* ===== ground site detail: sidewalk, road, parking, trees, streetlights ===== */
+function makeTree(scale){
+  var t=new THREE.Group();
+  var trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.06*scale,0.09*scale,0.7*scale,6),mat(0x5a4632,0.9,0));
+  trunk.position.set(0,0.35*scale,0);t.add(trunk);
+  /* layered canopy from 2 spheres */
+  var c1=new THREE.Mesh(new THREE.SphereGeometry(0.5*scale,8,7),mat(0x3f6b3a,0.95,0));
+  c1.position.set(0,0.95*scale,0);t.add(c1);
+  var c2=new THREE.Mesh(new THREE.SphereGeometry(0.36*scale,8,7),mat(0x4a7a42,0.95,0));
+  c2.position.set(0.14*scale,1.25*scale,0.08*scale);t.add(c2);
+  return t;
+}
+function makeStreetlight(){
+  var g=new THREE.Group();
+  var pole=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.05,2.6,6),mat(0x3a4048,0.6,0.5));
+  pole.position.set(0,1.3,0);g.add(pole);
+  var arm=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.05,0.05),mat(0x3a4048,0.6,0.5));
+  arm.position.set(0.25,2.55,0);g.add(arm);
+  var lamp=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.07,0.12),mat(0xffe9b8,0.4,0.2,0xffd98a,0.7));
+  lamp.position.set(0.48,2.52,0);g.add(lamp);
+  return g;
+}
+function buildGroundDetail(footW,footD){
+  var sg=new THREE.Group();
+  /* sidewalk apron around building */
+  var walkMat=mat(0x8f9399,0.92,0.02);
+  var apron=new THREE.Mesh(new THREE.BoxGeometry(footW+4.5,0.06,footD+4.5),walkMat);
+  apron.position.set(0,0.03,0);sg.add(apron);
+  /* sidewalk seam lines */
+  var seamMat=mat(0x74787e,0.9,0.02);
+  var seams=Math.round((footW+4.5)/1.6);
+  for(var sm=0;sm<seams;sm++){
+    var seam=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.062,footD+4.5),seamMat);
+    seam.position.set(-(footW+4.5)/2+(footW+4.5)/seams*(sm+0.5),0.031,0);sg.add(seam);
+  }
+  /* front walkway to the entrance */
+  var walkway=new THREE.Mesh(new THREE.BoxGeometry(2,0.065,4.5),walkMat);
+  walkway.position.set(0,0.033,footD/2+4.4);sg.add(walkway);
+  /* asphalt road running across the front */
+  var roadZ=footD/2+8.2;
+  var road=new THREE.Mesh(new THREE.BoxGeometry(Math.max(50,footW+40),0.05,4.6),mat(0x24272c,0.98,0));
+  road.position.set(0,0.026,roadZ);sg.add(road);
+  /* center dashes */
+  for(var dsh=0;dsh<14;dsh++){
+    var dash=new THREE.Mesh(new THREE.BoxGeometry(1.2,0.055,0.12),mat(0xd8c85a,0.8,0));
+    dash.position.set(-21+dsh*3.2,0.03,roadZ);sg.add(dash);
+  }
+  /* curb line between sidewalk and road */
+  var curb=new THREE.Mesh(new THREE.BoxGeometry(Math.max(50,footW+40),0.12,0.22),mat(0x9aa0a6,0.85,0.03));
+  curb.position.set(0,0.06,roadZ-2.45);sg.add(curb);
+  /* ===== parking lot: connected to the road by a driveway, 4 aligned stalls ===== */
+  var asphalt=mat(0x2b2f35,0.97,0), stripe=mat(0xe8e8e2,0.8,0);
+  var stallW=1.7, stallD=3.4, nStalls=4;
+  var padW=stallW*nStalls+0.4, padD=stallD+2.2;            /* stalls + drive aisle */
+  var padX=-(footW/2+padW/2+2.0);
+  var padZ=roadZ-2.55-padD/2;                              /* pad backs onto the curb line */
+  var pad=new THREE.Mesh(new THREE.BoxGeometry(padW,0.05,padD),asphalt);
+  pad.position.set(padX,0.027,padZ);sg.add(pad);
+  /* driveway apron connecting the lot's aisle to the road across the curb */
+  var drive=new THREE.Mesh(new THREE.BoxGeometry(3.2,0.055,2.8),asphalt);
+  drive.position.set(padX+padW/2-1.9,0.028,roadZ-1.35);sg.add(drive);
+  /* stalls: nose-in at the far side of the pad, stripes between them */
+  var stallZ=padZ-padD/2+stallD/2;                         /* stall row at the back of the pad */
+  for(var ps=0;ps<=nStalls;ps++){
+    var lx=padX-padW/2+0.2+ps*stallW;
+    var line=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.058,stallD),stripe);
+    line.position.set(lx,0.031,stallZ);sg.add(line);
+  }
+  /* wheel stops at the head of each stall */
+  for(var ws=0;ws<nStalls;ws++){
+    var wx2=padX-padW/2+0.2+stallW/2+ws*stallW;
+    var stop=new THREE.Mesh(new THREE.BoxGeometry(stallW*0.6,0.09,0.14),mat(0xb8b09a,0.85,0.02));
+    stop.position.set(wx2,0.07,stallZ-stallD/2+0.25);sg.add(stop);
+  }
+  /* trees along the sidewalk + corners */
+  var treeSpots=[
+    [-(footW/2+3.4), footD/2+5.6],[footW/2+3.4, footD/2+5.6],
+    [-(footW/2+3.0), -(footD/2+2.4)],[footW/2+3.0, -(footD/2+2.4)],
+    [0-footW*0.3, footD/2+5.9],[footW*0.32, footD/2+5.9]
+  ];
+  for(var tt=0;tt<treeSpots.length;tt++){
+    var tr=makeTree(1.0+((tt*37)%10)/18);
+    tr.position.set(treeSpots[tt][0],0.05,treeSpots[tt][1]);sg.add(tr);
+  }
+  /* shrubs against the facade */
+  for(var sh=0;sh<4;sh++){
+    var shrub=new THREE.Mesh(new THREE.SphereGeometry(0.28,7,6),mat(0x40663c,0.95,0));
+    shrub.position.set(-footW*0.35+sh*(footW*0.7/3),0.24,footD/2+0.75);sg.add(shrub);
+  }
+  /* two streetlights along the road */
+  var l1=makeStreetlight();l1.position.set(-footW*0.45-2,0.05,roadZ-2.9);sg.add(l1);
+  var l2=makeStreetlight();l2.position.set(footW*0.45+2,0.05,roadZ-2.9);sg.add(l2);
+  buildingGroup.add(sg);
+}
+
+/* ===== backdrop: sky color + ground tint + procedural skyline silhouette ===== */
+function buildBackdrop(){
+  if(backdropGroup){scene.remove(backdropGroup);backdropGroup=null;}
+  if(sceneIdx<0||sceneIdx>=SCENES.length)sceneIdx=0;
+  var sc=SCENES[sceneIdx];
+  /* sky via scene background + fog tint */
+  scene.background=new THREE.Color(sc.sky);
+  scene.fog.color=new THREE.Color(sc.sky);
+  /* ground tint */
+  scene.traverse(function(o){});
+  if(groundMesh){groundMesh.material.color.setHex(sc.ground);}
+  if(sc.silhouette===null)return;
+  backdropGroup=new THREE.Group();scene.add(backdropGroup);
+  /* ring of silhouette buildings around the scene */
+  var R=70, count=48;
+  var skyCol=new THREE.Color(sc.sky);
+  for(var i=0;i<count;i++){
+    var ang=(i/count)*Math.PI*2;
+    /* skip a gap toward the camera-front so the subject stays clear */
+    var dist=R+ (Math.random()*18-9);
+    var bx=Math.cos(ang)*dist, bz=Math.sin(ang)*dist;
+    var bh,bw;
+    if(sc.silhouette==="low"){bh=3+Math.random()*4;bw=4+Math.random()*4;}
+    else if(sc.silhouette==="mid"){bh=6+Math.random()*10;bw=4+Math.random()*5;}
+    else if(sc.silhouette==="tall"){bh=10+Math.random()*26;bw=4+Math.random()*6;}
+    else {bh=4+Math.random()*6;bw=8+Math.random()*8;} /* flat/industrial: wide low */
+    /* haze: blend building color toward sky with distance */
+    var base=new THREE.Color(sc.silhouette==="dusk"?0x2a2438:0x1a2230);
+    var c=base.clone().lerp(skyCol,0.45);
+    var b=new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bw),
+      new THREE.MeshStandardMaterial({color:c,roughness:0.95,metalness:0}));
+    b.position.set(bx,bh/2,bz);backdropGroup.add(b);
+    /* a few lit windows for dusk/city */
+    if((sc.id==="city"||sc.id==="dusk"||sc.id==="urban")&&Math.random()>0.4){
+      var lit=new THREE.Mesh(new THREE.PlaneGeometry(bw*0.6,bh*0.5),
+        new THREE.MeshBasicMaterial({color:0xffd98a,transparent:true,opacity:0.25}));
+      lit.position.set(bx,bh*0.55,bz+ (bz<0?-bw/2-0.05:bw/2+0.05));
+      lit.lookAt(0,bh*0.55,0);backdropGroup.add(lit);
+    }
+  }
+}
+
+/* recursively enable cast/receive shadow on solid meshes; skip transparent glass/glow */
+function enableShadows(root){
+  root.traverse(function(o){
+    if(o.isMesh){
+      var m=o.material;
+      var transparent=m&&m.transparent;
+      o.castShadow=!transparent;
+      o.receiveShadow=!transparent;
+    }
+  });
+}
+
+function applyDoors(){
+  var objs=[bigBattObj,bigNodeObj];
+  for(var lp=0;lp<landPairs.length;lp++){objs.push(landPairs[lp].batt);objs.push(landPairs[lp].node);}
+  for(var o=0;o<objs.length;o++){
+    var ob=objs[o];if(!ob||!ob.userData.doors)continue;
+    var ds=ob.userData.doors;
+    for(var i=0;i<ds.length;i++){
+      ds[i].pivot.rotation.y = doorsOpen ? (ds[i].dir*1.35) : 0;
+    }
+  }
+}
+
+function dayProfile(h){
+  if(h<6)return {mode:"charge",en:0.7};
+  if(h>=16&&h<21)return {mode:"discharge",en:1.0};
+  if(h>=21)return {mode:"charge",en:0.6};
+  return {mode:"idle",en:0.2};
+}
+var COL={charge:0x38bdf8,discharge:0xf97316,compute:0xa78bfa,idle:0x14233c};
+function setCell(a,mode){
+  var c=COL[mode];
+  a.glowMat.color.setHex(c);a.glowMat.opacity=mode==="idle"?0.55:0.95;
+  a.shellMat.emissive.setHex(mode==="idle"?0x000000:c);a.shellMat.emissiveIntensity=mode==="idle"?0:0.1;
+}
+function setPack(p,mode){var c=COL[mode];p.glowMat.color.setHex(mode==="idle"?0x22c55e:c);p.glowMat.emissive.setHex(mode==="idle"?0x22c55e:c);p.glowMat.emissiveIntensity=mode==="idle"?0.6:1.0;}
+function setBattLeds(ob,mode){
+  if(!ob||!ob.userData.interiorLeds)return;var c=COL[mode];
+  var leds=ob.userData.interiorLeds;
+  for(var i=0;i<leds.length;i++){
+    leds[i].material.emissive.setHex(mode==="idle"?0x22c55e:c);
+    leds[i].material.emissiveIntensity=mode==="idle"?0.6:1.0;
+  }
+}
+function setNodeLeds(ob,on){
+  if(!ob||!ob.userData.nodeLeds)return;var c=on?0xa78bfa:0x818cf8;
+  var leds=ob.userData.nodeLeds;
+  for(var i=0;i<leds.length;i++){
+    leds[i].material.emissive.setHex(c);leds[i].material.emissiveIntensity=on?1.1:0.5;
+  }
+}
+
+function bindOrbit(cv){
+  cv.addEventListener("mousedown",function(e){drag.on=true;drag.x=e.clientX;drag.y=e.clientY;orbit.auto=false;setRotChip();});
+  window.addEventListener("mouseup",function(){drag.on=false;});
+  window.addEventListener("mousemove",function(e){
+    if(!drag.on)return;
+    orbit.tAz+=(e.clientX-drag.x)*0.008;orbit.tEl+=(e.clientY-drag.y)*0.006;
+    orbit.tEl=Math.max(0.05,Math.min(1.2,orbit.tEl));drag.x=e.clientX;drag.y=e.clientY;
+  });
+  cv.addEventListener("wheel",function(e){
+    e.preventDefault();orbit._userZoom=true;orbit.tR+=e.deltaY*0.02;orbit.tR=Math.max(6,Math.min(100,orbit.tR));
+  },{passive:false});
+  cv.addEventListener("touchstart",function(e){
+    if(e.touches.length===1){drag.on=true;drag.x=e.touches[0].clientX;drag.y=e.touches[0].clientY;orbit.auto=false;setRotChip();}
+  },{passive:true});
+  cv.addEventListener("touchmove",function(e){
+    if(drag.on&&e.touches.length===1){
+      orbit.tAz+=(e.touches[0].clientX-drag.x)*0.01;orbit.tEl+=(e.touches[0].clientY-drag.y)*0.008;
+      orbit.tEl=Math.max(0.05,Math.min(1.2,orbit.tEl));drag.x=e.touches[0].clientX;drag.y=e.touches[0].clientY;
+    }
+  },{passive:true});
+  cv.addEventListener("touchend",function(){drag.on=false;});
+}
+function setRotChip(){$("rotChip").innerHTML=orbit.auto?"&#8635; auto-rotate":"&#10073;&#10073; paused";}
+function animate(){
+  requestAnimationFrame(animate);
+  if(orbit.auto)orbit.tAz+=0.0032;
+  orbit.az+=(orbit.tAz-orbit.az)*0.1;orbit.el+=(orbit.tEl-orbit.el)*0.1;orbit.r+=(orbit.tR-orbit.r)*0.1;
+  /* target focus */
+  var fx=focusEquip?equipCenter.x:0, fy=focusEquip?2:4, fz=focusEquip?equipCenter.z:0;
+  orbit.cx+=(fx-orbit.cx)*0.08;orbit.cy+=(fy-orbit.cy)*0.08;orbit.cz+=(fz-orbit.cz)*0.08;
+  var cx=orbit.cx+Math.cos(orbit.az)*Math.cos(orbit.el)*orbit.r;
+  var cy=Math.sin(orbit.el)*orbit.r;
+  var cz=orbit.cz+Math.sin(orbit.az)*Math.cos(orbit.el)*orbit.r;
+  camera.position.set(cx,cy+3,cz);camera.lookAt(orbit.cx,orbit.cy,orbit.cz);
+  renderer.render(scene,camera);
+}
+
+var timer=null;
+/* hourly earnings model: energy revenue lands in the 5 discharge hours (16-21),
+   compute revenue lands across the 11 compute hours (10-16 + 0-5) */
+function hourlyEarnings(h,c){
+  var en=0, co=0;
+  if(h>=16&&h<21) en=c.enDay/5;
+  var computeOn=((h>=10&&h<16)||(h>=0&&h<5));
+  if(computeOn) co=c.coDay/11;
+  return {en:en,co:co,tot:en+co};
+}
+function money2(n){
+  if(n>=1000)return "$"+n.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,",");
+  return "$"+n.toFixed(2);
+}
+function run(){
+  if(!THREEJS.ready)return;
+  if(timer){clearInterval(timer);timer=null;}
+  buildBuilding();renderOut();
+  var h=0, c=calc(), cum=0;
+  SIMSTATE.running=true;SIMSTATE.hour=0;SIMSTATE.earned=0;
+  $("earnRate").style.display="block";
+  $("earnTotal").style.display="block";
+  timer=setInterval(function(){
+    var p=dayProfile(h);
+    $("clk").textContent=(h<10?"0"+h:h)+":00";
+    $("mode").textContent=p.mode==="charge"?"charging off-peak":(p.mode==="discharge"?"discharging to grid / VPP":"idle / standby");
+    var computeOn=((h>=10&&h<16)||(h>=0&&h<5));
+    var edgeCompute=(S.edge.w>0)&&computeOn;
+    /* live earnings */
+    var e=hourlyEarnings(h,c);
+    cum+=e.tot;
+    SIMSTATE.hour=h;SIMSTATE.earned=cum;
+    if(e.tot>0.005){
+      var parts=[];
+      if(e.en>0.005)parts.push(money2(e.en)+"/hr energy");
+      if(e.co>0.005)parts.push(money2(e.co)+"/hr compute");
+      $("earnRate").textContent="earning "+parts.join(" + ");
+    }else{
+      $("earnRate").textContent=p.mode==="charge"?"buying off-peak power":"standing by";
+    }
+    $("earnTotalVal").textContent=money2(cum);
+    for(var i=0;i<apartments.length;i++){
+      var a=apartments[i];
+      if(!a.part){setCell(a,"idle");if(a.pack)setPack(a.pack,"idle");continue;}
+      var m=p.mode;if(edgeCompute&&(i%3===0))m="compute";
+      setCell(a,m);if(a.pack)setPack(a.pack,(edgeCompute&&(i%3===0))?"compute":p.mode);
+    }
+    setBattLeds(bigBattObj,p.mode);
+    setNodeLeds(bigNodeObj,(S.bigNode.kw&&computeOn));
+    for(var lp2=0;lp2<landPairs.length;lp2++){
+      setBattLeds(landPairs[lp2].batt,p.mode);
+      setNodeLeds(landPairs[lp2].node,computeOn);
+    }
+    pulsePackets(p.mode,computeOn);
+    h++;
+    if(h>23){
+      clearInterval(timer);timer=null;
+      $("clk").textContent="23:00";
+      $("mode").textContent="cycle complete";
+      $("earnRate").textContent="day complete \u2014 "+money2(cum)+" earned";
+    }
+  },300);
+}
+var pktT=0;
+function pulsePackets(mode,computeOn){
+  pktT+=1;var ids=["pkt1","pkt2","pkt3"];
+  for(var i=0;i<ids.length;i++){
+    var el=$(ids[i]);var phase=(pktT*0.12+i*0.33)%1;
+    el.style.left=(phase*100)+"%";el.style.opacity=(mode==="idle"&&!computeOn)?0.15:0.95;
+  }
+}
+setInterval(function(){if(!timer)pulsePackets("discharge",true);},90);
+
+/* ===== snapshot: composite the 3D render + data into a downloadable PNG ===== */
+function siteName(){
+  var el=$("siteName");
+  var v=el&&el.value?el.value.replace(/^\s+|\s+$/g,""):"";
+  return v||"NextNRG Site";
+}
+function activityLabel(h){
+  var p=dayProfile(h);
+  var computeOn=((h>=10&&h<16)||(h>=0&&h<5));
+  if(p.mode==="discharge")return computeOn?"Discharge + compute":"Discharge / VPP";
+  if(p.mode==="charge")return computeOn?"Charge + compute":"Off-peak charge";
+  return computeOn?"Compute":"Standby";
+}
+function saveSnapshot(){
+  if(!THREEJS.ready)return;
+  if(!(window.jspdf&&window.jspdf.jsPDF)){savePNGFallback();return;}
+  renderer.render(scene,camera);
+  var src=$("scene"),c=calc();
+  var img;
+  try{img=src.toDataURL("image/png");}catch(err){$("mode").textContent="snapshot blocked by browser";return;}
+  var pdf=new window.jspdf.jsPDF({unit:"mm",format:"letter"});
+  var PW=215.9, M=14, W=PW-M*2;
+  /* header */
+  pdf.setFillColor(7,11,20);pdf.rect(0,0,PW,26,"F");
+  pdf.setTextColor(249,115,22);pdf.setFontSize(16);pdf.setFont("helvetica","bold");
+  pdf.text(siteName(),M,11);
+  pdf.setTextColor(180,195,215);pdf.setFontSize(9);pdf.setFont("helvetica","normal");
+  pdf.text(S.btype.name+" ("+S.facMat.name+")  \u00b7  "+S.st.name+" \u00b7 "+S.st.util,M,17);
+  pdf.text(S.unit.name+" \u00b7 "+S.units+" units @ "+S.part+"% \u00b7 "+massingText(),M,22);
+  var d=new Date();
+  /* ClearSky-Omega mark at top-right: omega arc (stroked circle, bottom masked),
+     two feet, underline bar */
+  var ox=PW-M-6, oy=9.5, orr=4.2;
+  pdf.setDrawColor(232,238,247);pdf.setLineWidth(1.5);
+  pdf.circle(ox,oy,orr,"S");
+  pdf.setFillColor(7,11,20);
+  pdf.rect(ox-orr-1.4,oy+orr*0.62,(orr+1.4)*2,orr,"F");   /* mask the bottom of the ring */
+  pdf.setFillColor(232,238,247);
+  var footY=oy+orr*0.62, footH=1.5;
+  pdf.rect(ox-orr-2.6,footY,3.4,footH,"F");                /* left foot */
+  pdf.rect(ox+orr-0.8,footY,3.4,footH,"F");                /* right foot */
+  pdf.rect(ox-orr-2.6,footY+2.6,(orr+2.6)*2-1.2,footH,"F");/* underline bar */
+  pdf.setTextColor(120,140,165);pdf.setFontSize(9);
+  pdf.text(d.toLocaleDateString()+" "+d.toLocaleTimeString(),PW-M-16,11,{align:"right"});
+  pdf.setTextColor(232,238,247);pdf.setFont("helvetica","bold");
+  pdf.text("NextNRG",PW-M-16,17,{align:"right"});
+  pdf.setFont("helvetica","normal");pdf.setFontSize(7);pdf.setTextColor(150,165,190);
+  pdf.text("Powered by ClearSky-OMEGA",PW-M-16,21,{align:"right"});
+  /* 3D render */
+  var imgH=W*(src.height/src.width);
+  if(imgH>95){imgH=95;}
+  var imgW=imgH*(src.width/src.height);
+  pdf.addImage(img,"PNG",(PW-imgW)/2,30,imgW,imgH);
+  var y=30+imgH+7;
+  /* key stats row */
+  var stats=[
+    ["Units",commas(c.pu)+" / "+S.units],
+    ["Storage",(c.totKwh/1000).toFixed(2)+" MWh"],
+    ["Compute",Math.round(c.computeKw)+" kW"],
+    ["Rev / day",money(c.tot)],
+    ["Rev / year",money(c.totYr)]
+  ];
+  var sw2=W/stats.length;
+  pdf.setDrawColor(210,215,222);pdf.setLineWidth(0.2);
+  pdf.line(M,y-3,PW-M,y-3);
+  for(var si=0;si<stats.length;si++){
+    var sx=M+si*sw2;
+    pdf.setTextColor(120,130,145);pdf.setFontSize(7);pdf.text(stats[si][0].toUpperCase(),sx,y+1);
+    pdf.setTextColor(20,26,36);pdf.setFontSize(11);pdf.setFont("helvetica","bold");
+    pdf.text(stats[si][1],sx,y+7);
+    pdf.setFont("helvetica","normal");
+  }
+  y+=13;
+  if(S.bigBatt.kwh||S.bigNode.kw||derKw()){
+    pdf.setFontSize(8);pdf.setTextColor(90,100,115);
+    var eq=[];
+    if(S.bigBatt.kwh)eq.push("Central battery: "+S.bigBatt.model+" ("+commas(S.bigBatt.kwh)+" kWh)");
+    if(S.bigNode.kw)eq.push("Site node: "+S.bigNode.model+" ("+S.bigNode.kw+" kW)");
+    if(S.derSolar&&S.derSolar.kw)eq.push("Solar: "+S.derSolar.kw+" kW");
+    if(S.derWind&&S.derWind.kw)eq.push("Wind: "+S.derWind.kw+" kW");
+    if(S.derGen&&S.derGen.kw)eq.push("Generator: "+S.derGen.kw+" kW");
+    pdf.text(eq.join("   \u00b7   "),M,y);
+    y+=6;
+  }
+  /* hourly production table: two columns of 12 hours */
+  pdf.setFontSize(10);pdf.setFont("helvetica","bold");pdf.setTextColor(20,26,36);
+  pdf.text("Hourly production",M,y);
+  pdf.setFont("helvetica","normal");
+  y+=4;
+  var colWd=(W-6)/2, rowH=5.4;
+  var heads=["Hr","Activity","Energy","Compute","Total"];
+  var cw=[8,colWd-8-42,14,14,14];
+  function drawHalf(x0,hStart){
+    var yy=y;
+    pdf.setFillColor(238,241,246);pdf.rect(x0,yy,colWd,rowH,"F");
+    pdf.setFontSize(6.5);pdf.setTextColor(90,100,115);
+    var cx=x0+1.5;
+    for(var hh2=0;hh2<heads.length;hh2++){pdf.text(heads[hh2],cx,yy+3.7);cx+=cw[hh2];}
+    yy+=rowH;
+    pdf.setFontSize(7);
+    var half=0;
+    for(var h2=hStart;h2<hStart+12;h2++){
+      var e=hourlyEarnings(h2,c);
+      if(half%2===1){pdf.setFillColor(247,249,251);pdf.rect(x0,yy,colWd,rowH,"F");}
+      pdf.setTextColor(60,70,85);
+      var cx2=x0+1.5;
+      var vals=[(h2<10?"0"+h2:""+h2)+":00",activityLabel(h2),
+        e.en>0.005?money2(e.en):"\u2014",e.co>0.005?money2(e.co):"\u2014",
+        e.tot>0.005?money2(e.tot):"\u2014"];
+      for(var v2=0;v2<vals.length;v2++){
+        if(v2===4&&e.tot>0.005){pdf.setTextColor(22,120,60);pdf.setFont("helvetica","bold");}
+        pdf.text(String(vals[v2]),cx2,yy+3.7);
+        if(v2===4){pdf.setTextColor(60,70,85);pdf.setFont("helvetica","normal");}
+        cx2+=cw[v2];
+      }
+      yy+=rowH;half++;
+    }
+    pdf.setDrawColor(210,215,222);pdf.rect(x0,y,colWd,rowH*13);
+    return yy;
+  }
+  var yEnd1=drawHalf(M,0);
+  drawHalf(M+colWd+6,12);
+  y=yEnd1+5;
+  /* daily total line */
+  pdf.setFontSize(9);pdf.setFont("helvetica","bold");pdf.setTextColor(22,120,60);
+  pdf.text("Daily total: "+money2(c.tot)+"   \u00b7   Annualized: "+money(c.totYr),M,y);
+  pdf.setFont("helvetica","normal");
+  y+=5;
+  pdf.setFontSize(6.5);pdf.setTextColor(140,148,160);
+  var disc="Planning projection based on "+S.st.name+" program data ("+S.st.program+"). Actual earnings depend on enrolled programs, cleared market prices, dispatch performance, and compute utilization. Energy revenue is shown in the discharge window; compute revenue across inference hours.";
+  var lines=pdf.splitTextToSize(disc,W);
+  pdf.text(lines,M,y);
+  /* save */
+  var safeName=siteName().replace(/[^a-z0-9]+/gi,"-").toLowerCase();
+  pdf.save("nextnrg-"+safeName+"-"+S.st.c+"-"+S.units+"u.pdf");
+  var mc=$("mode");var prev=mc.textContent;mc.textContent="PDF report saved \u2713";
+  setTimeout(function(){mc.textContent=prev;},1800);
+}
+/* PNG fallback if jsPDF failed to load */
+function savePNGFallback(){
+  renderer.render(scene,camera);
+  var src=$("scene");
+  var link=document.createElement("a");
+  try{
+    link.href=src.toDataURL("image/png");
+    link.download="nextnrg-sim-"+S.st.c+"-"+S.units+"u.png";
+    document.body.appendChild(link);link.click();document.body.removeChild(link);
+    $("mode").textContent="PDF library unavailable \u2014 saved PNG instead";
+  }catch(err){$("mode").textContent="snapshot blocked by browser";}
+}
+
+/* show/hide per-unit controls and re-range the count slider per category */
+function updateVis(){
+  var bt=S.btype, big=!!bt.big, land=!!bt.land;
+  var fu=$("fldUnit"), fp=$("fldPart"), fe=$("fldEdge");
+  if(fu)fu.style.display=big?"none":"block";      /* HOME battery only for residential */
+  if(fp)fp.style.display=big?"none":"block";      /* participation only for residential */
+  if(fe)fe.style.display=big?"none":"block";      /* per-unit edge only for residential */
+  var rng=$("unitsRange"), lbl=$("unitsLbl");
+  if(rng){
+    if(land){
+      rng.min=1;rng.max=12;rng.step=1;
+      if(S.units>12){S.units=4;rng.value=4;}
+    }else if(bt.id==="cni"){
+      rng.min=4;rng.max=30;rng.step=1;
+      if(S.units>30){S.units=16;rng.value=16;}
+    }else if(bt.id==="hospital"){
+      rng.min=20;rng.max=400;rng.step=5;
+    }else if(bt.id==="muni"){
+      rng.min=6;rng.max=80;rng.step=2;
+      if(S.units>80){S.units=30;rng.value=30;}
+    }else{
+      rng.min=4;rng.max=400;rng.step=1;
+    }
+    if(parseInt(rng.value,10)!==S.units)rng.value=S.units;
+  }
+  if(lbl)lbl.innerHTML=bt.unitLabel+' <b id="unitsVal">'+S.units+'</b>';
+}
+
+function bind(){
+  var segs=$("btSeg").getElementsByClassName("seg");
+  for(var s=0;s<segs.length;s++){
+    segs[s].onclick=function(){
+      var id=this.getAttribute("data-id");
+      for(var q=0;q<segs.length;q++)segs[q].className="seg";
+      this.className="seg on";S.btype=findBy(BTYPES,id);
+      /* land defaults: pick sensible models if none selected, and clamp pair count */
+      if(S.btype.land){
+        if(!S.bigBatt.kwh){S.bigBatt=findBy(BIGBATT,"grid2703");$("bigBattSel").value="grid2703";}
+        if(!S.bigNode.kw){S.bigNode=findBy(BIGNODE,"triton");$("bigNodeSel").value="triton";}
+      }else if(S.btype.big){
+        if(!S.bigBatt.kwh){S.bigBatt=findBy(BIGBATT,"edge760");$("bigBattSel").value="edge760";}
+        if(!S.bigNode.kw){S.bigNode=findBy(BIGNODE,"cruiser");$("bigNodeSel").value="cruiser";}
+      }
+      updateVis();
+      renderSpecs();renderOut();if(THREEJS.ready)buildBuilding();
+    };
+  }
+  var fsegs=$("facSeg").getElementsByClassName("seg");
+  for(var fq=0;fq<fsegs.length;fq++){
+    fsegs[fq].onclick=function(){
+      var id=this.getAttribute("data-id");
+      for(var q=0;q<fsegs.length;q++)fsegs[q].className="seg";
+      this.className="seg on";S.facMat=findBy(FACMATS,id);
+      $("facName").textContent=S.facMat.name;
+      if(THREEJS.ready)buildBuilding();
+    };
+  }
+  $("unitSel").onchange=function(){S.unit=findBy(UNITS,this.value);renderSpecs();renderOut();renderDeployments();if(THREEJS.ready)buildBuilding();};
+  $("edgeSel").onchange=function(){S.edge=findBy(EDGE,this.value);renderSpecs();renderOut();renderDeployments();if(THREEJS.ready)buildBuilding();};
+  $("bigBattSel").onchange=function(){S.bigBatt=findBy(BIGBATT,this.value);renderSpecs();renderOut();renderDeployments();if(THREEJS.ready)buildBuilding();};
+  $("bigNodeSel").onchange=function(){S.bigNode=findBy(BIGNODE,this.value);renderSpecs();renderOut();renderDeployments();if(THREEJS.ready)buildBuilding();};
+  $("derSolarSel").onchange=function(){S.derSolar=findBy(DERSOLAR,this.value);$("derSolarName").textContent=S.derSolar.name;renderOut();renderDeployments();};
+  $("derWindSel").onchange=function(){S.derWind=findBy(DERWIND,this.value);$("derWindName").textContent=S.derWind.name;renderOut();renderDeployments();};
+  $("derGenSel").onchange=function(){S.derGen=findBy(DERGEN,this.value);$("derGenName").textContent=S.derGen.name;renderOut();renderDeployments();};
+  $("regSel").onchange=function(){S.st=stByCode(this.value);renderSpecs();renderOut();};
+  $("unitsRange").oninput=function(){S.units=parseInt(this.value,10);var uv=$("unitsVal");if(uv)uv.textContent=this.value;renderOut();if(THREEJS.ready)buildBuilding();};
+  $("partRange").oninput=function(){S.part=parseInt(this.value,10);$("partVal").textContent=this.value+"%";renderOut();renderDeployments();if(THREEJS.ready)buildBuilding();};
+  $("runBtn").onclick=run;
+  $("rotChip").onclick=function(){orbit.auto=!orbit.auto;setRotChip();};
+  $("doorChip").onclick=function(){doorsOpen=!doorsOpen;this.className="chip"+(doorsOpen?" on":"");this.innerHTML=(doorsOpen?"&#9707; close doors":"&#9707; open doors");applyDoors();};
+  $("sceneChip").onclick=function(){
+    sceneIdx=(sceneIdx+1)%SCENES.length;
+    var sc=SCENES[sceneIdx];
+    this.innerHTML=sc.ico+" "+sc.name;
+    if(THREEJS.ready)buildBackdrop();
+  };
+  $("focusChip").onclick=function(){
+    if(!S.bigBatt.kwh&&!S.bigNode.kw){return;}
+    focusEquip=!focusEquip;this.className="chip"+(focusEquip?" on":"");
+    this.innerHTML=(focusEquip?"&#9673; whole site":"&#9673; focus equipment");
+    orbit.auto=false;setRotChip();
+    if(focusEquip){orbit._userZoom=true;orbit.tR=14;}else{orbit.tR=40;}
+  };
+  $("snapChip").onclick=saveSnapshot;
+  $("siteName").oninput=function(){$("siteNameLbl").textContent=this.value?this.value:"\u2014";};
+  $("depAdd").onclick=function(){
+    var code=$("depState").value,u=parseInt($("depUnits").value,10);if(!u||u<1)u=1;
+    var nm=$("depName").value?$("depName").value.replace(/^\s+|\s+$/g,""):"";
+    addDeployment(code,u,nm);$("depName").value="";
+  };
+  $("depSeed").onclick=function(){addDeployment(S.st.c,S.units,siteName()==="NextNRG Site"?"":siteName());};
+}
+
+fill();bind();updateVis();renderSpecs();renderOut();
+if(window.THREE){initThree();}
+else{$("loadMsg").textContent="3D library failed to load \u2014 check network settings.";}
+
+</script>
+</body>
+</html>
