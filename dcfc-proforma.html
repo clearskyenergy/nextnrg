@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════════
+  ClearSky-OMEGA · EnergyOS Platform
+  DCFC BESS Pro Forma  ·  Investor Numbers Sheet
+
+  © 2025 ClearSky Energy Solutions LLC. All rights reserved.
+  Proprietary and Confidential. Author: Tommy Gilmer.
+
+  Investor-facing financial model for deploying a Battery Energy Storage System
+  (BESS) at a DC fast-charging (DCFC) site. Strictly numbers: economics, demand
+  offset, TOU arbitrage, IRR / NPV / payback. Rates seeded from SCE Schedule
+  TOU-EV-8 (Cal. P.U.C. Sheet 91206-E, effective Jun 1, 2026).
+  ═══════════════════════════════════════════════════════════════════════════════
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="author" content="Tommy Gilmer · ClearSky Energy Solutions LLC">
+<meta name="copyright" content="© 2025 ClearSky Energy Solutions LLC. Proprietary.">
+<title>DCFC BESS Pro Forma · ClearSky-OMEGA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --cs-navy:#0B1E35;--cs-dark:#0D2440;--cs-blue:#1B4F8A;--cs-sky:#2E86C1;
+  --cs-accent:#C9A84C;--cs-gold:#E8C56A;--cs-text:#1A2332;--cs-sub:#6B7A8D;
+  --cs-bg:#F4F1EC;--cs-surface:#FAFAF8;--cs-border:#DDD8D0;
+  --cs-green:#1DB954;--cs-red:#E53935;--cs-amber:#D97706;
+}
+body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-text);min-height:100vh}
+a{color:inherit}
+
+/* ── TOPBAR (platform chrome) ── */
+#topbar{
+  height:60px;background:var(--cs-navy);display:flex;align-items:center;
+  padding:0 24px;gap:16px;position:sticky;top:0;z-index:200;
+  border-bottom:1px solid rgba(255,255,255,.08);
+}
+.tb-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.tb-logo-txt{color:#fff;font-weight:700;font-size:15px;letter-spacing:-.2px}
+.tb-logo-txt span{color:var(--cs-gold)}
+.tb-sep{width:1px;height:24px;background:rgba(255,255,255,.12)}
+.tb-portal{color:rgba(255,255,255,.45);font-size:12px;font-weight:500;letter-spacing:.5px;text-transform:uppercase}
+.tb-client{display:flex;align-items:center;gap:9px;margin-left:4px}
+.tb-ent-badge{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#4ADE80;background:rgba(29,185,84,.14);border:1px solid rgba(29,185,84,.3);padding:4px 10px;border-radius:20px;white-space:nowrap}
+.tb-spacer{flex:1}
+.tb-back{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.7);border-radius:7px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif;transition:all .12s;text-decoration:none}
+.tb-back:hover{background:rgba(255,255,255,.14);color:#fff}
+
+/* ── PAGE LAYOUT ── */
+#main{max-width:1280px;margin:0 auto;padding:32px 24px 80px}
+.page-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--cs-accent)}
+.page-title{font-size:30px;font-weight:700;color:var(--cs-navy);margin-top:6px;letter-spacing:-.5px;line-height:1.1}
+.page-sub{font-size:14px;color:var(--cs-sub);margin-top:8px;max-width:720px;line-height:1.5}
+
+.layout{display:grid;grid-template-columns:360px 1fr;gap:24px;margin-top:28px;align-items:start}
+@media(max-width:1040px){.layout{grid-template-columns:1fr}}
+
+/* ── INPUT PANEL ── */
+.panel{background:#fff;border:1px solid var(--cs-border);border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.05)}
+.panel-inputs{position:sticky;top:80px}
+.panel-head{padding:16px 20px;border-bottom:1px solid var(--cs-border);display:flex;align-items:center;justify-content:space-between}
+.panel-head h3{font-size:14px;font-weight:700;color:var(--cs-navy)}
+.panel-head .tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--cs-sky);background:rgba(46,134,193,.1);border:1px solid rgba(46,134,193,.25);border-radius:20px;padding:3px 9px}
+.panel-body{padding:18px 20px}
+
+.fg{margin-bottom:15px}
+.fg:last-child{margin-bottom:0}
+.fg label{display:block;font-size:11px;font-weight:600;color:var(--cs-sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
+.fg .hint{font-size:10.5px;color:var(--cs-sub);font-weight:400;text-transform:none;letter-spacing:0;margin-top:4px;line-height:1.4}
+.fg input,.fg select{width:100%;padding:10px 12px;border:1.5px solid var(--cs-border);border-radius:9px;font-size:14px;font-family:'DM Sans',sans-serif;color:var(--cs-text);background:#fff;outline:none;transition:border-color .15s}
+.fg input:focus,.fg select:focus{border-color:var(--cs-sky)}
+.fg .with-unit{position:relative}
+.fg .with-unit input{padding-right:44px}
+.fg .with-unit .u{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--cs-sub);font-family:'DM Mono',monospace;pointer-events:none}
+.fg-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.section-div{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--cs-accent);margin:22px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--cs-border)}
+.section-div:first-child{margin-top:0}
+
+.rate-note{font-size:10.5px;color:var(--cs-sub);line-height:1.5;background:var(--cs-surface);border:1px solid var(--cs-border);border-radius:8px;padding:10px 12px;margin-top:6px}
+.rate-note b{color:var(--cs-navy)}
+
+/* ── RESULTS ── */
+.results{display:flex;flex-direction:column;gap:20px}
+
+/* headline verdict card */
+.verdict{background:linear-gradient(135deg,#0B1E35,#1B4F8A);border-radius:16px;padding:26px 28px;color:#fff;position:relative;overflow:hidden;box-shadow:0 12px 30px rgba(11,30,53,.25)}
+.verdict::before{content:'';position:absolute;right:-60px;top:-60px;width:240px;height:240px;border-radius:50%;background:radial-gradient(circle,rgba(201,168,76,.18),transparent 70%)}
+.verdict-top{display:flex;align-items:center;justify-content:space-between;position:relative;z-index:2}
+.verdict-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--cs-gold)}
+.verdict-flag{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:5px 13px;border-radius:20px}
+.verdict-flag.go{background:rgba(29,185,84,.2);color:#4ADE80;border:1px solid rgba(29,185,84,.4)}
+.verdict-flag.caution{background:rgba(217,119,6,.2);color:#FCD34D;border:1px solid rgba(217,119,6,.4)}
+.verdict-flag.no{background:rgba(229,57,53,.2);color:#FCA5A5;border:1px solid rgba(229,57,53,.4)}
+.verdict-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:22px;position:relative;z-index:2}
+.vm{}
+.vm-val{font-size:32px;font-weight:700;letter-spacing:-.5px;line-height:1;font-family:'DM Sans',sans-serif}
+.vm-val.pos{color:#4ADE80}.vm-val.neg{color:#FCA5A5}
+.vm-unit{font-size:15px;font-weight:600;color:rgba(255,255,255,.55);margin-left:2px}
+.vm-label{font-size:11px;color:rgba(255,255,255,.6);margin-top:6px;text-transform:uppercase;letter-spacing:.4px;font-weight:600}
+@media(max-width:640px){.verdict-metrics{grid-template-columns:repeat(2,1fr)}.vm-val{font-size:26px}}
+
+/* KPI grid */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:900px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:#fff;border:1px solid var(--cs-border);border-radius:12px;padding:16px 16px 14px;box-shadow:0 2px 8px rgba(0,0,0,.04);position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--cs-accent);opacity:.55}
+.kpi.blue::before{background:var(--cs-sky)}.kpi.green::before{background:var(--cs-green)}.kpi.red::before{background:var(--cs-red)}
+.kpi-label{font-size:10.5px;font-weight:600;color:var(--cs-sub);text-transform:uppercase;letter-spacing:.4px;line-height:1.3;min-height:26px}
+.kpi-val{font-size:23px;font-weight:700;color:var(--cs-navy);letter-spacing:-.4px;margin-top:6px}
+.kpi-val .unit{font-size:12px;font-weight:600;color:var(--cs-sub);margin-left:2px}
+.kpi-foot{font-size:10px;color:var(--cs-sub);margin-top:5px}
+
+/* generic result card */
+.rcard{background:#fff;border:1px solid var(--cs-border);border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.05);overflow:hidden}
+.rcard-head{padding:16px 20px;border-bottom:1px solid var(--cs-border);display:flex;align-items:center;justify-content:space-between}
+.rcard-head h3{font-size:15px;font-weight:700;color:var(--cs-navy)}
+.rcard-head .sub{font-size:11px;color:var(--cs-sub);margin-top:2px}
+.rcard-body{padding:20px}
+
+/* stacked revenue/cost table */
+.ftable{width:100%;border-collapse:collapse;font-size:13px}
+.ftable td{padding:9px 4px;border-bottom:1px solid var(--cs-border)}
+.ftable tr:last-child td{border-bottom:none}
+.ftable .lbl{color:var(--cs-text)}
+.ftable .lbl .s{display:block;font-size:10.5px;color:var(--cs-sub);margin-top:1px}
+.ftable .num{text-align:right;font-family:'DM Mono',monospace;font-weight:500;white-space:nowrap}
+.ftable .num.pos{color:#137A38}.ftable .num.neg{color:var(--cs-red)}
+.ftable tr.total td{border-top:2px solid var(--cs-navy);border-bottom:none;padding-top:12px;font-weight:700}
+.ftable tr.total .num{font-size:15px;color:var(--cs-navy)}
+.ftable tr.sub-h td{padding-top:16px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--cs-accent);border-bottom:1px solid var(--cs-border)}
+
+/* bar viz for revenue stack */
+.stackbar{display:flex;height:34px;border-radius:8px;overflow:hidden;margin:4px 0 14px;border:1px solid var(--cs-border)}
+.stackbar .seg{height:100%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap;transition:width .4s}
+.stack-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--cs-sub)}
+.stack-legend .li{display:flex;align-items:center;gap:6px}
+.stack-legend .dot{width:10px;height:10px;border-radius:3px}
+
+/* cashflow chart */
+.cf-chart{width:100%;height:220px;display:block}
+
+/* year table */
+.ytable-wrap{overflow-x:auto}
+.ytable{width:100%;border-collapse:collapse;font-size:11.5px;min-width:640px}
+.ytable th{background:var(--cs-navy);color:rgba(255,255,255,.85);text-align:right;padding:9px 12px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.ytable th:first-child{text-align:left}
+.ytable td{padding:8px 12px;border-bottom:1px solid var(--cs-border);text-align:right;font-family:'DM Mono',monospace;white-space:nowrap}
+.ytable td:first-child{text-align:left;font-family:'DM Sans',sans-serif;font-weight:600;color:var(--cs-navy)}
+.ytable tr:hover{background:#F8F9FA}
+.ytable td.neg{color:var(--cs-red)}.ytable td.pos{color:#137A38}
+
+/* assumptions footer */
+.assump{font-size:11px;color:var(--cs-sub);line-height:1.6}
+.assump b{color:var(--cs-navy)}
+.assump ul{margin:8px 0 0 18px}
+.assump li{margin-bottom:4px}
+
+.export-row{display:flex;gap:12px;flex-wrap:wrap}
+.btn{padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;border:none;transition:all .14s;display:inline-flex;align-items:center;gap:8px;text-decoration:none}
+.btn-primary{background:var(--cs-navy);color:#fff}
+.btn-primary:hover{background:var(--cs-blue)}
+.btn-ghost{background:#fff;border:1.5px solid var(--cs-border);color:var(--cs-text)}
+.btn-ghost:hover{border-color:var(--cs-sky);color:var(--cs-sky)}
+
+.foot-brand{margin-top:32px;padding-top:20px;border-top:1px solid var(--cs-border);font-size:11px;color:var(--cs-sub);text-align:center;line-height:1.6}
+.foot-brand b{color:var(--cs-navy)}
+
+.print-only{display:none}
+@media print{
+  #topbar,.panel-inputs,.export-row,.tb-back{display:none!important}
+  .layout{grid-template-columns:1fr}
+  body{background:#fff}
+  .print-only{display:block}
+}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <a href="/" class="tb-logo">
+    <span class="tb-logo-txt">ClearSky<span>-OMEGA</span></span>
+  </a>
+  <div class="tb-sep"></div>
+  <div class="tb-portal">EnergyOS</div>
+  <div class="tb-client">
+    <span class="tb-ent-badge" id="tb-client-badge">Enterprise</span>
+  </div>
+  <div class="tb-spacer"></div>
+  <a href="/" class="tb-back">← Platform</a>
+</div>
+
+<div id="main">
+  <div class="page-label">Investment Modeling</div>
+  <h1 class="page-title">DCFC BESS Pro Forma</h1>
+  <p class="page-sub">A single-screen investor numbers sheet for pairing a battery energy storage system with a DC fast-charging site. Every input drives the demand-charge offset, time-of-use arbitrage, and return math below — nothing here is narrative, only the figures an investment committee needs to decide go / no-go.</p>
+
+  <div class="layout">
+    <!-- ══════════ INPUTS ══════════ -->
+    <div class="panel panel-inputs">
+      <div class="panel-head">
+        <h3>Site &amp; System Inputs</h3>
+        <span class="tag">Live</span>
+      </div>
+      <div class="panel-body" id="inputs">
+
+        <div class="section-div">Charging Site</div>
+        <div class="fg">
+          <label>Site name</label>
+          <input id="i_site" type="text" value="Palmdale Park &amp; Ride" />
+        </div>
+        <div class="fg">
+          <label>Utility rate schedule</label>
+          <select id="i_rate"></select>
+          <div class="hint" id="rate_hint"></div>
+        </div>
+        <div class="fg-row">
+          <div class="fg">
+            <label>Annual energy throughput</label>
+            <div class="with-unit"><input id="i_kwh" type="number" value="304000" /><span class="u">kWh</span></div>
+          </div>
+          <div class="fg">
+            <label>Site peak demand</label>
+            <div class="with-unit"><input id="i_peak" type="number" value="307" /><span class="u">kW</span></div>
+          </div>
+        </div>
+        <div class="fg">
+          <label>Retail charging price to driver</label>
+          <div class="with-unit"><input id="i_retail" type="number" step="0.01" value="0.48" /><span class="u">$/kWh</span></div>
+          <div class="hint">Blended price EV drivers pay at the stall (energy + session fees).</div>
+        </div>
+
+        <div class="section-div">Battery System (BESS)</div>
+        <div class="fg-row">
+          <div class="fg">
+            <label>Power rating</label>
+            <div class="with-unit"><input id="i_bkw" type="number" value="300" /><span class="u">kW</span></div>
+          </div>
+          <div class="fg">
+            <label>Energy capacity</label>
+            <div class="with-unit"><input id="i_bkwh" type="number" value="600" /><span class="u">kWh</span></div>
+          </div>
+        </div>
+        <div class="fg">
+          <label>Round-trip efficiency</label>
+          <div class="with-unit"><input id="i_rte" type="number" value="88" /><span class="u">%</span></div>
+        </div>
+        <div class="fg">
+          <label>Annual degradation</label>
+          <div class="with-unit"><input id="i_deg" type="number" step="0.1" value="2.5" /><span class="u">%/yr</span></div>
+        </div>
+
+        <div class="section-div">Capital &amp; Financing</div>
+        <div class="fg">
+          <label>Installed BESS cost</label>
+          <div class="with-unit"><input id="i_capex" type="number" value="480" /><span class="u">$/kWh</span></div>
+          <div class="hint">All-in: battery, PCS, install, interconnect, soft costs.</div>
+        </div>
+        <div class="fg-row">
+          <div class="fg">
+            <label>ITC credit</label>
+            <div class="with-unit"><input id="i_itc" type="number" value="30" /><span class="u">%</span></div>
+          </div>
+          <div class="fg">
+            <label>State/utility rebate</label>
+            <div class="with-unit"><input id="i_rebate" type="number" value="0" /><span class="u">$/kWh</span></div>
+          </div>
+        </div>
+        <div class="fg">
+          <label>O&amp;M cost</label>
+          <div class="with-unit"><input id="i_om" type="number" value="8" /><span class="u">$/kW-yr</span></div>
+        </div>
+        <div class="fg-row">
+          <div class="fg">
+            <label>Discount rate</label>
+            <div class="with-unit"><input id="i_disc" type="number" step="0.5" value="9" /><span class="u">%</span></div>
+          </div>
+          <div class="fg">
+            <label>Project life</label>
+            <div class="with-unit"><input id="i_life" type="number" value="10" /><span class="u">yr</span></div>
+          </div>
+        </div>
+
+        <div class="section-div">Revenue Adders (Optional)</div>
+        <div class="fg">
+          <label>VPP / capacity payment</label>
+          <div class="with-unit"><input id="i_vpp" type="number" value="0" /><span class="u">$/kW-yr</span></div>
+          <div class="hint">Grid-service or demand-response payment on the battery's dispatchable kW.</div>
+        </div>
+        <div class="fg">
+          <label>Annual utilization growth</label>
+          <div class="with-unit"><input id="i_growth" type="number" step="0.5" value="6" /><span class="u">%/yr</span></div>
+          <div class="hint">Session volume ramp — grows throughput &amp; charging margin.</div>
+        </div>
+
+        <div class="rate-note" id="rate_summary"></div>
+      </div>
+    </div>
+
+    <!-- ══════════ RESULTS ══════════ -->
+    <div class="results" id="results"><!-- rendered by JS --></div>
+  </div>
+
+  <div class="foot-brand">
+    <b>ClearSky-OMEGA</b> · DCFC BESS Pro Forma &nbsp;·&nbsp; <span id="foot-powered">Powered by ClearSky-OMEGA</span><br>
+    © 2025 ClearSky Energy Solutions LLC · Rates seeded from SCE Schedule TOU-EV-8 (Cal. P.U.C. Sheet 91206-E, eff. Jun 1 2026). Figures are modeled estimates, not a financing commitment.
+  </div>
+</div>
+
+<script src="./dcfc-proforma-logic.js"></script>
+</body>
+</html>
