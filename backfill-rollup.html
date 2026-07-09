@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portfolio Rollup Backfill · ClearSky-OMEGA</title>
+<style>
+  :root{--navy:#0A1628;--panel:#0F1E33;--ink:#E8EEF6;--sub:#8CA3BE;--blue:#60A5FA;
+        --green:#22C55E;--amber:#F59E0B;--red:#DC2626;--border:rgba(255,255,255,.1)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--navy);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+       line-height:1.55;padding:40px 24px;max-width:900px;margin:0 auto}
+  h1{font-size:24px;font-weight:800;margin-bottom:6px}
+  .sub{color:var(--sub);font-size:14px;margin-bottom:24px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+  label{display:block;font-size:12px;color:var(--sub);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+  input{width:100%;padding:10px 12px;background:#0A1628;border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:14px;font-family:inherit}
+  button{padding:11px 18px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:14px}
+  .btn-primary{background:linear-gradient(135deg,#1DB95A,#00B84D);color:#fff}
+  .btn-scan{background:rgba(96,165,250,.15);color:var(--blue);border:1px solid rgba(96,165,250,.4)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .log{font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;font-size:12px;background:#06101F;
+       border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:16px;max-height:420px;overflow:auto;white-space:pre-wrap}
+  .row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
+  .ok{color:var(--green)}.warn{color:var(--amber)}.err{color:var(--red)}.dim{color:var(--sub)}
+  code{color:var(--blue);background:rgba(96,165,250,.08);padding:1px 5px;border-radius:4px;font-size:12px}
+  .note{font-size:12.5px;color:var(--sub);margin-top:8px;line-height:1.5}
+</style>
+</head>
+<body>
+  <h1>Portfolio Rollup Backfill</h1>
+  <div class="sub">One-time tool. Stamps the flat fields the Portfolio Command Center reads onto existing project docs, so sites created before the editor wiring stop showing <code>$0 / Candidate Review</code>.</div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Org ID (email domain — must match the dashboard tenant)</label>
+        <input id="org" value="nextnrg.com" placeholder="nextnrg.com">
+      </div>
+      <button class="btn-scan" id="scan">Scan projects</button>
+    </div>
+    <div class="note">
+      Backfill logic per doc:
+      • <b>bessKwh</b> — computed from the saved <code>bessList</code> (Σ kwh × qty).
+      • <b>stage</b> — set to <code>package</code> only if the doc has no stage yet.
+      • <b>quoted</b> — set <code>true</code> only if a real capex/revenue already exists on the doc.
+      • <b>capex / incentive / annualRevenue</b> — only written if already present on the doc; never invented.
+      A <code>merge</code> write is used, so nothing else in the site doc is touched.
+    </div>
+  </div>
+
+  <div class="card">
+    <button class="btn-primary" id="run" disabled>Apply backfill to scanned sites</button>
+    <div class="note">Review the scan output below before applying. This writes to Firestore.</div>
+  </div>
+
+  <div class="log" id="log"><span class="dim">Not connected yet. Enter your org ID and click “Scan projects”. You must be signed in to the same Firebase project.</span></div>
+
+  <!-- Firebase compat SDK (same version as the rest of the platform) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="/config.js"></script>
+  <script>
+    var db, auth, _scanned = [];
+    var logEl = document.getElementById('log');
+    function log(msg, cls){
+      var span = document.createElement('div');
+      if (cls) span.className = cls;
+      span.textContent = msg;
+      logEl.appendChild(span);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    function clearLog(){ logEl.innerHTML = ''; }
+
+    // Boot Firebase using the same config the platform exposes (window.CLEARSKY_CONFIG).
+    var _authReady = false;
+    function _boot(){
+      if (typeof firebase === 'undefined' || !window.CLEARSKY_CONFIG){ setTimeout(_boot, 120); return; }
+      try {
+        firebase.initializeApp(window.CLEARSKY_CONFIG.firebase);
+      } catch(e){ if(!/already exists/.test(e.message)) log('Firebase init: ' + e.message, 'err'); }
+      db = firebase.firestore();
+      auth = firebase.auth();
+      document.getElementById('scan').disabled = true;
+      auth.onAuthStateChanged(function(u){
+        _authReady = true;
+        if (u){
+          log('Signed in as ' + (u.email || u.uid), 'ok');
+          document.getElementById('scan').disabled = false;
+        } else {
+          log('Not signed in on this page. Open ' + location.origin + ' in another tab, sign in with your @nextnrg.com account, then reload THIS page.', 'warn');
+          document.getElementById('scan').disabled = true;
+        }
+      });
+    }
+    _boot();
+
+    function bessKwhFromList(bessList){
+      if (!bessList || !bessList.length) return 0;
+      var total = 0;
+      for (var i=0;i<bessList.length;i++){
+        var b = bessList[i];
+        total += (Number(b.kwh)||0) * (Number(b.qty)||1);
+      }
+      return Math.round(total);
+    }
+
+    // Pull the docs to back-fill. Tries the orgId query first; if the rules
+    // deny it, falls back to a uid-scoped query (the field the editor actually
+    // writes is `uid`), then a limited catch-all — filtering to the org client-side.
+    async function _fetchProjectDocs(org){
+      var user = auth && auth.currentUser;
+      if (!user){ throw new Error('not-signed-in'); }
+      // Attempt 1: org-scoped (same query the dashboard uses).
+      try {
+        var snap = await db.collection('projects').where('orgId','==',org).get();
+        log('Fetched via orgId query (' + snap.size + ' docs).', 'dim');
+        return snap.docs;
+      } catch(e1){
+        if (!/permission/i.test(e1.message)) throw e1;
+        log('orgId query denied by rules — falling back to uid-scoped query…', 'warn');
+      }
+      // Attempt 2: uid-scoped (the field the editor writes on create).
+      try {
+        var snap2 = await db.collection('projects').where('uid','==',user.uid).get();
+        var docs2 = snap2.docs.filter(function(doc){
+          var o = doc.data();
+          return !o.orgId || o.orgId === org;   // match org, or legacy docs with none
+        });
+        log('Fetched via uid query (' + snap2.size + ' owned, ' + docs2.length + ' in org).', 'dim');
+        if (docs2.length) return docs2;
+        log('uid query returned no in-org docs — trying a limited catch-all…', 'warn');
+      } catch(e2){
+        if (!/permission/i.test(e2.message)) throw e2;
+        log('uid query denied too — trying a limited catch-all…', 'warn');
+      }
+      // Attempt 3: limited catch-all (mirrors the editor's last-resort read).
+      var snap3 = await db.collection('projects').limit(50).get();
+      var docs3 = snap3.docs.filter(function(doc){
+        var o = doc.data();
+        return o.orgId === org;
+      });
+      log('Fetched via catch-all (' + snap3.size + ' scanned, ' + docs3.length + ' in org).', 'dim');
+      return docs3;
+    }
+
+    document.getElementById('scan').onclick = async function(){
+      clearLog();
+      _scanned = [];
+      document.getElementById('run').disabled = true;
+      var org = document.getElementById('org').value.trim();
+      if (!org){ log('Enter an org ID first.', 'err'); return; }
+      if (!db){ log('Firestore not ready.', 'err'); return; }
+      if (!auth || !auth.currentUser){
+        log('Not signed in on this page. Open ' + location.origin + ' in another tab, sign in, then reload this page and try again.', 'err');
+        return;
+      }
+      log('Scanning projects for org "' + org + '" as ' + auth.currentUser.email + ' …', 'dim');
+      try {
+        var docs = await _fetchProjectDocs(org);
+        if (!docs.length){ log('No matching projects found.', 'warn'); return; }
+        log('Found ' + docs.length + ' project(s).', 'ok');
+        log('');
+        docs.forEach(function(doc){
+          var d = doc.data();
+          var kwh = bessKwhFromList(d.bessList);
+          var hasFinancials = (Number(d.capex)||0) > 0 || (Number(d.annualRevenue)||0) > 0;
+          var update = { bessKwh: kwh };
+          if (!d.stage) update.stage = 'package';
+          if (hasFinancials) update.quoted = true;
+          // Only carry financials that already exist — never invent them.
+          if (d.capex != null) update.capex = Number(d.capex)||0;
+          if (d.incentive != null) update.incentive = Number(d.incentive)||0;
+          if (d.annualRevenue != null) update.annualRevenue = Number(d.annualRevenue)||0;
+
+          _scanned.push({ id: doc.id, update: update });
+          var name = d.name || '(untitled)';
+          var mwh = (kwh/1000).toFixed(2);
+          var fin = hasFinancials ? ('capex $' + (Number(d.capex)||0).toLocaleString()) : 'no financials → MWh only, $0 until a proposal runs';
+          log('• ' + name + '  [' + doc.id + ']');
+          log('    bessKwh=' + kwh + ' (' + mwh + ' MWh) · stage→' + (update.stage||d.stage||'candidate') + ' · ' + fin,
+              hasFinancials ? 'ok' : 'dim');
+        });
+        log('');
+        log('Scan complete. Review above, then click “Apply backfill”.', 'ok');
+        document.getElementById('run').disabled = false;
+      } catch(e){
+        if (e.message === 'not-signed-in'){
+          log('Not signed in. Sign in on the dashboard, reload this page, retry.', 'err');
+        } else if (/permission/i.test(e.message)){
+          log('Scan failed: Missing or insufficient permissions.', 'err');
+          log('Neither the orgId nor the owner query is allowed by your Firestore rules for this user.', 'dim');
+          log('Fix: either (a) sign in as a user whose email domain is "' + org + '", or (b) temporarily allow authenticated reads on the projects collection (see note below).', 'dim');
+        } else {
+          log('Scan failed: ' + e.message, 'err');
+        }
+      }
+    };
+
+    document.getElementById('run').onclick = async function(){
+      if (!_scanned.length){ log('Nothing scanned.', 'warn'); return; }
+      this.disabled = true;
+      log('');
+      log('Applying backfill to ' + _scanned.length + ' doc(s) …', 'dim');
+      var okCount = 0, failCount = 0;
+      for (var i=0;i<_scanned.length;i++){
+        var item = _scanned[i];
+        item.update.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+        try {
+          await db.collection('projects').doc(item.id).set(item.update, { merge: true });
+          okCount++;
+          log('  ✓ ' + item.id, 'ok');
+        } catch(e){
+          failCount++;
+          log('  ✗ ' + item.id + ' — ' + e.message, 'err');
+        }
+      }
+      log('');
+      log('Done. ' + okCount + ' updated' + (failCount ? (', ' + failCount + ' failed') : '') + '.', failCount ? 'warn' : 'ok');
+      log('Open the dashboard (or refresh it) — the sites now carry real MWh and stage. Generate a proposal on each to fill capex / incentives / revenue.', 'dim');
+    };
+  </script>
+</body>
+</html>
