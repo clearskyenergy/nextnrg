@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guided Build Walkthrough — ClearSky-OMEGA SiteMap Designer</title>
+<style>
+  :root{
+    --navy:#0A1628; --panel:#0F1E33; --panel2:#132741;
+    --ink:#E8EEF6; --sub:#8CA3BE; --faint:#5A7091;
+    --blue:#60A5FA; --amber:#F59E0B; --green:#22C55E; --red:#DC2626;
+    --gold:#C5A55A; --border:rgba(255,255,255,.09);
+    --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:
+      radial-gradient(1100px 600px at 80% -10%,rgba(96,165,250,.08),transparent 60%),
+      radial-gradient(900px 500px at -10% 20%,rgba(245,158,11,.05),transparent 55%),
+      var(--navy);
+    color:var(--ink); font-family:var(--sans); line-height:1.6;
+    -webkit-font-smoothing:antialiased; min-height:100vh;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:0 24px}
+
+  /* ---- Header ---- */
+  header{padding:64px 0 40px;border-bottom:1px solid var(--border);position:relative;overflow:hidden}
+  .eyebrow{
+    font-family:var(--mono);font-size:11px;letter-spacing:.28em;text-transform:uppercase;
+    color:var(--blue);margin-bottom:18px;display:flex;align-items:center;gap:10px
+  }
+  .eyebrow::before{content:"";width:26px;height:1px;background:var(--blue);display:inline-block}
+  h1{
+    font-size:clamp(32px,5.5vw,54px);line-height:1.04;font-weight:800;letter-spacing:-.02em;
+    max-width:16ch;margin-bottom:16px
+  }
+  h1 .thin{font-weight:300;color:var(--sub)}
+  .lede{font-size:17px;color:var(--sub);max-width:60ch}
+  .chip-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+  .chip{
+    font-family:var(--mono);font-size:11px;padding:6px 11px;border-radius:999px;
+    border:1px solid var(--border);background:rgba(255,255,255,.02);color:var(--sub);
+    display:flex;align-items:center;gap:7px
+  }
+  .chip b{color:var(--ink);font-weight:600}
+  .dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+
+  /* ---- Progress rail ---- */
+  .railwrap{position:sticky;top:0;z-index:20;background:rgba(10,22,40,.86);
+    backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+  .rail{display:flex;max-width:920px;margin:0 auto;padding:0 24px;gap:4px}
+  .rail a{
+    flex:1;padding:13px 4px 11px;text-align:center;font-family:var(--mono);font-size:10px;
+    letter-spacing:.05em;color:var(--faint);text-decoration:none;border-bottom:2px solid transparent;
+    transition:color .2s,border-color .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  }
+  .rail a:hover{color:var(--ink)}
+  .rail a.on{color:var(--blue);border-color:var(--blue)}
+
+  /* ---- Sections / steps ---- */
+  section{padding:52px 0;border-bottom:1px solid var(--border)}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:8px}
+  .sec-num{
+    font-family:var(--mono);font-size:13px;color:var(--amber);font-weight:600;
+    border:1px solid rgba(245,158,11,.3);border-radius:6px;padding:3px 9px;flex-shrink:0;
+    background:rgba(245,158,11,.06)
+  }
+  .sec-head h2{font-size:26px;font-weight:800;letter-spacing:-.01em}
+  .sec-sub{color:var(--sub);font-size:15px;margin:6px 0 30px;max-width:64ch}
+
+  .steps{display:flex;flex-direction:column;gap:2px}
+  .step{
+    display:grid;grid-template-columns:44px 1fr;gap:18px;padding:18px 20px 18px 14px;
+    border-radius:10px;position:relative;transition:background .2s
+  }
+  .step:hover{background:rgba(255,255,255,.02)}
+  .step:not(:last-child)::after{
+    content:"";position:absolute;left:35px;top:52px;bottom:-2px;width:1px;
+    background:linear-gradient(var(--border),transparent)
+  }
+  .snum{
+    width:44px;height:44px;border-radius:10px;display:grid;place-items:center;
+    font-family:var(--mono);font-size:15px;font-weight:700;color:var(--navy);
+    background:var(--blue);flex-shrink:0;box-shadow:0 4px 14px rgba(96,165,250,.25)
+  }
+  .step.amber .snum{background:var(--amber);box-shadow:0 4px 14px rgba(245,158,11,.25)}
+  .step.green .snum{background:var(--green);box-shadow:0 4px 14px rgba(34,197,94,.25)}
+  .step h3{font-size:16px;font-weight:700;margin-bottom:4px}
+  .step p{color:var(--sub);font-size:14px}
+  .step .ui{
+    font-family:var(--mono);font-size:12px;color:var(--ink);background:var(--panel2);
+    border:1px solid var(--border);border-radius:5px;padding:2px 7px;white-space:nowrap;
+    display:inline-block;margin:0 1px
+  }
+  .step .btnref{
+    font-family:var(--mono);font-size:12px;background:rgba(96,165,250,.1);
+    border:1px solid rgba(96,165,250,.3);color:var(--blue);border-radius:5px;padding:2px 8px;
+    display:inline-block;margin:0 1px;font-weight:600
+  }
+  .note{
+    margin-top:10px;font-size:13px;color:var(--faint);padding-left:12px;
+    border-left:2px solid var(--border)
+  }
+
+  /* mode cards */
+  .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:22px}
+  @media(max-width:640px){.modes{grid-template-columns:1fr}}
+  .mode{border:1px solid var(--border);border-radius:10px;padding:15px;background:var(--panel)}
+  .mode.btm{border-color:rgba(96,165,250,.35)}
+  .mode.fom{border-color:rgba(245,158,11,.35)}
+  .mode.ev{border-color:rgba(34,197,94,.35)}
+  .mode .mtag{font-family:var(--mono);font-size:12px;font-weight:800;margin-bottom:6px}
+  .mode.btm .mtag{color:var(--blue)}
+  .mode.fom .mtag{color:var(--amber)}
+  .mode.ev .mtag{color:var(--green)}
+  .mode .mname{font-size:13px;font-weight:700;margin-bottom:5px}
+  .mode .mdesc{font-size:12px;color:var(--sub);line-height:1.5}
+
+  /* callout box */
+  .callout{
+    background:linear-gradient(135deg,rgba(96,165,250,.06),rgba(245,158,11,.03));
+    border:1px solid var(--border);border-radius:12px;padding:22px 24px;margin-top:26px
+  }
+  .callout .ct{font-family:var(--mono);font-size:11px;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--amber);margin-bottom:10px}
+  .callout p{font-size:14px;color:var(--sub)}
+  .callout ul{margin:10px 0 0;padding-left:18px;color:var(--sub);font-size:14px}
+  .callout li{margin-bottom:5px}
+  .callout code{font-family:var(--mono);font-size:12.5px;color:var(--blue);
+    background:rgba(96,165,250,.08);padding:1px 6px;border-radius:4px}
+
+  /* cost table */
+  .cost{margin-top:22px;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .cost .chead{display:flex;justify-content:space-between;padding:11px 16px;
+    background:var(--panel2);font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--sub)}
+  .cost .crow{display:flex;justify-content:space-between;align-items:center;
+    padding:11px 16px;border-top:1px solid var(--border);font-size:14px}
+  .cost .crow .cl{color:var(--ink)}
+  .cost .crow .cd{color:var(--faint);font-size:12.5px;font-family:var(--mono)}
+  .cost .crow.grp{background:rgba(255,255,255,.015)}
+  .cost .cgrp-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--amber);padding:9px 16px 5px;border-top:1px solid var(--border);
+    background:rgba(245,158,11,.03)}
+
+  footer{padding:44px 0 70px;text-align:center;color:var(--faint);font-size:13px}
+  footer .powered{font-family:var(--mono);font-size:11px;letter-spacing:.1em;margin-top:8px;color:var(--gold)}
+  a.inline{color:var(--blue);text-decoration:none;border-bottom:1px solid rgba(96,165,250,.3)}
+  strong{color:var(--ink);font-weight:600}
+</style>
+<style>
+@media print{
+  .railwrap{display:none !important;}
+  header{padding-top:28px !important;}
+  /* Flat solid background — radial gradients + backdrop-filter mis-composite
+     to magenta in headless Chromium PDF output, so strip them for print. */
+  body{
+    background:#0A1628 !important;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;
+  }
+  header{background:#0A1628 !important;}
+  *{backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}
+  section, .step, .card, .callout, .cost{break-inside:avoid;}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">SiteMap Designer · Guided Build · Prepared for NextNRG</div>
+    <h1>Place a BESS, cost it, <span class="thin">and ship a proposal + blueprint —</span> start to finish.</h1>
+    <p class="lede">A tour of the Guided Build wizard in the ClearSky-OMEGA SiteMap Designer: it walks you from project type through equipment placement, construction costs, and both export formats — using the actual buttons in the tool.</p>
+    <div class="chip-row">
+      <span class="chip"><span class="dot" style="background:var(--blue)"></span><b>Guided Build</b> wizard</span>
+      <span class="chip"><span class="dot" style="background:var(--amber)"></span><b>Construction</b> cost estimator</span>
+      <span class="chip"><span class="dot" style="background:var(--green)"></span><b>Proposal</b> PDF export</span>
+      <span class="chip"><span class="dot" style="background:var(--gold)"></span><b>Blueprint</b> / E-sheet export</span>
+    </div>
+  </div>
+</header>
+
+<div class="railwrap">
+  <nav class="rail">
+    <a href="#start" class="on">Open Guided</a>
+    <a href="#type">Type &amp; Offtaker</a>
+    <a href="#bess">Place BESS</a>
+    <a href="#build">Build Chain</a>
+    <a href="#cost">Construction Cost</a>
+    <a href="#proposal">Proposal</a>
+    <a href="#blueprint">Blueprint</a>
+  </nav>
+</div>
+
+<div class="wrap">
+
+  <!-- 1 -->
+  <section id="start">
+    <div class="sec-head"><span class="sec-num">01</span><h2>Launch the Guided Build</h2></div>
+    <p class="sec-sub">The wizard lives on the right-hand ribbon and in the Controls panel. It's the fastest way to lay down a code-compliant single-assembly BESS without hunting for equipment in the catalog.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="snum">1</div>
+        <div>
+          <h3>Set your site backdrop first</h3>
+          <p>Before starting the wizard, drop a satellite photo or site schematic and calibrate the map scale. Open <span class="btnref">☰ Controls</span> and set your image + scale so conduit runs measure in real linear feet.</p>
+          <div class="note">Calibration matters later — the construction estimator prices conduit per LF, and it stays greyed out until the map is calibrated.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="snum">2</div>
+        <div>
+          <h3>Click <span class="btnref">◈ Guided Build</span></h3>
+          <p>Find it on the ribbon (or under <span class="ui">Controls</span>). This opens the walkthrough-style wizard panel with a step indicator bar across the top.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section id="type">
+    <div class="sec-head"><span class="sec-num">02</span><h2>Pick project type, then offtaker</h2></div>
+    <p class="sec-sub">Two setup screens come before any equipment. They decide your one-line topology and seed load/sizing assumptions — get these right and the rest of the wizard auto-routes correctly.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="snum">1</div>
+        <div>
+          <h3>Choose Project Type <span style="color:var(--faint);font-weight:400;font-size:13px">(Step 0)</span></h3>
+          <p>Three cards. Your pick determines the whole equipment chain and one-line layout.</p>
+          <div class="modes">
+            <div class="mode btm"><div class="mtag">⚡ BTM</div><div class="mname">Behind the Meter</div><div class="mdesc">Peak shaving + demand-charge reduction. Non-export, EMS-enforced. ComEd BESH eligible.</div></div>
+            <div class="mode fom"><div class="mtag">🔌 FOM</div><div class="mname">Front of Meter</div><div class="mdesc">PJM frequency regulation. AC-coupled grid services through a revenue meter.</div></div>
+            <div class="mode ev"><div class="mtag">🚗 EVSE+BESS</div><div class="mname">EV Charging + Storage</div><div class="mdesc">DCFC + BESS demand management. EMS + CSMS control. SGIP / ITC / NEVI eligible.</div></div>
+          </div>
+          <div class="note">Then click <span class="btnref">Next: Choose Offtaker ▸</span>.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="snum">2</div>
+        <div>
+          <h3>Choose the Offtaker</h3>
+          <p>Who consumes or hosts the energy — <span class="ui">Commercial Customer</span>, <span class="ui">Factory / Industrial</span>, <span class="ui">EV Charging</span>, or <span class="ui">Data Center</span>. Each seeds a peak-kW and daily-kWh load estimate and drops a labeled load block wired to your AC hub.</p>
+          <div class="note">Click the offtaker card, confirm the load seed shown, then hit <span class="btnref">Start Build ▸</span>. The wizard jumps to Step 1.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section id="bess">
+    <div class="sec-head"><span class="sec-num">03</span><h2>Configure &amp; place the BESS</h2></div>
+    <p class="sec-sub">Step 1 of the build is always the battery assembly — everything else wires off it. This is where equipment cost enters the model, so fill it in even for a rough pass.</p>
+    <div class="steps">
+      <div class="step amber">
+        <div class="snum">1</div>
+        <div>
+          <h3>Click <span class="btnref">Configure &amp; Place BESS</span></h3>
+          <p>The step card shows <span style="color:var(--amber)">⚙ No BESS configured yet</span> until you do this. The button opens the BESS configuration modal.</p>
+        </div>
+      </div>
+      <div class="step amber">
+        <div class="snum">2</div>
+        <div>
+          <h3>Pick a model &amp; set specs</h3>
+          <p>In the modal, choose a battery from the catalog (kWh / kW / manufacturer / model). Set the <strong>equipment cost</strong> here — it flows straight into the construction estimate and proposal total. Confirm the <span class="ui">BTM / FOM</span> mode radio matches your project type.</p>
+          <div class="note">On the container pad, tick what's <em>integrated</em> (PCS, disconnect, step-up transformer). The wizard skips those separate placement steps and re-routes the conduit so the chain stays continuous: battery → EMS → meter → POI.</div>
+        </div>
+      </div>
+      <div class="step amber">
+        <div class="snum">3</div>
+        <div>
+          <h3>Click <span class="btnref">💾 Save &amp; Place ✓</span></h3>
+          <p>The assembly drops onto the canvas and the step card flips to <span style="color:var(--green)">✓ ready</span> with the kWh · kW · cost summary. Position it, then advance the wizard.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section id="build">
+    <div class="sec-head"><span class="sec-num">04</span><h2>Walk the equipment chain</h2></div>
+    <p class="sec-sub">The remaining steps are mostly click-to-place. The wizard tells you exactly what each element wires to and auto-draws the conduit run from the previous piece.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="snum">›</div>
+        <div>
+          <h3>Site equipment</h3>
+          <p>Concrete pad, 8′ privacy fence, bollards (11× per CFC 1207.11.7.3), junction box, main panelboard / POI, revenue meter, and a fire-hydrant location check. For each: read the spec, click <span class="btnref">Click to Place</span>, drop it on the canvas.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="snum">›</div>
+        <div>
+          <h3>Conduit runs (auto-wired)</h3>
+          <p>DC run (RMC, BESS→inverter), AC run (RMC, inverter→XFMR→panel), the BMS/EMS data link (EMT), and the underground PVC trench. Each step notes <span style="color:var(--amber)">⌁ Auto-wires from previous</span> so the linework connects itself.</p>
+          <div class="note">Skipped a step because it's integrated on the pad? The chain re-routes automatically — no dangling conduit.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="snum">›</div>
+        <div>
+          <h3>Callouts &amp; the “NOT FOR CONSTRUCTION” note</h3>
+          <p>The last build step adds dimension labels, clearance notes, equipment specs, and the <span class="ui">FOR INFORMATIONAL PURPOSES ONLY — NOT FOR CONSTRUCTION</span> stamp for the preliminary set.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section id="cost">
+    <div class="sec-head"><span class="sec-num">05</span><h2>Review construction cost</h2></div>
+    <p class="sec-sub">The wizard splices a <strong>Review Construction Cost</strong> step in right before export — you always confirm the numbers before the PDF generates. Every field is live: change a number and the proposal total updates instantly.</p>
+
+    <div class="steps">
+      <div class="step amber">
+        <div class="snum">1</div>
+        <div>
+          <h3>Open the cost panel</h3>
+          <p>Click <span class="btnref">Review Construction Cost</span> in the wizard, or jump straight there anytime with the <span class="btnref">$ Construction</span> ribbon button. It opens the estimator with Cost / Incentives / Revenue tabs.</p>
+        </div>
+      </div>
+      <div class="step amber">
+        <div class="snum">2</div>
+        <div>
+          <h3>Confirm each line</h3>
+          <p>The estimator is pre-seeded with defaults — adjust to your bid. Conduit is priced per linear foot off the calibrated map, so the LF schedule fills in automatically once the map is calibrated.</p>
+          <div class="cost">
+            <div class="chead"><span>Line item</span><span>Field default</span></div>
+            <div class="cgrp-label">Conduit — material &amp; labor per LF</div>
+            <div class="crow grp"><span class="cl">AC run (EMT) material</span><span class="cd">$8 / ft</span></div>
+            <div class="crow grp"><span class="cl">AC run (EMT) labor</span><span class="cd">$35 / ft</span></div>
+            <div class="crow grp"><span class="cl">BMS / Data (EMT) material</span><span class="cd">$3.50 / ft</span></div>
+            <div class="crow grp"><span class="cl">BMS / Data (EMT) labor</span><span class="cd">$18 / ft</span></div>
+            <div class="cgrp-label">Indirect costs</div>
+            <div class="crow"><span class="cl">Engineering &amp; Design</span><span class="cd">$15,000</span></div>
+            <div class="crow"><span class="cl">Permitting &amp; AHJ</span><span class="cd">$3,500</span></div>
+            <div class="crow"><span class="cl">Commissioning</span><span class="cd">$8,500</span></div>
+            <div class="crow"><span class="cl">Contingency</span><span class="cd">10%</span></div>
+          </div>
+          <div class="note">Plus BESS equipment cost carried over from the config modal. The live breakdown at the bottom of the panel rolls it all into a gross total.</div>
+        </div>
+      </div>
+      <div class="step amber">
+        <div class="snum">3</div>
+        <div>
+          <h3>Apply incentives → net cost</h3>
+          <p>On the <span class="ui">Incentives</span> tab, toggle what applies. Flip on <span class="btnref">⚡ ComEd BESH</span> ($250/kWh C&amp;I, standalone qualifies) or <span class="btnref">＋ Add Custom Incentive</span>. The panel shows <span class="ui">Gross</span> → <span class="ui">Total incentives</span> → <span class="ui">Net to owner</span>.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <div class="ct">Why this order</div>
+      <p>Construction cost is deliberately the <strong>last</strong> gate before export. By the time you reach it, the BESS equipment cost, the placed site equipment, and the measured conduit lengths already exist — so the estimate is grounded in the actual drawing, not a guess.</p>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section id="proposal">
+    <div class="sec-head"><span class="sec-num">06</span><h2>Export the proposal</h2></div>
+    <p class="sec-sub">Once costs are locked, the wizard's final action is the proposal. It bundles the site image, the full cost breakdown, and the LOA into one PDF.</p>
+    <div class="steps">
+      <div class="step green">
+        <div class="snum">1</div>
+        <div>
+          <h3>Click <span class="btnref">Export Proposal PDF</span></h3>
+          <p>At the end of the wizard the action button becomes <span class="ui">Export Proposal</span>. You can also trigger it anytime from the <span class="btnref">▦ Proposal</span> ribbon button.</p>
+        </div>
+      </div>
+      <div class="step green">
+        <div class="snum">2</div>
+        <div>
+          <h3>What's in the PDF</h3>
+          <p>The generated document renders the sitemap image, the cost breakdown (gross, incentives, net), and a Letter of Authorization — a customer-facing proposal with the <span class="ui">Powered by ClearSky-OMEGA</span> footer applied.</p>
+          <div class="note">This is the client-facing artifact. For the internal engineering set, use the blueprint export below.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section id="blueprint">
+    <div class="sec-head"><span class="sec-num">07</span><h2>Export the blueprint / E-sheet</h2></div>
+    <p class="sec-sub">The blueprint path produces the AHJ-facing engineering drawing — the E1.0-style sheet with the title block, one-line, and clearance notes.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="snum">1</div>
+        <div>
+          <h3>Click <span class="btnref">⎙ Blueprint</span> or <span class="btnref">⎙ Print / PDF</span></h3>
+          <p>Both live on the ribbon. This renders the drawing view with the title block, revision line, and the <span class="ui">REV A — PRELIMINARY — NOT FOR CONSTRUCTION</span> stamp.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="snum">2</div>
+        <div>
+          <h3>Hand off to the permit set</h3>
+          <p>To turn the drawing into a full AHJ permit package, use <span class="btnref">▤ Permit Creator</span> — it carries the sitemap into the PPTX-based E-sheet / S-sheet permit set.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="snum">3</div>
+        <div>
+          <h3>Optional: send for validation</h3>
+          <p>When you need an independent engineering review + PE stamp, <span class="btnref">✒ Export for Validation</span> routes the set through the Engineering Validation workflow with a tracking ID.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <div class="ct">The two exports, side by side</div>
+      <ul>
+        <li><strong>Proposal (▦)</strong> — customer-facing. Sitemap + costs + LOA in one PDF. Use to win the deal.</li>
+        <li><strong>Blueprint (⎙)</strong> — engineering-facing. E-sheet drawing with title block → feeds the Permit Creator and validation flow.</li>
+      </ul>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    Guided Build walkthrough · SiteMap Designer
+    <div class="powered">Powered by ClearSky-OMEGA</div>
+  </div>
+</footer>
+
+<script>
+  // Scroll-spy for the sticky rail
+  var links = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+  var map = {};
+  links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var secs = Array.prototype.slice.call(document.querySelectorAll('section[id]'));
+  var obs = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if(en.isIntersecting){
+        links.forEach(function(l){ l.classList.remove('on'); });
+        if(map[en.target.id]) map[en.target.id].classList.add('on');
+      }
+    });
+  }, { rootMargin:'-45% 0px -50% 0px', threshold:0 });
+  secs.forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>
