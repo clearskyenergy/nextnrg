@@ -370,6 +370,31 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
 .pp-dev-foot .online{color:#137A38;font-weight:600}
 .pp-dev-empty{grid-column:1/-1;background:#fff;border:1px dashed var(--cs-border);border-radius:14px;padding:34px;text-align:center;color:var(--cs-sub);font-size:13px}
 
+
+/* ── PORTFOLIO TABLE OWNER CHIP ── */
+.owner-chip{font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:#EEF1F4;color:var(--cs-sub);white-space:nowrap}
+.owner-chip.owner-me{background:rgba(0,169,164,.14);color:#00736F}
+.owner-chip.owner-none{background:rgba(217,119,6,.12);color:#B45309}
+
+/* ── CLAIM OWNERSHIP MODAL ROWS ── */
+.claim-row{display:flex;align-items:center;gap:12px;padding:11px 12px;border:1px solid var(--cs-border);border-radius:9px;margin-bottom:8px;background:#fff}
+.claim-nm{flex:1;font-size:13.5px;font-weight:600;color:var(--cs-navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.claim-owner{font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;background:#EEF1F4;color:var(--cs-sub);white-space:nowrap}
+.claim-owner.me{background:rgba(0,169,164,.14);color:#00736F}
+.claim-owner.none{background:rgba(217,119,6,.12);color:#B45309}
+.claim-btn{border:none;background:var(--cs-navy);color:#fff;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;padding:7px 13px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:background .12s}
+.claim-btn:hover{background:var(--cs-blue)}
+.claim-btn.ghost{background:transparent;color:var(--cs-sub);border:1px solid var(--cs-border)}
+.claim-btn.ghost:hover{background:#F4F6F8;color:var(--cs-navy)}
+
+/* ── PER-USER DASHBOARD SCOPE TOGGLE ── */
+/* Company Overview widget */
+.co-badge{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--sap-blue);background:rgba(0,112,242,.1);border-radius:20px;padding:2px 9px;margin-left:8px;vertical-align:middle}
+.co-foot{font-size:11.5px;color:var(--sap-ink-2);margin-top:10px}
+.scope-note{margin:2px 0 10px;font-size:12px;color:var(--cs-sub);background:rgba(0,112,242,.06);border:1px solid rgba(0,112,242,.15);border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:8px}
+.scope-note a{color:var(--sap-blue);font-weight:600;cursor:pointer;text-decoration:none}
+.scope-note a:hover{text-decoration:underline}
+
 /* ── QUICK LINKS ROW (portal / site map / compute / how-it-works) ── */
 .quick-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
 .quick-link{background:#fff;border:1px solid var(--cs-border);border-radius:12px;padding:16px 18px;text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:8px;transition:all .15s;box-shadow:0 2px 8px rgba(0,0,0,.04)}
@@ -629,12 +654,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
   <div class="auth-card">
     <div class="auth-logo">
       <!-- Client login: NextNRG brand, on the ClearSky-OMEGA platform -->
-      <img src="/nextnrg-logo.png" alt="NextNRG" class="auth-omega" style="height:88px" onerror="this.style.display='none'">
+      <img src="/nextnrg-logo.png" alt="NextNRG" style="height:88px;width:auto;display:block;margin:0 auto" onerror="this.style.display='none'">
     </div>
     <div class="auth-company">NextNRG Workspace</div>
     <div class="auth-sub" id="auth-sub">Enterprise energy project &amp; asset management</div>
 
-    <!-- EMAIL / PASSWORD (NextNRG team) -->
+    <!-- EMAIL / PASSWORD (ClearSky sales reps) -->
     <div class="auth-fields">
       <div class="auth-field">
         <label for="auth-email">Work email</label>
@@ -750,6 +775,25 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
          numbers, even if the live query is empty or fails. */
       var USE_LIVE_ROLLUP = true;
 
+      /* ── PER-USER DASHBOARD SCOPE ─────────────────────────────────────────
+         'mine'    → only the signed-in user's own projects (ownerEmail == me)
+         'company' → the full org-wide rollup (every project in this orgId)
+         Defaults to 'mine' so each teammate lands on THEIR work, not a shared
+         company page. Toggled by the pill switch above the Command Center. */
+      /* ── DASHBOARD SCOPE — PERSONAL ONLY ──────────────────────────────────
+         The Portfolio Command Center ALWAYS shows only the signed-in user's
+         own projects (ownerEmail == me). There is no company toggle here — a
+         user only ever sees their own work on this dashboard. Company-wide
+         performance lives in the separate, opt-in "Company Overview" widget
+         below, which never changes what THIS dashboard counts. */
+      var DASH_SCOPE = 'mine';   // permanent — not user-switchable
+      function setDashScope(){ /* no-op: scope is locked to the personal view */ }
+      function _paintScopeToggle(){
+        // Toggle removed for account privacy — nothing to render here.
+        var wrap = document.getElementById('dash-scope-toggle');
+        if (wrap) wrap.innerHTML = '';
+      }
+
       /* ── FALLBACK KPIs (all zero — NextNRG starts empty) ──────────────── */
       var PLACEHOLDER_KPIS = {
         sitesUnderControl:   0,
@@ -797,10 +841,13 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
     <div class="block-head">
       <div>
         <div class="block-title">Portfolio Command Center</div>
-        <div class="block-sub">Live rollup of every site in your NextNRG portfolio</div>
+        <div class="block-sub" id="dash-scope-sub">Your projects — the sites linked to your account</div>
       </div>
-      <a class="view-all" onclick="goToProjects()">Manage projects ›</a>
+      <div style="display:flex;align-items:center;gap:14px">
+        <a class="view-all" onclick="goToProjects()">Manage projects ›</a>
+      </div>
     </div>
+    <div class="scope-note" id="dash-scope-note" style="display:none"></div>
     <div class="ov-strip" id="ov-strip"><!-- rendered by renderKpis() --></div>
     <div class="kpi-grid" id="kpi-grid" style="margin-top:12px"><!-- rendered by renderKpis() --></div>
 
@@ -861,6 +908,28 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
         </div>
       </div>
 
+    </div>
+
+    <!-- ══════════ COMPANY OVERVIEW (opt-in, company-wide performance) ══════════
+         Separate from the personal Command Center above. Shows the WHOLE
+         company's rollup so anyone can see how SUN is doing overall, without
+         changing what their personal dashboard counts. Collapsible; visible by
+         default. This is a read-only summary — it never exposes individual
+         project rows, only aggregate company numbers. -->
+    <div class="block-head">
+      <div>
+        <div class="block-title">Company Overview <span class="co-badge">Company-wide</span></div>
+        <div class="block-sub">Aggregate performance across every NextNRG project</div>
+      </div>
+      <button class="block-toggle" id="co-toggle" onclick="toggleCompanyOverview()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        <span id="co-toggle-label">Hide</span>
+      </button>
+    </div>
+    <div class="collapsible" id="co-collapsible">
+      <div class="ov-strip" id="co-ov-strip"><!-- rendered by renderCompanyOverview() --></div>
+      <div class="kpi-grid" id="co-kpi-grid" style="margin-top:12px"><!-- rendered by renderCompanyOverview() --></div>
+      <div class="co-foot" id="co-foot"></div>
     </div>
 
     <!-- ═══════════════════ TEAM HUB ═══════════════════ -->
@@ -1011,7 +1080,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
         <table class="ptable">
           <thead>
             <tr>
-              <th>Site Name</th><th>Utility</th><th>Program</th><th>Status</th>
+              <th>Site Name</th><th>Owner</th><th>Utility</th><th>Program</th><th>Status</th>
               <th>BESS Size</th><th>Quoted Capex</th><th>Est. Incentive</th>
               <th>Proj. Annual Rev.</th><th>Next Action</th>
             </tr>
@@ -1159,6 +1228,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
 
     </div><!-- /#partner-view -->
 
+
     <!-- Platform footer: client workspace + ClearSky-OMEGA IP attribution -->
     <div style="margin-top:48px;padding-top:20px;border-top:1px solid var(--cs-border);display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--cs-sub)">
       <span id="footer-ws-label">Powered by <strong style="color:var(--cs-navy)">ClearSky-OMEGA</strong></span>
@@ -1196,6 +1266,22 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
       <button class="mb-cancel" onclick="closeNewProjectModal()">Cancel</button>
       <button class="mb-create" onclick="createProject()">Create &amp; Open Editor →</button>
     </div>
+  </div>
+</div>
+
+
+
+<!-- ══ CLAIM / ASSIGN OWNERSHIP MODAL ══ -->
+<div class="modal-bg" id="claim-modal">
+  <div class="modal" style="width:560px;max-width:94vw">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+      <div>
+        <h3 style="margin:0">Assign Project Ownership</h3>
+        <div style="font-size:12.5px;color:var(--cs-sub);margin-top:4px">Claim a project to put it on your dashboard, or release it back to the company.</div>
+      </div>
+      <button class="mb-cancel" onclick="closeClaimModal()" style="padding:6px 12px">Close</button>
+    </div>
+    <div id="claim-body" style="margin-top:14px;max-height:420px;overflow:auto"></div>
   </div>
 </div>
 
@@ -1315,14 +1401,92 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
 var WORKSPACES = {
 
   // ─────────────── DEVELOPER (ENTERPRISE CLIENT) TENANTS ───────────────
+
+  // OMEGA — internal ClearSky SALES DEMO workspace. Sales reps sign in with
+  // @clearsky-usa.com; orgId is clearsky-usa.com so all demo projects scope to
+  // that domain (isolated from every client tenant and from csebuilders.com dev
+  // data). Enterprise tier => applyToolLocks() returns early and ALL tools are
+  // unlocked, so reps can show the full OMEGA suite. Exports carry the OMEGA brand.
+  'clearsky-usa.com': {
+    type: 'developer',
+    orgId: 'clearsky-usa.com',
+    clientName: 'OMEGA',
+    accountTier: 'Enterprise',
+    tierLevel: 3,                              // Enterprise — every tool unlocked
+    allowedDomain: 'clearsky-usa.com',         // only @clearsky-usa.com sales reps
+    requiredTools: ['editor','investment'],    // pinned defaults; full suite available
+    exportBrand: {
+      logo: '/omega-logo.png',                 // OMEGA mark on customer-facing exports
+      name: 'OMEGA',
+      poweredBy: 'Powered by ClearSky-OMEGA',
+      platformCopyright: '© 2026 ClearSky Energy Solutions LLC · ClearSky-OMEGA platform'
+    }
+  },
+
+  // SUN Energy Solutions — full-suite developer tenant. Users sign in with
+  // @sunesol.com; their orgId is sunesol.com so every project/team doc scopes
+  // to that domain (matches Firestore rules' userOrg()). Enterprise tier =>
+  // applyToolLocks() returns early and ALL tools are unlocked.
+  'sunesol.com': {
+    type: 'developer',
+    orgId: 'sunesol.com',
+    clientName: 'SUN Energy Solutions',
+    accountTier: 'Enterprise',
+    tierLevel: 3,                              // Enterprise — every tool unlocked
+    allowedDomain: 'sunesol.com',
+    requiredTools: ['editor','investment'],    // pinned/non-removable defaults
+    exportBrand: {
+      logo: '/sunesol-logo-color.png',
+      name: 'SUN Energy Solutions',
+      poweredBy: 'Powered by ClearSky-OMEGA',
+      platformCopyright: '© 2026 ClearSky Energy Solutions LLC · ClearSky-OMEGA platform'
+    }
+  },
+
+  // Solela LLC — the JV entity (portal header/brand). The actual users are
+  // Chileasing Energy, who log in with @chileasing.com. Their orgId is
+  // chileasing.com so all their project data scopes to that domain (and matches
+  // the Firestore rules' userOrg() check). Two tools only: Site Map + Underwriting.
+  'chileasing.com': {
+    type: 'developer',
+    orgId: 'chileasing.com',
+    clientName: 'Solela LLC',
+    accountTier: 'Enterprise',
+    tierLevel: 3,                              // Enterprise — investment tool is ENTERPRISE-gated
+    allowedDomain: 'chileasing.com',
+    requiredTools: ['editor','investment'],    // mandatory, pinned, non-removable
+    exportBrand: {
+      name: 'Solela LLC',
+      subName: 'Chileasing Energy',
+      poweredBy: 'Powered by ClearSky-OMEGA',
+      platformCopyright: '© 2026 ClearSky Energy Solutions LLC · ClearSky-OMEGA platform'
+    }
+  },
+
+  // SPATCO Energy Solutions — ENTERPRISE account. Their custom EV/project
+  // estimate tool + the sitemap editor are MANDATORY (pinned, non-removable).
+  'spatco.com': {
+    type: 'developer',
+    orgId: 'spatco.com',
+    clientName: 'SPATCO Energy Solutions',
+    accountTier: 'Enterprise',
+    tierLevel: 3,                              // Enterprise — sees everything
+    allowedDomain: 'spatco.com',
+    requiredTools: ['editor','spatco_ev'],     // mandatory, pinned, non-removable
+    exportBrand: {
+      logo: '/spatco-logo.jpg',
+      name: 'SPATCO Energy Solutions',
+      poweredBy: 'Powered by ClearSky-OMEGA',
+      platformCopyright: '© 2025 ClearSky Energy Solutions LLC · ClearSky-OMEGA platform'
+    }
+  },
+
   'nextnrg.com': {
     type: 'developer',
     orgId: 'nextnrg.com',           // hard tenant lock — scopes all data
     clientName: 'NextNRG',
     accountTier: 'Enterprise',
-    tierLevel: 3,                   // Enterprise — full suite, no tool gate
     allowedDomain: 'nextnrg.com',   // only @nextnrg.com may use this workspace
-    requiredTools: ['editor','sandbox','investment','sales'],  // pinned, non-removable
     exportBrand: {
       logo: '/nextnrg-logo.png',    // client logo on customer-facing exports
       name: 'NextNRG',
@@ -1398,6 +1562,13 @@ function resolveWorkspace(email){
   return (dom && WORKSPACES.hasOwnProperty(dom)) ? WORKSPACES[dom] : null;
 }
 
+// This is the single-tenant OMEGA sales-demo portal: every legitimate user
+// signs in with @clearsky-usa.com. We use this to pre-scope the Google account
+// chooser (the `hd` hint) so reps only see their ClearSky sales account, and to
+// pre-fill the email helper text. It does NOT replace the real gate — the
+// authoritative check is still resolveWorkspace() in onAuthStateChanged below.
+var PORTAL_DEFAULT_DOMAIN = 'nextnrg.com';
+
 // Active workspace for THIS session — set at sign-in by resolveWorkspace().
 // Defaults to null; every consumer must handle "no workspace yet".
 var WORKSPACE = null;
@@ -1427,7 +1598,7 @@ auth.onAuthStateChanged(user => {
     // Resolve which registered workspace this user belongs to, by email domain.
     var ws = resolveWorkspace(email);
     if (!ws) {
-      showAuthErr('No ClearSky-OMEGA workspace is provisioned for @' + (domainOf(email) || 'your domain') + '. Contact your administrator to be added.');
+      showAuthErr('This workspace is restricted to @' + PORTAL_DEFAULT_DOMAIN + ' accounts. You signed in as ' + (email || 'an unrecognized account') + '. Please sign in with your @' + PORTAL_DEFAULT_DOMAIN + ' account.');
       auth.signOut();
       return;
     }
@@ -1438,7 +1609,7 @@ auth.onAuthStateChanged(user => {
     currentOrg = ws.orgId;          // scopes this user's own data (developer) or partner org
 
     showApp(user);
-    applyToolLocks();   // gate tools by workspace.unlockedTools (NextNRG = full suite, no gate)
+    applyToolLocks();   // gate tools by workspace.unlockedTools (demo Enterprise = all unlocked)
 
     // Route by tenant type:
     //  • developer → their own project portfolio (single-org roll-up)
@@ -1538,6 +1709,21 @@ function showApp(user) {
     applyDeveloperChrome(ws);
     renderDashboard();  // developer: single-org roll-up (existing behavior)
   }
+
+  // If we arrived here from the Projects page "+ New Project" button
+  // (which navigates to /?new=1 because the create-project modal lives on this
+  // page), auto-open the new-project modal. Developer tenants only; partners
+  // don't create projects. We clear the query param so a refresh won't re-open.
+  try {
+    if (!isPartner && /[?&]new=1(&|$)/.test(window.location.search)) {
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+      if (typeof openNewProjectModal === 'function') {
+        setTimeout(function(){ openNewProjectModal('bess'); }, 60);
+      }
+    }
+  } catch(e){ /* non-fatal: just skip auto-open */ }
 }
 
 // Developer tenant: keep the existing single-org command center.
@@ -1574,7 +1760,12 @@ function signInWithGoogle() {
   btn.disabled = true;
   btn.textContent = 'Signing in…';
   const provider = new firebase.auth.GoogleAuthProvider();
-  if (CFG.allowedDomain && CFG.allowedDomain.length) provider.setCustomParameters({ hd: CFG.allowedDomain });
+  // Scope the Google account chooser to this portal's domain so reps land on
+  // their @clearsky-usa.com account. Prefer the portal default; fall back to
+  // CFG.allowedDomain if one is ever set. `hd` is only a UI hint — Google does
+  // not hard-enforce it, so onAuthStateChanged still verifies the domain.
+  var hdHint = PORTAL_DEFAULT_DOMAIN || CFG.allowedDomain;
+  if (hdHint && hdHint.length) provider.setCustomParameters({ hd: hdHint, prompt: 'select_account' });
   auth.signInWithPopup(provider).catch(err => {
     showAuthErr(err.message);
     btn.disabled = false;
@@ -1896,13 +2087,20 @@ function renderActivityFeed(items){
 function renderPortfolioTable(rows){
   var body = document.getElementById('portfolio-body');
   if (!rows || !rows.length){
-    body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--cs-sub)">No portfolio sites yet. Tag a project with a stage to see it here.</td></tr>';
+    var emptyMsg = (typeof DASH_SCOPE!=='undefined' && DASH_SCOPE==='mine')
+      ? 'No projects owned by you yet. Create one, or claim an existing project via “Assign ownership.”'
+      : 'No portfolio sites yet. Tag a project with a stage to see it here.';
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--cs-sub)">'+emptyMsg+'</td></tr>';
     return;
   }
+  var _me = (typeof _meEmail==='function') ? _meEmail() : '';
   body.innerHTML = rows.map(function(r){
     var openAttr = r.id ? ' onclick="openProject(\''+r.id+'\')"' : '';
+    var ownerTxt = r.ownerEmail ? (r.ownerName || r.ownerEmail.split('@')[0]) : 'Unassigned';
+    var ownerCls = !r.ownerEmail ? 'owner-none' : (r.ownerEmail===_me ? 'owner-me' : 'owner-other');
     return '<tr'+openAttr+'>'+
       '<td class="site-nm">'+escHtml(r.name)+'</td>'+
+      '<td><span class="owner-chip '+ownerCls+'">'+escHtml(ownerTxt)+'</span></td>'+
       '<td>'+escHtml(r.utility||'—')+'</td>'+
       '<td>'+escHtml(r.program||'—')+'</td>'+
       '<td><span class="pstatus '+stageClass(r.stage)+'">'+(STAGE_LABEL[r.stage]||r.stage)+'</span></td>'+
@@ -1917,6 +2115,7 @@ function renderPortfolioTable(rows){
 
 /* Master render: placeholder mode now, live rollup when USE_LIVE_ROLLUP=true */
 function renderDashboard(){
+  _paintScopeToggle();   // toggle removed — this now just clears the container
   if (!USE_LIVE_ROLLUP){
     renderKpis(PLACEHOLDER_KPIS);
     renderPipeline(PLACEHOLDER_PIPELINE);
@@ -1924,8 +2123,9 @@ function renderDashboard(){
     renderWidgets(PLACEHOLDER_KPIS, PLACEHOLDER_PIPELINE);
     renderActivityFeed(null);
   } else {
-    computeLiveRollup();  // reads Firestore, fills everything from real project docs
+    computeLiveRollup();  // reads Firestore, fills the PERSONAL dashboard (mine only)
   }
+  if (typeof renderCompanyOverview === 'function') renderCompanyOverview();  // company-wide widget
 }
 
 /* LIVE ROLLUP — computes every KPI/pipeline/table row from the projects collection.
@@ -1941,8 +2141,15 @@ async function computeLiveRollup(){
               storageQuotedMwh:0, storageSubmittedMwh:0, storageOnlineMwh:0,
               portfolioCapex:0, modeledIncentives:0, projectedRevenue:0, operatingAssets:0 };
     var rows = [];
+    var myEmail = _meEmail();
+    var unownedCount = 0;   // projects with no ownerEmail (legacy) — surfaced under Company view
     snap.forEach(function(doc){
       var d = doc.data();
+      // Per-user scope: "mine" shows only this user's projects; "company" shows all.
+      // Legacy projects with no ownerEmail are treated as company-wide (claimable).
+      var owner = (d.ownerEmail||'').toLowerCase();
+      if (!owner) unownedCount++;
+      if (DASH_SCOPE === 'mine' && owner !== myEmail){ return; }
       var stage = STAGE_KEYS.indexOf(d.stage)>=0 ? d.stage : 'candidate';
       var idx = STAGE_KEYS.indexOf(stage);
       var kwh = Number(d.bessKwh)||0, mwh = kwh/1000;
@@ -1956,13 +2163,15 @@ async function computeLiveRollup(){
       rows.push({ id:doc.id, name:d.name||'Untitled', utility:d.utility||'—', program:d.program||'—',
                   stage:stage, bess: kwh ? (mwh.toFixed(1)+' MWh') : '—',
                   capex:fmtMoney(d.capex), incentive:fmtMoney(d.incentive),
-                  revenue:fmtMoney(d.annualRevenue), next:d.nextAction||'—' });
+                  revenue:fmtMoney(d.annualRevenue), next:d.nextAction||'—',
+                  ownerEmail:owner, ownerName:d.ownerName||'' });
     });
     k.storageQuotedMwh = +k.storageQuotedMwh.toFixed(1);
     k.storageSubmittedMwh = +k.storageSubmittedMwh.toFixed(1);
     k.storageOnlineMwh = +k.storageOnlineMwh.toFixed(1);
     renderKpis(k); renderPipeline(counts); renderPortfolioTable(rows);
     renderWidgets(k, counts);
+    _updateScopeBar(rows.length, unownedCount);
     /* Activity feed from the same rows (most-recently-touched first if available). */
     var feed = rows.slice(0,6).map(function(r){
       return { id:r.id, title:r.name, meta:(r.utility&&r.utility!=='—'?r.utility+' · ':'')+(STAGE_LABEL[r.stage]||r.stage),
@@ -1973,6 +2182,90 @@ async function computeLiveRollup(){
     console.error('Live rollup failed, showing placeholders:', e);
     renderKpis(PLACEHOLDER_KPIS); renderPipeline(PLACEHOLDER_PIPELINE); renderPortfolioTable(PLACEHOLDER_ROWS);
     renderWidgets(PLACEHOLDER_KPIS, PLACEHOLDER_PIPELINE); renderActivityFeed(null);
+  }
+}
+
+/* Update the sub-label + the "unassigned projects" note under the header. */
+function _updateScopeBar(shownCount, unownedCount){
+  var sub = document.getElementById('dash-scope-sub');
+  if (sub){
+    sub.textContent = 'Your projects — the sites linked to your account';
+  }
+  var note = document.getElementById('dash-scope-note');
+  if (!note) return;
+  // Only nudge about legacy/unassigned projects when there are any.
+  if (unownedCount > 0){
+    note.style.display = 'flex';
+    var label = unownedCount === 1 ? '1 project has' : unownedCount + ' projects have';
+    note.innerHTML = '<span>' + label + ' no owner yet.</span>'
+      + '<a onclick="openClaimModal()">Assign ownership ›</a>';
+  } else {
+    note.style.display = 'none';
+  }
+}
+
+/* ── CLAIM / REASSIGN OWNERSHIP ─────────────────────────────────────────
+   Lets a signed-in SUN user claim legacy (un-owned) projects onto their own
+   dashboard, or reassign any project's owner. Writes ownerEmail/ownerName on
+   the project doc, which the rollup then scopes on. */
+var _claimList = [];
+async function openClaimModal(){
+  var body = document.getElementById('claim-body');
+  body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--cs-sub)">Loading projects…</div>';
+  document.getElementById('claim-modal').classList.add('on');
+  try {
+    var snap = await db.collection('projects').where('orgId','==',currentOrg).get();
+    _claimList = [];
+    snap.forEach(function(doc){
+      var d = doc.data();
+      _claimList.push({ id:doc.id, name:d.name||'Untitled',
+                        ownerEmail:(d.ownerEmail||'').toLowerCase(), ownerName:d.ownerName||'' });
+    });
+    _renderClaimList();
+  } catch(e){
+    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--cs-red)">Could not load projects: '+escHtml(e.message)+'</div>';
+  }
+}
+function closeClaimModal(){ document.getElementById('claim-modal').classList.remove('on'); }
+function _renderClaimList(){
+  var body = document.getElementById('claim-body');
+  if (!_claimList.length){ body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--cs-sub)">No projects found.</div>'; return; }
+  var me = _meEmail();
+  // Unowned first, then mine, then others — so the actionable ones are on top.
+  var sorted = _claimList.slice().sort(function(a,b){
+    function rank(x){ if(!x.ownerEmail) return 0; if(x.ownerEmail===me) return 1; return 2; }
+    return rank(a)-rank(b);
+  });
+  var h = '';
+  for (var i=0;i<sorted.length;i++){
+    var p = sorted[i];
+    var who = p.ownerEmail ? (p.ownerName || p.ownerEmail.split('@')[0]) : 'Unassigned';
+    var mine = (p.ownerEmail === me);
+    var chip = p.ownerEmail
+      ? '<span class="claim-owner'+(mine?' me':'')+'">'+escHtml(who)+(mine?' (you)':'')+'</span>'
+      : '<span class="claim-owner none">Unassigned</span>';
+    var btn = mine
+      ? '<button class="claim-btn ghost" onclick="claimProject(&quot;'+p.id+'&quot;,&quot;release&quot;)">Release</button>'
+      : '<button class="claim-btn" onclick="claimProject(&quot;'+p.id+'&quot;,&quot;mine&quot;)">Claim to me</button>';
+    h += '<div class="claim-row"><div class="claim-nm">'+escHtml(p.name)+'</div>'+chip+btn+'</div>';
+  }
+  body.innerHTML = h;
+}
+async function claimProject(id, mode){
+  try {
+    var payload;
+    if (mode === 'release'){ payload = { ownerEmail:'', ownerName:'' }; }
+    else { payload = { ownerEmail:_meEmail(), ownerName:_meName() }; }
+    payload.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+    await db.collection('projects').doc(id).set(payload, {merge:true});
+    // Reflect locally + refresh the modal and dashboard.
+    for (var i=0;i<_claimList.length;i++){
+      if (_claimList[i].id===id){ _claimList[i].ownerEmail=payload.ownerEmail; _claimList[i].ownerName=payload.ownerName; break; }
+    }
+    _renderClaimList();
+    if (typeof computeLiveRollup === 'function') computeLiveRollup();
+  } catch(e){
+    alert('Could not update ownership: ' + e.message);
   }
 }
 
@@ -2655,6 +2948,94 @@ function togglePortfolio(){
   if (label) label.textContent = collapsed ? 'Expand' : 'Minimize';
 }
 
+/* ══════════ COMPANY OVERVIEW (opt-in, company-wide performance) ══════════
+   A read-only aggregate view of EVERY project in the org — separate from the
+   personal Command Center, which only ever shows the signed-in user's own
+   projects. Visible by default; the user can hide it. It renders only summary
+   numbers (no individual project rows), so it never exposes another person's
+   project details. */
+var CO_VISIBLE = true;
+function toggleCompanyOverview(){
+  var body = document.getElementById('co-collapsible');
+  var btn  = document.getElementById('co-toggle');
+  var label= document.getElementById('co-toggle-label');
+  if (!body || !btn) return;
+  var collapsed = body.classList.toggle('hidden');
+  CO_VISIBLE = !collapsed;
+  btn.classList.toggle('collapsed', collapsed);
+  if (label) label.textContent = collapsed ? 'Show' : 'Hide';
+}
+
+/* Company-wide rollup: same math as computeLiveRollup but over ALL org
+   projects (no ownerEmail filter). Fills the co-* overview + KPI cards. */
+async function renderCompanyOverview(){
+  var ov = document.getElementById('co-ov-strip');
+  var grid = document.getElementById('co-kpi-grid');
+  var foot = document.getElementById('co-foot');
+  if (!ov || !grid) return;
+  if (!currentUser){ ov.innerHTML=''; grid.innerHTML=''; return; }
+  try {
+    var snap = await db.collection('projects').where('orgId','==',currentOrg).get();
+    var counts = {}; STAGE_KEYS.forEach(function(s){counts[s]=0;});
+    var k = { sitesUnderControl:0, projectsManaged:0, sitesSubmitted:0, sitesQuoted:0, sitesOnline:0,
+              storageQuotedMwh:0, storageSubmittedMwh:0, storageOnlineMwh:0,
+              portfolioCapex:0, modeledIncentives:0, projectedRevenue:0, operatingAssets:0 };
+    var owners = {};   // distinct owners → team-size hint
+    snap.forEach(function(doc){
+      var d = doc.data();
+      var o = (d.ownerEmail||'').toLowerCase(); if (o) owners[o]=1;
+      var stage = STAGE_KEYS.indexOf(d.stage)>=0 ? d.stage : 'candidate';
+      var idx = STAGE_KEYS.indexOf(stage);
+      var kwh = Number(d.bessKwh)||0, mwh = kwh/1000;
+      counts[stage]++; k.sitesUnderControl++; k.projectsManaged++;
+      k.portfolioCapex += Number(d.capex)||0;
+      k.modeledIncentives += Number(d.incentive)||0;
+      k.projectedRevenue += Number(d.annualRevenue)||0;
+      if (d.quoted){ k.sitesQuoted++; k.storageQuotedMwh += mwh; }
+      if (idx >= SUBMITTED_FROM_INDEX){ k.sitesSubmitted++; k.storageSubmittedMwh += mwh; }
+      if (idx === ONLINE_INDEX){ k.sitesOnline++; k.storageOnlineMwh += mwh; k.operatingAssets++; }
+    });
+    k.storageQuotedMwh = +k.storageQuotedMwh.toFixed(1);
+    k.storageSubmittedMwh = +k.storageSubmittedMwh.toFixed(1);
+    k.storageOnlineMwh = +k.storageOnlineMwh.toFixed(1);
+
+    var overview = [
+      { l:'Sites Under Control', v:k.sitesUnderControl },
+      { l:'Projects Managed',    v:k.projectsManaged },
+      { l:'Sites Submitted',     v:k.sitesSubmitted },
+      { l:'Sites Online',        v:k.sitesOnline },
+      { l:'Operating Assets',    v:k.operatingAssets }
+    ];
+    ov.innerHTML = overview.map(function(c){
+      return '<div class="ov-cell"><div class="ov-val">'+c.v+'</div><div class="ov-label">'+c.l+'</div></div>';
+    }).join('');
+
+    var cards = [
+      { l:'Sites Quoted', v:k.sitesQuoted, cls:'' },
+      { l:'Storage Quoted', v:k.storageQuotedMwh, unit:'MWh', cls:'' },
+      { l:'Storage Submitted', v:k.storageSubmittedMwh, unit:'MWh', cls:'blue' },
+      { l:'Storage Online', v:k.storageOnlineMwh, unit:'MWh', cls:'green' },
+      { l:'Estimated Portfolio Capex', v:fmtMoney(k.portfolioCapex), cls:'' },
+      { l:'Modeled Incentives / Rebates', v:fmtMoney(k.modeledIncentives), cls:'' },
+      { l:'Projected Annual Revenue', v:fmtMoney(k.projectedRevenue), cls:'green' },
+      { l:'Storage Under Control', v:k.storageQuotedMwh, unit:'MWh', cls:'blue' }
+    ];
+    grid.innerHTML = cards.map(function(c){
+      var unit = c.unit ? '<span class="unit">'+c.unit+'</span>' : '';
+      return '<div class="kpi '+c.cls+'"><div class="kpi-label">'+c.l+'</div><div class="kpi-val">'+c.v+unit+'</div></div>';
+    }).join('');
+
+    if (foot){
+      var ppl = Object.keys(owners).length;
+      foot.textContent = 'Company-wide totals across ' + k.projectsManaged + ' project' + (k.projectsManaged===1?'':'s')
+        + (ppl ? ' from ' + ppl + ' team member' + (ppl===1?'':'s') : '') + '. Summary only — individual projects stay private to their owners.';
+    }
+  } catch(e){
+    console.error('Company overview failed:', e);
+    if (foot) foot.textContent = 'Company overview is unavailable right now.';
+  }
+}
+
 function goToProjects() {  window.location.href = '/projects.html';
 }
 
@@ -2888,6 +3269,8 @@ async function createProject() {
     const ref = await db.collection('projects').add({
       uid: currentUser.uid,
       orgId: currentOrg,   // tenant tag — enforced by Firestore security rules
+      ownerEmail: (currentUser.email||'').toLowerCase(),  // per-user scope key ("My Projects")
+      ownerName: _meName(),                                 // friendly owner label for tables
       name, address: addr, type, client,
       stage: 'candidate', // seed pipeline stage so the dashboard can roll it up
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -2920,13 +3303,17 @@ function escHtml(s) {
 document.getElementById('new-proj-modal').addEventListener('click', function(e) {
   if (e.target === this) closeNewProjectModal();
 });
+(function(){
+  var cm = document.getElementById('claim-modal');
+  if (cm) cm.addEventListener('click', function(e){ if (e.target === this) closeClaimModal(); });
+})();
 
 // ══════════ BOOT (UNCHANGED) ══════════
 if (document.readyState === 'loading') {
 
 /* ══════════════════════════════════════════════════════════════════════
    TOOL ACCESS GATING — locks tiles not in workspace.unlockedTools and shows
-   an "Upgrade" overlay. Inert for NextNRG Enterprise (no unlockedTools gate).
+   an "Upgrade" overlay. (Demo tenant is Enterprise — all tools stay live.)
    ══════════════════════════════════════════════════════════════════════ */
 function applyToolLocks(){
   var ws = window.OMEGA_WORKSPACE;
@@ -2997,8 +3384,8 @@ function showUpgradeModal(toolName){
         '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'+
       '</div>'+
       '<div style="font-size:19px;font-weight:700;color:#08384F;margin-bottom:8px">Unlock '+esc2(toolName)+'</div>'+
-      '<div style="font-size:13px;color:#5A7180;line-height:1.55;margin-bottom:22px">Your NextNRG workspace currently includes the <b>Site Designer &amp; permit engine</b>. '+esc2(toolName)+' is part of the full ClearSky-OMEGA suite \u2014 financial modeling, investor underwriting, procurement, and more.</div>'+
-      '<a href="mailto:dev@clearsky-usa.com?subject=NextNRG%20\u2014%20Unlock%20'+encodeURIComponent(toolName)+'" style="display:block;background:linear-gradient(135deg,#006F9A,#00A9A4);color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:13px;border-radius:10px;margin-bottom:10px">Request access</a>'+
+      '<div style="font-size:13px;color:#5A7180;line-height:1.55;margin-bottom:22px">Your OMEGA demo workspace currently includes the <b>Site Designer &amp; permit engine</b>. '+esc2(toolName)+' is part of the full ClearSky-OMEGA suite \u2014 financial modeling, investor underwriting, procurement, and more.</div>'+
+      '<a href="mailto:dev@clearsky-usa.com?subject=OMEGA%20Demo%20\u2014%20Unlock%20'+encodeURIComponent(toolName)+'" style="display:block;background:linear-gradient(135deg,#006F9A,#00A9A4);color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:13px;border-radius:10px;margin-bottom:10px">Request access</a>'+
       '<button onclick="document.getElementById(\'upgrade-modal\').remove()" style="background:none;border:none;color:#5A7180;font-size:13px;cursor:pointer;font-family:inherit">Maybe later</button>'+
     '</div>';
   m.addEventListener('click', function(e){ if(e.target===m) m.remove(); });
@@ -3015,10 +3402,10 @@ function esc2(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 <script>
 /* ══════════════════════════════════════════════════════════════════════
    DASHBOARD + MARKETPLACE render (reads the shared OMEGATools catalog)
-   • Marketplace = every tool NextNRG's tier can see.
+   • Marketplace = every tool the demo tier can see.
    • Dashboard   = required tools (always, non-removable) + pinned tools.
    ══════════════════════════════════════════════════════════════════════ */
-var PORTAL_STROKE = '#00A9A4';       // NextNRG teal
+var PORTAL_STROKE = '#00A9A4';       // OMEGA teal
 var _PORTAL_WS = null, _PINNED = [];
 
 /* Local HTML escaper — the render code below uses esc(); define it here so

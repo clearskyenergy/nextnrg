@@ -8,7 +8,9 @@ window.CLEARSKY_CONFIG = {
     appId: "1:742134484347:web:ab0f95fd221536158481de"
   },
   googleMapsKey: "AIzaSyC0roZ_qMwtbVzqRLtNx9nrCeaGqrE1sNs",
+  // Domain gating happens via the WORKSPACES map in index.html (resolveWorkspace),
+  // not here — leave null, same as the other portals.
   allowedDomain: null,
-  companyName: "ClearSky USA",
-  portalTitle: "BESS Site Portal"
+  companyName: "NextNRG",
+  portalTitle: "NextNRG · ClearSky-OMEGA EnergyOS"
 };
