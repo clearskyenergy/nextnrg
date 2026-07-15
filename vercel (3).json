@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/editor.html", "destination": "https://tools.csebuilders.com/editor.html" }
+  ]
+}
