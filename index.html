@@ -1066,6 +1066,55 @@ body{overflow-x:hidden}
   #side-nav{display:none}   /* mobile uses the top hamburger drawer instead */
   #app-body #main{padding:20px 14px 48px}
 }
+
+/* ═══════════════ DASHBOARD BUILDER (edit mode) ═══════════════ */
+.edit-toggle{display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:8px;
+  border:1px solid var(--pol-border,#E1E6EC);background:#fff;color:var(--sap-ink-2,#556B82);
+  font:600 13px/1 'DM Sans',sans-serif;cursor:pointer;transition:all .12s}
+.edit-toggle:hover{border-color:var(--sap-blue,#0070F2);color:var(--sap-blue,#0070F2)}
+.edit-toggle svg{width:15px;height:15px}
+.edit-toggle.on{background:var(--sap-blue,#0070F2);color:#fff;border-color:var(--sap-blue,#0070F2)}
+
+/* When editing: dim the fixed dashboard, show builder overlay */
+body.dash-editing #dev-main > *:not(#bld-overlay){opacity:.15;pointer-events:none;filter:grayscale(.4)}
+#bld-overlay{display:none}
+body.dash-editing #bld-overlay{display:flex;position:relative;z-index:5}
+
+#bld-overlay{gap:18px;margin-top:8px}
+.bld-palette{width:210px;flex:none;background:var(--nav,#0B2A3D);color:#C9D6E2;border-radius:14px;padding:12px 10px;
+  align-self:flex-start;position:sticky;top:74px;max-height:calc(100vh - 96px);overflow-y:auto}
+.bld-pal-title{font:700 13px/1 'DM Sans',sans-serif;color:#fff;padding:6px 8px 4px}
+.bld-pal-sub{font-size:10.5px;color:#7E93A6;padding:0 8px 10px}
+.bld-pal-group-label{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:rgba(201,214,226,.5);padding:8px 8px 5px}
+.bld-pal-item{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:7px;cursor:grab;
+  color:#C9D6E2;font:500 12.5px/1 'DM Sans',sans-serif;margin-bottom:2px;user-select:none;transition:background .1s}
+.bld-pal-item:hover{background:rgba(255,255,255,.09);color:#fff}
+.bld-pal-item:active{cursor:grabbing}
+.bld-pal-item.dragging{opacity:.4}
+.bld-pal-item .bi{width:22px;height:22px;border-radius:6px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;flex:none}
+.bld-pal-item .bi svg{width:13px;height:13px;stroke:#9FB4C7;fill:none;stroke-width:2}
+
+.bld-canvas-wrap{flex:1;min-width:0}
+.bld-canvas{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:64px;gap:12px;min-height:400px;
+  border:2px dashed transparent;border-radius:12px;transition:border-color .12s}
+.bld-canvas.empty{place-content:start;border-color:var(--pol-border,#E1E6EC);background:#FAFBFC}
+.bld-canvas.drag-over{border-color:var(--sap-blue,#0070F2);background:rgba(0,112,242,.03)}
+.bld-empty-msg{grid-column:1/-1;text-align:center;color:var(--sub,#556B82);padding:70px 20px}
+.bld-empty-msg h3{font-size:16px;color:var(--ink,#0F2733);margin-bottom:6px}
+
+.bld-card{background:#fff;border:1px solid var(--pol-border,#E1E6EC);border-radius:12px;box-shadow:var(--pol-shadow);
+  display:flex;flex-direction:column;overflow:hidden;position:relative}
+.bld-card.dragging{opacity:.55}
+.bld-card-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--pol-border,#E1E6EC);cursor:move;flex:none;background:#FBFCFD}
+.bld-card-title{font:700 11.5px/1 'DM Sans',sans-serif;color:var(--ink,#0F2733);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bld-card-btn{width:20px;height:20px;border:none;background:none;cursor:pointer;border-radius:4px;color:var(--sub,#556B82);display:flex;align-items:center;justify-content:center}
+.bld-card-btn:hover{background:#F0F3F6}
+.bld-card-btn.del:hover{background:#FDECEC;color:#E53935}
+.bld-card-body{flex:1;overflow:auto;padding:10px}
+.bld-resize{position:absolute;right:2px;bottom:2px;width:15px;height:15px;cursor:nwse-resize;opacity:0}
+.bld-card:hover .bld-resize{opacity:.5}
+.bld-resize svg{width:15px;height:15px;stroke:var(--sub,#556B82);stroke-width:2;fill:none}
+.bld-editing-hint{background:#EAF3FF;border:1px solid #BBD9FF;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#0B4F9E;margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -1369,6 +1418,21 @@ window._omegaReady = function(){
       </div>
     </aside>
     <div id="dev-main">
+
+    <!-- ══ DASHBOARD BUILDER (edit mode) ══ -->
+    <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:6px">
+      <button class="edit-toggle" id="edit-toggle-btn" onclick="DB.toggle()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+        <span class="et-label">Edit Dashboard</span>
+      </button>
+    </div>
+    <div id="bld-overlay">
+      <aside class="bld-palette" id="bld-palette"></aside>
+      <div class="bld-canvas-wrap">
+        <div class="bld-editing-hint">You\'re editing your dashboard. Drag widgets from the left onto the board. Changes save automatically. Click <b>Done Editing</b> when finished.</div>
+        <div class="bld-canvas" id="bld-canvas"></div>
+      </div>
+    </div>
 
     <!--
       ═══════════════════════════════════════════════════════════════════════
@@ -4354,6 +4418,7 @@ var AN_STAGE_COLORS = ['#0070F2','#1B90FF','#00A9A4','#00C4BC','#F0A030','#E06C4
 var AN_TYPE_COLORS  = { bess:'#0070F2', dcfc:'#00A9A4', solar:'#F0A030', other:'#8A97A6' };
 
 function renderCharts(a){
+  window._lastAgg = a;   // cache for the dashboard builder
   if (typeof Chart === 'undefined') return;
   var STAGE = (typeof STAGE_KEYS!=='undefined')?STAGE_KEYS:Object.keys(a.counts||{});
   var LBL = (typeof STAGE_LABEL!=='undefined')?STAGE_LABEL:{};
@@ -4477,6 +4542,182 @@ function _paintSideApps(){
   list.innerHTML = html || '<a class="sn-app" href="/marketplace.html"><span class="sn-app-dot"></span>Browse Marketplace…</a>';
 }
 
+</script>
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   DASHBOARD BUILDER — edit mode, mounted in the portal.
+   View mode = fixed dashboard (unchanged). Edit mode = drag widgets on a
+   canvas; layout saves per-user to Firestore. Round 2: data widgets.
+   ══════════════════════════════════════════════════════════════════════ */
+var DB = (function(){
+  // Widget catalog — each renders REAL portal data via window._lastAgg / render fns.
+  var CATALOG = [
+    { group:'Metrics', items:[
+      { type:'kpis',    name:'KPI Summary',        w:12, h:2, icon:'<path d="M4 20V10M10 20V4M16 20v-8M22 20V8"/>' },
+    ]},
+    { group:'Charts', items:[
+      { type:'stage',   name:'Projects by Stage',  w:4, h:5, icon:'<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>' },
+      { type:'ptype',   name:'Projects by Type',   w:4, h:5, icon:'<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>' },
+      { type:'capex',   name:'Top CapEx',          w:6, h:5, icon:'<line x1="6" y1="20" x2="6" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="18" y1="20" x2="18" y2="14"/>' },
+      { type:'owner',   name:'Revenue by Owner',   w:6, h:5, icon:'<line x1="6" y1="20" x2="6" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="18" y1="20" x2="18" y2="14"/>' },
+      { type:'storage', name:'Storage by Stage',   w:12, h:4, icon:'<line x1="4" y1="20" x2="4" y2="8"/><line x1="12" y1="20" x2="12" y2="12"/><line x1="20" y1="20" x2="20" y2="4"/>' },
+    ]},
+    { group:'Data', items:[
+      { type:'table',   name:'Portfolio Table',    w:8, h:6, icon:'<rect x="3" y="4" width="18" height="16" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="4" x2="9" y2="20"/>' },
+    ]},
+  ];
+  var META={}; CATALOG.forEach(function(g){ g.items.forEach(function(it){ META[it.type]=it; }); });
+
+  var layout=[]; var editing=false; var dragId=null; var _saveT=null;
+  var canvas, palette;
+
+  function uid(){ return 'w'+Math.random().toString(36).slice(2,9); }
+  function find(id){ for(var i=0;i<layout.length;i++) if(layout[i].id===id) return layout[i]; return null; }
+
+  // ── Widget body renderers (real data) ──
+  function renderWidgetBody(card){
+    var body = document.querySelector('.bld-card[data-id="'+card.id+'"] .bld-card-body');
+    if(!body) return;
+    var a = window._lastAgg || {};
+    if (card.type==='kpis'){
+      // clone the live KPI grid markup
+      var kg=document.getElementById('kpi-grid');
+      body.innerHTML='<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">'+(kg?kg.innerHTML:'')+'</div>';
+      return;
+    }
+    if (card.type==='table'){
+      var pt=document.getElementById('pt-body')||document.querySelector('.ptable');
+      var tbl=document.querySelector('.table-wrap');
+      body.innerHTML = tbl?('<div class="table-wrap" style="box-shadow:none;border:none">'+tbl.innerHTML+'</div>'):'<div style="color:#556B82;font-size:13px">Portfolio table</div>';
+      return;
+    }
+    // chart widgets: put a canvas and draw with Chart.js using cached agg
+    body.innerHTML='<div style="position:relative;height:100%;min-height:120px"><canvas id="bldc-'+card.id+'"></canvas></div>';
+    _drawChart(card, a);
+  }
+
+  var _bldCharts={};
+  function _drawChart(card, a){
+    if (typeof Chart==='undefined') return;
+    var el=document.getElementById('bldc-'+card.id); if(!el) return;
+    if(_bldCharts[card.id]){ try{_bldCharts[card.id].destroy();}catch(e){} }
+    var STAGE=(typeof STAGE_KEYS!=='undefined')?STAGE_KEYS:[];
+    var LBL=(typeof STAGE_LABEL!=='undefined')?STAGE_LABEL:{};
+    var SC=['#0070F2','#1B90FF','#00A9A4','#00C4BC','#F0A030','#E06C4F','#2E9C3C','#6B4FA0'];
+    var TC={bess:'#0070F2',dcfc:'#00A9A4',solar:'#F0A030',other:'#8A97A6'};
+    var cfg=null;
+    if(card.type==='stage'){
+      var L=[],D=[],C=[]; STAGE.forEach(function(s,i){var v=(a.counts&&a.counts[s])||0; if(v>0){L.push(LBL[s]||s);D.push(v);C.push(SC[i%SC.length]);}});
+      var t=D.reduce(function(x,y){return x+y;},0);
+      cfg={type:'doughnut',data:{labels:t?L:['No data'],datasets:[{data:t?D:[1],backgroundColor:t?C:['#EAECEF'],borderWidth:0}]},options:{cutout:'64%',responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}}}}};
+    } else if(card.type==='ptype'){
+      var ks=Object.keys(a.byType||{}),L2=[],D2=[],C2=[]; ks.forEach(function(k){L2.push(k.toUpperCase());D2.push(a.byType[k]);C2.push(TC[k]||'#8A97A6');});
+      var t2=D2.reduce(function(x,y){return x+y;},0);
+      cfg={type:'doughnut',data:{labels:t2?L2:['No data'],datasets:[{data:t2?D2:[1],backgroundColor:t2?C2:['#EAECEF'],borderWidth:0}]},options:{cutout:'64%',responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}}}}};
+    } else if(card.type==='capex'){
+      var it=(a.capexByProj||[]).slice().sort(function(x,y){return y.capex-x.capex;}).slice(0,8);
+      cfg={type:'bar',data:{labels:it.length?it.map(function(i){return i.name;}):['No data'],datasets:[{data:it.length?it.map(function(i){return i.capex;}):[0],backgroundColor:'#0070F2',borderRadius:5}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:9}}},y:{ticks:{font:{size:10}}}}}};
+    } else if(card.type==='owner'){
+      var ok=Object.keys(a.byOwnerRev||{}).sort(function(x,y){return a.byOwnerRev[y]-a.byOwnerRev[x];}).slice(0,8);
+      cfg={type:'bar',data:{labels:ok.length?ok:['No data'],datasets:[{data:ok.length?ok.map(function(k){return a.byOwnerRev[k];}):[0],backgroundColor:'#00A9A4',borderRadius:5}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:9}}},y:{ticks:{font:{size:10}}}}}};
+    } else if(card.type==='storage'){
+      var L3=[],D3=[]; STAGE.forEach(function(s){L3.push(LBL[s]||s);D3.push(+((a.storageByStage&&a.storageByStage[s])||0).toFixed(1));});
+      cfg={type:'bar',data:{labels:L3,datasets:[{data:D3,backgroundColor:'#1B90FF',borderRadius:5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:9}}},y:{ticks:{font:{size:9}}}}}};
+    }
+    if(cfg) _bldCharts[card.id]=new Chart(el,cfg);
+  }
+
+  function cardHTML(c){
+    var m=META[c.type]||{name:c.type};
+    return '<div class="bld-card" data-id="'+c.id+'" style="grid-column:'+(c.x+1)+' / span '+c.w+';grid-row:'+(c.y+1)+' / span '+c.h+'">'+
+      '<div class="bld-card-head" data-drag="'+c.id+'"><span class="bld-card-title">'+(m.name||c.type)+'</span>'+
+      '<button class="bld-card-btn del" title="Remove" onclick="DB.remove(\''+c.id+'\')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>'+
+      '<div class="bld-card-body"></div>'+
+      '<div class="bld-resize" data-resize="'+c.id+'"><svg viewBox="0 0 24 24"><path d="M22 22L12 22M22 22L22 12M22 22L16 16"/></svg></div></div>';
+  }
+
+  function paintPalette(){
+    palette.innerHTML='<div class="bld-pal-title">Widgets</div><div class="bld-pal-sub">Drag onto the board</div>'+
+      CATALOG.map(function(g){return '<div class="bld-pal-group-label">'+g.group+'</div>'+
+        g.items.map(function(it){return '<div class="bld-pal-item" draggable="true" data-type="'+it.type+'"><span class="bi"><svg viewBox="0 0 24 24">'+it.icon+'</svg></span>'+it.name+'</div>';}).join('');}).join('');
+    palette.querySelectorAll('.bld-pal-item').forEach(function(el){
+      el.addEventListener('dragstart',function(e){e.dataTransfer.setData('text/pal',el.getAttribute('data-type'));e.dataTransfer.effectAllowed='copy';el.classList.add('dragging');});
+      el.addEventListener('dragend',function(){el.classList.remove('dragging');});
+    });
+  }
+
+  function render(){
+    if(!layout.length){ canvas.classList.add('empty'); canvas.innerHTML='<div class="bld-empty-msg"><h3>Empty board</h3><p>Drag widgets from the left to build your dashboard.</p></div>'; }
+    else { canvas.classList.remove('empty'); canvas.innerHTML=layout.map(cardHTML).join(''); layout.forEach(renderWidgetBody); wireCards(); }
+  }
+
+  function wireCards(){
+    canvas.querySelectorAll('.bld-card-head').forEach(function(h){
+      var id=h.getAttribute('data-drag'); h.setAttribute('draggable','true');
+      h.addEventListener('dragstart',function(e){dragId=id;e.dataTransfer.setData('text/card',id);e.dataTransfer.effectAllowed='move';h.closest('.bld-card').classList.add('dragging');});
+      h.addEventListener('dragend',function(){var c=h.closest('.bld-card');if(c)c.classList.remove('dragging');dragId=null;});
+    });
+    canvas.querySelectorAll('.bld-resize').forEach(function(rh){
+      rh.addEventListener('pointerdown',function(e){
+        e.preventDefault(); var id=rh.getAttribute('data-resize'); var card=find(id); if(!card)return;
+        var sx=e.clientX,sy=e.clientY,sw=card.w,sh=card.h,colW=canvas.getBoundingClientRect().width/12;
+        function mv(ev){card.w=Math.max(2,Math.min(12,sw+Math.round((ev.clientX-sx)/colW)));card.h=Math.max(1,Math.min(12,sh+Math.round((ev.clientY-sy)/(64+12))));
+          var el=canvas.querySelector('.bld-card[data-id="'+id+'"]');if(el){el.style.gridColumn=(card.x+1)+' / span '+card.w;el.style.gridRow=(card.y+1)+' / span '+card.h;}}
+        function up(){document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);renderWidgetBody(card);scheduleSave();}
+        document.addEventListener('pointermove',mv);document.addEventListener('pointerup',up);
+      });
+    });
+  }
+
+  function wireCanvas(){
+    canvas.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect=dragId?'move':'copy';canvas.classList.add('drag-over');});
+    canvas.addEventListener('dragleave',function(e){if(e.target===canvas)canvas.classList.remove('drag-over');});
+    canvas.addEventListener('drop',function(e){
+      e.preventDefault();canvas.classList.remove('drag-over');
+      var rect=canvas.getBoundingClientRect(),colW=rect.width/12,rowH=64+12;
+      var gx=Math.max(0,Math.min(11,Math.floor((e.clientX-rect.left)/colW)));
+      var gy=Math.max(0,Math.floor((e.clientY-rect.top)/rowH));
+      var pt=e.dataTransfer.getData('text/pal'),cid=e.dataTransfer.getData('text/card');
+      if(pt){var m=META[pt];layout.push({id:uid(),type:pt,x:Math.min(gx,12-m.w),y:gy,w:m.w,h:m.h});render();scheduleSave();}
+      else if(cid){var c=find(cid);if(c){c.x=Math.min(gx,12-c.w);c.y=gy;render();scheduleSave();}}
+    });
+  }
+
+  // ── Firestore persistence (per user) ──
+  function _docRef(){
+    if(typeof db==='undefined'||!db) return null;
+    var u=(typeof auth!=='undefined'&&auth.currentUser)?auth.currentUser:null;
+    var org=(_PORTAL_WS&&_PORTAL_WS.orgId)||'default';
+    if(!u) return null;
+    return db.collection('dashboards').doc(org+'__'+u.uid);
+  }
+  function scheduleSave(){ clearTimeout(_saveT); _saveT=setTimeout(persist,600); }
+  function persist(){ var r=_docRef(); if(!r) return; r.set({layout:JSON.stringify(layout), updatedAt:(firebase.firestore.FieldValue.serverTimestamp?firebase.firestore.FieldValue.serverTimestamp():Date.now())},{merge:true}).catch(function(){}); }
+  function loadSaved(cb){
+    var r=_docRef(); if(!r){ cb&&cb(); return; }
+    r.get().then(function(doc){ if(doc&&doc.exists){ var raw=doc.data().layout; try{layout=raw?JSON.parse(raw):[];}catch(e){layout=[];} } cb&&cb(); }).catch(function(){ cb&&cb(); });
+  }
+
+  return {
+    mount:function(){
+      canvas=document.getElementById('bld-canvas'); palette=document.getElementById('bld-palette');
+      if(!canvas||!palette) return;
+      paintPalette(); wireCanvas(); loadSaved(function(){ /* view mode shows fixed dash; layout ready for edit */ });
+    },
+    toggle:function(){
+      editing=!editing;
+      document.body.classList.toggle('dash-editing',editing);
+      var btn=document.getElementById('edit-toggle-btn'); if(btn){ btn.classList.toggle('on',editing); btn.querySelector('.et-label').textContent=editing?'Done Editing':'Edit Dashboard'; }
+      if(editing){ render(); }
+    },
+    remove:function(id){ layout=layout.filter(function(c){return c.id!==id;}); render(); scheduleSave(); },
+    save:function(){ persist(); },
+    _state:function(){ return layout; },
+    _setAgg:function(a){ window._lastAgg=a; }
+  };
+})();
+
+window.addEventListener("DOMContentLoaded",function(){ if(window.DB) DB.mount(); });
 </script>
 </body>
 </html>
