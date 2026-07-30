@@ -26835,6 +26835,16 @@ function _geoStampShape(sh, toGeo, force){
         });
       });
     }
+    /* Patch 9: shapes whose SIZE is raw pixels (pts[0] + wPx/hPx) need the
+       size anchored too, not just the origin. Two stamped corners fully
+       determine position and extent at any zoom, without relying on the
+       footprint having been recorded in feet -- which _derBuildBlock does
+       not do, and which is why a DER-Build ground array tracked position
+       but never scaled. */
+    if(sh.pts && sh.pts.length===1 && sh.wPx>0 && sh.hPx>0 && (force || !sh._geoBR)){
+      var gbr=toGeo(sh.pts[0].x+sh.wPx, sh.pts[0].y+sh.hPx);
+      if(gbr) sh._geoBR={lat:gbr.lat, lng:gbr.lng};
+    }
     /* Tables carry only their CENTRE. Width and height come back from
        tableWft/tableHft x pxPerFt at reproject time, which is what makes
        the array scale with the map instead of staying a fixed pixel size. */
@@ -26890,6 +26900,24 @@ function _geoApplyShape(sh, toPx, ppf){
         T.x=pt.x-(T.w||0)/2;
         T.y=pt.y-(T.h||0)/2;
         if(gt.a!=null) T.a=gt.a;
+      }
+    }
+    /* Patch 9: rebuild wPx/hPx from the far-corner anchor. This is what
+       makes a plain rectangular array actually SCALE rather than merely
+       track. Skipped when a boundary exists, because the bbox block below
+       derives the size from the polygon instead. */
+    if(!sh.boundary && sh.pts && sh.pts.length===1 && sh.wPx>0){
+      if(sh._geoBR){
+        var pbr=toPx(sh._geoBR.lat, sh._geoBR.lng);
+        if(pbr){
+          sh.wPx=Math.max(1, pbr.x-sh.pts[0].x);
+          sh.hPx=Math.max(1, pbr.y-sh.pts[0].y);
+        }
+      } else if(ppf>0 && sh.wFt>0 && sh.hFt>0){
+        /* Older project saved before the corner anchor existed. The Solar
+           draw tool recorded feet, so the footprint is still recoverable. */
+        sh.wPx=sh.wFt*ppf;
+        sh.hPx=sh.hFt*ppf;
       }
     }
     /* The cached pixel bbox has to follow the boundary or the shape's own
@@ -26990,6 +27018,33 @@ window.OmegaAnchor = {
     if(window.console) console.info('[omega/anchor] restamped from current pixels');
     return r;
   },
+  /* Give every pixel-sized shape a corner anchor at the CURRENT view, so a
+     project drawn before Patch 9 starts scaling without being redrawn.
+     Run this once, at the zoom the site actually looks correct at. */
+  upgrade: function(){
+    var ms=(typeof _liveMapState==='function')?_liveMapState():null;
+    if(!ms){
+      if(window.console) console.warn('[omega/anchor] no live map \u2014 unlock the '
+        + 'plot, zoom so the site looks right, then run this again.');
+      return 0;
+    }
+    var sz=_getCanvasSize();
+    var toGeo=function(x,y){ return _pxToLatLng(x,y,ms,sz.w,sz.h); };
+    var n=0;
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh || sh.boundary) return;
+      if(!(sh.pts && sh.pts.length===1 && sh.wPx>0 && sh.hPx>0)) return;
+      var g=toGeo(sh.pts[0].x+sh.wPx, sh.pts[0].y+sh.hPx);
+      if(g){ sh._geoBR={lat:g.lat, lng:g.lng}; n++; }
+      if(!(sh.wFt>0) && S.pxPerFt>0){
+        sh.wFt=+(sh.wPx/S.pxPerFt).toFixed(2);
+        sh.hFt=+(sh.hPx/S.pxPerFt).toFixed(2);
+      }
+    });
+    try{ if(typeof pushHist==='function') pushHist(); }catch(e){}
+    if(window.console) console.info('[omega/anchor] corner-anchored '+n+' shape(s)');
+    return n;
+  },
   reproject: function(){
     if(typeof _geoReprojectAll==='function') _geoReprojectAll();
     if(window.console) console.info('[omega/anchor] reprojected from stored lat/lng');
@@ -27015,6 +27070,16 @@ window.OmegaAnchor = {
       r['derTotals() solar'] = raw;
       r['shapes'] = (S.shapes||[]).length;
       r['dersolar'] = (S.shapes||[]).filter(function(s){return s&&s.kind==='dersolar';}).length;
+      /* Patch 9: a pixel-sized shape with no corner anchor is one that will
+         track position but not scale. This is the row to look at when
+         something stays the same size on zoom. */
+      var noScale=(S.shapes||[]).filter(function(s){
+        return s && !s.boundary && s.pts && s.pts.length===1 && s.wPx>0
+                 && !s._geoBR && !(s.wFt>0);
+      });
+      r['cannot scale (no corner anchor, no feet)'] = noScale.length
+        ? noScale.map(function(s){ return s.kind+':'+s.id; }).join(', ')
+        : 'none';
     }catch(e){ r.error=e&&e.message; }
     if(window.console) console.table(r);
     return r;
@@ -27026,7 +27091,7 @@ window.OmegaAnchor = {
 function _geoClearAnchor(o){
   if(!o) return o;
   delete o._geoPts; delete o._geoC; delete o._geoBoundary;
-  delete o._geoExcl; delete o._geoTables;
+  delete o._geoExcl; delete o._geoTables; delete o._geoBR;
   delete o._geoLat; delete o._geoLng;
   return o;
 }
@@ -40741,8 +40806,14 @@ function placeDerBuildAt(p){
 function _derBuildBlock(cfg, spec, cx, cy, blkW, blkH, idx){
   var sh;
   if(cfg.src==='pv'){
+    /* Patch 9: record the footprint in FEET as well as pixels. Pixels are a
+       function of the zoom this block happened to be built at; feet are the
+       thing that is actually true about the site, and they give the
+       reprojector a fallback when no corner anchor exists yet. */
+    var _bppf=(S.pxPerFt||6);
     sh={ id:uid(), kind:'dersolar', mount:'ground', pts:[{x:cx,y:cy}], wPx:blkW, hPx:blkH,
-         sqft:Math.round((blkW/ (S.pxPerFt||6))*(blkH/(S.pxPerFt||6))), kw:spec.blockKw, color:SHAPE_STROKE };
+         wFt:+(blkW/_bppf).toFixed(2), hFt:+(blkH/_bppf).toFixed(2),
+         sqft:Math.round((blkW/_bppf)*(blkH/_bppf)), kw:spec.blockKw, color:SHAPE_STROKE };
   } else if(cfg.src==='wind'){
     sh={ id:uid(), kind:'derwind', windId:'wind_100', pts:[{x:cx+blkW/2,y:cy+blkH/2}], lf:14, wf:14,
          model:'Wind 100 kW', kw:spec.blockKw, rotorFt:70, color:SHAPE_STROKE };
