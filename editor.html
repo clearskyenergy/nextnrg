@@ -55116,101 +55116,417 @@ window._crmToastModal=_crmToastModal;
     } catch (e) { return null; }
   }
 
-  /* Orthogonal route: out of the source, along a mid corridor, into the
-     target. Diagonals do not belong on a one-line. */
-  function route(a, b) {
-    var x1 = a.x + a.w, y1 = a.y + a.h / 2;
-    var x2 = b.x, y2 = b.y + b.h / 2;
-    if (x2 < x1) { x1 = a.x; x2 = b.x + b.w; }
-    var mid = (x1 + x2) / 2;
-    return 'M' + x1 + ',' + y1 + ' H' + mid + ' V' + y2 + ' H' + x2;
+  /* ═══════════════════════════════════════════════════════════════════
+     E2.0 is a permit sheet, not a block diagram.
+
+     The generated topology is drawn INTO the same template the hand-built
+     one-line uses — bordered sheet with zone grid, full title block,
+     general notes, conductor schedule, sheet tab — instead of replacing
+     it. Power reads top to bottom: generation at the top, point of
+     interconnection at the bottom, drawn in IEEE symbols rather than
+     captioned rectangles.
+
+     Layout space here is local; the finished chain is fitted into the
+     drawing window with a single transform, so nothing floats in a
+     corner at half size regardless of sheet size.
+     ═══════════════════════════════════════════════════════════════════ */
+
+  var TB_W = 360;         /* title block width — must match _olTitleBlock */
+  var ROW_PITCH = 168;    /* vertical distance between one-line levels */
+  var COL_PITCH = 300;    /* horizontal distance between siblings        */
+
+  /* ── sheet field values, same ids the template reads ── */
+  function fields() {
+    function G(id, dflt) {
+      var v = '';
+      try { v = _olGet(id); } catch (e) {}
+      return (v === '' || v == null) ? (dflt === undefined ? '' : dflt) : v;
+    }
+    var proj = G('ol-project', 'PROJECT');
+    var brand = '';
+    try { brand = (typeof brandName === 'function') ? brandName() : ''; } catch (e) {}
+    var pwr = '';
+    try { pwr = (typeof poweredByLine === 'function') ? poweredByLine() : ''; } catch (e) {}
+    return {
+      project: proj,
+      developer: G('ol-developer', brand),
+      developer2: G('ol-developer2', pwr),
+      owner: G('ol-owner', proj),
+      addr: G('ol-addr'), apn: G('ol-apn'), eor: G('ol-eor'),
+      sysrating: G('ol-sysrating'),
+      sheetno: G('ol-sheetno', 'E2.0'),
+      sheettitle: G('ol-sheettitle', 'SINGLE LINE DIAGRAM-1'),
+      rev: G('ol-rev', '30% DESIGN'),
+      revdate: G('ol-revdate'), date: G('ol-date'),
+      designby: G('ol-designby'), checkedby: G('ol-checkedby'),
+      sysv: G('ol-sysv', '480V 3\u00d8 4W'),
+      poiv: G('ol-poiv'), ground: G('ol-ground'), aic: G('ol-aic'),
+      dcsize: G('ol-dcsize'), acsize: G('ol-acsize'),
+      pcsbrk: G('ol-pcsbrk'), feeder: G('ol-feeder'), mainbrk: G('ol-mainbrk')
+    };
   }
 
+  /* ── primitive helpers, black line work only ── */
+  function R(x, y, w, h, sw, dash) {
+    return '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1)
+      + '" width="' + w.toFixed(1) + '" height="' + h.toFixed(1)
+      + '" fill="#FFFFFF" stroke="#1a1a1a" stroke-width="' + (sw || 1.4) + '"'
+      + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/>';
+  }
+  function L(x1, y1, x2, y2, sw) {
+    return '<line x1="' + x1.toFixed(1) + '" y1="' + y1.toFixed(1)
+      + '" x2="' + x2.toFixed(1) + '" y2="' + y2.toFixed(1)
+      + '" stroke="#1a1a1a" stroke-width="' + (sw || 1.4) + '"/>';
+  }
+  function C(x, y, r, sw, fill) {
+    return '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + r
+      + '" fill="' + (fill || '#FFFFFF') + '" stroke="#1a1a1a" stroke-width="' + (sw || 1.4) + '"/>';
+  }
+  function T(x, y, t, sz, wt, an) {
+    return '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" font-size="' + (sz || 7)
+      + '" font-family="Arial" fill="#1a1a1a" text-anchor="' + (an || 'middle') + '"'
+      + (wt ? ' font-weight="' + wt + '"' : '') + '>' + esc(t) + '</text>';
+  }
+
+  /* ── IEEE-style symbol for each one-line device, drawn about (cx,cy).
+        Returns the glyph plus its half-extents so routing and label
+        placement have something real to work against. ── */
+  function sym(n, cx, cy) {
+    var type = (n && n.type) || '';
+    var lbl = String((n && n.label) || '');
+    var g = '', hw, ht, i;
+
+    /* A collector / MV bus is a bar, not a box. */
+    if (type === 'panel' && /\bBUS\b|COLLECT/i.test(lbl)) {
+      hw = 120; ht = 4;
+      g = L(cx - hw, cy, cx + hw, cy, 5);
+      return { g: g, hw: hw, ht: ht, ty: cy - ht, by: cy + ht, bus: true };
+    }
+
+    switch (type) {
+
+      case 'bess':                                   /* battery / ESS container */
+        hw = 30; ht = 46;
+        g = R(cx - hw, cy - ht, hw * 2, ht * 2);
+        for (i = 1; i < 5; i++) g += L(cx - hw, cy - ht + (ht * 2) * i / 5, cx + hw, cy - ht + (ht * 2) * i / 5, 0.7);
+        g += L(cx - hw, cy - ht + 6, cx + hw, cy - ht + 6, 0.7);
+        break;
+
+      case 'inv':                                    /* PCS / inverter: DC-AC   */
+        hw = 25; ht = 25;
+        g = R(cx - hw, cy - ht, 50, 50);
+        g += L(cx - hw, cy + ht, cx + hw, cy - ht, 1.2);
+        g += T(cx - 12, cy - 8, 'DC', 8);
+        g += T(cx + 12, cy + 17, 'AC', 8);
+        break;
+
+      case 'xfmr':                                   /* two-winding transformer */
+        hw = 15; ht = 27;
+        g = C(cx, cy - 11, 14) + C(cx, cy + 11, 14);
+        break;
+
+      case 'disco':                                  /* visible-break switch    */
+        hw = 16; ht = 26;
+        g = L(cx, cy - ht, cx, cy - 11)
+          + L(cx, cy - 11, cx + 14, cy + 7, 1.5)
+          + L(cx, cy + 11, cx, cy + ht)
+          + C(cx, cy - 11, 2.4, 1, '#1a1a1a')
+          + C(cx, cy + 11, 2.4, 1, '#1a1a1a');
+        break;
+
+      case 'meter':                                  /* revenue meter           */
+        hw = 16; ht = 16;
+        g = C(cx, cy, 15) + T(cx, cy + 4.5, 'M', 12, 700);
+        break;
+
+      case 'panel':                                  /* switchgear / MDP        */
+        hw = 68; ht = 19;
+        g = R(cx - hw, cy - ht, hw * 2, ht * 2, 1.6);
+        break;
+
+      case 'pcs':                                    /* EMS / SCADA / PPC       */
+        hw = 58; ht = 17;
+        g = R(cx - hw, cy - ht, hw * 2, ht * 2, 1.2, '5 3');
+        break;
+
+      case 'utility':                                /* point of interconnection */
+        hw = 7; ht = 7;
+        g = C(cx, cy, 5, 1.4, '#1a1a1a');
+        break;
+
+      case 'dersolar':                               /* PV array                */
+        hw = 34; ht = 24;
+        g = R(cx - hw, cy - ht, hw * 2, ht * 2);
+        for (i = 1; i < 4; i++) g += L(cx - hw + (hw * 2) * i / 4, cy - ht, cx - hw + (hw * 2) * i / 4, cy + ht, 0.7);
+        g += L(cx - hw, cy, cx + hw, cy, 0.7);
+        g += L(cx - hw + 6, cy - ht - 13, cx - hw + 17, cy - ht - 3, 1);
+        g += L(cx - hw + 13, cy - ht - 3, cx - hw + 17, cy - ht - 3, 1);
+        g += L(cx - hw + 17, cy - ht - 7, cx - hw + 17, cy - ht - 3, 1);
+        break;
+
+      case 'derwind':
+        hw = 16; ht = 26;
+        g = C(cx, cy - 10, 7) + L(cx, cy - 3, cx, cy + ht)
+          + L(cx, cy - 10, cx + 15, cy - 20, 1) + L(cx, cy - 10, cx - 13, cy - 18, 1)
+          + L(cx, cy - 10, cx - 2, cy + 6, 1);
+        break;
+
+      case 'dergen':
+        hw = 17; ht = 17;
+        g = C(cx, cy, 16) + T(cx, cy + 4.5, 'G', 12, 700);
+        break;
+
+      default:                                       /* panels, EVSE, misc      */
+        hw = 62; ht = 18;
+        g = R(cx - hw, cy - ht, hw * 2, ht * 2);
+        break;
+    }
+    return { g: g, hw: hw, ht: ht, ty: cy - ht, by: cy + ht };
+  }
+
+  /* Orthogonal route: down out of the source, across a mid corridor, into
+     the top of the target. Diagonals do not belong on a one-line. */
+  function route(a, b) {
+    var x1 = a.cx, y1 = a.by, x2 = b.cx, y2 = b.ty;
+    if (Math.abs(x1 - x2) < 0.8) return 'M' + x1.toFixed(1) + ',' + y1.toFixed(1) + ' V' + y2.toFixed(1);
+    var mid = (y1 + y2) / 2;
+    return 'M' + x1.toFixed(1) + ',' + y1.toFixed(1) + ' V' + mid.toFixed(1)
+      + ' H' + x2.toFixed(1) + ' V' + y2.toFixed(1);
+  }
+
+  /* Conduit facts for a generated circuit, read live off the drawing so the
+     schedule carries real lengths rather than whatever was cached when the
+     topology was built (synthesised runs carry none at all). */
+  function runInfo(w, byId) {
+    var a = byId[w.fromId], b = byId[w.toId];
+    var out = { service: '', ft: '', cond: '' };
+    var parts = String(w.label || '').split('  ');
+    out.service = parts[0] || '';
+    if (parts[1]) out.ft = String(parts[1]).replace(/\s*ft\s*$/i, '').trim();
+    try {
+      var S2 = (typeof S !== 'undefined' && S) ? S : null;
+      if (S2 && S2.conduits && a && b && a._srcId != null && b._srcId != null) {
+        for (var i = 0; i < S2.conduits.length; i++) {
+          var c = S2.conduits[i]; if (!c) continue;
+          var f = (c.fromId != null) ? c.fromId : c.fromElId;
+          var t = (c.toId != null) ? c.toId : c.toElId;
+          if (!((f === a._srcId && t === b._srcId) || (f === b._srcId && t === a._srcId))) continue;
+          if (c.condType) out.service = c.condType;
+          if (c.ftLen) out.ft = String(Math.round(c.ftLen * 10) / 10);
+          if (c.conduit) out.cond = c.conduit;
+          break;
+        }
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  /* ── the sheet ── */
   function renderSheet(sizeKey, withSched) {
     var sld = generated(); if (!sld) return null;
+
     var sheet = null, dpi = 96;
     try { sheet = OL_SHEETS[sizeKey] || OL_SHEETS.B; dpi = OL_DPI || 96; } catch (e) {}
     var W = (sheet ? sheet.w : 17) * dpi, H = (sheet ? sheet.h : 11) * dpi;
 
-    var nodes = sld.nodes, wires = sld.wires || [];
-    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    var nodes = (sld.nodes || []).slice(), wires = (sld.wires || []).slice();
+    if (!nodes.length) return null;
+    var d = fields();
+
+    /* ── 1. depth and sibling order come out of the generator's own grid ── */
+    var byId = {}, maxDepth = 0;
     nodes.forEach(function (n) {
-      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
-      maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
+      byId[n.id] = n;
+      n._d = Math.max(0, Math.round((n.x - 60) / 230));
+      n._i = Math.max(0, Math.round((n.y - 60) / 110));
+      if (n._d > maxDepth) maxDepth = n._d;
     });
-    if (!isFinite(minX)) return null;
 
-    var padL = 70, padT = 90, padR = 70, padB = withSched ? 230 : 90;
-    var availW = W - padL - padR, availH = H - padT - padB;
-    var k = Math.min(availW / Math.max(1, maxX - minX), availH / Math.max(1, maxY - minY), 1.6);
-    var offX = padL - minX * k + (availW - (maxX - minX) * k) / 2;
-    var offY = padT - minY * k + (availH - (maxY - minY) * k) / 2;
-    var X = function (v) { return (v * k + offX).toFixed(1); };
-    var Y = function (v) { return (v * k + offY).toFixed(1); };
+    /* Rows run source-to-load down the page: the generator's root is the
+       utility, so it belongs at the bottom of the sheet, not the top. */
+    var rows = {};
+    nodes.forEach(function (n) {
+      n._row = maxDepth - n._d;
+      (rows[n._row] = rows[n._row] || []).push(n);
+    });
+    Object.keys(rows).forEach(function (r) {
+      rows[r].sort(function (a, b) { return a._i - b._i; });
+    });
 
-    var s = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H
-      + '" viewBox="0 0 ' + W + ' ' + H + '">';
-    s += '<rect width="' + W + '" height="' + H + '" fill="#FFFFFF"/>';
-    s += '<rect x="24" y="24" width="' + (W - 48) + '" height="' + (H - 48)
-      + '" fill="none" stroke="#000" stroke-width="2"/>';
-    s += '<text x="44" y="58" font-family="Arial" font-size="20" font-weight="bold">'
-      + 'ELECTRICAL SINGLE LINE DIAGRAM</text>';
-    s += '<text x="44" y="76" font-family="Arial" font-size="10" fill="#333">'
-      + 'Generated from the site map \u2014 ' + nodes.length + ' equipment item(s), '
-      + wires.length + ' circuit(s)</text>';
+    /* ── 2. place, centred on a common bus axis ── */
+    var placed = [];
+    Object.keys(rows).forEach(function (r) {
+      var list = rows[r], k = list.length;
+      list.forEach(function (n, i) {
+        var cx = (i - (k - 1) / 2) * COL_PITCH;
+        var cy = (+r) * ROW_PITCH;
+        var sm = sym(n, cx, cy);
+        var p = { n: n, cx: cx, cy: cy, g: sm.g, hw: sm.hw, ht: sm.ht, ty: sm.ty, by: sm.by, row: +r, bus: !!sm.bus };
+        placed.push(p); n._p = p;
+      });
+    });
 
-    var byId = {};
-    nodes.forEach(function (n) { byId[n.id] = n; });
+    /* ── 3. draw: runs first, then symbols, then annotation ── */
+    var chain = '', minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    function bbox(x1, y1, x2, y2) {
+      if (x1 < minX) minX = x1; if (x2 > maxX) maxX = x2;
+      if (y1 < minY) minY = y1; if (y2 > maxY) maxY = y2;
+    }
 
-    /* wires first so boxes sit on top */
     wires.forEach(function (w) {
       var a = byId[w.fromId], b = byId[w.toId];
-      if (!a || !b) return;
-      var sa = { x: a.x * k + offX, y: a.y * k + offY, w: a.w * k, h: a.h * k };
-      var sb = { x: b.x * k + offX, y: b.y * k + offY, w: b.w * k, h: b.h * k };
-      s += '<path d="' + route(sa, sb) + '" fill="none" stroke="#000" stroke-width="1.6"/>';
-      if (w.label) {
-        var lx = (sa.x + sa.w + sb.x) / 2, ly = (sa.y + sa.h / 2 + sb.y + sb.h / 2) / 2 - 5;
-        s += '<text x="' + lx.toFixed(1) + '" y="' + ly.toFixed(1)
-          + '" font-family="Arial" font-size="9" text-anchor="middle" fill="#000">'
-          + esc(w.label) + '</text>';
+      if (!a || !b || !a._p || !b._p) return;
+      var up = (a._p.row <= b._p.row) ? a._p : b._p;
+      var dn = (up === a._p) ? b._p : a._p;
+      chain += '<path d="' + route(up, dn) + '" fill="none" stroke="#1a1a1a" stroke-width="1.6"/>';
+      bbox(Math.min(up.cx, dn.cx), up.by, Math.max(up.cx, dn.cx), dn.ty);
+
+      /* conductor callout beside the run, permit-set style */
+      var info = runInfo(w, byId);
+      var lines = [];
+      if (info.cond) lines.push('(N) ' + info.cond);
+      if (info.service) lines.push(String(info.service).toUpperCase());
+      if (info.ft) lines.push('APPROX ' + info.ft + ' FT');
+      if (lines.length) {
+        var lx = Math.max(up.cx, dn.cx) + 12;
+        var ly = (up.by + dn.ty) / 2 - (lines.length - 1) * 4.5;
+        for (var q = 0; q < lines.length; q++) chain += T(lx, ly + q * 9, lines[q], 6.5, 0, 'start');
+        bbox(lx, ly - 10, lx + 120, ly + lines.length * 9);
       }
     });
 
-    nodes.forEach(function (n) {
-      var bx = X(n.x), by = Y(n.y), bw = (n.w * k).toFixed(1), bh = (n.h * k).toFixed(1);
-      s += '<rect x="' + bx + '" y="' + by + '" width="' + bw + '" height="' + bh
-        + '" fill="#FFFFFF" stroke="#000" stroke-width="1.8"/>';
-      var lines = String(n.label || '').split('\n');
-      var cx = (+bx) + (+bw) / 2, cy = (+by) + (+bh) / 2 - (lines.length - 1) * 6;
-      lines.forEach(function (ln, i) {
-        s += '<text x="' + cx.toFixed(1) + '" y="' + (cy + i * 13).toFixed(1)
-          + '" font-family="Arial" font-size="' + (i ? 9 : 11) + '"'
-          + (i ? '' : ' font-weight="bold"') + ' text-anchor="middle">' + esc(ln) + '</text>';
-      });
+    placed.forEach(function (p) {
+      chain += p.g;
+      bbox(p.cx - p.hw, p.ty, p.cx + p.hw, p.by);
+
+      /* identity to the right of the glyph; flip left for the last column */
+      var lab = String(p.n.label || '').split('\n');
+      var sibs = rows[p.row] || [];
+      /* run callouts hang off the right of a run, so the rightmost device in
+         a shared row puts its identity on the left and stays clear of them */
+      var right = !(sibs.length > 1 && sibs[sibs.length - 1] === p.n);
+      var lx = right ? (p.cx + p.hw + 12) : (p.cx - p.hw - 12);
+      var an = right ? 'start' : 'end';
+      var ly = p.cy - (lab.length - 1) * 5 - 2;
+      if (p.bus) { lx = p.cx - p.hw; an = 'start'; ly = p.cy - 10 - (lab.length - 1) * 11; }
+      for (var i = 0; i < lab.length; i++) {
+        chain += T(lx, ly + i * 11, lab[i], i ? 7 : 8.5, i ? 0 : 700, an);
+      }
+      bbox(lx - (right ? 0 : 150), ly - 12, lx + (right ? 150 : 0), ly + lab.length * 11);
+
+      /* MDP / switchgear carries the grounding electrode conductor */
+      if (!p.bus && /MDP|MAIN|SWITCHGEAR|SWITCHBOARD|SERVICE/i.test(String(p.n.label || ''))) {
+        /* GEC hangs off the side opposite the identity text so the two
+           never overlap, whichever way the label was flipped */
+        var sgn = right ? -1 : 1;
+        var gx = p.cx + sgn * (p.hw + 30), gy = p.cy;
+        chain += L(p.cx + sgn * p.hw, gy, gx, gy, 1.2);
+        chain += L(gx, gy - 7, gx, gy + 7, 1.2);
+        chain += L(gx - 5, gy + 7, gx + 5, gy + 7, 1.2);
+        chain += L(gx - 2.5, gy + 11, gx + 2.5, gy + 11, 1.2);
+        bbox(Math.min(gx - 6, p.cx), gy - 10, Math.max(gx + 6, p.cx), gy + 14);
+      }
     });
 
-    if (withSched) {
-      var ty = H - 200;
-      s += '<text x="44" y="' + ty + '" font-family="Arial" font-size="12" font-weight="bold">CIRCUIT SCHEDULE</text>';
-      var cols = [44, 150, 430, 700, 900];
-      var hdr = ['TAG', 'FROM \u2192 TO', 'SERVICE', 'LENGTH'];
-      s += '<line x1="44" y1="' + (ty + 8) + '" x2="' + (W - 44) + '" y2="' + (ty + 8) + '" stroke="#000" stroke-width="1"/>';
-      hdr.forEach(function (h2, i) {
-        s += '<text x="' + cols[i] + '" y="' + (ty + 24) + '" font-family="Arial" font-size="9" font-weight="bold">' + h2 + '</text>';
-      });
-      wires.slice(0, 12).forEach(function (w, i) {
-        var a = byId[w.fromId], b = byId[w.toId]; if (!a || !b) return;
-        var yy = ty + 40 + i * 13;
-        var parts = String(w.label || '').split('  ');
-        var cells = ['C' + (i + 1),
-          String(a.label).split('\n')[0] + ' \u2192 ' + String(b.label).split('\n')[0],
-          parts[0] || '', parts[1] || ''];
-        cells.forEach(function (c2, j) {
-          s += '<text x="' + cols[j] + '" y="' + yy + '" font-family="Arial" font-size="8.5">' + esc(c2) + '</text>';
-        });
-      });
+    if (!isFinite(minX)) return null;
+
+    /* ── 4. sheet furniture, then fit the chain into what is left ── */
+    var s = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H
+      + '" viewBox="0 0 ' + W + ' ' + H + '" font-family="Arial, sans-serif">';
+    s += '<rect width="' + W + '" height="' + H + '" fill="#FFFFFF"/>';
+    try { s += _olBorder(W, H); } catch (e) {
+      s += R(26, 26, W - 52, H - 52, 1.8);
     }
+
+    var notes = [
+      '1. System: ' + (d.sysv || '') + (d.aic ? (', ' + d.aic + ' min.') : ''),
+      '2. ESS per NEC Art. 706; interconnection per Art. 705.',
+      '3. Utility-accessible lockable AC disconnect at POI.',
+      '4. All equipment grounded per NEC Art. 250' + (d.ground ? ('; ' + d.ground) : '') + '.',
+      '5. Rapid shutdown / disconnect labeling per NEC 706.15 / 690.12.',
+      '6. Conductors per schedule; verify AHJ / utility requirements.',
+      '7. UL 9540 / NFPA 855 listed energy storage equipment.',
+      '8. Diagram generated from the site plan; lengths are measured routes.'
+    ];
+
+    var schedRight = 44 + 650, ny = H - 430;
+
+    if (withSched) {
+      var heads = ['CABLE RUN', 'FROM', 'TO', 'SERVICE', 'L-L VOLTAGE', 'PH', 'MATERIAL',
+        'CONDUCTOR', 'CONDUIT', 'RUN LEN [ft]', 'OCP RATING', '# RUNS',
+        'VD LIMIT', 'VD [%]', 'GROUND'];
+      var runs = [];
+      wires.forEach(function (w, i) {
+        var a = byId[w.fromId], b = byId[w.toId]; if (!a || !b) return;
+        var info = runInfo(w, byId);
+        var svc = String(info.service || '');
+        var dc = /dc|batt/i.test(svc);
+        runs.push([
+          'C' + (i + 1),
+          String(a.label || '').split('\n')[0],
+          String(b.label || '').split('\n')[0],
+          svc.toUpperCase(),
+          dc ? '' : (d.sysv || ''),
+          dc ? '' : '3',
+          'Cu',
+          dc ? (d.dcsize || '') : (d.acsize || ''),
+          info.cond || '',
+          info.ft || '',
+          '', '1', '2%', '', d.ground || ''
+        ]);
+      });
+      if (!runs.length) runs.push(['\u2014', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+
+      var tx = 40, tW = W - TB_W - tx - 30, nCol = heads.length;
+      var cw = [], base = tW / (nCol + 1.6);
+      cw.push(base * 1.6); cw.push(base * 1.5); cw.push(base * 1.5);
+      for (var ci = 3; ci < nCol; ci++) cw.push((tW - cw[0] - cw[1] - cw[2]) / (nCol - 3));
+      var rowH = 19, headH = 32, tableH = headH + runs.length * rowH;
+      var ty2 = (H - 26) - 30 - tableH;
+      schedRight = tx + tW;
+
+      s += T(tx, ty2 - 8, 'CONDUCTOR SCHEDULE', 13, 700, 'start');
+      var hx = tx;
+      for (var h = 0; h < nCol; h++) {
+        s += '<rect x="' + hx.toFixed(1) + '" y="' + ty2.toFixed(1) + '" width="' + cw[h].toFixed(1)
+          + '" height="' + headH + '" fill="#e8e8e8" stroke="#1a1a1a" stroke-width="0.75"/>';
+        var hwds = heads[h].split(' '), l1 = hwds[0], l2 = hwds.slice(1).join(' ');
+        s += T(hx + cw[h] / 2, ty2 + 13, l1, 6.5, 700);
+        if (l2) s += T(hx + cw[h] / 2, ty2 + 24, l2, 6.5, 700);
+        hx += cw[h];
+      }
+      for (var r2 = 0; r2 < runs.length; r2++) {
+        var ry = ty2 + headH + r2 * rowH, rx = tx;
+        for (var c3 = 0; c3 < nCol; c3++) {
+          s += '<rect x="' + rx.toFixed(1) + '" y="' + ry.toFixed(1) + '" width="' + cw[c3].toFixed(1)
+            + '" height="' + rowH + '" fill="none" stroke="#1a1a1a" stroke-width="0.4"/>';
+          var cell = runs[r2][c3] || '';
+          if (String(cell).length > 22) cell = String(cell).slice(0, 21) + '\u2026';
+          s += T(c3 === 0 ? rx + 4 : rx + cw[c3] / 2, ry + 12.5, cell, 6.8,
+            c3 === 0 ? 600 : 0, c3 === 0 ? 'start' : 'middle');
+          rx += cw[c3];
+        }
+      }
+      ny = ty2 - 8 - 24 - (notes.length * 19) - 24;
+    }
+
+    s += T(44, ny, 'GENERAL NOTES', 15, 700, 'start');
+    for (var n3 = 0; n3 < notes.length; n3++) s += T(44, ny + 24 + n3 * 19, notes[n3], 11, 0, 'start');
+
+    /* drawing window: left of the title block, above the notes */
+    var drawL = 48, drawR = W - TB_W - 56;
+    var drawT = 52, drawB = ny - 34;
+    var usedW = Math.max(1, maxX - minX), usedH = Math.max(1, maxY - minY);
+    var sc = Math.min((drawR - drawL) / usedW, (drawB - drawT) / usedH);
+    if (sc > 3.2) sc = 3.2; if (sc < 0.15) sc = 0.15;
+    var txf = (drawL + drawR) / 2 - ((minX + maxX) / 2) * sc;
+    var tyf = (drawT + drawB) / 2 - ((minY + maxY) / 2) * sc;
+    s += '<g transform="translate(' + txf.toFixed(2) + ',' + tyf.toFixed(2)
+      + ') scale(' + sc.toFixed(4) + ')">' + chain + '</g>';
+
+    try { s += _olTitleBlock(W, H, d); } catch (e) {}
+    try { s += _olSheetTab(H, d, schedRight); } catch (e) {}
+
     s += '</svg>';
     return s;
   }
