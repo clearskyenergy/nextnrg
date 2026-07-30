@@ -6037,7 +6037,8 @@ function _setScaleFromZoomLat(zoom, lat){
     S.shapes.forEach(function(sh){ renderShape(sh); });
     if(typeof updShapeCount==='function') updShapeCount();
   }
-  if(S.conduits){ S.conduits.forEach(function(c){ c.ftLen=+(c.pxLen/S.pxPerFt).toFixed(1);
+  if(S.conduits){ S.conduits.forEach(function(c){
+    if(!c._geoPts) c.ftLen=+(c.pxLen/S.pxPerFt).toFixed(1);   /* see _gmapAutoScale */
     var el=document.querySelector('[data-cid="'+c.id+'"]'); if(el) el.remove(); renderConduit(c); }); }
   if(typeof updCondStat==='function') updCondStat();
   if(typeof updateRuler==='function') updateRuler();
@@ -6087,7 +6088,12 @@ function _gmapAutoScale() {
   }
   // Recalc all conduit lengths
   S.conduits.forEach(c => {
-    c.ftLen = +(c.pxLen / pxPerFt).toFixed(1);
+    /* zoom_changed fires BEFORE idle/bounds_changed, so at this instant a
+       geo-anchored run's points are still at the PREVIOUS projection.
+       Measuring here would divide last zoom's pxLen by this zoom's scale.
+       _geoReprojectAll() owns those runs and measures them once the points
+       have actually moved. Pixel-only runs (no site loaded) still recalc. */
+    if(!c._geoPts) c.ftLen = +(c.pxLen / pxPerFt).toFixed(1);
     document.querySelector('[data-cid="'+c.id+'"]')?.remove();
     renderConduit(c);
   });
@@ -9712,14 +9718,31 @@ function _calloutOffset(c){
    skip their own halo.
    ══════════════════════════════════════════════════════════════════════ */
 
-/* Tolerance (px) for treating two runs as sharing a trench. */
-var CORRIDOR_TOL = 26;
+/* Tolerance for treating two runs as sharing a trench.
+
+   Whether two conduits share one trench is a fact about the site, so the
+   test belongs in feet. Held as a fixed 26 px it was a question about the
+   view instead: the same drawing reported "2 shared corridors" at one zoom
+   and "1 shared" at the next, and the trench quantity on the schedule moved
+   with it. 8 ft is about what 26 px meant at a normal working zoom, so
+   existing drawings group the way they did. Override with
+   window.CORRIDOR_TOL_FT if a site wants it tighter or looser. */
+var CORRIDOR_TOL_FT = 8;
+var CORRIDOR_TOL = 26;            /* fallback: unscaled site, px as before */
+function _corridorTolPx(){
+  try{
+    var ft = (typeof window!=='undefined' && +window.CORRIDOR_TOL_FT>0)
+      ? +window.CORRIDOR_TOL_FT : CORRIDOR_TOL_FT;
+    var p = (typeof S!=='undefined' && S.pxPerFt>0) ? S.pxPerFt : 0;
+    return p ? Math.max(4, ft*p) : CORRIDOR_TOL;
+  }catch(e){ return CORRIDOR_TOL; }
+}
 
 /* Do two routes coincide closely enough to share one trench? Compares the
    polyline vertex-for-vertex; different vertex counts mean different routes. */
 function _routesCoincide(a, b, tol){
   if(!a || !b || a.length !== b.length) return false;
-  var t = tol || CORRIDOR_TOL;
+  var t = tol || _corridorTolPx();
   for(var i=0;i<a.length;i++){
     if(Math.abs(a[i].x-b[i].x) > t) return false;
     if(Math.abs(a[i].y-b[i].y) > t) return false;
@@ -23386,6 +23409,16 @@ function _geoReprojectAll(){
       for(var j=0;j<c.pts.length && j<c._geoPts.length;j++){
         var g2=c._geoPts[j]; if(!g2) continue;
         var px2=toPx(g2.lat,g2.lng); if(px2){ c.pts[j].x=px2.x; c.pts[j].y=px2.y; }
+      }
+      /* The points just moved, so the pixel length they imply moved with
+         them. pxLen is assigned only on explicit draw/edit paths — never
+         on pan or zoom — so without this it stays frozen at the zoom the
+         run was DRAWN at while _gmapAutoScale() keeps dividing it by the
+         CURRENT pxPerFt. That mismatch is why a length doubles every time
+         you zoom out one level and halves every time you zoom in. */
+      if(c.pts.length>1 && typeof _polyLen==='function'){
+        c.pxLen=_polyLen(c.pts);
+        if(S.pxPerFt>0) c.ftLen=+(c.pxLen/S.pxPerFt).toFixed(1);
       }
     });
     /* Repaint shapes + conduits now that their points moved. */
