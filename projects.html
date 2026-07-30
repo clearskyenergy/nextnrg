@@ -159,6 +159,360 @@ body{overflow-x:hidden}
   .mbtns{flex-direction:column-reverse}
   .mbtns button{width:100%;padding:13px}
 }
+
+
+/* ═══════════════════ DASHBOARD POLISH v2 — tighter · brighter · crisp ═══════════════════ */
+:root{
+  --pol-border:#E1E6EC;
+  --pol-border-strong:#CFD7E0;
+  --pol-shadow:0 1px 2px rgba(16,40,64,.04), 0 3px 10px rgba(16,40,64,.05);
+  --pol-shadow-hover:0 2px 6px rgba(16,40,64,.06), 0 12px 26px rgba(16,40,64,.12);
+  --pol-blue:#0070F2;
+  --pol-teal:#00A9A4;
+}
+
+/* Brighter page — a cleaner near-white instead of flat gray */
+body{background:#F4F6F8}
+
+/* ── Section rhythm & headers ── */
+#developer-view .block-head,#developer-view .widgets-head,#developer-view .sec-head{margin-top:32px}
+#developer-view > .block-head:first-of-type{margin-top:22px}
+.block-title{letter-spacing:-.2px;position:relative;padding-left:12px}
+.block-title::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:4px;height:15px;border-radius:3px;background:linear-gradient(180deg,var(--pol-blue),var(--pol-teal))}
+.block-sub{color:var(--sap-ink-2)}
+.block-head .view-all{align-self:center;white-space:nowrap;font-weight:600}
+.dash-welcome{letter-spacing:-.6px}
+
+/* ── Applications: grouped card, tighter ── */
+#developer-view .platform-map{margin-top:12px}
+.pm-col.wide{background:#fff;border:1px solid var(--pol-border);border-radius:16px;padding:18px;
+  box-shadow:var(--pol-shadow)}
+.pm-col.wide .pm-grid{margin:0;gap:14px}
+
+/* ── Overview strip (Sites Under Control row): tighter, brighter numbers ── */
+.ov-strip{border:1px solid var(--pol-border) !important;box-shadow:var(--pol-shadow) !important;
+  border-radius:16px !important;padding:20px 8px !important}
+.ov-val{font-size:34px !important;font-weight:600 !important;letter-spacing:-1.2px;
+  background:linear-gradient(180deg,#0F2733,#33475B);-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent}
+.ov-label{font-size:12px;margin-top:6px}
+
+/* ── KPI cards: tighter, crisper, subtle color accent, hover lift ── */
+.kpi-grid{gap:14px}
+.kpi{border:1px solid var(--pol-border) !important;border-radius:14px !important;
+  padding:15px 16px !important;box-shadow:var(--pol-shadow) !important;
+  transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease}
+.kpi:hover{transform:translateY(-2px);box-shadow:var(--pol-shadow-hover) !important;
+  border-color:var(--pol-border-strong) !important}
+.kpi::before{width:3px !important;opacity:1 !important;border-radius:14px 0 0 14px}
+.kpi-label{font-size:10.5px !important;letter-spacing:.5px;min-height:24px !important;color:var(--sap-ink-2) !important}
+.kpi-val{font-size:23px !important;letter-spacing:-.6px;margin-top:4px !important}
+
+/* ── Widget cards + pipeline + tables: unified soft depth + hover ── */
+.wg-card,.pipeline,.table-wrap,.th-card,.pp-dev-card,.actions-panel{
+  border:1px solid var(--pol-border) !important;box-shadow:var(--pol-shadow) !important}
+.wg-card,.pp-dev-card{transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease}
+.wg-card:hover,.pp-dev-card:hover{transform:translateY(-2px);
+  box-shadow:var(--pol-shadow-hover) !important;border-color:var(--pol-border-strong) !important}
+.wg-card{min-height:280px !important}
+
+/* Pipeline: a touch tighter */
+.pipeline{padding:20px !important}
+.pipe-stage.filled .pipe-dot,.pipe-stage.submitted .pipe-dot,.pipe-stage.online .pipe-dot{
+  box-shadow:0 0 0 4px rgba(0,112,242,.12),0 1px 3px rgba(16,40,64,.18)}
+
+/* ── Quick Access tiles: brighter, crisp, hover ── */
+.quick-link{border:1px solid var(--pol-border) !important;box-shadow:var(--pol-shadow) !important;
+  transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease}
+.quick-link:hover{transform:translateY(-2px);box-shadow:var(--pol-shadow-hover) !important;
+  border-color:var(--pol-blue) !important}
+.ql-icon{color:var(--pol-blue)}
+
+/* ── Portfolio table: cleaner rows ── */
+.ptable thead th{background:#F6F8FA !important;letter-spacing:.4px;color:var(--sap-ink-2) !important}
+.ptable tbody tr{transition:background .12s ease}
+.ptable tbody tr:hover{background:#F2F7FF !important}
+.ptable tbody td{border-bottom:1px solid #EDF0F4 !important}
+
+/* Application tiles inside the dashboard grid: crisp + hover lift */
+.pm-tile{transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease}
+.pm-tile:hover{transform:translateY(-2px);box-shadow:var(--pol-shadow-hover) !important}
+
+/* Ownership banner ("5 projects have no owner"): softer, brighter */
+.owner-banner,.assign-banner{border-radius:12px !important}
+
+/* Toggle buttons crisper */
+.block-toggle{box-shadow:var(--pol-shadow) !important;border-color:var(--pol-border) !important}
+.block-toggle:hover{border-color:var(--pol-blue) !important}
+/* ══════════════════════ MOBILE ══════════════════════ */
+html{-webkit-text-size-adjust:100%}
+body{overflow-x:hidden}
+
+/* ── AUTH SCREEN ── */
+@media (max-width:520px){
+  #auth-screen{align-items:flex-start;padding:24px 14px 40px;min-height:100vh;min-height:100dvh;overflow-y:auto}
+  .auth-card{width:100%;max-width:none;padding:34px 22px;border-radius:16px}
+  .auth-logo img{height:44px !important}
+  .auth-company{font-size:19px}
+  .auth-sub{font-size:12.5px;margin-bottom:24px}
+  .auth-field input{font-size:16px;padding:13px 14px}
+  .btn-email,.btn-google{padding:15px 18px;font-size:15px}
+  .auth-note{font-size:10.5px}
+}
+
+/* Drawer-only controls (name + Account/Sign-out) hidden on desktop; shown inside the mobile drawer via the max-width:900px block below. */
+.tb-drawer-who,.tb-drawer-actions{display:none}
+
+/* ── TOPBAR + HAMBURGER ── */
+.tb-burger{display:none;background:#fff;border:1px solid var(--sap-bar-border);border-radius:8px;
+  width:38px;height:38px;align-items:center;justify-content:center;cursor:pointer;flex:none;padding:0}
+.tb-burger svg{width:20px;height:20px;stroke:var(--sap-ink);stroke-width:2;fill:none;stroke-linecap:round}
+.tb-scrim{position:fixed;inset:0;background:rgba(8,25,40,.5);z-index:999;opacity:0;pointer-events:none;
+  transition:opacity .2s}
+.tb-scrim.open{opacity:1;pointer-events:auto}
+
+@media (max-width:900px){
+  #topbar{height:54px;padding:0 12px;gap:8px}
+  .tb-burger{display:flex}
+  .tb-sep,.tb-portal,.tb-ent-badge{display:none}
+  .tb-client{margin-left:0;min-width:0}
+  .tb-client-chip{height:30px;padding:3px 7px;max-width:150px;overflow:hidden}
+  .tb-client-chip img{height:20px}
+  .tb-client-txt{font-size:12px;overflow:hidden;text-overflow:ellipsis}
+  .tb-logo img[alt="SUN Energy Solutions"]{display:none}
+  .tb-name{display:none}
+
+  .tb-nav{position:fixed !important;top:0 !important;right:0;bottom:0;left:auto;
+    width:270px;max-width:82vw;height:100vh;height:100dvh;
+    background:#ffffff !important;background-color:#ffffff !important;
+    flex-direction:column;align-items:stretch;gap:0;margin:0;padding:64px 0 20px;
+    box-shadow:-8px 0 30px rgba(0,0,0,.28);transform:translateX(100%);transition:transform .24s ease;
+    z-index:1000 !important;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    opacity:1 !important;backdrop-filter:none}
+  .tb-nav.open{transform:translateX(0)}
+  .tb-tab{height:auto;padding:15px 22px;border-bottom:1px solid var(--sap-bar-border);
+    border-left:3px solid transparent;font-size:15px;justify-content:flex-start;gap:12px}
+  .tb-tab.active{border-bottom-color:var(--sap-bar-border);border-left-color:var(--sap-blue);
+    background:rgba(0,112,242,.06)}
+  .tb-tab svg{width:18px;height:18px}
+  .tb-nav .tb-drawer-actions{padding:16px 22px;display:flex;flex-direction:column;gap:10px}
+  .tb-nav .tb-drawer-actions button{width:100%;padding:12px;font-size:14px;border-radius:9px}
+  .tb-nav .tb-drawer-who{display:block;padding:0 22px 12px;font-size:12px;color:var(--sap-ink-2);
+    word-break:break-all;border-bottom:1px solid var(--sap-bar-border);margin-bottom:14px}
+  .tb-user .btn-signout{display:none}
+  .tb-spacer{flex:1}
+}
+
+/* ── LAYOUT / CONTENT ── */
+@media (max-width:900px){
+  #main{padding:22px 14px 56px}
+  .dash-welcome{font-size:24px}
+  .dash-sub{font-size:13.5px}
+  .dash-positioning{font-size:12px}
+  .block-head{flex-direction:column;align-items:flex-start;gap:10px;margin:26px 0 12px}
+  .widgets-head .block-title{font-size:19px}
+  .wg-row{grid-template-columns:1fr}
+  .dash-cols{grid-template-columns:1fr}
+  .platform-map{grid-template-columns:1fr;gap:20px}
+  .pm-col.wide .pm-grid{grid-template-columns:repeat(2,1fr)}
+  .quick-row{grid-template-columns:repeat(2,1fr)}
+  .team-grid{grid-template-columns:1fr}
+  .pp-dev-grid{grid-template-columns:1fr}
+  .convo-wrap{flex-direction:column}
+  .convo-list{width:auto;border-right:none;border-bottom:1px solid var(--cs-border);max-height:220px}
+  .convo-thread{max-height:260px}
+  .th-body{max-height:300px}
+}
+
+@media (max-width:600px){
+  #main{padding:18px 12px 48px}
+  .dash-welcome{font-size:21px}
+  .dash-banner{height:112px}
+  .dash-banner-txt{max-width:80%;left:16px}
+  .dash-banner-txt h2{font-size:15px}
+  .dash-banner-txt p{font-size:11px}
+
+  .ov-strip{display:grid;grid-template-columns:1fr 1fr;gap:18px 0;padding:20px 4px}
+  .ov-cell{flex:none;padding:0 10px}
+  .ov-cell::before{display:none !important}
+  .ov-val{font-size:28px}
+  .ov-label{font-size:12px;margin-top:8px}
+
+  .kpi-grid{grid-template-columns:1fr 1fr;gap:10px}
+  .kpi{padding:13px 14px}
+  .kpi-label{font-size:10px;min-height:26px}
+  .kpi-val{font-size:21px}
+
+  .pipeline{padding:16px 12px}
+  .pipe-track{grid-template-columns:1fr 1fr;gap:14px}
+  .pipe-num{font-size:19px}
+
+  .quick-row{grid-template-columns:1fr}
+  .pm-col.wide .pm-grid,.pm-grid{grid-template-columns:1fr}
+
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .ptable{min-width:820px}
+  .imp-table{min-width:760px}
+
+  .th-compose-row{flex-wrap:wrap}
+  .th-select,.th-date{flex:1 1 100%}
+  .th-send{width:100%}
+  .th-input{font-size:16px}
+
+  .modal,.acct-modal,.convo-modal{width:100% !important;max-width:100%;border-radius:16px 16px 0 0;
+    max-height:92vh;max-height:92dvh;padding:22px 18px}
+  .modal-bg,.acct-overlay,.convo-modal-overlay{align-items:flex-end;padding:0}
+  .mrow input,.mrow select,.acct-field input,.modal textarea{font-size:16px}
+  .mrow[style*="flex"]{flex-direction:column !important;gap:0 !important}
+  .mbtns{flex-direction:column-reverse}
+  .mbtns button{width:100%;padding:13px}
+  #video-modal .modal{border-radius:14px;margin:0 10px}
+
+  .imp-filters{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+  .fpill{flex:none}
+  .claim-row{flex-wrap:wrap}
+  .claim-nm{flex:1 1 100%}
+}
+
+@media (max-width:400px){
+  .ov-strip{grid-template-columns:1fr}
+  .kpi-grid{grid-template-columns:1fr}
+  .pipe-track{grid-template-columns:1fr}
+}
+
+/* -- DRAWER: reparented to document body, escapes #topbar stacking context -- */
+@media (max-width:900px){
+  body > .tb-nav{
+    position:fixed;top:0;right:0;bottom:0;left:auto;
+    width:270px;max-width:82vw;height:100vh;height:100dvh;
+    background:#fff;
+    display:flex;flex-direction:column;align-items:stretch;
+    margin:0;padding:64px 0 20px;
+    box-shadow:-8px 0 30px rgba(0,0,0,.28);
+    transform:translateX(100%);transition:transform .24s ease;
+    z-index:100000 !important;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  }
+  body > .tb-nav.open{transform:translateX(0)}
+  body > .tb-scrim{z-index:99999}
+  /* Opaque fill painted inside the drawer, behind its own content.
+     Immune to whatever was making the element background composite oddly. */
+  body > .tb-nav::before{
+    content:'';position:absolute;inset:0;
+    background:#fff;z-index:0;pointer-events:none}
+  body > .tb-nav > *{position:relative;z-index:1}
+}
+
+/* ═══════════ MY APPLICATIONS — uniform grid (cap 6) ═══════════ */
+/* Fixed 3-across grid; equal-height rows so pinned & removable cards align. */
+.pm-col.wide .pm-grid{grid-template-columns:repeat(3,1fr);grid-auto-rows:1fr;gap:16px}
+@media (max-width:1100px){ .pm-col.wide .pm-grid{grid-template-columns:repeat(2,1fr)} }
+@media (max-width:620px){ .pm-col.wide .pm-grid{grid-template-columns:1fr} }
+
+/* Every app tile is the same height; content top-aligned, action pinned to bottom. */
+.pm-col.wide .pm-tile{
+  height:100%;min-height:210px;display:flex;flex-direction:column;
+  border:1px solid var(--pol-border,#E1E6EC);border-radius:14px;padding:18px;
+  box-shadow:var(--pol-shadow);background:#fff}
+.pm-col.wide .pm-tile .pm-open{flex:1 1 auto;display:flex;flex-direction:column}
+.pm-col.wide .pm-tile .pm-desc{flex:1 1 auto}          /* description absorbs slack */
+.pm-col.wide .pm-tile .pin-btn{margin-top:14px}        /* button always at the bottom edge */
+
+/* Cap toast (reuses pm-toast) */
+.pm-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(12px);
+  background:#0F2733;color:#fff;padding:11px 18px;border-radius:10px;font:600 13px/1.3 'DM Sans',sans-serif;
+  box-shadow:0 10px 30px rgba(16,40,64,.3);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:600;max-width:90vw}
+.pm-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ═══════════════ TEAM & MESSAGES LEFT RAIL ═══════════════ */
+/* Two-column shell: narrow sticky rail on the left, dashboard fills the right. */
+#developer-view{display:grid;grid-template-columns:minmax(420px,520px) minmax(0,1fr);gap:28px;align-items:start}
+#developer-view > .sw{grid-column:1;grid-row:1}
+#dev-main{grid-column:2;grid-row:1;min-width:0}
+
+.tm-rail{position:sticky;top:78px;align-self:start}
+.tm-panel{background:#fff;border:1px solid var(--pol-border,#E1E6EC);border-radius:16px;
+  box-shadow:var(--pol-shadow);overflow:hidden;display:flex;flex-direction:column;
+  max-height:calc(100vh - 100px)}
+.tm-panel-head{padding:14px 16px 10px;border-bottom:1px solid var(--pol-border,#E1E6EC)}
+.tm-panel-title{font:700 14px/1 'DM Sans',sans-serif;color:var(--cs-navy,#08384F);letter-spacing:-.2px}
+.tm-tabs{display:flex;gap:2px;padding:8px 8px 0;background:#FAFBFC;border-bottom:1px solid var(--pol-border,#E1E6EC)}
+.tm-tab{flex:1;padding:9px 6px;border:none;background:none;cursor:pointer;
+  font:600 12px/1 'DM Sans',sans-serif;color:var(--sap-ink-2,#556B82);border-radius:8px 8px 0 0;
+  border-bottom:2px solid transparent;transition:color .12s,border-color .12s}
+.tm-tab:hover{color:var(--cs-navy,#08384F)}
+.tm-tab.active{color:var(--sap-blue,#0070F2);border-bottom-color:var(--sap-blue,#0070F2);background:#fff}
+.tm-body{flex:1;overflow-y:auto;padding:14px;-webkit-overflow-scrolling:touch}
+.tm-pane{display:none}
+.tm-pane.active{display:block}
+
+/* Panes: strip the inner card chrome since the rail IS the card now */
+.tm-pane .th-card{border:none !important;box-shadow:none !important;padding:0 !important;background:none !important;min-height:0 !important}
+.tm-pane .th-head{padding:0 0 10px !important}
+.tm-pane .th-body{max-height:none !important}
+.tm-pane .convo-card .convo-wrap{flex-direction:column}
+.tm-pane .convo-list{width:auto !important;border-right:none !important;border-bottom:1px solid var(--cs-border,#DDD8D0);max-height:200px}
+.tm-pane .convo-thread{min-height:220px}
+.tm-pane .th-users .th-body{max-height:none}
+
+/* Messages pane: stack the two panes vertically inside the narrow rail */
+.tm-pane[data-tm-pane="msgs"] .convo-wrap{display:flex;flex-direction:column;gap:12px}
+
+/* On narrower screens, drop the rail below the content (full width) */
+@media (max-width:1080px){
+  #developer-view{grid-template-columns:1fr}
+  #developer-view > .sw{grid-column:1;grid-row:2}
+  #dev-main{grid-column:1;grid-row:1}
+  .tm-panel{max-height:none}
+  .tm-body{max-height:560px}
+}
+#app{display:flex;align-items:stretch;min-height:100vh}
+#side-nav{width:212px;flex:none;background:#0B2A3D;color:#C9D6E2;display:flex;flex-direction:column;
+  position:sticky;top:0;height:100vh;overflow:hidden;z-index:60}
+#app-body{flex:1;min-width:0;display:flex;flex-direction:column}
+/* topbar no longer needs the horizontal nav tabs on desktop */
+#app-body #topbar{position:sticky;top:0;z-index:50}
+@media (min-width:901px){ #app-body .tb-nav{display:none !important} }  /* nav moved to sidebar */
+
+.sn-head{padding:16px 16px 12px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sn-logo-txt{display:block;font:700 16px/1.1 'DM Sans',sans-serif;color:#fff}
+.sn-sub{display:block;font-size:11px;color:#7E93A6;margin-top:3px;letter-spacing:.3px}
+.sn-scroll{flex:1;overflow-y:auto;padding:10px 8px 20px}
+.sn-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border:none;background:none;cursor:pointer;
+  color:#C9D6E2;font:500 13.5px/1 'DM Sans',sans-serif;border-radius:8px;text-align:left;text-decoration:none;
+  transition:background .1s,color .1s;margin-bottom:2px}
+.sn-item svg{width:17px;height:17px;flex:none;opacity:.85}
+.sn-item span{flex:1}
+.sn-item:hover{background:rgba(255,255,255,.08);color:#fff}
+.sn-item.active{background:#1264A3;color:#fff}
+.sn-item.active svg{opacity:1}
+.sn-caret{width:14px !important;height:14px !important;transition:transform .18s}
+.sn-toggle[aria-expanded="true"] .sn-caret{transform:rotate(180deg)}
+.sn-subnav{max-height:0;overflow:hidden;transition:max-height .22s ease;padding-left:8px}
+.sn-subnav.open{max-height:420px}
+.sn-app{display:flex;align-items:center;gap:9px;padding:7px 12px 7px 26px;color:#A9BCCC;text-decoration:none;
+  font:500 12.5px/1.2 'DM Sans',sans-serif;border-radius:7px;transition:background .1s,color .1s}
+.sn-app:hover{background:rgba(255,255,255,.07);color:#fff}
+.sn-app .sn-app-dot{width:6px;height:6px;border-radius:50%;background:#00A9A4;flex:none}
+.sn-divider{height:1px;background:rgba(255,255,255,.08);margin:12px 8px}
+.sn-section-label{font-size:10.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:rgba(201,214,226,.5);padding:2px 12px 8px}
+
+/* Kill wasted space: developer-view no longer a 2-col grid with a floating rail */
+#developer-view{display:block !important}
+#developer-view > .sw{margin-top:20px}
+#dev-main{width:auto}
+
+/* Dense content: tighten main padding */
+#app-body #main{max-width:none;padding:28px 32px 56px}
+
+/* Mobile: sidebar collapses; the existing hamburger drawer handles nav */
+@media (max-width:900px){
+  #app{flex-direction:column}
+  #side-nav{display:none}   /* mobile uses the top hamburger drawer instead */
+  #app-body #main{padding:20px 14px 48px}
+}
+@media (min-width:901px){ #app-body .tb-nav{display:none !important} }
+#app-body #main{max-width:none}
 </style>
 </head>
 <body>
@@ -197,6 +551,29 @@ window._omegaReady = function(){
   setTimeout(function(){ if (el && el.parentNode) el.parentNode.removeChild(el); }, 320);
 };
 </script>
+<div id="app">
+  <nav id="side-nav">
+    <div class="sn-head">
+      <span class="sn-logo-txt">NextNRG</span>
+      <span class="sn-sub">EnergyOS</span>
+    </div>
+    <div class="sn-scroll">
+      <a class="sn-item" data-sn="dashboard" href="/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span>Dashboard</span>
+      </a>
+      <a class="sn-item active" data-sn="projects" href="/projects.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span>Projects</span>
+      </a>
+      <a class="sn-item " data-sn="marketplace" href="/marketplace.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l1-5h16l1 5"/><path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><path d="M9 22V12h6v10"/></svg>
+        <span>Marketplace</span>
+      </a>
+    </div>
+  </nav>
+
+  <div id="app-body">
 <div id="topbar">
   <a href="/" class="tb-logo">
     <img src="/clearsky-omega-mark-white.png" alt="OMEGA" class="tb-omega" onerror="this.style.display='none'">
@@ -252,6 +629,8 @@ window._omegaReady = function(){
     <div class="loading"><div class="spin"></div> Loading projects…</div>
   </div>
 </div>
+  </div><!-- /#app-body -->
+</div><!-- /#app -->
 
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
