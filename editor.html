@@ -23011,7 +23011,11 @@ function _d4GenFin(){
     var omAnn=0; try{ omAnn=(+($v('ce-om')||12941))+(+(window._EMS_ANNUAL||0)); }catch(e){}
     var net=window._NET_COST||window._COST_TOTAL||0;
     var lcoe=(y && typeof omegaLcoe==='function') ? omegaLcoe(net, y.kwh, omAnn, 25) : null;
+    var _bf=omegaBessFleet();
     r.push(['BESS power', bKw||'', 'kW']);
+    r.push(['BESS energy', omegaBessKwh()||'', 'kWh']);
+    r.push(['BESS units', _bf.units||'', '']);
+    r.push(['BESS duration', omegaBessHours()!=null?+omegaBessHours().toFixed(2):'', 'h']);
     r.push(['Solar DC', sDc||'', 'kWdc']);
     r.push(['Annual energy', y?Math.round(y.kwh):'', 'kWh']);
     r.push(['Energy source', y?y.source:'not set', '']);
@@ -23066,8 +23070,12 @@ function _d4GenProj(){
       r.push(['Equipment area', ac.equip.toFixed(4), 'acre']);
     }
     r.push([]);
+    var _pf=omegaBessFleet();
     r.push(['BESS power', omegaBessKw()||'', 'kW']);
     r.push(['BESS energy', omegaBessKwh()||'', 'kWh']);
+    r.push(['BESS units', _pf.units||'', '']);
+    r.push(['BESS duration', omegaBessHours()!=null?+omegaBessHours().toFixed(2):'', 'h']);
+    r.push(['BESS source', _pf.source, '']);
     r.push(['Solar DC', omegaSolarKwDc()||'', 'kWdc']);
     r.push(['Solar AC', omegaSolarKwAc()||'', 'kWac']);
     r.push(['Elements', (S.elements||[]).length, '']);
@@ -25140,15 +25148,56 @@ function _omFix(v,d){
 
 /* Installed AC kW across placed BESS. Mirrors the cost engine's totalKW so
    the rail and the estimate panel can never disagree. */
-function omegaBessKw(){
-  return (S.bessList||[]).reduce(function(s,b){
-    return s + (+(b.kw||0))*(+(b.qty||1));
-  },0);
+/* BESS totals.
+   -------------------------------------------------------------------
+   Read what is PLACED, not what was configured. _ppCollectFleet() walks
+   S.shapes for kind 'assembly'/'bespad' and sums unitKw/unitKwh -- it is
+   the same function the legend, the BOM and the cost sheet use, so those
+   four surfaces can no longer disagree.
+
+   The previous version read S.bessList, which is the BESS Config dialog's
+   list. On a site with an EDGE-760 and an AWG-20AWG5MW placed, that
+   reported only the 380 kW EDGE and missed 2,580 kW of the fleet.
+
+   S.bessList is kept as a fallback so a system that has been SIZED but not
+   yet placed still reads out in the rail.
+   ------------------------------------------------------------------- */
+function omegaBessFleet(){
+  var out={ kw:0, kwh:0, units:0, cost:0, missingCost:false, source:'placed' };
+  try{
+    if(typeof _ppCollectFleet==='function'){
+      var f=_ppCollectFleet();
+      if(f && f.units>0){
+        out.kw=+f.totalKw||0; out.kwh=+f.totalKwh||0; out.units=f.units;
+        out.cost=+f.totalCost||0; out.missingCost=!!f.anyMissingCost;
+        return out;
+      }
+    }
+  }catch(e){}
+  /* Nothing placed -- fall back to the sizing dialog so a preview reads out. */
+  try{
+    (S.bessList||[]).forEach(function(b){
+      var q=+(b.qty||1);
+      out.kw += (+(b.kw||0))*q;
+      out.kwh += (+(b.kwh||0))*q;
+      out.units += q;
+    });
+    if(out.units>0) out.source='configured';
+  }catch(e){}
+  return out;
 }
-function omegaBessKwh(){
-  return (S.bessList||[]).reduce(function(s,b){
-    return s + (+(b.kwh||0))*(+(b.qty||1));
-  },0);
+function omegaBessKw(){  return omegaBessFleet().kw;  }
+function omegaBessKwh(){ return omegaBessFleet().kwh; }
+/* Duration in hours at the nameplate rate, and its reciprocal, the C-rate.
+   Both are meaningless without a full fleet, which is why they only became
+   correct once the collector started reading the drawing. */
+function omegaBessHours(){
+  var f=omegaBessFleet();
+  return (f.kw>0 && f.kwh>0) ? (f.kwh/f.kw) : null;
+}
+function omegaBessCRate(){
+  var f=omegaBessFleet();
+  return (f.kw>0 && f.kwh>0) ? (f.kw/f.kwh) : null;
 }
 /* Generation totals.
    -------------------------------------------------------------------
@@ -25414,9 +25463,21 @@ function omegaRenderResults(){
 
   function unitSfx(n){ return (n>1) ? (' \u00d7'+n) : ''; }
 
+  var BF=omegaBessFleet();
+  var bHrs=omegaBessHours(), bC=omegaBessCRate();
   var pw='';
-  pw += _omRow('BESS power',  bKw  ? bKw.toLocaleString()+' kW'    : null);
+  pw += _omRow('BESS power'+unitSfx(BF.units),
+               bKw ? Math.round(bKw).toLocaleString()+' kW' : null,
+               null,
+               BF.source==='configured'
+                 ? 'From the BESS Config dialog \u2014 nothing placed on the drawing yet.'
+                 : null);
   pw += _omRow('BESS energy', bKwh ? (bKwh/1000).toFixed(2)+' MWh' : null);
+  /* Duration is the number an offtaker asks for first; C-rate is what the
+     cell datasheet is rated against. Both fall straight out of the fleet. */
+  pw += _omRow('BESS duration', bHrs ? _omFix(bHrs,2)+' h' : null,
+               null, 'Energy divided by power at the nameplate rate.');
+  pw += _omRow('BESS C-rate',   bC   ? _omFix(bC,3)+' C'   : null);
   pw += _omRow('Solar DC'+unitSfx(D.solarUnits),
                sDc ? Math.round(sDc).toLocaleString()+' kWdc' : null);
   pw += _omRow('Solar AC',    sAc  ? Math.round(sAc).toLocaleString()+' kWac' : null);
@@ -25453,8 +25514,19 @@ function omegaRenderResults(){
                  (poiKw-dcL)>=0 ? 'rr-pos' : 'rr-neg',
                  'Generation less on-site DC compute load.');
   }
-  fl += '<div class="rr-note">POI figure is a nameplate sum, not an '
-      + 'interconnection study result.</div>';
+  /* Spell out what went into the sum. A bare number invites the reader to
+     assume it means something it does not. */
+  var _parts=[];
+  if(sAc>0) _parts.push('solar '+Math.round(sAc).toLocaleString()+' kWac');
+  if(bKw>0) _parts.push('BESS '+Math.round(bKw).toLocaleString()+' kW');
+  if(wKw>0) _parts.push('wind '+Math.round(wKw).toLocaleString()+' kW');
+  if(aKw>0) _parts.push('fuel cell / genset '+Math.round(aKw).toLocaleString()+' kW');
+  if(_parts.length){
+    fl += '<div class="rr-note">' + _parts.join(' + ') + '.</div>';
+  }
+  fl += '<div class="rr-note">A nameplate sum of everything that can export, '
+      + 'not an interconnection study result and not an export limit. '
+      + 'Simultaneous output is a dispatch question.</div>';
   _omSet('rr-b-flow', fl);
 
   /* CIVIL --------------------------------------------------------- */
@@ -27070,7 +27142,20 @@ window.OmegaAnchor = {
       r['solar kWdc'] = d.solarKwDc+'  ('+d.solarUnits+' array/s)';
       r['wind kW']    = d.windKw+'  ('+d.windUnits+')';
       r['alt kW']     = d.altKw+'  ('+d.altUnits+')';
-      r['bess kW']    = (typeof omegaBessKw==='function')?omegaBessKw():'?';
+      var bf=(typeof omegaBessFleet==='function')?omegaBessFleet():null;
+      if(bf){
+        r['bess kW']  = bf.kw+'  ('+bf.units+' unit/s, read from '+bf.source+')';
+        r['bess kWh'] = bf.kwh;
+        r['bess h']   = (bf.kw>0&&bf.kwh>0)?(bf.kwh/bf.kw).toFixed(2):'--';
+      }
+      /* If these two disagree the rail and the legend are reading different
+         things, which is the bug this patch existed to kill. */
+      try{
+        var pf=(typeof _ppCollectFleet==='function')?_ppCollectFleet():null;
+        r['_ppCollectFleet kW'] = pf ? (pf.totalKw+'  ('+pf.units+' unit/s)') : 'n/a';
+        r['S.bessList kW'] = (S.bessList||[]).reduce(function(s,b){
+          return s+(+(b.kw||0))*(+(b.qty||1)); },0);
+      }catch(e){}
       var raw=0;
       try{ raw=(typeof derTotals==='function')?(derTotals().solarKwDc||0):-1; }catch(e){ raw='THREW: '+(e&&e.message); }
       r['derTotals() solar'] = raw;
