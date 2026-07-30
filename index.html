@@ -913,8 +913,8 @@ body{overflow-x:hidden}
 
 /* ═══════════════ TEAM & MESSAGES LEFT RAIL ═══════════════ */
 /* Two-column shell: narrow sticky rail on the left, dashboard fills the right. */
-#developer-view{display:grid;grid-template-columns:340px minmax(0,1fr);gap:28px;align-items:start}
-#developer-view > .tm-rail{grid-column:1;grid-row:1}
+#developer-view{display:grid;grid-template-columns:minmax(420px,520px) minmax(0,1fr);gap:28px;align-items:start}
+#developer-view > .sw{grid-column:1;grid-row:1}
 #dev-main{grid-column:2;grid-row:1;min-width:0}
 
 .tm-rail{position:sticky;top:78px;align-self:start}
@@ -948,10 +948,123 @@ body{overflow-x:hidden}
 /* On narrower screens, drop the rail below the content (full width) */
 @media (max-width:1080px){
   #developer-view{grid-template-columns:1fr}
-  #developer-view > .tm-rail{grid-column:1;grid-row:2;position:static;max-height:none}
+  #developer-view > .sw{grid-column:1;grid-row:2}
   #dev-main{grid-column:1;grid-row:1}
   .tm-panel{max-height:none}
   .tm-body{max-height:560px}
+}
+
+/* ═══════════════ TEAM WORKSPACE (Slack-style) ═══════════════ */
+/* Sits in the left grid column of #developer-view; dashboard fills the right. */
+.sw{display:flex;background:#fff;border:1px solid var(--pol-border,#E1E6EC);border-radius:16px;
+  box-shadow:var(--pol-shadow);overflow:hidden;height:calc(100vh - 100px);min-height:520px}
+.tm-rail{}  /* legacy — unused now */
+
+/* Left nav strip (Slack sidebar) */
+.sw-nav{width:200px;flex:none;background:#0B2A3D;color:#C9D6E2;display:flex;flex-direction:column;overflow-y:auto}
+.sw-nav-head{padding:16px 16px 12px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sw-workspace{display:block;font:700 15px/1.1 'DM Sans',sans-serif;color:#fff}
+.sw-workspace-sub{display:block;font-size:11px;color:#7E93A6;margin-top:3px}
+.sw-section{padding:12px 8px 4px}
+.sw-section-label{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#6E85999;color:rgba(201,214,226,.55);padding:0 8px 6px}
+.sw-item{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border:none;background:none;cursor:pointer;
+  color:#C9D6E2;font:500 13.5px/1 'DM Sans',sans-serif;border-radius:7px;text-align:left;transition:background .1s,color .1s}
+.sw-item svg{width:16px;height:16px;flex:none;opacity:.85}
+.sw-item span{flex:1}
+.sw-item:hover{background:rgba(255,255,255,.07);color:#fff}
+.sw-item.active{background:#1264A3;color:#fff}
+.sw-item.active svg{opacity:1}
+.sw-badge{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#E53935;color:#fff;
+  font:700 11px/18px 'DM Sans',sans-serif;text-align:center;display:none}
+.sw-badge.show{display:inline-block}
+
+/* Conversation rows in the nav reuse the existing convo-list markup */
+.sw-nav .convo-list{width:auto !important;border:none !important;background:none !important;flex:none}
+.sw-nav .convo-list-head{padding:0 8px 6px !important;border:none !important}
+.sw-nav .convo-list-title{display:none}   /* section label already says "Direct Messages" */
+.sw-nav .convo-list-body{max-height:none !important;overflow:visible !important}
+.sw-nav .convo-item{color:#C9D6E2 !important;border-radius:7px;padding:7px 10px !important}
+.sw-nav .convo-item:hover{background:rgba(255,255,255,.07) !important}
+.sw-nav .convo-item.active{background:#1264A3 !important;color:#fff !important}
+.sw-nav .convo-new-btn,.sw-nav .convo-list-head button{color:#fff !important;border-color:rgba(255,255,255,.25) !important;background:rgba(255,255,255,.08) !important}
+
+/* Right reading pane */
+.sw-main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.sw-view{display:none;flex:1;min-height:0;overflow-y:auto;padding:20px}
+.sw-view.active{display:flex;flex-direction:column}
+/* strip inner card chrome — the module IS the frame */
+.sw-view .th-card{border:none !important;box-shadow:none !important;padding:0 !important;background:none !important;min-height:0 !important;flex:1;display:flex;flex-direction:column}
+.sw-view .th-head{padding:0 0 14px !important;border-bottom:1px solid var(--pol-border,#E1E6EC);margin-bottom:14px}
+.sw-view .th-body{max-height:none !important;flex:1}
+.sw-view .convo-thread-pane{border:none !important}
+.sw-view .convo-thread{max-height:none !important;flex:1}
+
+@media (max-width:1080px){
+  .sw{height:auto;min-height:0;flex-direction:column}
+  .sw-nav{width:auto;flex-direction:row;overflow-x:auto;gap:4px}
+  .sw-nav .sw-dms{display:none}   /* on mobile, DMs open via a toggle instead */
+  .sw-view{max-height:520px}
+}
+
+/* ═══════════ PORTFOLIO ANALYTICS (Coupler-style) ═══════════ */
+.an-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:14px}
+.an-card{background:#fff;border:1px solid var(--pol-border,#E1E6EC);border-radius:16px;padding:18px 18px 14px;
+  box-shadow:var(--pol-shadow);display:flex;flex-direction:column}
+.an-card.an-full{grid-column:1 / -1}
+.an-head{margin-bottom:12px}
+.an-title{font:700 14px/1 'DM Sans',sans-serif;color:var(--cs-navy,#08384F);letter-spacing:-.2px}
+.an-chartwrap{position:relative;height:220px}
+.an-chartwrap.tall{height:260px}
+.an-legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:12px;justify-content:center}
+.an-leg{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--sap-ink-2,#556B82);font-weight:600}
+.an-leg .dot{width:9px;height:9px;border-radius:50%;flex:none}
+@media (max-width:900px){ .an-grid{grid-template-columns:1fr} .an-card.an-full{grid-column:1} }
+
+/* ═══════════════ APP SHELL — left sidebar + content (Coupler-dense) ═══════════════ */
+#app{display:flex;align-items:stretch;min-height:100vh}
+#side-nav{width:212px;flex:none;background:#0B2A3D;color:#C9D6E2;display:flex;flex-direction:column;
+  position:sticky;top:0;height:100vh;overflow:hidden;z-index:60}
+#app-body{flex:1;min-width:0;display:flex;flex-direction:column}
+/* topbar no longer needs the horizontal nav tabs on desktop */
+#app-body #topbar{position:sticky;top:0;z-index:50}
+@media (min-width:901px){ #app-body .tb-nav{display:none !important} }  /* nav moved to sidebar */
+
+.sn-head{padding:16px 16px 12px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sn-logo-txt{display:block;font:700 16px/1.1 'DM Sans',sans-serif;color:#fff}
+.sn-sub{display:block;font-size:11px;color:#7E93A6;margin-top:3px;letter-spacing:.3px}
+.sn-scroll{flex:1;overflow-y:auto;padding:10px 8px 20px}
+.sn-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border:none;background:none;cursor:pointer;
+  color:#C9D6E2;font:500 13.5px/1 'DM Sans',sans-serif;border-radius:8px;text-align:left;text-decoration:none;
+  transition:background .1s,color .1s;margin-bottom:2px}
+.sn-item svg{width:17px;height:17px;flex:none;opacity:.85}
+.sn-item span{flex:1}
+.sn-item:hover{background:rgba(255,255,255,.08);color:#fff}
+.sn-item.active{background:#1264A3;color:#fff}
+.sn-item.active svg{opacity:1}
+.sn-caret{width:14px !important;height:14px !important;transition:transform .18s}
+.sn-toggle[aria-expanded="true"] .sn-caret{transform:rotate(180deg)}
+.sn-subnav{max-height:0;overflow:hidden;transition:max-height .22s ease;padding-left:8px}
+.sn-subnav.open{max-height:420px}
+.sn-app{display:flex;align-items:center;gap:9px;padding:7px 12px 7px 26px;color:#A9BCCC;text-decoration:none;
+  font:500 12.5px/1.2 'DM Sans',sans-serif;border-radius:7px;transition:background .1s,color .1s}
+.sn-app:hover{background:rgba(255,255,255,.07);color:#fff}
+.sn-app .sn-app-dot{width:6px;height:6px;border-radius:50%;background:#00A9A4;flex:none}
+.sn-divider{height:1px;background:rgba(255,255,255,.08);margin:12px 8px}
+.sn-section-label{font-size:10.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:rgba(201,214,226,.5);padding:2px 12px 8px}
+
+/* Kill wasted space: developer-view no longer a 2-col grid with a floating rail */
+#developer-view{display:block !important}
+#developer-view > .sw{margin-top:20px}
+#dev-main{width:auto}
+
+/* Dense content: tighten main padding */
+#app-body #main{max-width:none;padding:28px 32px 56px}
+
+/* Mobile: sidebar collapses; the existing hamburger drawer handles nav */
+@media (max-width:900px){
+  #app{flex-direction:column}
+  #side-nav{display:none}   /* mobile uses the top hamburger drawer instead */
+  #app-body #main{padding:20px 14px 48px}
 }
 </style>
 </head>
@@ -1034,6 +1147,48 @@ window._omegaReady = function(){
 
 <!-- ══════════════ PORTAL APP ══════════════ -->
 <div id="app">
+  <!-- ══ LEFT SIDEBAR NAV (Coupler-style app shell) ══ -->
+  <nav id="side-nav">
+    <div class="sn-head">
+      <span class="sn-logo-txt">NextNRG</span>
+      <span class="sn-sub">EnergyOS</span>
+    </div>
+    <div class="sn-scroll">
+      <a class="sn-item active" data-sn="dashboard" href="#" onclick="snGo(event,'dashboard')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span>Dashboard</span>
+      </a>
+
+      <button class="sn-item sn-toggle" data-sn="apps" onclick="snToggleApps(event)" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>
+        <span>My Applications</span>
+        <svg class="sn-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="sn-subnav" id="sn-apps-list"><!-- pinned apps injected by _paintSideApps() --></div>
+
+      <a class="sn-item" data-sn="projects" href="/projects.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span>Projects</span>
+      </a>
+      <a class="sn-item" data-sn="marketplace" href="/marketplace.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l1-5h16l1 5"/><path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><path d="M9 22V12h6v10"/></svg>
+        <span>Marketplace</span>
+      </a>
+
+      <div class="sn-divider"></div>
+      <div class="sn-section-label">Workspace</div>
+
+      <a class="sn-item" data-sn="team" href="#" onclick="snGo(event,'team')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
+        <span>Team</span>
+      </a>
+      <a class="sn-item" data-sn="chat" href="#" onclick="snGo(event,'chat')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>Chat</span>
+      </a>
+    </div>
+  </nav>
+  <div id="app-body">
   <!-- TOPBAR (UNCHANGED — logo, user, sign out) -->
   <div id="topbar">
     <a href="/" class="tb-logo">
@@ -1097,81 +1252,34 @@ window._omegaReady = function(){
          ════════════════════════════════════════════════════════════════════ -->
     <div id="developer-view">
     <!-- ══ TEAM & MESSAGES — combined tabbed left-rail panel ══ -->
-    <aside class="tm-rail" id="tm-rail">
-      <div class="tm-panel">
-        <div class="tm-panel-head">
-          <span class="tm-panel-title">Team &amp; Messages</span>
+        <!-- ══ TEAM WORKSPACE — Slack-style: nav list (left) + reading pane (right) ══ -->
+    <aside class="sw" id="sw">
+      <!-- Nav strip -->
+      <div class="sw-nav">
+        <div class="sw-nav-head">
+          <span class="sw-workspace">NextNRG</span>
+          <span class="sw-workspace-sub">Team Workspace</span>
         </div>
-        <div class="tm-tabs" role="tablist">
-          <button class="tm-tab active" data-tm="todos"   onclick="tmTab('todos')">To-Dos</button>
-          <button class="tm-tab"        data-tm="team"    onclick="tmTab('team')">Team</button>
-          <button class="tm-tab"        data-tm="feed"    onclick="tmTab('feed')">Feed</button>
-          <button class="tm-tab"        data-tm="msgs"    onclick="tmTab('msgs')">Messages</button>
+
+        <div class="sw-section">
+          <div class="sw-section-label">Workspace</div>
+          <button class="sw-item active" data-sw="todos" onclick="swSelect('todos')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span>To-Dos</span><span class="sw-badge" id="sw-todo-badge"></span>
+          </button>
+          <button class="sw-item" data-sw="team" onclick="swSelect('team')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
+            <span>Team</span><span class="sw-badge" id="sw-team-badge"></span>
+          </button>
+          <button class="sw-item" data-sw="feed" onclick="swSelect('feed')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Company Feed</span>
+          </button>
         </div>
-        <div class="tm-body">
-          <div class="tm-pane active" data-tm-pane="todos">
-                  <div class="th-card">
-                    <div class="th-head">
-                      <div class="th-head-l">
-                        <span class="th-head-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
-                        <span class="th-title">Team To-Dos</span>
-                      </div>
-                      <span class="th-count" id="th-todo-count">0</span>
-                    </div>
-                    <div class="th-body" id="th-todo-list">
-                      <div class="th-empty">No to-dos yet. Add one and assign a teammate.</div>
-                    </div>
-                    <div class="th-compose">
-                      <input class="th-input" id="th-todo-text" type="text" placeholder="What needs doing?" maxlength="240" onkeydown="if(event.key==='Enter'){event.preventDefault();addTodo();}">
-                      <div class="th-compose-row">
-                        <select class="th-select" id="th-todo-assignee"><option value="">Assign to…</option></select>
-                        <input class="th-date" id="th-todo-due" type="date" title="Due date (optional)">
-                        <button class="th-send" id="th-todo-btn" onclick="addTodo()">Add</button>
-                      </div>
-                    </div>
-                  </div>
 
-          </div>
-          <div class="tm-pane" data-tm-pane="team">
-                  <div class="th-card th-users">
-                    <div class="th-head">
-                      <div class="th-head-l">
-                        <span class="th-head-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-                        <span class="th-title">Team</span>
-                      </div>
-                      <span class="th-count" id="th-users-count">0</span>
-                    </div>
-                    <div class="th-body" id="th-users-list">
-                      <div class="th-empty">Loading team…</div>
-                    </div>
-                  </div>
-          </div>
-          <div class="tm-pane" data-tm-pane="feed">
-                  <div class="th-card">
-                    <div class="th-head">
-                      <div class="th-head-l">
-                        <span class="th-head-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
-                        <span class="th-title">Company Messages</span>
-                      </div>
-                      <span class="th-count" id="th-msg-count">0</span>
-                    </div>
-                    <div class="th-body" id="th-msg-list">
-                      <div class="th-empty">No messages yet. Post an update for the team.</div>
-                    </div>
-                    <div class="th-compose">
-                      <textarea class="th-input" id="th-msg-text" rows="2" placeholder="Post a message to your team…" maxlength="600"></textarea>
-                      <div class="th-compose-row" style="justify-content:flex-end">
-                        <button class="th-send" id="th-msg-btn" onclick="postMessage()">Post</button>
-                      </div>
-                    </div>
-                  </div>
-          </div>
-          <div class="tm-pane" data-tm-pane="msgs">
-                <div class="th-card convo-card">
-                  <div class="convo-wrap">
-
-                    <!-- Left: conversation list -->
-                    <div class="convo-list">
+        <div class="sw-section sw-dms">
+          <div class="sw-section-label">Direct Messages</div>
+          <div class="convo-list">
                       <div class="convo-list-head">
                         <span class="convo-list-title">Conversations</span>
                         <button class="convo-new-btn" onclick="openNewConvo()">+ New</button>
@@ -1180,57 +1288,83 @@ window._omegaReady = function(){
                         <div class="th-empty" style="padding:20px 12px">No conversations yet. Start one with “+ New”.</div>
                       </div>
                     </div>
+        </div>
+      </div>
 
-                    <!-- Right: open thread -->
-                    <div class="convo-thread-pane">
-                      <div class="convo-thread-head" id="convo-thread-head">
-                        <span class="convo-thread-title" id="convo-thread-title">Select a conversation</span>
-                        <span class="convo-thread-sub" id="convo-thread-sub"></span>
-                      </div>
-                      <div class="convo-thread" id="convo-thread">
-                        <div class="th-empty">Pick a conversation on the left, or start a new one.</div>
-                      </div>
-                      <div class="th-compose">
-                        <div class="th-compose-row">
-                          <input class="th-input" id="convo-text" type="text" placeholder="Type a message…" maxlength="1000" disabled onkeydown="if(event.key==='Enter'){event.preventDefault();sendConvoMessage();}">
-                          <button class="th-send" id="convo-send" onclick="sendConvoMessage()" disabled>Send</button>
-                        </div>
-                      </div>
-                    </div>
-
-                  </div>
-                </div>
-
-                <!-- New conversation / group modal -->
-                <div class="convo-modal-overlay" id="convo-modal" onclick="if(event.target===this)closeNewConvo()">
-                  <div class="convo-modal">
-                    <div class="convo-modal-head">
-                      <h3 id="convo-modal-title">New conversation</h3>
-                      <button class="acct-close" onclick="closeNewConvo()">&times;</button>
-                    </div>
-                    <div class="convo-modal-body">
-                      <div class="convo-tabs">
-                        <button class="convo-tab on" id="convo-tab-dm" onclick="convoTab('dm')">Direct message</button>
-                        <button class="convo-tab" id="convo-tab-group" onclick="convoTab('group')">New group</button>
-                      </div>
-
-                      <!-- Group name (groups only) -->
-                      <div class="acct-field" id="convo-group-name-field" style="display:none">
-                        <label>Group name</label>
-                        <input id="convo-group-name" type="text" maxlength="60" placeholder="e.g. Prairie Ave team">
-                      </div>
-
-                      <div class="acct-field">
-                        <label id="convo-pick-label">Choose a teammate</label>
-                        <div class="convo-member-picker" id="convo-member-picker"></div>
-                      </div>
-
-                      <button class="acct-btn" id="convo-create-btn" onclick="createConvo()">Start conversation</button>
-                      <div class="acct-msg" id="convo-modal-msg"></div>
-                    </div>
-                  </div>
-                </div>
-          </div>
+      <!-- Reading pane -->
+      <div class="sw-main">
+        <div class="sw-view active" data-sw-view="todos">
+          <div class="th-card">
+                              <div class="th-head">
+                                <div class="th-head-l">
+                                  <span class="th-head-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
+                                  <span class="th-title">Team To-Dos</span>
+                                </div>
+                                <span class="th-count" id="th-todo-count">0</span>
+                              </div>
+                              <div class="th-body" id="th-todo-list">
+                                <div class="th-empty">No to-dos yet. Add one and assign a teammate.</div>
+                              </div>
+                              <div class="th-compose">
+                                <input class="th-input" id="th-todo-text" type="text" placeholder="What needs doing?" maxlength="240" onkeydown="if(event.key==='Enter'){event.preventDefault();addTodo();}">
+                                <div class="th-compose-row">
+                                  <select class="th-select" id="th-todo-assignee"><option value="">Assign to…</option></select>
+                                  <input class="th-date" id="th-todo-due" type="date" title="Due date (optional)">
+                                  <button class="th-send" id="th-todo-btn" onclick="addTodo()">Add</button>
+                                </div>
+                              </div>
+                            </div>
+        </div>
+        <div class="sw-view" data-sw-view="team">
+          <div class="th-card th-users">
+                              <div class="th-head">
+                                <div class="th-head-l">
+                                  <span class="th-head-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+                                  <span class="th-title">Team</span>
+                                </div>
+                                <span class="th-count" id="th-users-count">0</span>
+                              </div>
+                              <div class="th-body" id="th-users-list">
+                                <div class="th-empty">Loading team…</div>
+                              </div>
+                            </div>
+        </div>
+        <div class="sw-view" data-sw-view="feed">
+          <div class="th-card">
+                              <div class="th-head">
+                                <div class="th-head-l">
+                                  <span class="th-head-ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+                                  <span class="th-title">Company Messages</span>
+                                </div>
+                                <span class="th-count" id="th-msg-count">0</span>
+                              </div>
+                              <div class="th-body" id="th-msg-list">
+                                <div class="th-empty">No messages yet. Post an update for the team.</div>
+                              </div>
+                              <div class="th-compose">
+                                <textarea class="th-input" id="th-msg-text" rows="2" placeholder="Post a message to your team…" maxlength="600"></textarea>
+                                <div class="th-compose-row" style="justify-content:flex-end">
+                                  <button class="th-send" id="th-msg-btn" onclick="postMessage()">Post</button>
+                                </div>
+                              </div>
+                            </div>
+        </div>
+        <div class="sw-view" data-sw-view="msgs">
+          <div class="convo-thread-pane">
+                                <div class="convo-thread-head" id="convo-thread-head">
+                                  <span class="convo-thread-title" id="convo-thread-title">Select a conversation</span>
+                                  <span class="convo-thread-sub" id="convo-thread-sub"></span>
+                                </div>
+                                <div class="convo-thread" id="convo-thread">
+                                  <div class="th-empty">Pick a conversation on the left, or start a new one.</div>
+                                </div>
+                                <div class="th-compose">
+                                  <div class="th-compose-row">
+                                    <input class="th-input" id="convo-text" type="text" placeholder="Type a message…" maxlength="1000" disabled onkeydown="if(event.key==='Enter'){event.preventDefault();sendConvoMessage();}">
+                                    <button class="th-send" id="convo-send" onclick="sendConvoMessage()" disabled>Send</button>
+                                  </div>
+                                </div>
+                              </div>
         </div>
       </div>
     </aside>
@@ -1397,6 +1531,39 @@ window._omegaReady = function(){
     <div class="pipeline">
       <div class="pipe-track" id="pipe-track"><!-- rendered by renderPipeline() --></div>
     </div>
+
+    <!-- ══ PORTFOLIO ANALYTICS (Coupler-style charts, real Firestore data) ══ -->
+    <div class="block-head">
+      <div>
+        <div class="block-title">Portfolio Analytics</div>
+        <div class="block-sub">Live breakdowns across your projects &mdash; capital, storage, revenue, and stage.</div>
+      </div>
+    </div>
+    <div class="an-grid">
+      <div class="an-card">
+        <div class="an-head"><span class="an-title">Projects by Stage</span></div>
+        <div class="an-chartwrap"><canvas id="an-stage"></canvas></div>
+        <div class="an-legend" id="an-stage-legend"></div>
+      </div>
+      <div class="an-card">
+        <div class="an-head"><span class="an-title">Projects by Type</span></div>
+        <div class="an-chartwrap"><canvas id="an-type"></canvas></div>
+        <div class="an-legend" id="an-type-legend"></div>
+      </div>
+      <div class="an-card an-wide">
+        <div class="an-head"><span class="an-title">Top Projects by CapEx</span></div>
+        <div class="an-chartwrap tall"><canvas id="an-capex"></canvas></div>
+      </div>
+      <div class="an-card an-wide">
+        <div class="an-head"><span class="an-title">Projected Revenue by Owner</span></div>
+        <div class="an-chartwrap tall"><canvas id="an-owner"></canvas></div>
+      </div>
+      <div class="an-card an-full">
+        <div class="an-head"><span class="an-title">Storage Capacity by Stage (MWh)</span></div>
+        <div class="an-chartwrap"><canvas id="an-storage"></canvas></div>
+      </div>
+    </div>
+
 
 
     <!-- ══ MY WIDGETS (SAP-style widget row) ══ -->
@@ -1595,6 +1762,7 @@ window._omegaReady = function(){
       <span id="footer-ws-label">Powered by <strong style="color:var(--cs-navy)">ClearSky-OMEGA</strong></span>
       <span>© 2025 ClearSky Energy Solutions LLC · Platform &amp; software authored by Tommy Gilmer · Proprietary</span>
     </div>
+  </div><!-- /#app-body -->
   </div>
 </div>
 
@@ -2053,7 +2221,7 @@ function refreshGreeting(user) {
 
 function showApp(user) {
   document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
+  document.getElementById('app').style.display = 'flex';   // flex = sidebar + app-body shell
 
   var ws = WORKSPACE || {};
   var isPartner = ws.type === 'partner';
@@ -2531,6 +2699,12 @@ async function computeLiveRollup(){
               storageQuotedMwh:0, storageSubmittedMwh:0, storageOnlineMwh:0,
               portfolioCapex:0, modeledIncentives:0, projectedRevenue:0, operatingAssets:0 };
     var rows = [];
+    // ── Chart aggregations (real data, filled in the loop below) ──
+    var byType = {};
+    var byOwnerRev = {};
+    var capexByProj = [];
+    var storageByStage = {};
+    if (typeof STAGE_KEYS!=='undefined'){ STAGE_KEYS.forEach(function(s){ storageByStage[s]=0; }); }
     var myEmail = _meEmail();
     var unownedCount = 0;   // projects with no ownerEmail (legacy) — surfaced under Company view
     snap.forEach(function(doc){
@@ -2550,6 +2724,15 @@ async function computeLiveRollup(){
       if (d.quoted){ k.sitesQuoted++; k.storageQuotedMwh += mwh; }
       if (idx >= SUBMITTED_FROM_INDEX){ k.sitesSubmitted++; k.storageSubmittedMwh += mwh; }
       if (idx === ONLINE_INDEX){ k.sitesOnline++; k.storageOnlineMwh += mwh; k.operatingAssets++; }
+      // chart datasets (real per-project data)
+      var _ty = (d.type||'other').toLowerCase();
+      byType[_ty] = (byType[_ty]||0) + 1;
+      var _rev = Number(d.annualRevenue)||0;
+      var _own = d.ownerName || (owner ? owner.split('@')[0] : 'Unassigned');
+      if (_rev>0){ byOwnerRev[_own] = (byOwnerRev[_own]||0) + _rev; }
+      var _cx = Number(d.capex)||0;
+      if (_cx>0){ capexByProj.push({ name:(d.name||'Untitled'), capex:_cx }); }
+      storageByStage[stage] = (storageByStage[stage]||0) + mwh;
       rows.push({ id:doc.id, name:d.name||'Untitled', utility:d.utility||'—', program:d.program||'—',
                   stage:stage, bess: kwh ? (mwh.toFixed(1)+' MWh') : '—',
                   capex:fmtMoney(d.capex), incentive:fmtMoney(d.incentive),
@@ -2561,6 +2744,7 @@ async function computeLiveRollup(){
     k.storageOnlineMwh = +k.storageOnlineMwh.toFixed(1);
     renderKpis(k); renderPipeline(counts); renderPortfolioTable(rows);
     renderWidgets(k, counts);
+    renderCharts({ byType:byType, byOwnerRev:byOwnerRev, capexByProj:capexByProj, storageByStage:storageByStage, counts:counts, k:k });
     _updateScopeBar(rows.length, unownedCount);
     /* Activity feed from the same rows (most-recently-touched first if available). */
     var feed = rows.slice(0,6).map(function(r){
@@ -4132,6 +4316,165 @@ function tmTab(which){
   var panes = document.querySelectorAll('.tm-pane');
   for (var i=0;i<tabs.length;i++){ tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tm')===which); }
   for (var j=0;j<panes.length;j++){ panes[j].classList.toggle('active', panes[j].getAttribute('data-tm-pane')===which); }
+}
+
+</script>
+<script>
+/* ══ Team Workspace (Slack-style) view switching ══ */
+function swSelect(which){
+  var items = document.querySelectorAll('.sw-item');
+  for (var i=0;i<items.length;i++){ items[i].classList.toggle('active', items[i].getAttribute('data-sw')===which); }
+  var views = document.querySelectorAll('.sw-view');
+  for (var j=0;j<views.length;j++){ views[j].classList.toggle('active', views[j].getAttribute('data-sw-view')===which); }
+}
+// When a conversation is opened from the nav list, switch the reading pane to the thread view.
+(function(){
+  var _origOpen = window.openConversation;
+  if (typeof _origOpen === 'function'){
+    window.openConversation = function(){
+      var r = _origOpen.apply(this, arguments);
+      // reflect selection in nav + show the msgs view
+      var items = document.querySelectorAll('.sw-item');
+      for (var i=0;i<items.length;i++){ items[i].classList.remove('active'); }
+      var views = document.querySelectorAll('.sw-view');
+      for (var j=0;j<views.length;j++){ views[j].classList.toggle('active', views[j].getAttribute('data-sw-view')==='msgs'); }
+      return r;
+    };
+  }
+})();
+
+</script>
+<script>
+/* ══ PORTFOLIO ANALYTICS — Chart.js, fed by real Firestore aggregations ══ */
+var _anCharts = {};
+function _anDestroy(id){ if(_anCharts[id]){ _anCharts[id].destroy(); delete _anCharts[id]; } }
+function _fmtK(n){ n=Number(n)||0; if(n>=1e6) return '$'+(n/1e6).toFixed(1)+'M'; if(n>=1e3) return '$'+Math.round(n/1e3)+'K'; return '$'+Math.round(n); }
+
+var AN_STAGE_COLORS = ['#0070F2','#1B90FF','#00A9A4','#00C4BC','#F0A030','#E06C4F','#2E9C3C','#6B4FA0'];
+var AN_TYPE_COLORS  = { bess:'#0070F2', dcfc:'#00A9A4', solar:'#F0A030', other:'#8A97A6' };
+
+function renderCharts(a){
+  if (typeof Chart === 'undefined') return;
+  var STAGE = (typeof STAGE_KEYS!=='undefined')?STAGE_KEYS:Object.keys(a.counts||{});
+  var LBL = (typeof STAGE_LABEL!=='undefined')?STAGE_LABEL:{};
+
+  // ── Donut: projects by stage ──
+  (function(){
+    var el=document.getElementById('an-stage'); if(!el) return;
+    var labels=[], data=[], colors=[];
+    STAGE.forEach(function(s,i){ var v=(a.counts&&a.counts[s])||0; if(v>0){ labels.push(LBL[s]||s); data.push(v); colors.push(AN_STAGE_COLORS[i%AN_STAGE_COLORS.length]); } });
+    var total=data.reduce(function(x,y){return x+y;},0);
+    _anDestroy('stage');
+    _anCharts['stage']=new Chart(el,{type:'doughnut',
+      data:{labels:total?labels:['No projects'],datasets:[{data:total?data:[1],backgroundColor:total?colors:['#EAECEF'],borderWidth:0,hoverOffset:6}]},
+      options:{cutout:'66%',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:!!total,callbacks:{label:function(c){var p=total?Math.round(c.parsed/total*100):0;return ' '+c.label+': '+c.parsed+' ('+p+'%)';}}}}},
+      plugins:[{id:'ct',afterDraw:function(ch){var x=ch.ctx,ca=ch.chartArea,cx=(ca.left+ca.right)/2,cy=(ca.top+ca.bottom)/2;x.save();x.textAlign='center';x.fillStyle='#223548';x.font='700 26px DM Sans,sans-serif';x.fillText(String(total),cx,cy-2);x.fillStyle='#556B82';x.font='400 11px DM Sans,sans-serif';x.fillText('projects',cx,cy+15);x.restore();}}]
+    });
+    var lg=document.getElementById('an-stage-legend');
+    if(lg) lg.innerHTML=labels.map(function(l,i){return '<span class="an-leg"><span class="dot" style="background:'+colors[i]+'"></span>'+l+'</span>';}).join('');
+  })();
+
+  // ── Donut: projects by type ──
+  (function(){
+    var el=document.getElementById('an-type'); if(!el) return;
+    var keys=Object.keys(a.byType||{});
+    var labels=[],data=[],colors=[];
+    keys.forEach(function(k){ labels.push(k.toUpperCase()); data.push(a.byType[k]); colors.push(AN_TYPE_COLORS[k]||'#8A97A6'); });
+    var total=data.reduce(function(x,y){return x+y;},0);
+    _anDestroy('type');
+    _anCharts['type']=new Chart(el,{type:'doughnut',
+      data:{labels:total?labels:['No projects'],datasets:[{data:total?data:[1],backgroundColor:total?colors:['#EAECEF'],borderWidth:0,hoverOffset:6}]},
+      options:{cutout:'66%',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:!!total,callbacks:{label:function(c){var p=total?Math.round(c.parsed/total*100):0;return ' '+c.label+': '+c.parsed+' ('+p+'%)';}}}}},
+      plugins:[{id:'ct2',afterDraw:function(ch){var x=ch.ctx,ca=ch.chartArea,cx=(ca.left+ca.right)/2,cy=(ca.top+ca.bottom)/2;x.save();x.textAlign='center';x.fillStyle='#223548';x.font='700 26px DM Sans,sans-serif';x.fillText(String(total),cx,cy-2);x.fillStyle='#556B82';x.font='400 11px DM Sans,sans-serif';x.fillText('projects',cx,cy+15);x.restore();}}]
+    });
+    var lg=document.getElementById('an-type-legend');
+    if(lg) lg.innerHTML=labels.map(function(l,i){return '<span class="an-leg"><span class="dot" style="background:'+colors[i]+'"></span>'+l+'</span>';}).join('');
+  })();
+
+  // ── Horizontal bars: top projects by capex ──
+  (function(){
+    var el=document.getElementById('an-capex'); if(!el) return;
+    var items=(a.capexByProj||[]).slice().sort(function(x,y){return y.capex-x.capex;}).slice(0,8);
+    _anDestroy('capex');
+    _anCharts['capex']=new Chart(el,{type:'bar',
+      data:{labels:items.length?items.map(function(i){return i.name;}):['No data'],
+        datasets:[{data:items.length?items.map(function(i){return i.capex;}):[0],backgroundColor:'#0070F2',borderRadius:5,barThickness:18}]},
+      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' '+_fmtK(c.parsed.x);}}}},
+        scales:{x:{ticks:{callback:function(v){return _fmtK(v);},font:{size:10}},grid:{color:'#EEF1F5'}},y:{ticks:{font:{size:11}},grid:{display:false}}}}
+    });
+  })();
+
+  // ── Horizontal bars: projected revenue by owner ──
+  (function(){
+    var el=document.getElementById('an-owner'); if(!el) return;
+    var keys=Object.keys(a.byOwnerRev||{}).sort(function(x,y){return a.byOwnerRev[y]-a.byOwnerRev[x];}).slice(0,8);
+    _anDestroy('owner');
+    _anCharts['owner']=new Chart(el,{type:'bar',
+      data:{labels:keys.length?keys:['No data'],datasets:[{data:keys.length?keys.map(function(k){return a.byOwnerRev[k];}):[0],backgroundColor:'#00A9A4',borderRadius:5,barThickness:18}]},
+      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' '+_fmtK(c.parsed.x);}}}},
+        scales:{x:{ticks:{callback:function(v){return _fmtK(v);},font:{size:10}},grid:{color:'#EEF1F5'}},y:{ticks:{font:{size:11}},grid:{display:false}}}}
+    });
+  })();
+
+  // ── Bar: storage capacity by stage (MWh) ──
+  (function(){
+    var el=document.getElementById('an-storage'); if(!el) return;
+    var labels=[],data=[];
+    STAGE.forEach(function(s){ labels.push(LBL[s]||s); data.push(+(a.storageByStage&&a.storageByStage[s]||0).toFixed(1)); });
+    var any=data.some(function(v){return v>0;});
+    _anDestroy('storage');
+    _anCharts['storage']=new Chart(el,{type:'bar',
+      data:{labels:labels,datasets:[{data:any?data:labels.map(function(){return 0;}),backgroundColor:'#1B90FF',borderRadius:5,maxBarThickness:44}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' '+c.parsed.y+' MWh';}}}},
+        scales:{y:{ticks:{callback:function(v){return v+' MWh';},font:{size:10}},grid:{color:'#EEF1F5'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}
+    });
+  })();
+}
+
+</script>
+<script>
+/* ══ LEFT SIDEBAR NAV ══ */
+function snGo(ev, which){
+  if (ev && ev.preventDefault) ev.preventDefault();
+  // highlight
+  var items=document.querySelectorAll('#side-nav .sn-item');
+  for (var i=0;i<items.length;i++){ items[i].classList.toggle('active', items[i].getAttribute('data-sn')===which); }
+  // scroll to the matching in-page section
+  var target=null;
+  if (which==='dashboard'){ target=document.querySelector('#developer-view .block-head'); }
+  else if (which==='team'){ target=document.getElementById('sw') || document.querySelector('[data-sw-view="team"]'); if(target&&window.swSelect) swSelect('team'); }
+  else if (which==='chat'){ target=document.getElementById('sw'); if(target&&window.swSelect) swSelect('msgs'); }
+  if (target && target.scrollIntoView){ target.scrollIntoView({behavior:'smooth', block:'start'}); }
+}
+function snToggleApps(ev){
+  if (ev && ev.preventDefault) ev.preventDefault();
+  var btn=ev.currentTarget;
+  var list=document.getElementById('sn-apps-list');
+  var open=list.classList.toggle('open');
+  btn.setAttribute('aria-expanded', open?'true':'false');
+  if (open) _paintSideApps();
+}
+// Populate the sidebar's My Applications sublist from the same pinned/required tools.
+function _paintSideApps(){
+  var list=document.getElementById('sn-apps-list'); if(!list) return;
+  var html='';
+  try{
+    if (typeof _qualifying==='function'){
+      var tools=_qualifying(), n=0;
+      for (var i=0;i<tools.length && n<DASH_MAX;i++){
+        var t=tools[i];
+        if (_required(t) || _pinned(t.key)){
+          var href = (typeof OMEGATools!=='undefined' && OMEGATools.hrefFor)?OMEGATools.hrefFor(t):'#';
+          html += '<a class="sn-app" href="'+href+'"><span class="sn-app-dot"></span>'+ (t.name||t.key) +'</a>';
+          n++;
+        }
+      }
+    }
+  }catch(e){}
+  list.innerHTML = html || '<a class="sn-app" href="/marketplace.html"><span class="sn-app-dot"></span>Browse Marketplace…</a>';
 }
 
 </script>
