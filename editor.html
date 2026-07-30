@@ -22746,7 +22746,64 @@ function buildBOM() {
             'Coordinate service capacity with utility');
   }
 
+  /* ── SOLAR PV ────────────────────────────────────────────────────────
+     An array on the map is real electrical scope: modules, racking,
+     module-level electronics, combiners, array grounding, placards and
+     commissioning. None of it reached the estimate, so a site carrying
+     364 kW-DC of canopy priced as though the solar were not there.
+
+     Conduit and conductor for the PV runs are deliberately NOT added
+     here. They already come through the conduit takeoff above, from the
+     runs actually drawn on the map — adding them again would double-count
+     every foot of PV homerun. */
+  var SOLAR_MODULE_W = (+window.SOLAR_MODULE_W > 0) ? +window.SOLAR_MODULE_W : 550;
+  var _pv = { kw:0, arrays:0, byMount:{} };
+  (S.shapes||[]).forEach(function(sh){
+    if(!sh || sh.kind!=='dersolar') return;
+    var k = +sh.kw || 0; if(!(k>0)) return;
+    _pv.kw += k; _pv.arrays++;
+    var m = (sh.mount==='roof'||sh.mount==='adjacent') ? sh.mount : 'ground';
+    _pv.byMount[m] = (_pv.byMount[m]||0) + k;
+  });
+  (S.elements||[]).forEach(function(el){
+    if(el && (el.eqId==='solar' || el.type==='solar') && +el.kw>0){
+      _pv.kw += (+el.kw); _pv.arrays++;
+      _pv.byMount.ground = (_pv.byMount.ground||0) + (+el.kw);
+    }
+  });
+
+  if(_pv.kw > 0){
+    var _mods = ceil(_pv.kw*1000/SOLAR_MODULE_W);
+    addItem('Solar PV', 'PV module', SOLAR_MODULE_W+' W', _mods, 'ea',
+            _pv.arrays+' array(s) \u00b7 '+_pv.kw.toFixed(1)+' kW-DC');
+    Object.keys(_pv.byMount).forEach(function(m){
+      var lbl = (m==='roof')     ? 'Roof racking + attachments'
+              : (m==='adjacent') ? 'Carport / canopy structure'
+                                 : 'Ground-mount racking + piers';
+      addItem('Solar PV', lbl, m, +(_pv.byMount[m]).toFixed(1), 'kW', 'Mount class: '+m);
+    });
+    addItem('Solar PV', 'Module-level rapid shutdown (NEC 690.12)', '', _mods, 'ea',
+            'One per module \u00b7 verify listed combination');
+    addItem('Solar PV', 'DC combiner box', '', Math.max(1, ceil(_pv.kw/150)), 'ea',
+            '~150 kW-DC per combiner');
+    addItem('Solar PV', 'Array equipment ground (bare Cu)', '6 AWG',
+            ceil(_mods*4*C), 'LF', 'Racking bond + module frames \u00b7 incl contingency');
+    addItem('Solar PV', 'PV labels, placards & directory (NEC 690.13 / 690.56)', '', 1, 'lot',
+            'Rapid-shutdown, DC disconnect and PV directory signage');
+    addItem('Solar PV', 'Array commissioning + IV curve testing', '',
+            +_pv.kw.toFixed(1), 'kW', 'String test, insulation resistance, PTO package');
+    /* Only add inverters when nothing on the map already converts DC. */
+    var _hasConv = (S.shapes||[]).some(function(sh){
+      return sh && sh.kind==='utility' && /^(pcs|inverter|strinv)$/.test(sh.utype||'');
+    });
+    if(!_hasConv){
+      addItem('Solar PV', 'String inverter', '100 kW class', Math.max(1, ceil(_pv.kw/100)), 'ea',
+              'No PCS / inverter on the map \u2014 PV priced as AC-coupled');
+    }
+  }
+
   return { items: items, wireGauge: wg, systemKw: kw,
+           solarKwDc: +_pv.kw.toFixed(1), solarArrays: _pv.arrays,
            kwh: S.bessList.reduce(function(s,x){return s+(+(x.kwh||0))*(+(x.qty||1));},0),
            trenchFt: (function(){ var f=0; (S._trenches||[]).forEach(function(t){ if(t.pts&&t.pts.length>1&&S.pxPerFt) f+=_polyLen(t.pts)/S.pxPerFt; }); return Math.round(f); })() };
 }
@@ -41070,6 +41127,19 @@ var ELEC_LABOR = {
   'conduit|4" PVC (MV)'   : 0.080,
   'conduit|*'             : 0.060,   /* fallback per LF */
 
+  /* --- solar PV --- */
+  'solar|module'        : 0.35,    /* hrs per module, C&I, incl set + clamp */
+  'solar|rack-ground'   : 0.90,    /* hrs per kW-DC, piers + rail + trackers */
+  'solar|rack-roof'     : 0.70,    /* hrs per kW-DC, ballast or attachment   */
+  'solar|rack-carport'  : 1.40,    /* hrs per kW-DC, steel canopy            */
+  'solar|rsd'           : 0.12,    /* hrs per device                         */
+  'solar|combiner'      : 2.50,    /* hrs per EA                             */
+  'solar|egc'           : 0.010,   /* hrs per LF                             */
+  'solar|labels'        : 3.00,    /* hrs per lot                            */
+  'solar|commissioning' : 0.15,    /* hrs per kW-DC                          */
+  'solar|inverter'      : 6.00,    /* hrs per EA                             */
+  'solar|*'             : 0.20,
+
   /* --- fittings (hrs per EA) --- */
   'fittings|coupling'     : 0.10,
   'fittings|connector'    : 0.15,
@@ -41120,6 +41190,18 @@ var ELEC_MAT = {
   'conduit|2" PVC Sch40'  : 2.20,
   'conduit|4" PVC (MV)'   : 7.80,
   'conduit|*'             : 3.00,
+
+  'solar|module'          : 165.00,  /* 550 W @ ~$0.30/W, C&I tier          */
+  'solar|rack-ground'     : 180.00,  /* $/kW-DC                              */
+  'solar|rack-roof'       : 120.00,  /* $/kW-DC                              */
+  'solar|rack-carport'    : 550.00,  /* $/kW-DC, steel canopy                */
+  'solar|rsd'             : 45.00,   /* $/device                             */
+  'solar|combiner'        : 650.00,
+  'solar|egc'             : 0.65,    /* $/LF bare Cu                         */
+  'solar|labels'          : 350.00,
+  'solar|commissioning'   : 8.00,    /* $/kW-DC, mostly labor                */
+  'solar|inverter'        : 11000.00,/* 100 kW class @ ~$0.11/W              */
+  'solar|*'               : 100.00,
 
   'fittings|coupling'     : 4.50,
   'fittings|connector'    : 6.00,
@@ -41188,6 +41270,19 @@ function _sig(it){
     if(/trench/.test(d)) return 'civil|trench';
     if(/tape/.test(d)) return 'civil|tape';
     return 'civil|*';
+  }
+  if(cat==='solar pv'){
+    if(/module-level|rapid shutdown|rsd|mlpe/.test(d)) return 'solar|rsd';
+    if(/pv module/.test(d))                            return 'solar|module';
+    if(/carport|canopy/.test(d))                       return 'solar|rack-carport';
+    if(/roof racking/.test(d))                         return 'solar|rack-roof';
+    if(/racking|pier/.test(d))                         return 'solar|rack-ground';
+    if(/combiner/.test(d))                             return 'solar|combiner';
+    if(/ground|egc|bond/.test(d))                      return 'solar|egc';
+    if(/label|placard|directory|signage/.test(d))      return 'solar|labels';
+    if(/commission|iv curve|testing/.test(d))          return 'solar|commissioning';
+    if(/inverter/.test(d))                             return 'solar|inverter';
+    return 'solar|*';
   }
   if(cat==='ev charging'){
     if(/make-ready|make ready|makeready/.test(d)) return 'ev|makeready';
@@ -41277,6 +41372,16 @@ function recalc(est){
   var sell    = subtotal + profit;
   est.hrs=hrs; est.mat=mat; est.labor=labor; est.direct=direct;
   est.tax=tax; est.oh=oh; est.subtotal=subtotal; est.profit=profit; est.sell=sell;
+  /* What share of the bid is the PV scope? Overhead and profit are applied
+     to the job as a whole, so solar carries its proportion of direct cost
+     rather than being marked up on its own. Quoting a $/W-DC off the whole
+     sell price would price the batteries into the solar rate. */
+  var sDirect = 0;
+  est.lines.forEach(function(l){
+    if((l.category||'').toLowerCase()==='solar pv') sDirect += l.mat + l.hrs*ELEC_BID.crewRate;
+  });
+  est.solarDirect = sDirect;
+  est.solarSell   = direct > 0 ? sell * (sDirect/direct) : 0;
   return est;
 }
 
@@ -41332,7 +41437,10 @@ function _renderEstimate(host){
     return;
   }
 
-  var sys = (e.bom.kwh/1000).toFixed(2)+' MWh / '+(e.bom.systemKw/1000).toFixed(2)+' MW';
+  var _pvKw = +e.bom.solarKwDc || 0;
+  var sys = (e.bom.kwh/1000).toFixed(2)+' MWh / '+(e.bom.systemKw/1000).toFixed(2)+' MW'
+    + (_pvKw>0 ? (' \u00b7 '+_pvKw.toFixed(1)+' kW-DC PV'
+        + (e.bom.solarArrays>1 ? (' ('+e.bom.solarArrays+' arrays)') : '')) : '');
 
   /* group lines by category for a clean McCormick-style recap */
   var cats={}, order=[];
@@ -41463,8 +41571,13 @@ function _totalsHTML(){
     + '<div style="border-top:1px solid rgba(197,165,90,.4);margin-top:8px;padding-top:8px">'
     + row('SELL PRICE (BID)', _money(e.sell), true, '#22C55E')
     + '<div style="font-size:9px;color:#6B8299;text-align:right;margin-top:2px">'
-    +   (e.bom.systemKw>0 ? _money(e.sell/(e.bom.systemKw)) +'/kW · ' : '')
-    +   (e.bom.kwh>0 ? _money(e.sell/e.bom.kwh)+'/kWh' : '')+'</div></div>';
+    +   (e.bom.systemKw>0 ? _money(e.sell/(e.bom.systemKw)) +'/kW \u00b7 ' : '')
+    +   (e.bom.kwh>0 ? _money(e.sell/e.bom.kwh)+'/kWh' : '')
+    +   ((+e.bom.solarKwDc>0)
+          ? ('<br><span style="color:#6B8299">incl. '+(+e.bom.solarKwDc).toFixed(1)
+             +' kW-DC PV \u00b7 '+_money(e.solarSell/((+e.bom.solarKwDc)*1000))+'/W-DC solar scope</span>')
+          : '')
+    +   '</div></div>';
 }
 
 /* ----------------------------------------------------------------------
