@@ -1540,6 +1540,7 @@ window.onerror = function(msg, src, line, col, err) {
         <button class="rbtn" onclick="rbRun(toggleDiagPanel)" title="Anchor diagnostics — why equipment is or is not locked to the ground"><span class="rb-ico">⚠</span><span class="rb-lbl">Diagnose</span></button>
         <button class="rbtn" onclick="rbRun(toggleCompassPanel)" title="Compass — pan the view north / south / east / west, and frame the drawing"><span class="rb-ico">⊕</span><span class="rb-lbl">Compass</span></button>
         <button class="rbtn" onclick="toggleLayersPanel()" title="Layers — list, select, hide, reorder, delete all elements"><span class="rb-ico">▧</span><span class="rb-lbl">Layers</span></button>
+        <button class="rbtn" onclick="rbRun(engSchedToggleVisible)" title="Conduit schedule — show or hide the run schedule panel"><span class="rb-ico">≔</span><span class="rb-lbl">Conduit<br>Schedule</span></button>
         <div class="omega-addr" title="Type a site address and press Enter to load the satellite map there"><span class="omega-addr-ico">◎</span><input id="omega-addr-in" type="text" placeholder="Site address…" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter'){event.preventDefault();omegaLoadMap();}"><button type="button" id="omega-addr-go" onclick="omegaLoadMap()">Load</button></div>
       </div>
       <div class="rpanel-cap">Panels</div>
@@ -6026,6 +6027,7 @@ function _setScaleFromZoomLat(zoom, lat){
   var metersPerPx = 156543.03392 * Math.cos(lat*Math.PI/180) / Math.pow(2, zoom);
   var ftPerPx = metersPerPx * 3.28084;
   if(!(ftPerPx>0)) return;
+  var _prevPpf = S.pxPerFt;            /* see _gmapAutoScale */
   S.pxPerFt = 1/ftPerPx;
   S.unitLabel='ft';
   var scalEl=document.getElementById('sc-lbl');
@@ -6038,7 +6040,7 @@ function _setScaleFromZoomLat(zoom, lat){
     if(typeof updShapeCount==='function') updShapeCount();
   }
   if(S.conduits){ S.conduits.forEach(function(c){
-    if(!c._geoPts) c.ftLen=+(c.pxLen/S.pxPerFt).toFixed(1);   /* see _gmapAutoScale */
+    if(!c._geoPts && !(_prevPpf > 0)) c.ftLen=+(c.pxLen/S.pxPerFt).toFixed(1);  /* see _gmapAutoScale */
     var el=document.querySelector('[data-cid="'+c.id+'"]'); if(el) el.remove(); renderConduit(c); }); }
   if(typeof updCondStat==='function') updCondStat();
   if(typeof updateRuler==='function') updateRuler();
@@ -6078,6 +6080,7 @@ function _gmapAutoScale() {
   const ftPerPx = metersPerPx * 3.28084;
   // pxPerFt = how many canvas pixels = 1 foot
   const pxPerFt = 1 / ftPerPx;
+  const _prevPpf = S.pxPerFt;          /* was a scale already established? */
   S.pxPerFt = pxPerFt;
   S.unitLabel = 'ft';
   // Update status bar
@@ -6093,7 +6096,12 @@ function _gmapAutoScale() {
        Measuring here would divide last zoom's pxLen by this zoom's scale.
        _geoReprojectAll() owns those runs and measures them once the points
        have actually moved. Pixel-only runs (no site loaded) still recalc. */
-    if(!c._geoPts) c.ftLen = +(c.pxLen / pxPerFt).toFixed(1);
+    /* An un-anchored run is pinned to canvas pixels, so its pixel length is
+       genuinely fixed — re-dividing it by each new zoom's scale made its
+       reported length track the view just as badly. Recompute only when a
+       scale is arriving for the first time, which is the case this rewrite
+       actually exists for: a run drawn before the site was calibrated. */
+    if(!c._geoPts && !(_prevPpf > 0)) c.ftLen = +(c.pxLen / pxPerFt).toFixed(1);
     document.querySelector('[data-cid="'+c.id+'"]')?.remove();
     renderConduit(c);
   });
@@ -61791,6 +61799,115 @@ window._crmToastModal=_crmToastModal;
   };
 })();
 
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   OMEGA — CONDUIT LENGTH VERIFICATION
+
+   A length that moves when you zoom is the failure this checks for. It is
+   not enough to know it reads correctly right now: the question is whether
+   it reads the SAME at every zoom, because that is what tells you the
+   number describes the ground and not the view.
+
+       OmegaLen.check()     every run: anchored?, px, ft, and the risk
+       OmegaLen.sweep()     drive the map through 5 zoom levels and report
+                            each run's spread. A correct run has spread 0.
+
+   sweep() restores the original view when it finishes.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+  var TAG = '[omega/len]';
+  function S_() { try { return (typeof S !== 'undefined' && S) ? S : null; } catch (e) { return null; } }
+  function map_() { try { return (typeof _gmap !== 'undefined' && _gmap) ? _gmap : window._gmap; } catch (e) { return null; } }
+  function tags() { try { return (typeof _engTagMap === 'function') ? _engTagMap() : {}; } catch (e) { return {}; } }
+
+  function check() {
+    var s = S_(); if (!s) { console.warn(TAG, 'no session'); return null; }
+    var T = tags(), rows = [], loose = 0;
+    (s.conduits || []).forEach(function (c) {
+      if (!c) return;
+      var anchored = !!(c._geoPts && c._geoPts.length);
+      if (!anchored) loose++;
+      rows.push({
+        tag: T[c.id] || '\u2014',
+        service: c.condType || '\u2014',
+        anchored: anchored ? 'geo' : 'pixels only',
+        pxLen: c.pxLen == null ? '\u2014' : Math.round(c.pxLen),
+        reported: c.ftLen == null ? '\u2014' : (c.ftLen + (s.pxPerFt > 0 ? ' ft' : ' px')),
+        zoomSafe: anchored ? 'yes' : (s.pxPerFt > 0 ? 'held' : 'no scale')
+      });
+    });
+    if (console.table) console.table(rows); else console.log(rows);
+    console.info(TAG + ' ' + rows.length + ' run(s), ' + (rows.length - loose)
+      + ' geo-anchored, ' + loose + ' pixel-only.');
+    if (loose) {
+      console.warn(TAG + ' pixel-only runs are not reprojected. Their length is held '
+        + 'at the scale they were measured at rather than tracking the view. Draw or '
+        + 'nudge them with the map live, or run _geoStampAll(), to anchor them.');
+    }
+    return { runs: rows.length, anchored: rows.length - loose, loose: loose, rows: rows };
+  }
+
+  /* The real test: does the number survive the view changing? */
+  function sweep(levels) {
+    var s = S_(), m = map_();
+    if (!s) { console.warn(TAG, 'no session'); return null; }
+    if (!m || !m.getZoom) { console.warn(TAG, 'no live map \u2014 nothing to sweep'); return null; }
+    var z0 = m.getZoom(), c0 = m.getCenter();
+    var span = levels || 2;
+    var zs = [];
+    for (var d = -span; d <= span; d++) zs.push(z0 + d);
+
+    var seen = {}, T = tags();
+    var i = 0;
+    console.info(TAG + ' sweeping zoom ' + zs[0] + '\u2013' + zs[zs.length - 1] + ' \u2026');
+
+    function step() {
+      if (i >= zs.length) {
+        try { m.setZoom(z0); m.setCenter(c0); } catch (e) {}
+        setTimeout(report, 700);
+        return;
+      }
+      try { m.setZoom(zs[i]); } catch (e) {}
+      var z = zs[i]; i++;
+      setTimeout(function () {
+        (s.conduits || []).forEach(function (c) {
+          if (!c) return;
+          var k = c.id;
+          (seen[k] = seen[k] || { tag: T[c.id] || k, vals: [] }).vals.push(+c.ftLen || 0);
+        });
+        step();
+      }, 700);
+    }
+
+    function report() {
+      var rows = [], bad = 0;
+      Object.keys(seen).forEach(function (k) {
+        var v = seen[k].vals, lo = Math.min.apply(null, v), hi = Math.max.apply(null, v);
+        var spread = hi - lo;
+        if (spread > 0.5) bad++;
+        rows.push({
+          tag: seen[k].tag,
+          min: +lo.toFixed(1), max: +hi.toFixed(1),
+          spread: +spread.toFixed(1),
+          verdict: spread <= 0.5 ? 'stable' : 'MOVES WITH ZOOM'
+        });
+      });
+      if (console.table) console.table(rows); else console.log(rows);
+      console.info(TAG + ' ' + (bad ? (bad + ' run(s) still move with zoom.')
+        : 'every run held its length across ' + zs.length + ' zoom levels.'));
+      window.__omegaLenSweep = rows;
+    }
+
+    step();
+    return 'sweeping \u2014 results in about ' + ((zs.length + 1) * 0.7).toFixed(0) + 's';
+  }
+
+  window.OmegaLen = { check: check, sweep: sweep };
+  if (window.console) console.info(TAG, 'armed \u2014 OmegaLen.check() / OmegaLen.sweep()');
+})();
 </script>
 
 </body>
