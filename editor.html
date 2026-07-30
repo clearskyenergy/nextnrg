@@ -50506,7 +50506,7 @@ window._crmToastModal=_crmToastModal;
 
 <!-- ═════════════════════════════════════════════════════════════════════
      CLEARSKY OMEGA — SITE MAP DESIGNER PRO
-     PATCH BUNDLE  ·  2026-07-28  ·  rev 52
+     PATCH BUNDLE  ·  2026-07-28  ·  rev 53
 
      Exactly ONE copy per file, immediately before </body>.
 
@@ -50536,7 +50536,7 @@ window._crmToastModal=_crmToastModal;
           pad square, spine runs the aisle. EMS move re-lanes it.
       18. Trench bands at 45% so the drawing reads through — now
           applies in ENG mode too, which is the DEFAULT style, so the
-          setting had never taken effect  [corrected rev 52]
+          setting had never taken effect  [corrected rev 53]
       19. OmegaRotate.by(deg) turns a whole layout as a rigid body —
           equipment, stencils, boundaries, solar tables and conduits
       20. 14 balance-of-plant footprints in Draw › Utility — EMS,
@@ -50569,6 +50569,9 @@ window._crmToastModal=_crmToastModal;
           drop below it when they will not fit — they were a flat 8pt
       35. Engineering Mode takes effect — a stale guided-build flag was
           pinning _engActive() false so the toggle changed nothing
+      43. Conduit LENGTHS come from spherical.computeLength on the geo
+          points, not from pixels. The schedule read 336 ft zoomed in
+          and 2,689 ft zoomed out — exactly 8x, three zoom steps.
       42. Every conduit gets a GROUND ANCHOR. _geoReprojectAll skips any
           run without _geoPts, and none of my creators set it — so on
           zoom the equipment moved and the conduits did not.
@@ -50595,7 +50598,7 @@ window._crmToastModal=_crmToastModal;
           battery DC, bore, GEC, RSD, tracker) + TRENCH-FIRST routing:
           mark a polyline as a trench, pull circuits through it
           + the three services share one centreline so the existing
-            banking spreads them evenly inside the band  [rev 52]
+            banking spreads them evenly inside the band  [rev 53]
        7. Guided-build assemblies can be dragged and stay put
           (moved out of opt-in — this is the BESS pad fix)
 
@@ -50605,7 +50608,7 @@ window._crmToastModal=_crmToastModal;
        8. Trench and conduit move together
       12. renderEl replaces its node instead of stacking a ghost
 
-     rev 52 also stops modules logging "armed" more than once. Each
+     rev 53 also stops modules logging "armed" more than once. Each
      polls for its hook targets and those appear at different points
      during boot, so a module wrapping three functions logged three
      times. Nothing was double-wrapped — it was noise, but it buried
@@ -50665,7 +50668,7 @@ window._crmToastModal=_crmToastModal;
       console.info('[omega] patch passes ON');
       return true;
     },
-    rev: 52,
+    rev: 53,
     installed: function () {
       var active = ['OmegaMapExport', 'OmegaClose', 'OmegaSolar', 'OmegaAnchor', 'OmegaRecent',
                     'OmegaSave', 'OmegaProjects', 'OmegaAutoLayout', 'OmegaBgbLeg',
@@ -59873,6 +59876,210 @@ window._crmToastModal=_crmToastModal;
           : un.length ? un.length + ' run(s) have no ground anchor and WILL move on zoom. '
               + 'OmegaAnchorCond.stamp() fixes them.'
             : 'Every run is anchored to the ground; zoom cannot move them.';
+      if (console.table) console.table(o); else console.log(o);
+      console.info(o.verdict);
+      return o;
+    }
+  };
+})();
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   OMEGA PATCH — 43 : LENGTH COMES FROM THE GROUND, NOT THE SCREEN
+   -----------------------------------------------------------------------
+   Rev 52 fixed the geometry — the runs now hold their position over the
+   site through a zoom. The SCHEDULE did not:
+
+       tag     zoomed in    zoomed out    ratio
+       C1          221.9        1775.1     8.00
+       C4           28.2         225.8     8.01
+       C5           47.6         381.0     8.00
+       total       336.1        2688.8     8.00
+
+   Exactly 8x on every run. Three zoom steps, 2^3. The length is being
+   derived from pixels:
+
+       c.pxLen  measured on screen
+       c.ftLen  = pxLen / S.pxPerFt
+
+   Zoom changes both, but not in step — the points are re-projected while
+   pxLen keeps its old value, or pxPerFt updates and pxLen has not yet. The
+   quotient is whatever the two happen to be at that instant. So the
+   conduit schedule, the trench total and anything priced off them change
+   depending on how far you happened to be zoomed in. That is a bid going
+   out with the wrong number on it.
+
+   A conduit's length is a property of the ground, not of the display.
+   Since rev 52 every run carries _geoPts, so the true length is available
+   directly:
+
+       google.maps.geometry.spherical.computeLength(latLngs)
+
+   which returns metres between real coordinates and does not care about
+   zoom at all. That is cached on the record and only recomputed when the
+   vertices actually change.
+
+   Deliberately NOT the earlier ground-length module (patch 6, still
+   opt-in). That one wrapped _gmapAutoScale and _geoReprojectAll and
+   triggered a repaint storm — 180 restyles per pan. This touches no render
+   path: it computes a number and stores it.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  var TAG = '[omega/groundlen]';
+  var M_TO_FT = 3.280839895;
+
+  function S_() { try { return (typeof S !== 'undefined' && S) ? S : null; } catch (e) { return null; } }
+
+  function spherical() {
+    try {
+      var g = window.google && google.maps && google.maps.geometry && google.maps.geometry.spherical;
+      return (g && typeof g.computeLength === 'function') ? g : null;
+    } catch (e) { return null; }
+  }
+
+  /* A signature of the vertices, so we only recompute when they move. */
+  function sig(c) {
+    if (!c._geoPts) return '';
+    var s = '';
+    for (var i = 0; i < c._geoPts.length; i++) {
+      var g = c._geoPts[i];
+      if (!g) { s += '|'; continue; }
+      s += g.lat.toFixed(7) + ',' + g.lng.toFixed(7) + '|';
+    }
+    return s;
+  }
+
+  function groundFeet(c) {
+    var sph = spherical(); if (!sph) return null;
+    if (!c._geoPts || c._geoPts.length < 2) return null;
+    var path = [];
+    for (var i = 0; i < c._geoPts.length; i++) {
+      var g = c._geoPts[i];
+      if (!g || g.lat == null || g.lng == null) return null;
+      try { path.push(new google.maps.LatLng(g.lat, g.lng)); } catch (e) { return null; }
+    }
+    var m = null;
+    try { m = sph.computeLength(path); } catch (e) { return null; }
+    if (!isFinite(m)) return null;
+    return +(m * M_TO_FT).toFixed(1);
+  }
+
+  function refresh(quiet) {
+    var s = S_(); if (!s || !s.conduits) return 0;
+    if (!spherical()) return 0;
+    var n = 0;
+    s.conduits.forEach(function (c) {
+      if (!c || !c._geoPts) return;
+      var k = sig(c);
+      if (c._groundSig === k && c._groundFt != null) {
+        /* unchanged — just make sure nothing has overwritten ftLen */
+        if (c.ftLen !== c._groundFt) { c.ftLen = c._groundFt; n++; }
+        return;
+      }
+      var ft = groundFeet(c);
+      if (ft == null) return;
+      c._groundFt = ft;
+      c._groundSig = k;
+      c.ftLen = ft;
+      n++;
+    });
+    if (n && !quiet && window.console) {
+      console.info(TAG, 'recomputed ' + n + ' run length(s) from ground coordinates');
+    }
+    return n;
+  }
+
+  function repaintSchedule() {
+    try { if (typeof updCondStat === 'function') updCondStat(); } catch (e) {}
+    try { if (typeof renderLegend === 'function') renderLegend(); } catch (e) {}
+  }
+
+  /* Hold the true length across anything that recomputes from pixels.
+     Runs AFTER the app has done its thing, so we are the last word. */
+  function wrap(name) {
+    var orig = window[name];
+    if (typeof orig !== 'function' || orig.__omegaGroundLen) return false;
+    var wrapped = function () {
+      var r = orig.apply(this, arguments);
+      try { if (refresh(true)) repaintSchedule(); } catch (e) {}
+      return r;
+    };
+    wrapped.__omegaGroundLen = true;
+    window[name] = wrapped;
+    return true;
+  }
+
+  /* A zoom does not necessarily go through any of those, so watch the
+     scale itself. No render hook — this only writes numbers. */
+  var lastPpf = null;
+  setInterval(function () {
+    if (window.OMEGA_OFF) return;
+    var s = S_(); if (!s) return;
+    var p = s.pxPerFt || 0;
+    if (lastPpf === null) { lastPpf = p; return; }
+    if (Math.abs(p - lastPpf) < 1e-9) return;
+    lastPpf = p;
+    try { if (refresh(true)) repaintSchedule(); } catch (e) {}
+  }, 600);
+
+  var n = 0;
+  var iv = setInterval(function () {
+    var a = wrap('updCondStat'), b = wrap('_geoReprojectAll'), c = wrap('pushHist');
+    if (a || b || c) {
+      refresh(true); repaintSchedule();
+      if (window.console) {
+        console.info(TAG, 'armed \u2014 lengths come from spherical.computeLength, so zoom cannot change them');
+      }
+    }
+    if (++n > 300) clearInterval(iv);
+  }, 400);
+
+  window.OmegaGroundLen = {
+    refresh: function () { var k = refresh(false); repaintSchedule(); return k; },
+
+    /* Prove it: compare the pixel-derived figure with the ground figure. */
+    audit: function () {
+      var s = S_() || {};
+      var p = s.pxPerFt || 0;
+      var rows = (s.conduits || []).filter(Boolean).map(function (c) {
+        var fromPx = (p && c.pxLen) ? +(c.pxLen / p).toFixed(1) : null;
+        return {
+          tag: c.id,
+          service: c.condType || '',
+          fromPixels: fromPx == null ? '\u2014' : fromPx + ' ft',
+          fromGround: c._groundFt == null ? 'not anchored' : c._groundFt + ' ft',
+          reported: c.ftLen == null ? '\u2014' : c.ftLen + ' ft',
+          agrees: (c._groundFt != null && Math.abs((c.ftLen || 0) - c._groundFt) < 0.15) ? 'yes' : 'NO'
+        };
+      });
+      if (rows.length) { if (console.table) console.table(rows); else console.log(rows); }
+      var bad = rows.filter(function (r) { return r.agrees === 'NO'; }).length;
+      console.info(TAG + ' ' + rows.length + ' run(s); ' + bad + ' not reporting their ground length. '
+        + (spherical() ? '' : 'The Maps geometry library is not loaded, so nothing can be measured.'));
+      return rows;
+    },
+
+    status: function () {
+      var s = S_() || {};
+      var cs = (s.conduits || []).filter(Boolean);
+      var grounded = cs.filter(function (c) { return c._groundFt != null; }).length;
+      var total = cs.reduce(function (a, c) { return a + (c._groundFt || 0); }, 0);
+      var o = {
+        conduitRuns: cs.length,
+        measuredFromGround: grounded,
+        stillPixelDerived: cs.length - grounded,
+        totalFt: +total.toFixed(1),
+        geometryLibrary: !!spherical(),
+        pxPerFt: s.pxPerFt || 0
+      };
+      o.verdict = !cs.length ? 'No conduit runs.'
+        : !o.geometryLibrary ? 'Maps geometry library missing \u2014 lengths stay pixel-derived and WILL move with zoom.'
+          : (cs.length - grounded) ? (cs.length - grounded) + ' run(s) not yet anchored; '
+              + 'OmegaAnchorCond.stamp() then OmegaGroundLen.refresh().'
+            : 'All ' + cs.length + ' run(s) measured on the ground \u2014 ' + o.totalFt
+              + ' ft, and zoom cannot change it.';
       if (console.table) console.table(o); else console.log(o);
       console.info(o.verdict);
       return o;
