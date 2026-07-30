@@ -16692,7 +16692,7 @@ function placeSLDElement(type) {
 }
 
 // == UNDO ====================================================
-function pushHist(){try{if(typeof _geoStampAll==='function')_geoStampAll();}catch(e){}S.history.push({els:JSON.parse(JSON.stringify(S.elements)),conds:JSON.parse(JSON.stringify(S.conduits)),shps:JSON.parse(JSON.stringify(S.shapes||[]))});if(S.history.length>30)S.history.shift();window._workDirty=true;try{omegaSetStale(true);}catch(e){}}
+function pushHist(){try{if(typeof _geoStampAll==='function')_geoStampAll();}catch(e){}S.history.push({els:JSON.parse(JSON.stringify(S.elements)),conds:JSON.parse(JSON.stringify(S.conduits)),shps:JSON.parse(JSON.stringify(S.shapes||[]))});if(S.history.length>30)S.history.shift();window._workDirty=true;try{omegaSetStale(true);}catch(e){}/* Patch 6: an edit just finished, so the pixels are the truth. Refresh every geo anchor from them, otherwise the next map idle drags the moved object back to its old anchor. */try{if(typeof _geoRestampAll==='function')_geoRestampAll();}catch(e){}}
 function undoLast(){
   if(S.history.length<2)return;S.history.pop();const prev=S.history[S.history.length-1];
   document.getElementById('els').innerHTML='';document.getElementById('csvg').innerHTML='';
@@ -16750,6 +16750,8 @@ document.addEventListener('keydown',e=>{
     var _copy=JSON.parse(JSON.stringify(window._clipboardEl));
     _copy.id=uid(); _copy.x=(_copy.x||0)+30; _copy.y=(_copy.y||0)+30;
     _copy._groupParent=null; _copy._groupIds=[];
+    /* Patch 6: clipboard paste inherited the source's geo anchor too. */
+    if(typeof _geoClearAnchor==='function') _geoClearAnchor(_copy);
     S.elements.push(_copy); renderEl(_copy);
     if(typeof updCount==='function') updCount();
     if(typeof renderLegend==='function') renderLegend();
@@ -24328,6 +24330,9 @@ var O2_CLASSES = [
   { key:'trench', label:'Trench / Conduit', color:'#D97706' },
   { key:'bess',   label:'BESS',       color:'#4ADE80' },
   { key:'ev',     label:'EV',         color:'#22D3EE' },
+  /* Patch 7: wind, fuel cells and gensets were landing in Structures, so a
+     site with 4 turbines and 3 fuel cells reported them as generic shapes. */
+  { key:'gen',    label:'Wind / Gen', color:'#A78BFA' },
   { key:'struct', label:'Structures', color:'#9A9A9A' }
 ];
 
@@ -24366,10 +24371,15 @@ function o2Members(key){
     out.elements = els.filter(function(e){
       var t=elType(e); return t.indexOf('charger')>=0 || t.indexOf('dcfc')>=0 || t.indexOf('evse')>=0;
     });
+  } else if(key==='gen'){
+    out.shapes = shapes.filter(function(s){
+      return s && (s.kind==='derwind' || s.kind==='deralt' || s.kind==='derdc');
+    });
   } else { /* struct: everything not claimed above */
     out.shapes = shapes.filter(function(s){
       if(!s) return false;
-      return ['dersolar','solar','assembly','bespad','evunit','evpost','evcab'].indexOf(s.kind)<0;
+      return ['dersolar','solar','assembly','bespad','evunit','evpost','evcab',
+              'derwind','deralt','derdc'].indexOf(s.kind)<0;
     });
     out.elements = els.filter(function(e){
       var t=elType(e);
@@ -24529,6 +24539,10 @@ function o2Add(){
 function _o2CloneShape(sh, dx, dy){
   var c=JSON.parse(JSON.stringify(sh));
   c.id=uid();
+  /* Patch 6: a deep clone carries the original's geo anchor. Left in place
+     the copy snaps back on top of the original at the next map idle. Drop
+     it; pushHist() re-stamps from the offset pixels. */
+  if(typeof _geoClearAnchor==='function') _geoClearAnchor(c);
   dx=dx||30; dy=dy||30;
   if(typeof c.cx==='number'){ c.cx+=dx; c.cy+=dy; }
   if(c.pts && c.pts.length) c.pts=c.pts.map(function(p){ return {x:p.x+dx,y:p.y+dy}; });
@@ -24549,6 +24563,8 @@ function _o2CloneElement(el, dx, dy){
   var c=JSON.parse(JSON.stringify(el));
   c.id=uid(); c.x=(c.x||0)+(dx||30); c.y=(c.y||0)+(dy||30);
   c._groupParent=null; c._groupIds=[];
+  /* Patch 6: same inherited-anchor problem as _o2CloneShape. */
+  if(typeof _geoClearAnchor==='function') _geoClearAnchor(c);
   S.elements.push(c);
   try{ if(typeof renderEl==='function') renderEl(c); }catch(e){}
   return c;
@@ -24773,6 +24789,10 @@ function o2ApplyGeom(){
   var before = sh.kw || 0;
   var L=null;
   try{ L = OmegaSolar.relayout(sh, opts); }catch(e){}
+  /* Patch 6: relayout regenerates tables[] in pixels. The old table anchors
+     describe a layout that no longer exists, so clear them and let
+     _o2Commit -> pushHist re-stamp from the new geometry. */
+  try{ delete sh._geoTables; }catch(e){}
   _o2Commit();
   if(typeof showBanner==='function'){
     try{
@@ -25095,17 +25115,57 @@ function omegaBessKwh(){
     return s + (+(b.kwh||0))*(+(b.qty||1));
   },0);
 }
-/* Solar DC kW from the auto-layout, when one has been generated. */
+/* Generation totals.
+   -------------------------------------------------------------------
+   derTotals() is the canonical reader: it walks S.shapes and sums by
+   kind, so it sees EVERY array, turbine and fuel cell on the drawing.
+   Patch 1 used window._alLayout instead -- the global left behind by the
+   last auto-layout preview -- which is null after a reload and only ever
+   describes one array. That is why a two-array site reported "--".
+   ------------------------------------------------------------------- */
+function omegaDer(){
+  try{
+    if(typeof derTotals==='function') return derTotals();
+  }catch(e){}
+  return { solarKwDc:0, solarSqft:0, solarUnits:0,
+           windKw:0, windUnits:0, altKw:0, altUnits:0,
+           dcLoadKw:0, dcUnits:0 };
+}
+
 function omegaSolarKwDc(){
-  var L = window._alLayout;
+  var d=omegaDer();
+  if(d.solarKwDc>0) return d.solarKwDc;
+  /* Fall back to the preview global only when nothing is placed yet, so a
+     freshly-previewed layout still reads out before it is applied. */
+  var L=window._alLayout;
   return (L && _omNum(L.kw)) ? +L.kw : 0;
 }
+
+/* AC side. Prefer an explicit per-array kwAc; otherwise fall back to the
+   array's own DC:AC ratio rather than a hard-coded 1.25. */
 function omegaSolarKwAc(){
-  var L = window._alLayout;
-  if(L && _omNum(L.kwAc)) return +L.kwAc;
-  var dc = omegaSolarKwDc();
+  var ac=0, sawExplicit=false;
+  try{
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh || (sh.kind!=='dersolar' && sh.kind!=='solar')) return;
+      if(_omNum(sh.kwAc)>0){ ac+=+sh.kwAc; sawExplicit=true; }
+      else if(_omNum(sh.kw)>0){
+        var r=(_omNum(sh.dcAcRatio)>0)?+sh.dcAcRatio:1.25;
+        ac += (+sh.kw)/r;
+      }
+    });
+  }catch(e){}
+  if(ac>0) return Math.round(ac);
+  var L=window._alLayout;
+  if(!sawExplicit && L && _omNum(L.kwAc)) return +L.kwAc;
+  var dc=omegaSolarKwDc();
   return dc ? Math.round(dc/1.25) : 0;
 }
+
+/* Everything that generates, not just solar. */
+function omegaWindKw(){ return +(omegaDer().windKw||0); }
+function omegaAltKw(){  return +(omegaDer().altKw||0);  }   /* fuel cell / genset */
+function omegaDcLoadKw(){ return +(omegaDer().dcLoadKw||0); }
 
 /* Map centre + derived grid/projection facts. */
 function omegaGeo(){
@@ -25264,26 +25324,55 @@ function omegaRenderResults(){
 
   /* POWER --------------------------------------------------------- */
   var bKw=omegaBessKw(), bKwh=omegaBessKwh();
+  var D=omegaDer();
   var sDc=omegaSolarKwDc(), sAc=omegaSolarKwAc();
+  var wKw=omegaWindKw(), aKw=omegaAltKw(), dcL=omegaDcLoadKw();
   var ratio = sAc>0 ? sDc/sAc : null;
+  var genKw = (sAc||0) + wKw + aKw;          /* AC-side generating capacity */
+
+  function unitSfx(n){ return (n>1) ? (' \u00d7'+n) : ''; }
+
   var pw='';
-  pw += _omRow('BESS power',    bKw  ? bKw.toLocaleString()+' kW'   : null);
-  pw += _omRow('BESS energy',   bKwh ? (bKwh/1000).toFixed(2)+' MWh': null);
-  pw += _omRow('Solar DC',      sDc  ? sDc.toLocaleString()+' kWdc' : null);
-  pw += _omRow('Solar AC',      sAc  ? sAc.toLocaleString()+' kWac' : null);
-  pw += _omRow('DC/AC ratio',   ratio? _omFix(ratio,3) : null);
-  if(!bKw && !sDc){
-    pw += '<div class="rr-gate">Place BESS or generate a solar layout to size the system.</div>';
+  pw += _omRow('BESS power',  bKw  ? bKw.toLocaleString()+' kW'    : null);
+  pw += _omRow('BESS energy', bKwh ? (bKwh/1000).toFixed(2)+' MWh' : null);
+  pw += _omRow('Solar DC'+unitSfx(D.solarUnits),
+               sDc ? Math.round(sDc).toLocaleString()+' kWdc' : null);
+  pw += _omRow('Solar AC',    sAc  ? Math.round(sAc).toLocaleString()+' kWac' : null);
+  pw += _omRow('DC/AC ratio', ratio ? _omFix(ratio,3) : null);
+  /* Wind and fuel cell / genset had no row at all before Patch 7, so a site
+     with 400 kW of wind and 1,200 kW of fuel cell showed a POWER group that
+     pretended neither existed. */
+  pw += _omRow('Wind'+unitSfx(D.windUnits),
+               wKw ? Math.round(wKw).toLocaleString()+' kW' : null);
+  pw += _omRow('Fuel cell / genset'+unitSfx(D.altUnits),
+               aKw ? Math.round(aKw).toLocaleString()+' kW' : null);
+  pw += _omRow('Total generation',
+               genKw ? Math.round(genKw).toLocaleString()+' kWac' : null,
+               genKw ? 'rr-pos' : '', 'Solar AC + wind + fuel cell / genset.');
+  if(dcL>0){
+    pw += _omRow('DC compute load', Math.round(dcL).toLocaleString()+' kW',
+                 null, 'Data-centre nodes placed on the drawing.');
+  }
+  if(!bKw && !sDc && !wKw && !aKw){
+    pw += '<div class="rr-gate">Place BESS, solar, wind or a fuel cell to size '
+        + 'the system.</div>';
   }
   _omSet('rr-b-power', pw);
 
   /* POWER FLOW ---------------------------------------------------- */
-  var poiKw = (bKw||0) + (sAc||0);
+  /* Wind and fuel cell export through the same POI as solar and BESS, so
+     leaving them out understated the interconnection by their full rating. */
+  var poiKw = (bKw||0) + (sAc||0) + wKw + aKw;
   var fl='';
-  fl += _omRow('Active power at POI', poiKw ? poiKw.toLocaleString()+' kW' : null);
+  fl += _omRow('Active power at POI', poiKw ? Math.round(poiKw).toLocaleString()+' kW' : null);
   fl += _omRow('DC/AC at POI', (poiKw && sDc) ? _omFix(sDc/poiKw,3) : null);
-  fl += '<div class="rr-note">POI figure is nameplate sum, not an interconnection '
-      + 'study result.</div>';
+  if(dcL>0){
+    fl += _omRow('Net at POI', Math.round(poiKw-dcL).toLocaleString()+' kW',
+                 (poiKw-dcL)>=0 ? 'rr-pos' : 'rr-neg',
+                 'Generation less on-site DC compute load.');
+  }
+  fl += '<div class="rr-note">POI figure is a nameplate sum, not an '
+      + 'interconnection study result.</div>';
   _omSet('rr-b-flow', fl);
 
   /* CIVIL --------------------------------------------------------- */
@@ -25301,7 +25390,9 @@ function omegaRenderResults(){
   /* ENERGY -------------------------------------------------------- */
   var y=omegaYield(), en='';
   if(y){
-    var kwp = sDc || bKw || 0;
+    /* Specific yield is a PV metric, so the denominator is the array's DC
+       rating -- not wind or fuel cell, which do not have a kWp. */
+    var kwp = sDc || 0;
     en += _omRow('Annual energy', (y.kwh/1e6).toFixed(3)+' GWh');
     en += _omRow('Specific yield', kwp ? Math.round(y.kwh/kwp).toLocaleString()+' kWh/kWp' : null);
     en += _omRow('Performance ratio',
@@ -26632,6 +26723,191 @@ function _geoStampElement(el){
 }
 window._geoStampElement=_geoStampElement;
 
+/* ------------------------------------------------------------------
+   FULL-GEOMETRY ANCHORING                                  (Patch 6)
+   A shape's position is not always in sh.pts. Depending on kind it can
+   live in cx/cy, in boundary[], in exclusions[][], and in tables[].
+   Stamping only pts left the rest frozen in the pixel coordinates of
+   whichever zoom level it was drawn at, which is why a solar array
+   neither scaled nor tracked the basemap.
+   ------------------------------------------------------------------ */
+
+/* Record every positional field of a shape as lat/lng.
+   force=false only fills in what is missing, so an existing project keeps
+   the anchors it already had and merely gains the ones it never got. */
+function _geoStampShape(sh, toGeo, force){
+  if(!sh) return;
+  try{
+    if(sh.pts && sh.pts.length && (force || !sh._geoPts)){
+      sh._geoPts = sh.pts.map(function(p){
+        var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null;
+      });
+    }
+    if(typeof sh.cx==='number' && typeof sh.cy==='number' && (force || !sh._geoC)){
+      var gc=toGeo(sh.cx, sh.cy);
+      if(gc) sh._geoC={lat:gc.lat, lng:gc.lng};
+    }
+    if(sh.boundary && sh.boundary.length && (force || !sh._geoBoundary)){
+      sh._geoBoundary = sh.boundary.map(function(p){
+        var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null;
+      });
+    }
+    if(sh.exclusions && sh.exclusions.length && (force || !sh._geoExcl)){
+      sh._geoExcl = sh.exclusions.map(function(z){
+        return z.map(function(p){
+          var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null;
+        });
+      });
+    }
+    /* Tables carry only their CENTRE. Width and height come back from
+       tableWft/tableHft x pxPerFt at reproject time, which is what makes
+       the array scale with the map instead of staying a fixed pixel size. */
+    if(sh.tables && sh.tables.length && (force || !sh._geoTables)){
+      sh._geoTables = sh.tables.map(function(t){
+        var g=toGeo(t.x+(t.w||0)/2, t.y+(t.h||0)/2);
+        return g?{lat:g.lat, lng:g.lng, a:t.a||0}:null;
+      });
+    }
+  }catch(e){}
+}
+
+/* Rebuild a shape's pixels from its stamped lat/lng at the current view. */
+function _geoApplyShape(sh, toPx, ppf){
+  if(!sh) return;
+  try{
+    if(sh._geoPts && sh.pts){
+      for(var i=0;i<sh.pts.length && i<sh._geoPts.length;i++){
+        var g=sh._geoPts[i]; if(!g) continue;
+        var px=toPx(g.lat,g.lng); if(px){ sh.pts[i].x=px.x; sh.pts[i].y=px.y; }
+      }
+    }
+    if(sh._geoC && typeof sh.cx==='number'){
+      var pc=toPx(sh._geoC.lat, sh._geoC.lng);
+      if(pc){ sh.cx=pc.x; sh.cy=pc.y; }
+    }
+    if(sh._geoBoundary && sh.boundary){
+      for(var b=0;b<sh.boundary.length && b<sh._geoBoundary.length;b++){
+        var gb=sh._geoBoundary[b]; if(!gb) continue;
+        var pb=toPx(gb.lat,gb.lng); if(pb){ sh.boundary[b].x=pb.x; sh.boundary[b].y=pb.y; }
+      }
+    }
+    if(sh._geoExcl && sh.exclusions){
+      for(var z=0;z<sh.exclusions.length && z<sh._geoExcl.length;z++){
+        var ring=sh.exclusions[z], gring=sh._geoExcl[z];
+        if(!ring || !gring) continue;
+        for(var k=0;k<ring.length && k<gring.length;k++){
+          var ge=gring[k]; if(!ge) continue;
+          var pe=toPx(ge.lat,ge.lng); if(pe){ ring[k].x=pe.x; ring[k].y=pe.y; }
+        }
+      }
+    }
+    if(sh._geoTables && sh.tables){
+      /* Size in FEET is the invariant; pixels follow the current scale. */
+      var tw = (ppf>0 && sh.tableWft>0) ? sh.tableWft*ppf : null;
+      var th = (ppf>0 && sh.tableHft>0) ? sh.tableHft*ppf : null;
+      for(var t=0;t<sh.tables.length && t<sh._geoTables.length;t++){
+        var gt=sh._geoTables[t]; if(!gt) continue;
+        var pt=toPx(gt.lat,gt.lng); if(!pt) continue;
+        var T=sh.tables[t];
+        if(tw!=null) T.w=tw;
+        if(th!=null) T.h=th;
+        T.x=pt.x-(T.w||0)/2;
+        T.y=pt.y-(T.h||0)/2;
+        if(gt.a!=null) T.a=gt.a;
+      }
+    }
+    /* The cached pixel bbox has to follow the boundary or the shape's own
+       hit-box and label placement drift away from what is drawn. */
+    if(sh.boundary && sh.boundary.length>1){
+      var minX=1e15,minY=1e15,maxX=-1e15,maxY=-1e15;
+      for(var q=0;q<sh.boundary.length;q++){
+        var P=sh.boundary[q];
+        if(P.x<minX)minX=P.x; if(P.y<minY)minY=P.y;
+        if(P.x>maxX)maxX=P.x; if(P.y>maxY)maxY=P.y;
+      }
+      sh.wPx=maxX-minX; sh.hPx=maxY-minY;
+      if(sh.pts && sh.pts.length===1){ sh.pts[0].x=minX; sh.pts[0].y=minY; }
+    }
+  }catch(e){}
+}
+
+/* Force-refresh the geo anchor of everything from the CURRENT pixels.
+   Called after a user edit, when the pixels are the truth. Without this the
+   stamp is written once and never corrected, so a drag, a trench rebuild or
+   a toolbar Move leaves the anchor behind and the next map idle drags the
+   object back to where it used to be. */
+function _geoRestampAll(){
+  if(window._geoReprojecting) return;          /* never restamp mid-reproject */
+  var ms=_liveMapState(); if(!ms) return;
+  var sz=_getCanvasSize();
+  var toGeo=function(x,y){ return _pxToLatLng(x,y,ms,sz.w,sz.h); };
+  try{
+    (S.elements||[]).forEach(function(el){
+      var g=toGeo(el.x+((el.w||60)/2), el.y+((el.h||el.w||60)/2));
+      if(g){ el._geoLat=g.lat; el._geoLng=g.lng; }
+    });
+    (S.shapes||[]).forEach(function(sh){ _geoStampShape(sh, toGeo, true); });
+    (S.conduits||[]).forEach(function(c){
+      if(c.pts && c.pts.length){
+        c._geoPts=c.pts.map(function(p){
+          var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null;
+        });
+      }
+    });
+  }catch(e){}
+}
+window._geoRestampAll=_geoRestampAll;
+
+/* Console diagnostic. `OmegaAnchor.check()` reports what is unanchored and
+   what would drift, so this class of bug is visible without a screenshot. */
+window.OmegaAnchor = {
+  check: function(){
+    var out={elements:{total:0,unanchored:0},
+             shapes:{total:0,noPts:0,noBoundary:0,noTables:0,noCentre:0},
+             conduits:{total:0,unanchored:0}};
+    try{
+      (S.elements||[]).forEach(function(el){
+        out.elements.total++;
+        if(el._geoLat==null) out.elements.unanchored++;
+      });
+      (S.shapes||[]).forEach(function(sh){
+        out.shapes.total++;
+        if(sh.pts && sh.pts.length && !sh._geoPts) out.shapes.noPts++;
+        if(sh.boundary && sh.boundary.length && !sh._geoBoundary) out.shapes.noBoundary++;
+        if(sh.tables && sh.tables.length && !sh._geoTables) out.shapes.noTables++;
+        if(typeof sh.cx==='number' && !sh._geoC) out.shapes.noCentre++;
+      });
+      (S.conduits||[]).forEach(function(c){
+        out.conduits.total++;
+        if(c.pts && c.pts.length && !c._geoPts) out.conduits.unanchored++;
+      });
+    }catch(e){}
+    if(window.console) console.table(out);
+    return out;
+  },
+  restamp: function(){
+    _geoRestampAll();
+    var r=this.check();
+    if(window.console) console.info('[omega/anchor] restamped from current pixels');
+    return r;
+  },
+  reproject: function(){
+    if(typeof _geoReprojectAll==='function') _geoReprojectAll();
+    if(window.console) console.info('[omega/anchor] reprojected from stored lat/lng');
+  }
+};
+/* Drop every anchor on one object so it re-stamps from where it now is.
+   Used by Duplicate: a deep clone inherits the original's _geo* fields and
+   would otherwise snap back on top of the original at the next zoom. */
+function _geoClearAnchor(o){
+  if(!o) return o;
+  delete o._geoPts; delete o._geoC; delete o._geoBoundary;
+  delete o._geoExcl; delete o._geoTables;
+  delete o._geoLat; delete o._geoLng;
+  return o;
+}
+window._geoClearAnchor=_geoClearAnchor;
+
 /* Stamp EVERY placed thing — elements, shapes, and conduit points — with
    lat/lng. This is what makes "anything on the canvas" lock to the map, not
    just single equipment drops. Every placement path (Draw tools, guided
@@ -26646,12 +26922,10 @@ function _geoStampAll(){
       var g=toGeo(el.x+((el.w||60)/2), el.y+((el.h||el.w||60)/2));
       if(g){ el._geoLat=g.lat; el._geoLng=g.lng; }
     });
-    (S.shapes||[]).forEach(function(sh){
-      if(sh._geoPts) return;
-      if(sh.pts && sh.pts.length){
-        sh._geoPts=sh.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
-      }
-    });
+    /* Patch 6: stamp the whole geometry, not just pts. Non-destructive --
+       fills in only what is missing, so an existing project keeps its
+       anchors and gains the ones it never had (boundary, tables, cx/cy). */
+    (S.shapes||[]).forEach(function(sh){ _geoStampShape(sh, toGeo, false); });
     (S.conduits||[]).forEach(function(c){
       if(c._geoPts) return;
       if(c.pts && c.pts.length){
@@ -26681,14 +26955,11 @@ function _geoReprojectAll(){
       var dom=document.querySelector('[data-elid="'+el.id+'"]');
       if(dom){ dom.style.left=el.x+'px'; dom.style.top=el.y+'px'; }
     });
-    /* Shapes: reproject each point from its stored lat/lng. */
-    (S.shapes||[]).forEach(function(sh){
-      if(!sh._geoPts || !sh.pts) return;
-      for(var i=0;i<sh.pts.length && i<sh._geoPts.length;i++){
-        var g=sh._geoPts[i]; if(!g) continue;
-        var px=toPx(g.lat,g.lng); if(px){ sh.pts[i].x=px.x; sh.pts[i].y=px.y; }
-      }
-    });
+    /* Shapes: rebuild the WHOLE geometry from lat/lng, and re-derive table
+       pixel size from feet so a solar array scales with the map instead of
+       staying frozen at the zoom it was drawn at. */
+    var _ppf = (typeof S!=='undefined' && S.pxPerFt>0) ? S.pxPerFt : 0;
+    (S.shapes||[]).forEach(function(sh){ _geoApplyShape(sh, toPx, _ppf); });
     /* Conduits: reproject each routing point from its stored lat/lng. */
     (S.conduits||[]).forEach(function(c){
       if(!c._geoPts || !c.pts) return;
