@@ -4124,7 +4124,15 @@ function applyToolLocks(){
   for(var t=0;t<tiles.length;t++){
     var tile = tiles[t];
     var key = tile.getAttribute('data-tool');
-    if(unlocked[key]){ continue; }           // live tool — leave it
+    if(unlocked[key]){
+      // Live tool: ensure its link carries the tenant org so it opens
+      // branded to THIS tenant, not the generic tools.csebuilders root.
+      if (tile.tagName === "A" && tile.getAttribute("href")){
+        var _h = tile.getAttribute("href");
+        if (_h && _h.charAt(0) !== "#" && _h.indexOf("javascript:") !== 0){ tile.setAttribute("href", _withOrg(_h)); }
+      }
+      continue;
+    }
     lockTile(tile, key);
   }
 }
@@ -4199,6 +4207,21 @@ function esc2(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
    ══════════════════════════════════════════════════════════════════════ */
 var PORTAL_STROKE = '#00A9A4';       // OMEGA teal
 var _PORTAL_WS = null, _PINNED = [];
+// Append ?org=<tenant> to a tool link so external tools (on tools.csebuilders.com)
+// open branded to the tenant the user is in — not the admin/default tenant.
+function _withOrg(href){
+  try {
+    if (!href || href === '#') return href;
+    if (href.charAt(0) === '#') return href;
+    var org = (_PORTAL_WS && _PORTAL_WS.orgId) || '';
+    if (!org) return href;
+    // don't double-add
+    if (/[?&]org=/.test(href)) return href;
+    // only add to page links (skip javascript:, mailto:, etc.)
+    if (/^(javascript|mailto|tel):/i.test(href)) return href;
+    return href + (href.indexOf('?') >= 0 ? '&' : '?') + 'org=' + encodeURIComponent(org);
+  } catch(e){ return href; }
+}
 
 /* Local HTML escaper — the render code below uses esc(); define it here so
    it never depends on whatever the host page happens to name its escaper. */
@@ -4208,8 +4231,23 @@ function esc(s){
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// Rewrite every hardcoded tool link (Quick Access, etc.) so it opens branded
+// to the current tenant. Runs regardless of tier (applyToolLocks early-returns
+// for Enterprise, so it can't be relied on for this).
+function _brandToolLinks(){
+  try {
+    var links = document.querySelectorAll('a[data-tool][href]');
+    for (var i=0;i<links.length;i++){
+      var h = links[i].getAttribute('href');
+      if (h && h.charAt(0) !== '#' && h.indexOf('javascript:') !== 0){
+        links[i].setAttribute('href', _withOrg(h));
+      }
+    }
+  } catch(e){}
+}
 function renderPortalApps(ws){
   _PORTAL_WS = ws;
+  _brandToolLinks();   // ensure Quick Access + tool links carry ?org=
   // omega-tools.js loads cross-origin from the host and may not be ready yet
   // at sign-in. Instead of giving up, wait for it (retry up to ~5s).
   if (typeof OMEGATools === 'undefined'){
@@ -4289,22 +4327,6 @@ function _paintDash(){
       href:'/spatco-ev-estimate.html'
     });
   }
-  // Sales Proposal fallback: if the shared catalog doesn't carry the 'sales'
-  // key (or under a different name) but this workspace requires it, render a
-  // direct tile so the Sales Proposal Builder always appears + stays locked.
-  if (_PORTAL_WS && _PORTAL_WS.requiredTools &&
-      _PORTAL_WS.requiredTools.indexOf('sales') >= 0 && !renderedKeys['sales']
-      && count < DASH_MAX){
-    html += _localTile({
-      key:'sales',
-      name:'Sales Proposal Builder',
-      desc:'Customer-facing 4-page PPA / cash proposals with AI site placement.',
-      category:'sales',
-      icon:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M9 13h6 M9 17h4',
-      href:'/sales-proposal.html?org=' + ((_PORTAL_WS && _PORTAL_WS.orgId) || '')
-    });
-    renderedKeys['sales'] = true; count++;
-  }
   el.innerHTML = html || '<div style="grid-column:1/-1;padding:24px;text-align:center;color:var(--cs-sub)">No tools pinned yet. Add some from the marketplace below.</div>';
 }
 
@@ -4361,6 +4383,7 @@ function _paintMarket(){
 
 function _tile(t, onDash){
   var href = OMEGATools.hrefFor(t, _PORTAL_WS);
+  href = _withOrg(href);   // ensure tenant-branded tools open in the right tenant
   var stroke = t.soon ? '#9AA6B4' : PORTAL_STROKE;
   var req = _required(t), pinned = _pinned(t.key);
   var open;
@@ -4752,21 +4775,13 @@ function _paintSideApps(){
           if (t.key==='editor'){
             html += '<a class="sn-app" href="#" onclick="if(typeof openNewProjectModal===\'function\'){openNewProjectModal(\'bess\');}return false;"><span class="sn-app-dot"></span>'+label+'</a>';
           } else {
-            var href = (typeof OMEGATools!=='undefined' && OMEGATools.hrefFor)?OMEGATools.hrefFor(t):'#';
+            var href = _withOrg((typeof OMEGATools!=='undefined' && OMEGATools.hrefFor)?OMEGATools.hrefFor(t):'#');
             html += '<a class="sn-app" href="'+href+'"><span class="sn-app-dot"></span>'+label+'</a>';
           }
           n++;
         }
       }
     }
-      // Sales Proposal fallback: ensure it shows in the sidebar even if the
-      // shared catalog doesn't carry the 'sales' key (matches the dashboard).
-      if (_PORTAL_WS && _PORTAL_WS.requiredTools &&
-          _PORTAL_WS.requiredTools.indexOf('sales') >= 0 &&
-          html.indexOf('data-app="sales"') < 0){
-        var _salesHref = '/sales-proposal.html?org=' + ((_PORTAL_WS && _PORTAL_WS.orgId) || '');
-        html += '<a class="sn-app" data-app="sales" href="'+_salesHref+'"><span class="sn-app-dot"></span>Sales Proposal</a>';
-      }
   }catch(e){}
   list.innerHTML = html || '<a class="sn-app" href="/marketplace.html"><span class="sn-app-dot"></span>Browse Marketplace…</a>';
 }
