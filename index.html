@@ -1115,6 +1115,26 @@ body.dash-editing #bld-overlay{display:flex;position:relative;z-index:5}
 .bld-card:hover .bld-resize{opacity:.5}
 .bld-resize svg{width:15px;height:15px;stroke:var(--sub,#556B82);stroke-width:2;fill:none}
 .bld-editing-hint{background:#EAF3FF;border:1px solid #BBD9FF;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#0B4F9E;margin-bottom:12px}
+
+/* ── Builder: config panel (#2) + view-mode canvas (#4) ── */
+#bld-config{position:fixed;top:0;right:-360px;width:340px;height:100vh;background:#fff;z-index:600;
+  box-shadow:-8px 0 30px rgba(16,40,64,.16);transition:right .24s ease;display:flex;flex-direction:column}
+#bld-config.open{right:0}
+.cfg-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--pol-border,#E1E6EC);font:700 15px/1 'DM Sans',sans-serif;color:var(--cs-navy,#08384F)}
+.cfg-x{border:none;background:none;font-size:22px;cursor:pointer;color:var(--sub,#556B82);line-height:1}
+.cfg-body{flex:1;overflow-y:auto;padding:20px}
+.cfg-row{margin-bottom:16px}
+.cfg-row label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--sub,#556B82);margin-bottom:6px}
+.cfg-row input{width:100%;padding:9px 12px;border:1.5px solid var(--pol-border,#E1E6EC);border-radius:8px;font:400 14px/1 'DM Sans',sans-serif;color:var(--ink,#0F2733);outline:none}
+.cfg-row input:focus{border-color:var(--sap-blue,#0070F2)}
+.cfg-note{font-size:12px;color:var(--sub,#556B82);margin-top:4px}
+.cfg-actions{display:flex;gap:8px;justify-content:flex-end;padding:16px 20px;border-top:1px solid var(--pol-border,#E1E6EC)}
+.cfg-cancel{background:#F4F1EC;border:1px solid var(--pol-border,#E1E6EC);color:var(--sub,#556B82);border-radius:8px;padding:9px 18px;cursor:pointer;font:600 13px/1 'DM Sans',sans-serif}
+.cfg-apply{background:var(--sap-blue,#0070F2);color:#fff;border:none;border-radius:8px;padding:9px 22px;cursor:pointer;font:600 13px/1 'DM Sans',sans-serif}
+/* view-mode custom board */
+#bld-view .bld-view-canvas{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:64px;gap:14px}
+#bld-view .bld-card{box-shadow:var(--pol-shadow)}
+.bld-ph{color:var(--sub,#556B82);font-size:13px;text-align:center;padding:20px}
 </style>
 </head>
 <body>
@@ -1517,6 +1537,17 @@ window._omegaReady = function(){
       var ONLINE_INDEX         = STAGE_KEYS.indexOf('online');    // 7
     </script>
 
+    <!-- View-mode host for a saved custom layout (#4) -->
+    <div id="bld-view" style="display:none"></div>
+
+    <!-- Config / properties panel (#2) -->
+    <div id="bld-config">
+      <div class="cfg-head"><span>Widget Settings</span><button class="cfg-x" onclick="DB.closeConfig()">&times;</button></div>
+      <div class="cfg-body"></div>
+      <div class="cfg-actions"><button class="cfg-cancel" onclick="DB.closeConfig()">Cancel</button><button class="cfg-apply" onclick="DB.applyConfig()">Apply</button></div>
+    </div>
+
+    <div id="dev-fixed">
     <!-- ══ MY APPLICATIONS ══ -->
     <div class="block-head">
       <div>
@@ -1765,6 +1796,7 @@ window._omegaReady = function(){
       </a>
     </div>
 
+    </div><!-- /#dev-fixed -->
     </div><!-- /#dev-main -->
 
 
@@ -4565,7 +4597,20 @@ var DB = (function(){
     { group:'Data', items:[
       { type:'table',   name:'Portfolio Table',    w:8, h:6, icon:'<rect x="3" y="4" width="18" height="16" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="4" x2="9" y2="20"/>' },
     ]},
+    { group:'Portal', items:[
+      { type:'team',    name:'Team & Chat',        w:6, h:7, icon:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/>' },
+      { type:'quick',   name:'Quick Access',       w:6, h:3, icon:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>' },
+      { type:'guides',  name:'Guides & Training',   w:6, h:3, icon:'<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>' },
+    ]},
   ];
+  // Per-widget config schema for the properties panel (#2).
+  var CONFIG_SCHEMA = {
+    kpis:{title:'KPI Summary'}, stage:{title:'Projects by Stage'}, ptype:{title:'Projects by Type'},
+    capex:{title:'Top CapEx', opts:[{k:'limit',label:'Show top N',type:'number',def:8}]},
+    owner:{title:'Revenue by Owner', opts:[{k:'limit',label:'Show top N',type:'number',def:8}]},
+    storage:{title:'Storage by Stage'}, table:{title:'Portfolio Table', opts:[{k:'rows',label:'Max rows',type:'number',def:10}]},
+    team:{title:'Team & Chat'}, quick:{title:'Quick Access'}, guides:{title:'Guides & Training'}
+  };
   var META={}; CATALOG.forEach(function(g){ g.items.forEach(function(it){ META[it.type]=it; }); });
 
   var layout=[]; var editing=false; var dragId=null; var _saveT=null;
@@ -4591,10 +4636,29 @@ var DB = (function(){
       body.innerHTML = tbl?('<div class="table-wrap" style="box-shadow:none;border:none">'+tbl.innerHTML+'</div>'):'<div style="color:#556B82;font-size:13px">Portfolio table</div>';
       return;
     }
+    // ── Composite portal widgets (clone visual markup, strip IDs to avoid collisions) ──
+    if (card.type==='team'){
+      var sw=document.getElementById('sw');
+      body.innerHTML = sw ? _cloneStripped(sw, 'height:100%') : '<div class="bld-ph">Team &amp; Chat</div>';
+      return;
+    }
+    if (card.type==='quick'){
+      var qr=document.querySelector('.quick-row');
+      body.innerHTML = qr ? '<div class="quick-row" style="margin:0">'+_stripIds(qr.innerHTML)+'</div>' : '<div class="bld-ph">Quick Access</div>';
+      return;
+    }
+    if (card.type==='guides'){
+      var gr=document.querySelectorAll('.quick-row'); var grEl=gr.length>1?gr[gr.length-1]:null;
+      body.innerHTML = grEl ? '<div class="quick-row" style="margin:0">'+_stripIds(grEl.innerHTML)+'</div>' : '<div class="bld-ph">Guides &amp; Training</div>';
+      return;
+    }
     // chart widgets: put a canvas and draw with Chart.js using cached agg
     body.innerHTML='<div style="position:relative;height:100%;min-height:120px"><canvas id="bldc-'+card.id+'"></canvas></div>';
     _drawChart(card, a);
   }
+  // Clone an element's HTML with all id="" attributes removed (prevents duplicate-ID bugs).
+  function _stripIds(html){ return String(html).replace(/\sid="[^"]*"/g,''); }
+  function _cloneStripped(el, style){ return '<div style="'+(style||'')+'">'+_stripIds(el.innerHTML)+'</div>'; }
 
   var _bldCharts={};
   function _drawChart(card, a){
@@ -4627,10 +4691,49 @@ var DB = (function(){
     if(cfg) _bldCharts[card.id]=new Chart(el,cfg);
   }
 
+  // ── Collision + compaction (#3): resolve overlaps, pull cards upward ──
+  function _overlap(a,b){ return !(a.x+a.w<=b.x || b.x+b.w<=a.x || a.y+a.h<=b.y || b.y+b.h<=a.y); }
+  function _resolveCollisions(moved){
+    // Push cards that overlap `moved` downward, then keep sweeping until the
+    // whole board is overlap-free. `moved` keeps its position (it's the anchor).
+    var guard=0;
+    while(guard++<500){
+      var hit=false;
+      for(var i=0;i<layout.length;i++){
+        for(var j=0;j<layout.length;j++){
+          if(i===j) continue;
+          var a=layout[i], bb=layout[j];
+          if(_overlap(a,bb)){
+            // move the one that is NOT the anchor; if neither is anchor, move the lower/後 one down
+            var mover = (a.id===moved.id)? bb : (bb.id===moved.id? a : (a.y>=bb.y? a : bb));
+            var other = (mover===a)? bb : a;
+            mover.y = other.y + other.h;
+            hit=true;
+          }
+        }
+      }
+      if(!hit) break;
+    }
+  }
+  function _compact(){
+    // pull every card up as far as it can go without overlapping
+    var sorted=layout.slice().sort(function(a,b){return a.y-b.y || a.x-b.x;});
+    sorted.forEach(function(c){
+      var ny=c.y;
+      while(ny>0){
+        var test={id:c.id,x:c.x,y:ny-1,w:c.w,h:c.h};
+        var hit=layout.some(function(o){return o.id!==c.id && _overlap(test,o);});
+        if(hit) break; ny--;
+      }
+      c.y=ny;
+    });
+  }
+
   function cardHTML(c){
     var m=META[c.type]||{name:c.type};
     return '<div class="bld-card" data-id="'+c.id+'" style="grid-column:'+(c.x+1)+' / span '+c.w+';grid-row:'+(c.y+1)+' / span '+c.h+'">'+
-      '<div class="bld-card-head" data-drag="'+c.id+'"><span class="bld-card-title">'+(m.name||c.type)+'</span>'+
+      '<div class="bld-card-head" data-drag="'+c.id+'"><span class="bld-card-title">'+(c.title||m.name||c.type)+'</span>'+
+      '<button class="bld-card-btn" title="Configure" onclick="DB.config(\''+c.id+'\')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H8a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V8a1.65 1.65 0 0 0 1.51 1H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>'+
       '<button class="bld-card-btn del" title="Remove" onclick="DB.remove(\''+c.id+'\')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>'+
       '<div class="bld-card-body"></div>'+
       '<div class="bld-resize" data-resize="'+c.id+'"><svg viewBox="0 0 24 24"><path d="M22 22L12 22M22 22L22 12M22 22L16 16"/></svg></div></div>';
@@ -4663,7 +4766,7 @@ var DB = (function(){
         var sx=e.clientX,sy=e.clientY,sw=card.w,sh=card.h,colW=canvas.getBoundingClientRect().width/12;
         function mv(ev){card.w=Math.max(2,Math.min(12,sw+Math.round((ev.clientX-sx)/colW)));card.h=Math.max(1,Math.min(12,sh+Math.round((ev.clientY-sy)/(64+12))));
           var el=canvas.querySelector('.bld-card[data-id="'+id+'"]');if(el){el.style.gridColumn=(card.x+1)+' / span '+card.w;el.style.gridRow=(card.y+1)+' / span '+card.h;}}
-        function up(){document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);renderWidgetBody(card);scheduleSave();}
+        function up(){document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);_resolveCollisions(card);_compact();render();scheduleSave();}
         document.addEventListener('pointermove',mv);document.addEventListener('pointerup',up);
       });
     });
@@ -4678,8 +4781,8 @@ var DB = (function(){
       var gx=Math.max(0,Math.min(11,Math.floor((e.clientX-rect.left)/colW)));
       var gy=Math.max(0,Math.floor((e.clientY-rect.top)/rowH));
       var pt=e.dataTransfer.getData('text/pal'),cid=e.dataTransfer.getData('text/card');
-      if(pt){var m=META[pt];layout.push({id:uid(),type:pt,x:Math.min(gx,12-m.w),y:gy,w:m.w,h:m.h});render();scheduleSave();}
-      else if(cid){var c=find(cid);if(c){c.x=Math.min(gx,12-c.w);c.y=gy;render();scheduleSave();}}
+      if(pt){var m=META[pt];var nc={id:uid(),type:pt,x:Math.min(gx,12-m.w),y:gy,w:m.w,h:m.h};layout.push(nc);_resolveCollisions(nc);_compact();render();scheduleSave();}
+      else if(cid){var c=find(cid);if(c){c.x=Math.min(gx,12-c.w);c.y=gy;_resolveCollisions(c);_compact();render();scheduleSave();}}
     });
   }
 
@@ -4698,20 +4801,78 @@ var DB = (function(){
     r.get().then(function(doc){ if(doc&&doc.exists){ var raw=doc.data().layout; try{layout=raw?JSON.parse(raw):[];}catch(e){layout=[];} } cb&&cb(); }).catch(function(){ cb&&cb(); });
   }
 
+  // ── View-mode render (#4): if the user has a saved custom layout, show it
+  //    in the CONTENT area in place of the fixed dashboard sections. ──
+  function _hasCustom(){ return layout && layout.length>0; }
+  function applyViewMode(){
+    var host=document.getElementById('bld-view');
+    var fixed=document.getElementById('dev-fixed');
+    if(!host) return;
+    if(_hasCustom() && !editing){
+      // render read-only cards into the view host, hide the fixed sections
+      host.style.display='';
+      host.innerHTML='<div class="bld-canvas bld-view-canvas">'+layout.map(cardHTML).join('')+'</div>';
+      var vc=host.querySelector('.bld-canvas');
+      layout.forEach(function(c){ var b=host.querySelector('.bld-card[data-id="'+c.id+'"] .bld-card-body'); if(b){ _renderInto(c,b); } });
+      // strip the move/resize affordances in view mode
+      host.querySelectorAll('.bld-card-head').forEach(function(h){h.style.cursor='default';});
+      host.querySelectorAll('.bld-resize,.bld-card-btn').forEach(function(x){x.style.display='none';});
+      if(fixed) fixed.style.display='none';
+    } else {
+      host.style.display='none'; host.innerHTML='';
+      if(fixed) fixed.style.display='';
+    }
+  }
+  // render a widget body into an arbitrary element (view mode reuse)
+  function _renderInto(card, bodyEl){ renderWidgetBody(card); }
+
+  // ── Config panel (#2) ──
+  function openConfig(id){
+    var card=find(id); if(!card) return;
+    var schema=CONFIG_SCHEMA[card.type]||{};
+    var panel=document.getElementById('bld-config'); if(!panel) return;
+    var opts=(schema.opts||[]).map(function(o){
+      var val=(card.cfg&&card.cfg[o.k]!=null)?card.cfg[o.k]:o.def;
+      return '<div class="cfg-row"><label>'+o.label+'</label><input type="'+o.type+'" data-k="'+o.k+'" value="'+val+'"></div>';
+    }).join('');
+    panel.querySelector('.cfg-body').innerHTML=
+      '<div class="cfg-row"><label>Title</label><input type="text" data-k="__title" value="'+(card.title||schema.title||'')+'"></div>'+opts+
+      '<div class="cfg-note">Changes apply when you click Apply.</div>';
+    panel.setAttribute('data-cardid',id);
+    panel.classList.add('open');
+  }
+  function applyConfig(){
+    var panel=document.getElementById('bld-config'); var id=panel.getAttribute('data-cardid'); var card=find(id); if(!card) return;
+    card.cfg=card.cfg||{};
+    panel.querySelectorAll('.cfg-body input').forEach(function(inp){
+      var k=inp.getAttribute('data-k');
+      if(k==='__title'){ card.title=inp.value; }
+      else { card.cfg[k]= (inp.type==='number')?Number(inp.value):inp.value; }
+    });
+    panel.classList.remove('open');
+    render(); scheduleSave();
+  }
+  function closeConfig(){ var p=document.getElementById('bld-config'); if(p) p.classList.remove('open'); }
+
   return {
     mount:function(){
       canvas=document.getElementById('bld-canvas'); palette=document.getElementById('bld-palette');
       if(!canvas||!palette) return;
-      paintPalette(); wireCanvas(); loadSaved(function(){ /* view mode shows fixed dash; layout ready for edit */ });
+      paintPalette(); wireCanvas();
+      loadSaved(function(){ applyViewMode(); });   // #4: reflect saved layout in view mode
     },
     toggle:function(){
       editing=!editing;
       document.body.classList.toggle('dash-editing',editing);
       var btn=document.getElementById('edit-toggle-btn'); if(btn){ btn.classList.toggle('on',editing); btn.querySelector('.et-label').textContent=editing?'Done Editing':'Edit Dashboard'; }
-      if(editing){ render(); }
+      if(editing){ render(); } else { applyViewMode(); }   // leaving edit → refresh view render
     },
-    remove:function(id){ layout=layout.filter(function(c){return c.id!==id;}); render(); scheduleSave(); },
+    remove:function(id){ layout=layout.filter(function(c){return c.id!==id;}); _compact(); render(); scheduleSave(); },
+    config:function(id){ openConfig(id); },
+    applyConfig:function(){ applyConfig(); },
+    closeConfig:function(){ closeConfig(); },
     save:function(){ persist(); },
+    refreshData:function(){ if(!editing) applyViewMode(); },   // re-render view cards when data updates
     _state:function(){ return layout; },
     _setAgg:function(a){ window._lastAgg=a; }
   };
