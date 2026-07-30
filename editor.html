@@ -11363,6 +11363,9 @@ function applyGroundLayout(boundary, layout, exclusions){
     densityOnly:layout.tooMany,
     kw:layout.kw, gcr:layout.gcr, setbackFt:layout.setbackFt,
     sqft:Math.round((bb.w/ppf)*(bb.h/ppf)),
+    /* Patch 10: the scale this geometry was written at, so the renderer can
+       tell how far the view has moved since and rescale to match. */
+    _ppfAt:ppf,
     style:(typeof S!=='undefined'?S.shapeStyle:''),
     scaled:(typeof _derScaled==='function')?_derScaled():false
   };
@@ -24822,6 +24825,9 @@ function o2ApplyGeom(){
      describe a layout that no longer exists, so clear them and let
      _o2Commit -> pushHist re-stamp from the new geometry. */
   try{ delete sh._geoTables; }catch(e){}
+  /* Patch 10: relayout rewrote the geometry at the CURRENT scale, so that is
+     the new reference. Leaving a stale mark would rescale it a second time. */
+  try{ sh._ppfAt=(typeof _derScale==='function')?_derScale():S.pxPerFt; }catch(e){}
   _o2Commit();
   if(typeof showBanner==='function'){
     try{
@@ -27080,6 +27086,12 @@ window.OmegaAnchor = {
       r['cannot scale (no corner anchor, no feet)'] = noScale.length
         ? noScale.map(function(s){ return s.kind+':'+s.id; }).join(', ')
         : 'none';
+      /* Patch 10: solar arrays now size themselves from feet at paint time,
+         so this is the row that says whether that data is present. */
+      var sol=(S.shapes||[]).filter(function(s){ return s&&s.kind==='dersolar'; });
+      r['arrays sized from feet'] = sol.filter(function(s){ return s.wFt>0; }).length
+                                    + ' of ' + sol.length;
+      r['auto-layout arrays'] = sol.filter(function(s){ return s.autoLayout; }).length;
     }catch(e){ r.error=e&&e.message; }
     if(window.console) console.table(r);
     return r;
@@ -38784,7 +38796,35 @@ function _derRenderSolar(g, sh){
     _derRenderAutoLayout(g, sh);
     return;
   }
-  var x=sh.pts[0].x, y=sh.pts[0].y, w=sh.wPx, h=sh.hPx;
+  /* Patch 10: size from FEET at paint time, exactly as _derRenderWind and
+     the genset renderer already do. Stored pixels describe the zoom the
+     array happened to be drawn at, so using them made the array shrink on
+     zoom-in and grow on zoom-out while every other shape behaved. This path
+     needs no reprojection, so it works with the plot locked -- which is the
+     state that stopped the geo-anchoring fixes from ever running. */
+  var _sppf=(typeof _derScale==='function')?_derScale():6;
+  if(!(sh.wFt>0) || !(sh.hFt>0)){
+    /* Older array saved before the footprint was recorded in feet. Recover
+       it once from the pixels and the scale in force right now. If the view
+       has changed since it was drawn this will be off, which is what
+       OmegaAnchor.upgrade() exists to correct at a known-good zoom. */
+    if(_sppf>0 && sh.wPx>0 && sh.hPx>0){
+      sh.wFt=+(sh.wPx/_sppf).toFixed(2);
+      sh.hFt=+(sh.hPx/_sppf).toFixed(2);
+      if(window.console && !window._derFtBackfillWarned){
+        window._derFtBackfillWarned=1;
+        console.info('[omega/der] recovered array footprint in feet from the '
+          + 'current scale. If an array looks the wrong size, fix the zoom and '
+          + 'run OmegaAnchor.upgrade().');
+      }
+    }
+  }
+  var x=sh.pts[0].x, y=sh.pts[0].y;
+  var w=(sh.wFt>0 && _sppf>0) ? sh.wFt*_sppf : sh.wPx;
+  var h=(sh.hFt>0 && _sppf>0) ? sh.hFt*_sppf : sh.hPx;
+  /* Keep the cached pixels in step so hit-testing, selection handles and the
+     bbox used by exports all agree with what is actually drawn. */
+  sh.wPx=w; sh.hPx=h;
   var fill = sh.mount==='roof' ? 'rgba(37,99,235,0.14)' : 'rgba(37,99,235,0.10)';
   _derRect(g, x, y, w, h, fill, '#2563EB', 1.4);
   /* Setback inset — the dashed line is the buildable boundary. Everything
@@ -55475,6 +55515,32 @@ window._crmToastModal=_crmToastModal;
   /* ── rotated tables need a rotated renderer ────────────────────────── */
   function renderAutoLayoutV2(g, sh) {
     var NS = 'http://www.w3.org/2000/svg';
+    /* Patch 10: an auto-layout array keeps boundary[] and tables[] in
+       pixels, refreshed only by _geoReprojectAll(). That does not run while
+       the plot is locked, so the array stayed a fixed pixel size on zoom.
+       Rescale about the centroid by how much the scale has moved since the
+       geometry was last written. Cheap, and it needs no map. */
+    try {
+      var ppfNow = (typeof _derScale === 'function') ? _derScale() : 0;
+      var ppfWas = sh._ppfAt || 0;
+      if (ppfNow > 0 && ppfWas > 0 && Math.abs(ppfNow - ppfWas) / ppfWas > 0.001
+          && sh.boundary && sh.boundary.length) {
+        var k = ppfNow / ppfWas;
+        var cx = 0, cy = 0, n = sh.boundary.length;
+        sh.boundary.forEach(function (p) { cx += p.x / n; cy += p.y / n; });
+        var sc = function (p) { p.x = cx + (p.x - cx) * k; p.y = cy + (p.y - cy) * k; };
+        sh.boundary.forEach(sc);
+        (sh.exclusions || []).forEach(function (z) { z.forEach(sc); });
+        (sh.tables || []).forEach(function (t) {
+          var tcx = t.x + (t.w || 0) / 2, tcy = t.y + (t.h || 0) / 2;
+          var ncx = cx + (tcx - cx) * k, ncy = cy + (tcy - cy) * k;
+          t.w = (t.w || 0) * k; t.h = (t.h || 0) * k;
+          t.x = ncx - t.w / 2;  t.y = ncy - t.h / 2;
+        });
+        if (sh.pts && sh.pts.length === 1) sc(sh.pts[0]);
+      }
+      if (ppfNow > 0) sh._ppfAt = ppfNow;
+    } catch (e) {}
     if (sh.boundary && sh.boundary.length) {
       var poly = document.createElementNS(NS, 'polygon');
       poly.setAttribute('class', 'o2-bnd');   /* Patch 2: preview-mode hook */
