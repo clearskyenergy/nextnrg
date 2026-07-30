@@ -1267,6 +1267,40 @@ body.dash-edit-on .db-bar{display:flex;align-items:center;gap:10px;padding:5px 8
 
 .tf-assign-btn{margin-left:8px;padding:2px 9px;border:1px solid var(--cs-border,#E1E6EC);background:#fff;border-radius:20px;font:600 10.5px 'DM Sans',sans-serif;color:var(--cs-sub,#5A7180);cursor:pointer;vertical-align:middle}
 .tf-assign-btn:hover{border-color:var(--cs-sky,#00A9A4);color:var(--cs-sky,#00A9A4)}
+
+/* ═══════ TASK FLOW — compact horizontal stepper ═══════ */
+.dash-block[data-block="taskflow"]{max-width:100%}
+.tf-stepper-wrap{display:flex;align-items:center;gap:6px;margin:4px 0 14px}
+.tf-nav{flex:none;width:28px;height:28px;border:1px solid var(--pol-border,#E1E6EC);background:#fff;border-radius:8px;cursor:pointer;color:var(--cs-sub,#5A7180);font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center}
+.tf-nav:hover{border-color:var(--cs-sky,#00A9A4);color:var(--cs-sky,#00A9A4)}
+.tf-stepper{flex:1;display:flex;align-items:center;gap:0;overflow-x:auto;scroll-behavior:smooth;padding:4px 2px}
+.tf-stepper::-webkit-scrollbar{height:5px}
+.tf-stepper::-webkit-scrollbar-thumb{background:#CFD9E4;border-radius:3px}
+.tf-step{flex:none;display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;padding:2px 4px;min-width:78px;max-width:110px}
+.tf-step-badge{width:30px;height:30px;border-radius:50%;background:#EAEEF2;color:var(--cs-sub,#5A7180);font:700 13px 'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;border:2px solid transparent;transition:all .15s}
+.tf-step-badge svg{width:15px;height:15px}
+.tf-step.done .tf-step-badge{background:#00A9A4;color:#fff}
+.tf-step.active .tf-step-badge{background:#fff;color:var(--cs-navy,#08384F);border-color:#0070F2;box-shadow:0 0 0 3px rgba(0,112,242,.15)}
+.tf-step.viewing .tf-step-badge{border-color:var(--cs-navy,#08384F)}
+.tf-step-name{font:600 10.5px 'DM Sans',sans-serif;color:var(--cs-sub,#5A7180);text-align:center;line-height:1.2;max-height:26px;overflow:hidden}
+.tf-step.viewing .tf-step-name{color:var(--cs-navy,#08384F)}
+.tf-step-line{flex:1;min-width:14px;height:2px;background:#E1E6EC;margin-top:-20px}
+.tf-step-line.done{background:#00A9A4}
+/* panel (single phase) */
+.tf-panel{border:1px solid var(--pol-border,#E1E6EC);border-radius:12px;background:#fff;overflow:hidden}
+.tf-panel.done{border-color:#9FD9C9}
+.tf-panel-head{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#F7F9FB;border-bottom:1px solid var(--pol-border,#E1E6EC)}
+.tf-panel.done .tf-panel-head{background:rgba(0,169,164,.07)}
+.tf-panel-badge{width:24px;height:24px;flex:none;border-radius:50%;background:var(--cs-navy,#08384F);color:#fff;font:700 12px 'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center}
+.tf-panel.done .tf-panel-badge{background:#00A9A4}
+.tf-mark{flex:none;padding:5px 12px;border:1px solid var(--cs-border,#E1E6EC);background:#fff;border-radius:20px;font:600 11px 'DM Sans',sans-serif;color:var(--cs-sub,#5A7180);cursor:pointer}
+.tf-mark:hover{border-color:#00A9A4;color:#00857F}
+.tf-mark.on{background:#00A9A4;border-color:#00A9A4;color:#fff}
+.tf-panel-actions{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 10px}
+.tf-step-move{display:flex;gap:8px}
+.tf-step-btn{padding:7px 14px;border:1px solid var(--cs-border,#E1E6EC);background:#fff;border-radius:9px;font:600 12px 'DM Sans',sans-serif;color:var(--cs-navy,#08384F);cursor:pointer}
+.tf-step-btn:hover:not([disabled]){border-color:#00A9A4;color:#00857F}
+.tf-step-btn[disabled]{opacity:.4;cursor:default}
 </style>
 </head>
 <body>
@@ -5193,6 +5227,7 @@ var TASKFLOW = (function(){
   function _uid(){ return 't'+Math.random().toString(36).slice(2,9); }
 
   var _proj = null;        // {id,name,stage}
+  var _view = 0;           // which step/phase is being viewed
   var _flow = [];          // [{key,name,dept,stage,tasks:[{id,text,status,dept,assignee}]}]
   var _projects = [];
   var _saveT = null;
@@ -5263,46 +5298,86 @@ var TASKFLOW = (function(){
     return { total:total, done:done, pct: total?Math.round(done/total*100):0 };
   }
 
+  // A phase is complete when all its tasks are resolved (passed/skipped) OR
+  // it's been manually marked complete.
+  function phaseComplete(p){
+    var ph=_flow[p]; if(!ph) return false;
+    if (ph.doneManual) return true;
+    if (!ph.tasks.length) return false;
+    for (var t=0;t<ph.tasks.length;t++){ var s=ph.tasks[t].status; if(s!=='passed'&&s!=='skipped') return false; }
+    return true;
+  }
+  function activeStep(){
+    for (var p=0;p<_flow.length;p++){ if(!phaseComplete(p)) return p; }
+    return _flow.length-1;
+  }
+
   function render(){
     var host=document.getElementById('tf-body'); if(!host) return;
     if (!_proj){ host.innerHTML='<div class="tf-empty">Select a project above to see its task flow.</div>'; _renderProgress(); return; }
-    var html='';
+    if (_view<0 || _view>=_flow.length) _view = activeStep();
+    var active = activeStep();
+
+    var rail='<div class="tf-stepper-wrap"><button class="tf-nav" onclick="TASKFLOW.scrollSteps(-1)" aria-label="Scroll left">&#8249;</button>'
+           + '<div class="tf-stepper" id="tf-stepper">';
     for (var p=0;p<_flow.length;p++){
-      var ph=_flow[p], pt=ph.tasks.length, pdone=0;
-      for (var t0=0;t0<pt;t0++){ var s0=ph.tasks[t0].status; if(s0==='passed'||s0==='skipped') pdone++; }
-      var phaseDone=(pt>0 && pdone===pt);
-      html += '<div class="tf-phase'+(phaseDone?' done':'')+'">'
-           +  '<div class="tf-phase-head">'
-           +    '<span class="tf-phase-badge">'+(p+1)+'</span>'
-           +    '<input class="tf-phase-name-input" value="'+escHtml(ph.name)+'" onchange="TASKFLOW.renamePhase('+p+',this.value)" title="Rename phase">'
-           +    '<select class="tf-phase-dept" onchange="TASKFLOW.setPhaseDept('+p+',this.value)">'+_deptOptions(ph.dept)+'</select>'
-           +    '<span class="tf-phase-count">'+pdone+'/'+pt+'</span>'
-           +    '<button class="tf-phase-del" onclick="TASKFLOW.deletePhase('+p+')" title="Delete phase">&times;</button>'
-           +  '</div>'
-           +  '<div class="tf-tasks">';
-      for (var t=0;t<ph.tasks.length;t++){
-        var tk=ph.tasks[t], meta=statusMeta(tk.status);
-        html += '<div class="tf-task '+meta.cls+'">'
-             +  '<span class="tf-status-dot '+meta.cls+'"></span>'
-             +  '<input class="tf-task-txt-input" value="'+escHtml(tk.text)+'" onchange="TASKFLOW.editTask('+p+','+t+',this.value)">'
-             +  '<select class="tf-status-sel '+meta.cls+'" onchange="TASKFLOW.setStatus('+p+','+t+',this.value)">'+_statusOptions(tk.status)+'</select>'
-             +  '<select class="tf-assign-dept" onchange="TASKFLOW.setDept('+p+','+t+',this.value)">'+_deptOptions(tk.dept||ph.dept)+'</select>'
-             +  '<select class="tf-assign-who" onchange="TASKFLOW.setAssignee('+p+','+t+',this.value)">'+_teamOptions(tk.assignee||'')+'</select>'
-             +  '<button class="tf-task-del" onclick="TASKFLOW.deleteTask('+p+','+t+')" title="Delete task">&times;</button>'
-             +  '</div>';
-      }
-      html += '<button class="tf-add-task" onclick="TASKFLOW.addTask('+p+')">+ Add task</button>';
-      html += '</div></div>';
+      var done=phaseComplete(p), isActive=(p===active), isView=(p===_view);
+      var cls='tf-step'+(done?' done':'')+(isActive?' active':'')+(isView?' viewing':'');
+      var badge = done ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>' : String(p+1);
+      rail += '<div class="'+cls+'" onclick="TASKFLOW.goStep('+p+')">'
+           +  '<span class="tf-step-badge">'+badge+'</span>'
+           +  '<span class="tf-step-name">'+escHtml(_flow[p].name)+'</span>'
+           +  '</div>';
+      if (p<_flow.length-1) rail += '<span class="tf-step-line'+(done?' done':'')+'"></span>';
     }
-    html += '<button class="tf-add-phase" onclick="TASKFLOW.addPhase()">+ Add phase</button>';
-    host.innerHTML=html;
+    rail += '</div><button class="tf-nav" onclick="TASKFLOW.scrollSteps(1)" aria-label="Scroll right">&#8250;</button></div>';
+
+    var ph=_flow[_view], pt=ph.tasks.length, pdone=0;
+    for (var t0=0;t0<pt;t0++){ var s0=ph.tasks[t0].status; if(s0==='passed'||s0==='skipped') pdone++; }
+    var pcDone=phaseComplete(_view);
+    var panel='<div class="tf-panel'+(pcDone?' done':'')+'">'
+        + '<div class="tf-panel-head">'
+        +   '<span class="tf-panel-badge">'+(_view+1)+'</span>'
+        +   '<input class="tf-phase-name-input" value="'+escHtml(ph.name)+'" onchange="TASKFLOW.renamePhase('+_view+',this.value)" title="Rename phase">'
+        +   '<select class="tf-phase-dept" onchange="TASKFLOW.setPhaseDept('+_view+',this.value)">'+_deptOptions(ph.dept)+'</select>'
+        +   '<span class="tf-phase-count">'+pdone+'/'+pt+'</span>'
+        +   '<button class="tf-mark'+(ph.doneManual?' on':'')+'" onclick="TASKFLOW.toggleManual('+_view+')">'+(ph.doneManual?'Completed':'Mark complete')+'</button>'
+        +   '<button class="tf-phase-del" onclick="TASKFLOW.deletePhase('+_view+')" title="Delete phase">&times;</button>'
+        + '</div>'
+        + '<div class="tf-tasks">';
+    for (var t=0;t<ph.tasks.length;t++){
+      var tk=ph.tasks[t], meta=statusMeta(tk.status);
+      panel += '<div class="tf-task '+meta.cls+'">'
+           +  '<span class="tf-status-dot '+meta.cls+'"></span>'
+           +  '<input class="tf-task-txt-input" value="'+escHtml(tk.text)+'" onchange="TASKFLOW.editTask('+_view+','+t+',this.value)">'
+           +  '<select class="tf-status-sel '+meta.cls+'" onchange="TASKFLOW.setStatus('+_view+','+t+',this.value)">'+_statusOptions(tk.status)+'</select>'
+           +  '<select class="tf-assign-dept" onchange="TASKFLOW.setDept('+_view+','+t+',this.value)">'+_deptOptions(tk.dept||ph.dept)+'</select>'
+           +  '<select class="tf-assign-who" onchange="TASKFLOW.setAssignee('+_view+','+t+',this.value)">'+_teamOptions(tk.assignee||'')+'</select>'
+           +  '<button class="tf-task-del" onclick="TASKFLOW.deleteTask('+_view+','+t+')" title="Delete task">&times;</button>'
+           +  '</div>';
+    }
+    panel += '<div class="tf-panel-actions">'
+          +  '<button class="tf-add-task" onclick="TASKFLOW.addTask('+_view+')">+ Add task</button>'
+          +  '<div class="tf-step-move">'
+          +    '<button class="tf-step-btn" onclick="TASKFLOW.goStep('+(_view-1)+')"'+(_view<=0?' disabled':'')+'>&#8249; Previous</button>'
+          +    '<button class="tf-step-btn" onclick="TASKFLOW.goStep('+(_view+1)+')"'+(_view>=_flow.length-1?' disabled':'')+'>Next &#8250;</button>'
+          +  '</div></div>';
+    panel += '</div>';
+    panel += '<button class="tf-add-phase" onclick="TASKFLOW.addPhase()">+ Add phase</button>';
+
+    host.innerHTML = rail + panel;
     _renderProgress();
+    setTimeout(function(){ var s=document.querySelector('#tf-stepper .tf-step.viewing'); if(s&&s.scrollIntoView) s.scrollIntoView({inline:'center',block:'nearest'}); }, 30);
   }
 
   function _renderProgress(){
     var pr=_progress();
     var bar=document.getElementById('tf-progress-bar'); if(bar) bar.style.width=pr.pct+'%';
-    var lbl=document.getElementById('tf-progress-lbl'); if(lbl) lbl.textContent = _proj ? (pr.done+' / '+pr.total+' resolved · '+pr.pct+'%') : '—';
+    var lbl=document.getElementById('tf-progress-lbl'); if(lbl){
+      if (!_proj){ lbl.textContent='-'; return; }
+      var doneP=0; for(var p=0;p<_flow.length;p++){ if(phaseComplete(p)) doneP++; }
+      lbl.textContent = doneP+' / '+_flow.length+' steps';
+    }
   }
 
   // ── Mutations ──
@@ -5316,13 +5391,16 @@ var TASKFLOW = (function(){
   function setPhaseDept(p,v){ _flow[p].dept=v; scheduleSave(); }
   function deletePhase(p){ if(!confirm('Delete this phase and its tasks?')) return; _flow.splice(p,1); scheduleSave(); render(); }
   function addPhase(){ _flow.push({ key:'phase_'+_uid(), name:'New Phase', dept:'', stage:'', tasks:[] }); scheduleSave(); render(); }
+  function toggleManual(p){ _flow[p].doneManual = !_flow[p].doneManual; scheduleSave(); render(); }
+  function goStep(p){ if(p<0||p>=_flow.length) return; _view=p; render(); }
+  function scrollSteps(dir){ var el=document.getElementById('tf-stepper'); if(el) el.scrollBy({left:dir*180,behavior:'smooth'}); }
 
   function selectProject(id){
     var proj=null;
     for (var i=0;i<_projects.length;i++){ if(_projects[i].id===id){ proj=_projects[i]; break; } }
     _proj=proj;
     var sel=document.getElementById('tf-project'); if(sel) sel.value=id||'';
-    if (_proj){ load(function(){ render(); }); } else { _flow=[]; render(); }
+    if (_proj){ load(function(){ _view=activeStep(); render(); }); } else { _flow=[]; _view=0; render(); }
   }
 
   function _paintPicker(){
@@ -5352,6 +5430,7 @@ var TASKFLOW = (function(){
     setStatus:setStatus, setDept:setDept, setAssignee:setAssignee,
     editTask:editTask, deleteTask:deleteTask, addTask:addTask,
     renamePhase:renamePhase, setPhaseDept:setPhaseDept, deletePhase:deletePhase, addPhase:addPhase,
+    toggleManual:toggleManual, goStep:goStep, scrollSteps:scrollSteps,
     DEPARTMENTS:DEPARTMENTS, STATUSES:STATUSES
   };
 })();
