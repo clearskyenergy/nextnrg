@@ -50506,7 +50506,7 @@ window._crmToastModal=_crmToastModal;
 
 <!-- ═════════════════════════════════════════════════════════════════════
      CLEARSKY OMEGA — SITE MAP DESIGNER PRO
-     PATCH BUNDLE  ·  2026-07-28  ·  rev 51
+     PATCH BUNDLE  ·  2026-07-28  ·  rev 52
 
      Exactly ONE copy per file, immediately before </body>.
 
@@ -50536,7 +50536,7 @@ window._crmToastModal=_crmToastModal;
           pad square, spine runs the aisle. EMS move re-lanes it.
       18. Trench bands at 45% so the drawing reads through — now
           applies in ENG mode too, which is the DEFAULT style, so the
-          setting had never taken effect  [corrected rev 51]
+          setting had never taken effect  [corrected rev 52]
       19. OmegaRotate.by(deg) turns a whole layout as a rigid body —
           equipment, stencils, boundaries, solar tables and conduits
       20. 14 balance-of-plant footprints in Draw › Utility — EMS,
@@ -50569,6 +50569,9 @@ window._crmToastModal=_crmToastModal;
           drop below it when they will not fit — they were a flat 8pt
       35. Engineering Mode takes effect — a stale guided-build flag was
           pinning _engActive() false so the toggle changed nothing
+      42. Every conduit gets a GROUND ANCHOR. _geoReprojectAll skips any
+          run without _geoPts, and none of my creators set it — so on
+          zoom the equipment moved and the conduits did not.
       41. Analyze › VALUE STACK — reads the battery on the map, derives
           the ISO/RTO from the zip, and values each stream. The zip
           fixes the MARKET; the demand charge stays an assumption.
@@ -50592,7 +50595,7 @@ window._crmToastModal=_crmToastModal;
           battery DC, bore, GEC, RSD, tracker) + TRENCH-FIRST routing:
           mark a polyline as a trench, pull circuits through it
           + the three services share one centreline so the existing
-            banking spreads them evenly inside the band  [rev 51]
+            banking spreads them evenly inside the band  [rev 52]
        7. Guided-build assemblies can be dragged and stay put
           (moved out of opt-in — this is the BESS pad fix)
 
@@ -50602,7 +50605,7 @@ window._crmToastModal=_crmToastModal;
        8. Trench and conduit move together
       12. renderEl replaces its node instead of stacking a ghost
 
-     rev 51 also stops modules logging "armed" more than once. Each
+     rev 52 also stops modules logging "armed" more than once. Each
      polls for its hook targets and those appear at different points
      during boot, so a module wrapping three functions logged three
      times. Nothing was double-wrapped — it was noise, but it buried
@@ -50662,7 +50665,7 @@ window._crmToastModal=_crmToastModal;
       console.info('[omega] patch passes ON');
       return true;
     },
-    rev: 51,
+    rev: 52,
     installed: function () {
       var active = ['OmegaMapExport', 'OmegaClose', 'OmegaSolar', 'OmegaAnchor', 'OmegaRecent',
                     'OmegaSave', 'OmegaProjects', 'OmegaAutoLayout', 'OmegaBgbLeg',
@@ -59701,6 +59704,178 @@ window._crmToastModal=_crmToastModal;
         + Math.round(r.total / Math.max(1, r.battery.kwh)) + ' per kWh installed');
       console.info('  PLANNING GRADE \u2014 the demand charge is an assumption, not a tariff.');
       return r;
+    }
+  };
+})();
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   OMEGA PATCH — 42 : ANCHOR EVERY CONDUIT TO THE GROUND
+   -----------------------------------------------------------------------
+   Conduits jump on zoom because mine were never anchored.
+
+   _geoReprojectAll re-projects everything from lat/lng to pixels when the
+   map moves, and every branch bails on anything without an anchor:
+
+       elements   if(el._geoLat==null || el._geoLng==null) return;
+       shapes     if(!sh._geoPts || !sh.pts) return;
+       conduits   if(!c._geoPts || !c.pts) return;
+
+   Equipment placed by the app carries its anchor, so it stays on the
+   ground. Every conduit MY code creates carries pixel coordinates only:
+
+       part17 (trench router)      3 push sites, 0 set _geoPts
+       part36 (engineering build)  1 push site,  0 set _geoPts
+       part39 (traced circuits)    1 push site,  0 set _geoPts
+
+   So on a zoom the equipment moves to stay over the same patch of earth
+   and the conduits stay where they were on the screen. They are not
+   drifting relative to the site — they were never attached to it.
+
+   This stamps a geo anchor on any conduit that lacks one, or whose anchor
+   has fallen out of step with its point count after an edit. It runs
+   against whatever created the run, so it covers all three of the above
+   and anything added later without me having to remember.
+
+   Deliberately does NOT overwrite a good anchor. If _geoPts is present and
+   matches pts, that run is already correct and the app owns it.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  var TAG = '[omega/anchorcond]';
+
+  function S_() { try { return (typeof S !== 'undefined' && S) ? S : null; } catch (e) { return null; } }
+
+  function mapReady() {
+    try {
+      return typeof _liveMapState === 'function' && !!_liveMapState()
+        && typeof _pxToLatLng === 'function';
+    } catch (e) { return false; }
+  }
+
+  function canvasSize() {
+    try { if (typeof _getCanvasSize === 'function') return _getCanvasSize(); } catch (e) {}
+    try {
+      var sc = document.getElementById('sc');
+      if (sc) { var r = sc.getBoundingClientRect(); return { w: r.width, h: r.height }; }
+    } catch (e) {}
+    return { w: 1200, h: 800 };
+  }
+
+  /* A run needs stamping if it has no anchor, or the anchor no longer
+     describes the same number of vertices (a vertex was added or removed). */
+  function needsStamp(c) {
+    if (!c || !c.pts || !c.pts.length) return false;
+    if (!c._geoPts) return true;
+    if (c._geoPts.length !== c.pts.length) return true;
+    for (var i = 0; i < c._geoPts.length; i++) {
+      var g = c._geoPts[i];
+      if (!g || g.lat == null || g.lng == null) return true;
+    }
+    return false;
+  }
+
+  function stamp(quiet) {
+    var s = S_(); if (!s || !s.conduits) return 0;
+    if (!mapReady()) return 0;
+    var ms, sz;
+    try { ms = _liveMapState(); sz = canvasSize(); } catch (e) { return 0; }
+    if (!ms) return 0;
+
+    var n = 0;
+    s.conduits.forEach(function (c) {
+      if (!needsStamp(c)) return;
+      var geo = [];
+      var ok = true;
+      for (var i = 0; i < c.pts.length; i++) {
+        var p = c.pts[i];
+        var g = null;
+        try { g = _pxToLatLng(p.x, p.y, ms, sz.w, sz.h); } catch (e) {}
+        if (!g || g.lat == null || g.lng == null) { ok = false; break; }
+        geo.push({ lat: g.lat, lng: g.lng });
+      }
+      if (!ok) return;
+      c._geoPts = geo;
+      n++;
+    });
+    if (n && !quiet && window.console) {
+      console.info(TAG, 'anchored ' + n + ' conduit run(s) to the ground');
+    }
+    return n;
+  }
+
+  /* Stamp right after anything that creates or edits a run. */
+  function wrap(name) {
+    var orig = window[name];
+    if (typeof orig !== 'function' || orig.__omegaAnchorCond) return false;
+    var wrapped = function () {
+      var r = orig.apply(this, arguments);
+      try { stamp(true); } catch (e) {}
+      return r;
+    };
+    wrapped.__omegaAnchorCond = true;
+    window[name] = wrapped;
+    return true;
+  }
+
+  /* And a light sweep, because a run can also arrive from a path I have
+     not wrapped — the point is that NOTHING reaches a zoom unanchored. */
+  var lastCount = -1, lastUnanchored = -1;
+  setInterval(function () {
+    if (window.OMEGA_OFF) return;
+    var s = S_(); if (!s || !s.conduits) return;
+    if (s.condDrawing || s.asmPartDrag || s.shapeDrag || s.drag) return;
+    var total = s.conduits.length;
+    var un = s.conduits.filter(needsStamp).length;
+    if (total === lastCount && un === lastUnanchored) return;
+    lastCount = total; lastUnanchored = un;
+    if (un) { try { stamp(true); } catch (e) {} }
+  }, 700);
+
+  var n = 0;
+  var iv = setInterval(function () {
+    var a = wrap('pushHist'), b = wrap('finishConduit'), c = wrap('renderTrenchCorridors');
+    if (a || b || c) {
+      stamp(true);
+      if (window.console) {
+        console.info(TAG, 'armed \u2014 every conduit gets a ground anchor so zoom cannot move it');
+      }
+    }
+    if (++n > 300) clearInterval(iv);
+  }, 400);
+
+  window.OmegaAnchorCond = {
+    stamp: function () { return stamp(false); },
+
+    /* Force a re-anchor of everything, e.g. after a bulk edit. */
+    restampAll: function () {
+      var s = S_(); if (!s || !s.conduits) return 0;
+      s.conduits.forEach(function (c) { if (c) delete c._geoPts; });
+      var n2 = stamp(false);
+      try { if (typeof _geoReprojectAll === 'function') _geoReprojectAll(); } catch (e) {}
+      return n2;
+    },
+
+    status: function () {
+      var s = S_() || {};
+      var cs = (s.conduits || []).filter(Boolean);
+      var un = cs.filter(needsStamp);
+      var o = {
+        conduitRuns: cs.length,
+        anchored: cs.length - un.length,
+        unanchored: un.length,
+        mapReady: mapReady(),
+        hooked: !!(window.pushHist && window.pushHist.__omegaAnchorCond)
+      };
+      o.verdict = !cs.length ? 'No conduit runs.'
+        : !o.mapReady ? 'No live map \u2014 nothing can be anchored until the site loads.'
+          : un.length ? un.length + ' run(s) have no ground anchor and WILL move on zoom. '
+              + 'OmegaAnchorCond.stamp() fixes them.'
+            : 'Every run is anchored to the ground; zoom cannot move them.';
+      if (console.table) console.table(o); else console.log(o);
+      console.info(o.verdict);
+      return o;
     }
   };
 })();
