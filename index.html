@@ -2466,6 +2466,9 @@ function showApp(user) {
       }
     }
   } catch(e){ /* non-fatal: just skip auto-open */ }
+
+  // Restore this user's saved dashboard layout now that auth + workspace are ready.
+  try { if (window.DASH && DASH.mount) DASH.mount(); } catch(e){}
 }
 
 // Developer tenant: keep the existing single-org command center.
@@ -4937,6 +4940,7 @@ var DASH = (function(){
       if(!host()) return;
       load(function(){ apply(); setTimeout(_drawAdded, 400); });
     },
+    remount:function(){ if(host()){ load(function(){ apply(); setTimeout(_drawAdded,400); }); } },
     toggle:toggle,
     togglePalette:togglePalette,
     addWidget:addWidget,
@@ -4944,7 +4948,7 @@ var DASH = (function(){
     _state:function(){ return state; }
   };
 })();
-window.addEventListener("DOMContentLoaded", function(){ if(window.DASH) DASH.mount(); });
+/* DASH.mount() is called from the auth callback once the user is known. */
 </script>
 
 </body>
