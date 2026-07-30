@@ -9581,7 +9581,16 @@ function _shapeInteractMove(e){
 }
 function _shapeInteractEnd(){
   if(S.shapeDrag||S.shapeResize||S.shapeRotate){
+    /* Patch 8: capture which shape moved BEFORE the ids are cleared, then
+       re-anchor just that one. Mirrors what element drag-end already did. */
+    var _movedId = S.shapeDrag || S.shapeResize || S.shapeRotate;
     S.shapeDrag=null; S.shapeResize=null; S.shapeRotate=null; S.groupDrag=null;
+    try{
+      if(_movedId && typeof _geoRestampOne==='function'){
+        var _sh=(S.shapes||[]).filter(function(x){ return x.id===_movedId; })[0];
+        if(_sh) _geoRestampOne(_sh);
+      }
+    }catch(e){}
     pushHist();
     return true;
   }
@@ -9686,6 +9695,13 @@ function _asmPartInteractMove(e){
   return true;
 }
 function _asmPartInteractEnd(){
+  /* Patch 8: moving a part shifts the parent assembly's footprint. */
+  try{
+    if(S.asmPartId && typeof _geoRestampOne==='function'){
+      var _ash=(S.shapes||[]).filter(function(x){ return x.id===S.asmPartId; })[0];
+      if(_ash) _geoRestampOne(_ash);
+    }
+  }catch(e){}
   if(S.asmPartDrag){
     S.asmPartDrag=false;
     pushHist();
@@ -16692,7 +16708,7 @@ function placeSLDElement(type) {
 }
 
 // == UNDO ====================================================
-function pushHist(){try{if(typeof _geoStampAll==='function')_geoStampAll();}catch(e){}S.history.push({els:JSON.parse(JSON.stringify(S.elements)),conds:JSON.parse(JSON.stringify(S.conduits)),shps:JSON.parse(JSON.stringify(S.shapes||[]))});if(S.history.length>30)S.history.shift();window._workDirty=true;try{omegaSetStale(true);}catch(e){}/* Patch 6: an edit just finished, so the pixels are the truth. Refresh every geo anchor from them, otherwise the next map idle drags the moved object back to its old anchor. */try{if(typeof _geoRestampAll==='function')_geoRestampAll();}catch(e){}}
+function pushHist(){try{if(typeof _geoStampAll==='function')_geoStampAll();}catch(e){}S.history.push({els:JSON.parse(JSON.stringify(S.elements)),conds:JSON.parse(JSON.stringify(S.conduits)),shps:JSON.parse(JSON.stringify(S.shapes||[]))});if(S.history.length>30)S.history.shift();window._workDirty=true;try{omegaSetStale(true);}catch(e){}/* Patch 8: the blanket restamp that used to live here re-anchored EVERY object on every pushHist, including the one the native layer fires straight after setting a correct anchor. Restamping is now done by whichever handler actually moved something. */}
 function undoLast(){
   if(S.history.length<2)return;S.history.pop();const prev=S.history[S.history.length-1];
   document.getElementById('els').innerHTML='';document.getElementById('csvg').innerHTML='';
@@ -24639,6 +24655,14 @@ function _o2Nudge(dxPx, dyPx){
       }
     }
   });
+  /* Patch 8: these moved things in canvas space, so re-anchor exactly them. */
+  try{
+    targets.forEach(function(t){
+      var arr = (t.kind==='element') ? S.elements : S.shapes;
+      var o=(arr||[]).filter(function(x){ return x.id===t.id; })[0];
+      if(o && typeof _geoRestampOne==='function') _geoRestampOne(o);
+    });
+  }catch(e){}
   _o2Repaint();
   _o2Commit();
 }
@@ -24674,6 +24698,11 @@ function o2Align(){
     var d=want-p[axis];
     if(Math.abs(d)<0.01) return;
     _o2MoveOne(p.t, axis==='x'?d:0, axis==='y'?d:0);
+    try{
+      var arr=(p.t.kind==='element')?S.elements:S.shapes;
+      var o=(arr||[]).filter(function(x){ return x.id===p.t.id; })[0];
+      if(o && typeof _geoRestampOne==='function') _geoRestampOne(o);
+    }catch(e){}
     moved++;
   });
   _o2Repaint();
@@ -25124,12 +25153,39 @@ function omegaBessKwh(){
    describes one array. That is why a two-array site reported "--".
    ------------------------------------------------------------------- */
 function omegaDer(){
+  /* Patch 8: sum the shapes here rather than depending on derTotals()
+     succeeding. derTotals() reaches into DERC_DC and other module state; a
+     throw anywhere inside it used to be swallowed and reported as zero, which
+     showed up as Solar / Wind / Fuel cell all reading "--" on a site that
+     plainly had them. Walking S.shapes cannot fail that way.
+     derTotals() is still consulted and wins where it reports MORE, so any
+     source it knows about and this loop does not is still counted. */
+  var t={ solarKwDc:0, solarSqft:0, solarUnits:0,
+          windKw:0, windUnits:0, altKw:0, altUnits:0,
+          dcLoadKw:0, dcUnits:0 };
   try{
-    if(typeof derTotals==='function') return derTotals();
+    (S.shapes||[]).forEach(function(s){
+      if(!s) return;
+      var kw=+s.kw||0;
+      if(s.kind==='dersolar'||s.kind==='solar'){
+        t.solarKwDc+=kw; t.solarSqft+=(+s.sqft||0); t.solarUnits++;
+      } else if(s.kind==='derwind'){ t.windKw+=kw; t.windUnits++; }
+      else if(s.kind==='deralt'){    t.altKw+=kw;  t.altUnits++;  }
+      else if(s.kind==='derdc'){     t.dcLoadKw+=kw; t.dcUnits++; }
+    });
   }catch(e){}
-  return { solarKwDc:0, solarSqft:0, solarUnits:0,
-           windKw:0, windUnits:0, altKw:0, altUnits:0,
-           dcLoadKw:0, dcUnits:0 };
+  try{
+    if(typeof derTotals==='function'){
+      var d=derTotals();
+      if(d){
+        ['solarKwDc','solarSqft','solarUnits','windKw','windUnits',
+         'altKw','altUnits','dcLoadKw','dcUnits'].forEach(function(k){
+          if((+d[k]||0) > t[k]) t[k]=+d[k];
+        });
+      }
+    }
+  }catch(e){}
+  return t;
 }
 
 function omegaSolarKwDc(){
@@ -25171,9 +25227,29 @@ function omegaDcLoadKw(){ return +(omegaDer().dcLoadKw||0); }
 function omegaGeo(){
   var lat=null, lng=null;
   try{
-    if(window._gmap && _gmap.getCenter){
-      var c=_gmap.getCenter();
+    /* Patch 8: the map lives on EITHER the lexical _gmap binding (the address
+       path assigns that one) or window._gmap (the GPS path). Reading only the
+       window binding is why SITE intermittently reported "No map centre yet"
+       on a site that plainly had one. _liveMapState() already documents this;
+       this collector was not following it. */
+    var _m = (typeof _gmap!=='undefined' && _gmap) ? _gmap : window._gmap;
+    if(_m && _m.getCenter){
+      var c=_m.getCenter();
       if(c){ lat=c.lat(); lng=c.lng(); }
+    }
+  }catch(e){}
+  try{
+    if(lat===null && typeof _liveMapState==='function'){
+      var ms=_liveMapState();
+      if(ms && ms.lat!=null){ lat=ms.lat; lng=ms.lng; }
+    }
+  }catch(e){}
+  try{
+    /* Last resort: the centre saved with the project. A locked/frozen plot
+       makes _liveMapState() return null by design, but the project still
+       knows where it is. */
+    if(lat===null && window._savedMapState && window._savedMapState.lat!=null){
+      lat=+window._savedMapState.lat; lng=+window._savedMapState.lng;
     }
   }catch(e){}
   try{
@@ -26831,6 +26907,29 @@ function _geoApplyShape(sh, toPx, ppf){
   }catch(e){}
 }
 
+/* Re-anchor ONE object from its current pixels.
+   This is the targeted counterpart to _geoStampElement(), which the element
+   drag-end handler has always called. Shapes never had an equivalent, so a
+   dragged shape kept its old anchor and jumped back at the next map idle.
+   Call this from any handler that moves geometry in canvas space. */
+function _geoRestampOne(o){
+  if(!o) return;
+  if(window._geoReprojecting) return;      /* never restamp mid-reproject */
+  var ms=_liveMapState(); if(!ms) return;
+  var sz=_getCanvasSize();
+  var toGeo=function(x,y){ return _pxToLatLng(x,y,ms,sz.w,sz.h); };
+  try{
+    if(o.pts || o.boundary || o.tables || typeof o.cx==='number'){
+      _geoStampShape(o, toGeo, true);
+    }
+    if(typeof o.x==='number' && typeof o.y==='number' && !o.pts){
+      var g=toGeo(o.x+((o.w||60)/2), o.y+((o.h||o.w||60)/2));
+      if(g){ o._geoLat=g.lat; o._geoLng=g.lng; }
+    }
+  }catch(e){}
+}
+window._geoRestampOne=_geoRestampOne;
+
 /* Force-refresh the geo anchor of everything from the CURRENT pixels.
    Called after a user edit, when the pixels are the truth. Without this the
    stamp is written once and never corrected, so a drag, a trench rebuild or
@@ -26894,6 +26993,31 @@ window.OmegaAnchor = {
   reproject: function(){
     if(typeof _geoReprojectAll==='function') _geoReprojectAll();
     if(window.console) console.info('[omega/anchor] reprojected from stored lat/lng');
+  },
+  /* Print exactly what every collector sees. If a number reads "--" on
+     screen, run this and the reason is in the output. */
+  why: function(){
+    var r={};
+    try{
+      var m=(typeof _liveMapState==='function')?_liveMapState():null;
+      r['_liveMapState()'] = m ? (m.lat.toFixed(5)+', '+m.lng.toFixed(5)+' z'+m.zoom)
+                               : 'null (map absent, or plot is locked/frozen)';
+      var g=(typeof omegaGeo==='function')?omegaGeo():null;
+      r['omegaGeo()'] = g ? (g.lat.toFixed(5)+', '+g.lng.toFixed(5)+' '+g.zone+g.band) : 'null';
+      r['S.pxPerFt'] = S.pxPerFt || '(unscaled)';
+      var d=(typeof omegaDer==='function')?omegaDer():{};
+      r['solar kWdc'] = d.solarKwDc+'  ('+d.solarUnits+' array/s)';
+      r['wind kW']    = d.windKw+'  ('+d.windUnits+')';
+      r['alt kW']     = d.altKw+'  ('+d.altUnits+')';
+      r['bess kW']    = (typeof omegaBessKw==='function')?omegaBessKw():'?';
+      var raw=0;
+      try{ raw=(typeof derTotals==='function')?(derTotals().solarKwDc||0):-1; }catch(e){ raw='THREW: '+(e&&e.message); }
+      r['derTotals() solar'] = raw;
+      r['shapes'] = (S.shapes||[]).length;
+      r['dersolar'] = (S.shapes||[]).filter(function(s){return s&&s.kind==='dersolar';}).length;
+    }catch(e){ r.error=e&&e.message; }
+    if(window.console) console.table(r);
+    return r;
   }
 };
 /* Drop every anchor on one object so it re-stamps from where it now is.
