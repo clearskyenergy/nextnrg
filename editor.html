@@ -58382,19 +58382,232 @@ window._crmToastModal=_crmToastModal;
     bessctr: { label: 'BESS CONTAINER', lf: 7.9, wf: 4.6, abbr: 'BESS' }
   };
 
+  /* An EMS needs control power as well as data, and there is no conduit
+     type for a 120/208V branch — AC-FEED is a 3/0 feeder, which is not
+     what lands on a controls cabinet. */
+  var CTRL = {
+    id: 'CTRL-PWR', label: 'Control Power 120/208V', color: '#0EA5E9',
+    dash: '6 3', sw: 1.8, size: '12 AWG THWN-2, 3/4\" EMT'
+  };
+
+  function seedCtypes() {
+    try {
+      if (typeof CTYPES === 'undefined' || !CTYPES.push) return false;
+      for (var i = 0; i < CTYPES.length; i++) if (CTYPES[i].id === CTRL.id) return true;
+      var ci = -1;
+      for (var j = 0; j < CTYPES.length; j++) if (CTYPES[j].id === 'custom') { ci = j; break; }
+      if (ci >= 0) CTYPES.splice(ci, 0, CTRL); else CTYPES.push(CTRL);
+      return true;
+    } catch (e) { return false; }
+  }
+
   var SEQ = [
     { key: 'mpoi',    prompt: 'Utility point of interconnect', cond: null },
     { key: 'xfmr',    prompt: 'Utility transformer',           cond: 'MV-UG' },
     { key: 'mdp',     prompt: 'Main switchgear',               cond: 'AC-FEED' },
     { key: 'pcs',     prompt: 'PCS / inverter skid',           cond: 'AC-FEED' },
-    { key: 'bessctr', prompt: 'BESS container',                cond: 'BAT-DC' },
-    { key: 'ems',     prompt: 'EMS cabinet',                   cond: 'COMMS', from: 'pcs' }
+    { key: 'bessctr', prompt: 'BESS container',                cond: 'BAT-DC', size: true },
+    { key: 'ems',     prompt: 'EMS cabinet',                   cond: 'COMMS', from: 'pcs',
+      /* An EMS is a controls device, not a power device. One Cat6 drop to
+         the PCS is not the whole story: it also reads the battery BMS and
+         it has to be fed control power from the gear or it does not run. */
+      also: [
+        { to: 'bessctr', cond: 'EMT-BMS'  },   /* battery BMS / data       */
+        { to: 'mdp',     cond: 'CTRL-PWR' }    /* 120/208V control power   */
+      ] }
   ];
 
-  var run = null;      /* {i, placed:{key:shapeId}, engWas} */
+  var run = null;      /* {i, placed:{key:shapeId}, engWas, spec, remaining} */
+
+  /* ─────────────────────────────────────────────────────────────────
+     BESS SIZING
+
+     A pad is not a fixed object. The footprint, how many containers
+     land, and what the legend and one-line say about them all follow
+     from how much system is being installed. So the flow stops at the
+     BESS step and asks, rather than dropping a hard-coded 7.9' x 4.6'
+     cabinet and leaving the real numbers to be retyped afterwards.
+     ───────────────────────────────────────────────────────────────── */
+
+  /* Every catalogue entry that is a real unit, smallest first. System
+     presets are excluded — they are N of a unit, which is the quantity
+     this step works out for itself. */
+  function catalogUnits() {
+    var out = [];
+    try {
+      if (typeof BESS_CATALOG === 'undefined') return out;
+      for (var k in BESS_CATALOG) {
+        if (!Object.prototype.hasOwnProperty.call(BESS_CATALOG, k)) continue;
+        var c = BESS_CATALOG[k];
+        if (!c || !c.kwh || c.isSystem) continue;
+        out.push({
+          key: k, kwh: +c.kwh, kw: +c.kw || 0,
+          mfr: c.mfr || '', model: c.model || k,
+          dims: c.dims || '', notes: c.notes || ''
+        });
+      }
+    } catch (e) {}
+    out.sort(function (a, b) { return a.kwh - b.kwh; });
+    return out;
+  }
+
+  /* Footprint in feet: the catalogue's own dimensions when it carries
+     them, otherwise the enclosure class the capacity implies. */
+  function footprint(u) {
+    var dims = String((u && u.dims) || '');
+    var mm = dims.match(/(\d{3,5})\s*[x\u00d7]\s*(\d{3,5})/);
+    if (mm) {
+      var lf = +mm[1] / 304.8, wf = +mm[2] / 304.8;
+      if (lf > 1 && wf > 1) return { lf: +lf.toFixed(1), wf: +wf.toFixed(1) };
+    }
+    var blob = dims + ' ' + String((u && u.notes) || '');
+    if (/40\s*-?\s*ft|40-?foot/i.test(blob)) return { lf: 40.0, wf: 8.0 };
+    if (/20\s*-?\s*ft|20-?foot/i.test(blob)) return { lf: 19.9, wf: 8.0 };
+    var kwh = (u && +u.kwh) || 0;
+    if (kwh >= 2000) return { lf: 19.9, wf: 8.0 };   /* 20ft container class */
+    if (kwh >= 500)  return { lf: 7.9,  wf: 4.6 };   /* C&I cabinet          */
+    if (kwh >= 100)  return { lf: 3.9,  wf: 2.6 };   /* small C&I cabinet    */
+    return { lf: 2.5, wf: 1.5 };                      /* residential stack    */
+  }
+
+  function shortName(u) {
+    var t = String((u && u.model) || (u && u.key) || 'CUSTOM');
+    t = t.replace(/\s*\(.*?\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    return t.length > 30 ? (t.slice(0, 29) + '\u2026') : t;
+  }
+
+  function fmt(n) {
+    n = +n || 0;
+    return (n >= 100 ? Math.round(n) : Math.round(n * 10) / 10)
+      .toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+
+  /* Read the form and work out what actually gets placed. */
+  function readSize() {
+    function val(id) { var e = document.getElementById(id); return e ? e.value : ''; }
+    var units = catalogUnits(), key = val('oeb-model');
+    var u = null;
+    for (var i = 0; i < units.length; i++) if (units[i].key === key) { u = units[i]; break; }
+
+    var totKwh = parseFloat(val('oeb-kwh')) || 0;
+    var totKw  = parseFloat(val('oeb-kw'))  || 0;
+
+    if (!u) {                                   /* custom: one enclosure, as entered */
+      u = { key: 'CUSTOM', kwh: totKwh, kw: totKw, mfr: '', model: 'CUSTOM BESS', dims: '', notes: '' };
+      var fpC = footprint(u);
+      return { unit: u, qty: 1, totKwh: totKwh, totKw: totKw, lf: fpC.lf, wf: fpC.wf, custom: true };
+    }
+
+    var qty = Math.max(1, Math.ceil((totKwh || u.kwh) / u.kwh));
+    var fp = footprint(u);
+    return {
+      unit: u, qty: qty,
+      totKwh: qty * u.kwh,
+      totKw: totKw || (qty * u.kw),
+      lf: fp.lf, wf: fp.wf, custom: false
+    };
+  }
+
+  /* Push the chosen enclosure into the catalogue the placer reads, so the
+     footprint that drops on the map is the one that was just specified. */
+  function applySize(spec) {
+    try {
+      if (typeof UTILITY_CATALOG === 'undefined') return;
+      var e = UTILITY_CATALOG.bessctr || (UTILITY_CATALOG.bessctr = {});
+      e.lf = spec.lf; e.wf = spec.wf; e.abbr = 'BESS';
+      e.label = 'BESS CONTAINER';
+    } catch (err) {}
+  }
+
+  /* Stamp the rating onto the placed shape. labelOf() in the one-line
+     extractor and the legend both read kwh/kw off the shape, so this is
+     what carries the size through to E2.0 and the equipment schedule. */
+  function stampSpec(sh, spec, n) {
+    if (!sh || !spec) return;
+    try {
+      sh.kwh = spec.unit.kwh;
+      sh.kw  = spec.unit.kw || null;
+      sh.mfr = spec.unit.mfr || '';
+      sh.model = spec.unit.model || '';
+      sh.bessKey = spec.unit.key;
+      sh.bessQty = spec.qty;
+      sh.label = (spec.qty > 1)
+        ? ('BESS CONTAINER-' + n + ' \u00b7 ' + fmt(spec.unit.kwh) + ' kWh')
+        : ('BESS CONTAINER \u00b7 ' + fmt(spec.unit.kwh) + ' kWh');
+    } catch (e) {}
+  }
 
   function S_() { try { return (typeof S !== 'undefined' && S) ? S : null; } catch (e) { return null; } }
   function ppf() { var s = S_(); return (s && s.pxPerFt > 0) ? s.pxPerFt : 6; }
+  function scaled() { var s = S_(); return !!(s && s.pxPerFt > 0); }
+  function unitWord() { return scaled() ? ' ft' : ' px (site not scaled)'; }
+
+  /* ─────────────────────────────────────────────────────────────────
+     COMPLETENESS AUDIT
+
+     The conduit schedule renders every run in S.conduits, so nothing
+     that exists is dropped from it. What it cannot show is a run that
+     was never drawn — a footprint placed but never linked is simply
+     absent, and absent reads the same as finished. This reports both
+     sides: every piece of equipment and how many runs touch it.
+     ───────────────────────────────────────────────────────────────── */
+  function audit() {
+    var s = S_();
+    if (!s) { console.warn(TAG, 'no session'); return null; }
+    var shapes = utilityShapes();
+    var conds = s.conduits || [];
+
+    var touch = {};
+    conds.forEach(function (c) {
+      if (!c) return;
+      var a = (c.fromId != null) ? c.fromId : c.fromElId;
+      var b = (c.toId != null) ? c.toId : c.toElId;
+      if (a != null) touch[a] = (touch[a] || 0) + 1;
+      if (b != null) touch[b] = (touch[b] || 0) + 1;
+    });
+
+    var rows = [], stranded = [];
+    shapes.forEach(function (sh) {
+      var n = touch[sh.id] || 0;
+      var label = sh.label || (function () {
+        try { return (UTILITY_CATALOG[sh.utype] || {}).label || sh.utype; } catch (e) { return sh.utype; }
+      })();
+      rows.push({ equipment: label, type: sh.utype || '\u2014', runs: n });
+      if (!n) stranded.push(label);
+    });
+
+    /* a run whose ends are not both real equipment never reaches the
+       one-line, even though it does appear in the conduit schedule */
+    var byId = {}; shapes.forEach(function (x) { byId[x.id] = 1; });
+    var dangling = 0;
+    conds.forEach(function (c) {
+      if (!c) return;
+      var a = (c.fromId != null) ? c.fromId : c.fromElId;
+      var b = (c.toId != null) ? c.toId : c.toElId;
+      if (!byId[a] || !byId[b]) dangling++;
+    });
+
+    var out = {
+      equipment: shapes.length, conduits: conds.length,
+      stranded: stranded, danglingRuns: dangling, scaled: scaled(), rows: rows
+    };
+    if (console.table) console.table(rows); else console.log(rows);
+    if (stranded.length) {
+      console.warn(TAG + ' ' + stranded.length + ' item(s) with no conduit \u2014 these will not '
+        + 'appear on the one-line and have nothing in the schedule: ' + stranded.join(', '));
+    } else {
+      console.info(TAG + ' every placed item has at least one run.');
+    }
+    if (dangling) {
+      console.warn(TAG + ' ' + dangling + ' run(s) with an end that is not equipment \u2014 '
+        + 'they show in the conduit schedule but cannot be traced on E2.0.');
+    }
+    if (!out.scaled) {
+      console.warn(TAG + ' the site has no scale set, so run lengths are pixels, not feet. '
+        + 'Set the scale and the schedule will report real lengths.');
+    }
+    return out;
+  }
 
   function seedCatalog() {
     try {
@@ -58440,7 +58653,13 @@ window._crmToastModal=_crmToastModal;
       condType: condType,
       pts: pts,
       pxLen: len,
-      ftLen: +(len / (ppf() || 6)).toFixed(1),
+      /* Everywhere else in the app an unscaled site reports px, not a
+         length divided by a guessed 6 px/ft. Inventing feet here put
+         fabricated numbers straight into the conduit schedule. */
+      ftLen: (function () {
+        var sc = S_(); sc = sc && sc.pxPerFt > 0 ? sc.pxPerFt : 0;
+        return sc ? +(len / sc).toFixed(1) : len;
+      })(),
       fromId: fromSh.id, toId: toSh.id,
       fromElId: fromSh.id, toElId: toSh.id,
       engBuild: true
@@ -58489,6 +58708,90 @@ window._crmToastModal=_crmToastModal;
     var st = SEQ[run.i];
     var def = null; try { def = st && UTILITY_CATALOG[st.key]; } catch (e) {}
 
+    /* the BESS step asks for a size before it arms the placer */
+    if (run.sizing) {
+      var units = catalogUnits();
+      var opts = units.map(function (u) {
+        return '<option value="' + u.key + '">' + shortName(u)
+          + ' \u2014 ' + fmt(u.kwh) + ' kWh / ' + fmt(u.kw) + ' kW</option>';
+      }).join('');
+      p.innerHTML =
+        '<div style="padding:9px 11px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;gap:8px">'
+        + '<span style="font-size:13px">\u25a4</span>'
+        + '<div style="flex:1;font-weight:700;font-size:12px">BESS \u2014 system size</div>'
+        + '<button id="oeb-x" style="background:none;border:none;color:#8BA3C4;font-size:17px;cursor:pointer;line-height:1">\u00d7</button></div>'
+        + '<div style="padding:10px 11px">'
+        + '<div style="font-size:10px;color:#7D95B4;margin-bottom:3px">CONTAINER / CABINET</div>'
+        + '<select id="oeb-model" style="width:100%;background:#152A45;border:1px solid rgba(255,255,255,.16);'
+        + 'color:#E8F0FE;border-radius:5px;padding:5px;font:11px/1.3 \'IBM Plex Sans\',sans-serif;margin-bottom:8px">'
+        + opts + '<option value="CUSTOM">Custom \u2014 enter below</option></select>'
+        + '<div style="display:flex;gap:8px;margin-bottom:8px">'
+        + '<div style="flex:1"><div style="font-size:10px;color:#7D95B4;margin-bottom:3px">SYSTEM kWh</div>'
+        + '<input id="oeb-kwh" type="number" min="0" step="any" style="width:100%;box-sizing:border-box;background:#152A45;'
+        + 'border:1px solid rgba(255,255,255,.16);color:#E8F0FE;border-radius:5px;padding:5px;'
+        + 'font:11px \'IBM Plex Mono\',monospace"></div>'
+        + '<div style="flex:1"><div style="font-size:10px;color:#7D95B4;margin-bottom:3px">SYSTEM kW</div>'
+        + '<input id="oeb-kw" type="number" min="0" step="any" style="width:100%;box-sizing:border-box;background:#152A45;'
+        + 'border:1px solid rgba(255,255,255,.16);color:#E8F0FE;border-radius:5px;padding:5px;'
+        + 'font:11px \'IBM Plex Mono\',monospace"></div></div>'
+        + '<div id="oeb-calc" style="padding:7px 8px;background:rgba(251,191,36,.1);border-left:2px solid #FBBF24;'
+        + 'font:10.5px/1.5 \'IBM Plex Mono\',monospace;color:#E8F0FE;min-height:32px"></div>'
+        + '<button id="oeb-size-go" style="margin-top:9px;width:100%;background:#FBBF24;border:none;color:#0B1E35;'
+        + 'border-radius:5px;padding:7px 0;font:700 11px/1 \'IBM Plex Mono\',monospace;cursor:pointer">Size &amp; place</button>'
+        + '<button id="oeb-skip" style="margin-top:6px;width:100%;background:#152A45;'
+        + 'border:1px solid rgba(255,255,255,.16);color:#E8F0FE;border-radius:5px;padding:6px 0;'
+        + 'font:700 11px/1 \'IBM Plex Mono\',monospace;cursor:pointer">Skip this step</button>'
+        + '</div>';
+
+      var sel = p.querySelector('#oeb-model');
+      var iKwh = p.querySelector('#oeb-kwh'), iKw = p.querySelector('#oeb-kw');
+      var calc = p.querySelector('#oeb-calc');
+
+      /* default to the unit already on the drawing if there is one */
+      try {
+        var seed = null;
+        (S_() && S_().shapes || []).forEach(function (x) { if (x && x.bessKey) seed = x.bessKey; });
+        if (seed) sel.value = seed;
+      } catch (e) {}
+      if (!sel.value && units.length) sel.value = units[0].key;
+
+      function recalc(fromModel) {
+        var spec = readSize();
+        if (fromModel && spec.unit && !spec.custom) {
+          iKwh.value = spec.unit.kwh;                 /* one unit as the starting point */
+          if (!iKw.value) iKw.value = spec.unit.kw || '';
+          spec = readSize();
+        }
+        run.pendingSpec = spec;
+        calc.innerHTML = spec.custom
+          ? ('1 \u00d7 CUSTOM<br>' + spec.lf.toFixed(1) + '\u2032 \u00d7 ' + spec.wf.toFixed(1) + '\u2032 pad')
+          : (spec.qty + ' \u00d7 ' + shortName(spec.unit)
+            + '<br>' + spec.lf.toFixed(1) + '\u2032 \u00d7 ' + spec.wf.toFixed(1) + '\u2032 each'
+            + '<br>' + fmt(spec.totKwh) + ' kWh \u00b7 ' + fmt(spec.totKw) + ' kW total');
+      }
+      sel.onchange = function () { recalc(true); };
+      iKwh.oninput = function () { recalc(false); };
+      iKw.oninput = function () { recalc(false); };
+      recalc(true);
+
+      p.querySelector('#oeb-x').onclick = cancel;
+      p.querySelector('#oeb-skip').onclick = skip;
+      p.querySelector('#oeb-size-go').onclick = function () {
+        var spec = readSize();
+        if (!spec.totKwh) { calc.innerHTML = 'Enter a system size first.'; return; }
+        run.spec = spec;
+        run.remaining = spec.qty;
+        run.bessIds = [];
+        applySize(spec);
+        run.sizing = false;
+        console.info(TAG + ' BESS sized \u2014 ' + spec.qty + ' \u00d7 ' + shortName(spec.unit)
+          + ' @ ' + spec.lf + '\u2032 \u00d7 ' + spec.wf + '\u2032 \u2014 '
+          + fmt(spec.totKwh) + ' kWh / ' + fmt(spec.totKw) + ' kW');
+        arm();
+      };
+      return;
+    }
+
     p.innerHTML =
       '<div style="padding:9px 11px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;gap:8px">'
       + '<span style="font-size:13px">\u25a4</span>'
@@ -58500,6 +58803,9 @@ window._crmToastModal=_crmToastModal;
           + 'border-left:2px solid #FBBF24;font-size:10.5px;line-height:1.45">'
           + 'Click the map to place the <b>' + (def ? def.label : st.key) + '</b>'
           + (def ? ' (' + def.lf + '\u2032 \u00d7 ' + def.wf + '\u2032)' : '') + '.'
+          + ((st.size && run.spec && run.spec.qty > 1)
+            ? ('<br>' + run.remaining + ' of ' + run.spec.qty + ' remaining \u00b7 '
+              + fmt(run.spec.unit.kwh) + ' kWh each.') : '')
           + (st.cond ? '<br>A ' + st.cond + ' run will follow automatically.' : '')
           + '</div>'
           + '<button id="oeb-skip" style="margin-top:8px;width:100%;background:#152A45;'
@@ -58519,6 +58825,8 @@ window._crmToastModal=_crmToastModal;
     if (!run) return;
     var st = SEQ[run.i];
     if (!st) { finish(); return; }
+    if (st.size && !run.spec) { run.sizing = true; paint(); return; }
+    run.sizing = false;
     try { if (typeof setUtilityType === 'function') setUtilityType(st.key); } catch (e) {}
     try {
       if (typeof showBanner === 'function') {
@@ -58542,14 +58850,46 @@ window._crmToastModal=_crmToastModal;
 
     run.placed[st.key] = fresh.id;
 
+    /* carry the size onto the shape, so the legend, the equipment
+       schedule and E2.0 all read the rating that was just entered */
+    if (st.size && run.spec) {
+      run.bessIds = run.bessIds || [];
+      run.bessIds.push(fresh.id);
+      stampSpec(fresh, run.spec, run.bessIds.length);
+      try { if (typeof renderShape === 'function') renderShape(fresh); } catch (e) {}
+    }
+
     if (st.cond) {
       var fromKey = st.from || SEQ[run.i - 1] && SEQ[run.i - 1].key;
       var fromId = fromKey && run.placed[fromKey];
       var fromSh = fromId && utilityShapes().filter(function (x) { return x.id === fromId; })[0];
       if (fromSh) {
         var c = link(fromSh, fresh, st.cond);
-        if (c) console.info(TAG + ' ' + st.cond + ' \u2014 ' + c.ftLen + ' ft');
+        if (c) console.info(TAG + ' ' + st.cond + ' \u2014 ' + c.ftLen + unitWord());
       }
+    }
+
+    /* secondary legs — the EMS reads the battery and takes control power */
+    if (st.also && st.also.length) {
+      st.also.forEach(function (leg) {
+        /* on a multi-container system the BMS run lands on the first unit */
+        var tid = (leg.to === 'bessctr' && run.bessIds && run.bessIds.length)
+          ? run.bessIds[0] : run.placed[leg.to];
+        if (!tid) return;
+        var tsh = utilityShapes().filter(function (x) { return x.id === tid; })[0];
+        if (!tsh) return;
+        var c2 = link(tsh, fresh, leg.cond);
+        if (c2) console.info(TAG + ' ' + leg.cond + ' \u2014 ' + c2.ftLen + unitWord());
+      });
+    }
+
+    /* a multi-container system stays on this step until every unit is down */
+    if (st.size && run.spec && run.remaining > 1) {
+      run.remaining--;
+      try { if (typeof _refreshConduitStyle === 'function') _refreshConduitStyle(); } catch (e) {}
+      try { if (typeof pushHist === 'function') pushHist(); } catch (e) {}
+      arm();
+      return;
     }
 
     run.i++;
@@ -58559,9 +58899,10 @@ window._crmToastModal=_crmToastModal;
   }, 350);
 
   function start() {
-    seedCatalog();
+    seedCatalog(); seedCtypes();
     if (typeof setUtilityType !== 'function') { console.warn(TAG, 'the utility placer is not available'); return null; }
-    run = { i: 0, placed: {}, engWas: (function () { try { return window.ENG_MODE; } catch (e) { return true; } })() };
+    run = { i: 0, placed: {}, spec: null, remaining: 0, sizing: false, bessIds: [],
+            engWas: (function () { try { return window.ENG_MODE; } catch (e) { return true; } })() };
     lastCount = utilityShapes().length;
     /* plan-set style for the whole flow, and no stale guide flag holding it */
     try { if (window.OmegaEng && OmegaEng.set) OmegaEng.set(true); else window.ENG_MODE = true; } catch (e) {}
@@ -58585,6 +58926,7 @@ window._crmToastModal=_crmToastModal;
     paint();
     try { if (window.OmegaConnect && OmegaConnect.reconcile) OmegaConnect.reconcile(); } catch (e) {}
     try { if (window.OmegaCallout && OmegaCallout.tidy) OmegaCallout.tidy(); } catch (e) {}
+    try { audit(); } catch (e) {}
     console.info(TAG + ' complete \u2014 ' + placed + ' footprint(s) placed and linked. '
       + 'OmegaSLD.generate() will now build the one-line from it.');
     var keep = run; run = null;
@@ -58634,7 +58976,7 @@ window._crmToastModal=_crmToastModal;
 
   var n = 0;
   var iv = setInterval(function () {
-    seedCatalog();
+    seedCatalog(); seedCtypes();
     var a = addButton();
     if (a && window.console) console.info(TAG, 'armed \u2014 Build \u203a Engineering Build, or OmegaEngBuild.start()');
     if (a || ++n > 200) clearInterval(iv);
@@ -58643,6 +58985,8 @@ window._crmToastModal=_crmToastModal;
   window.OmegaEngBuild = {
     start: start, skip: skip, cancel: cancel,
     sequence: SEQ,
+    units: catalogUnits, footprint: footprint, audit: audit, check: audit,
+    spec: function () { return run ? run.spec : null; },
     status: function () {
       var o = {
         running: !!run,
