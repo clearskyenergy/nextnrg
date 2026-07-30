@@ -238,12 +238,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
 <body>
 
 <div id="topbar">
-  <a href="/" class="tb-logo"><span class="tb-logo-txt">ClearSky<span>-OMEGA</span></span></a>
+  <a href="/" id="tb-logo-link" class="tb-logo"><span class="tb-logo-txt">ClearSky<span>-OMEGA</span></span></a>
   <div class="tb-sep"></div>
   <div class="tb-portal">EnergyOS</div>
   <span class="tb-badge" id="tb-badge">Enterprise</span>
   <div class="tb-spacer"></div>
-  <a href="/" class="tb-back">← Platform</a>
+  <a href="/" id="tb-back-link" class="tb-back">← Platform</a>
 </div>
 
 <div id="main">
@@ -396,6 +396,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
         <button class="btn btn-ghost" id="btn-proposal" disabled>Generate AI Proposal</button>
         <span class="spinner" id="run-spin"></span>
         <span class="intake-status" id="run-status"></span>
+        <span class="intake-status" id="iv-save-status" style="opacity:.55;transition:opacity .3s"></span>
       </div>
       <div class="err-box" id="err-box"></div>
 
@@ -416,14 +417,101 @@ body{font-family:'DM Sans',sans-serif;background:var(--cs-bg);color:var(--cs-tex
   </div>
 </div>
 
+<!-- Firebase + shared registry (for per-client save/resume) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="/config.js"></script>
+<script src="/omega-tools.js"></script>
 <script src="./investment-analysis-logic.js"></script>
 <script>
 /* Route the Run button to the investor model. Falls back to legacy underwriting. */
 (function(){
+  /* ── Route "Platform" and the logo back to the portal the user ACTUALLY came from.
+        Never fabricate a hostname: guessing "<slug>.clearskyomega.com" produced
+        DNS_PROBE_FINISHED_NXDOMAIN for tenants whose subdomain isn't provisioned.
+        Resolution order is observed-origin first, same-origin last. ── */
+  var PORTAL_KEY='cs_portal_origin';
+
+  function _org(){
+    try{
+      var o=new URLSearchParams(location.search).get('org');
+      if(!o){ var m=/[?&]org=([^&]+)/.exec(document.referrer||''); if(m) o=decodeURIComponent(m[1]); }
+      return (o||'').trim().toLowerCase();
+    }catch(e){ return ''; }
+  }
+
+  /* A host we are willing to navigate to: a platform host, and not this tool page. */
+  function _isPlatformHost(h){
+    h=(h||'').toLowerCase();
+    return /(^|\.)clearskyomega\.com$/.test(h) || /(^|\.)csebuilders\.com$/.test(h);
+  }
+
+  /* Append ?org= so the portal reopens in the right tenant context. */
+  function _withOrg(origin,path){
+    var org=_org();
+    return origin+(path||'/')+(org?('?org='+encodeURIComponent(org)):'');
+  }
+
+  function tenantHome(){
+    try{
+      /* 1) Explicit hand-off. Portals should launch tools with ?return=<origin>.
+            This is the only source that is authoritative and survives everything. */
+      var ret=new URLSearchParams(location.search).get('return');
+      if(ret){
+        var rt=new URL(ret, location.href);
+        if(_isPlatformHost(rt.hostname)){
+          try{ sessionStorage.setItem(PORTAL_KEY, rt.origin); }catch(e){}
+          return _withOrg(rt.origin, rt.pathname||'/');
+        }
+      }
+
+      /* 2) The origin we arrived from, remembered on first load. Survives
+            in-tool navigation and reloads, which strip document.referrer. */
+      var saved=null;
+      try{ saved=sessionStorage.getItem(PORTAL_KEY); }catch(e){}
+      if(saved) return _withOrg(saved,'/');
+
+      /* 3) The referrer, if it is a platform host and not this page itself.
+            Accepts csebuilders.com as well — the portal does not have to be
+            on clearskyomega.com, and rejecting it was what forced the guess. */
+      if(document.referrer){
+        var ru=new URL(document.referrer);
+        if(_isPlatformHost(ru.hostname) && ru.href.split('#')[0]!==location.href.split('#')[0]){
+          try{ sessionStorage.setItem(PORTAL_KEY, ru.origin); }catch(e){}
+          return _withOrg(ru.origin,'/');
+        }
+      }
+
+      /* 4) Last resort: the root of the host serving this tool. The user was
+            already here, so it always resolves. No invented subdomains. */
+      if(_isPlatformHost(location.hostname)) return _withOrg(location.origin,'/');
+    }catch(e){}
+    return null; /* unknown context: leave the links inert rather than guess */
+  }
+
+  function fixLinks(){
+    var home=tenantHome();
+    ['tb-back-link','tb-logo-link'].forEach(function(id){
+      var el=document.getElementById(id);
+      if(!el) return;
+      if(home){ el.setAttribute('href',home); el.style.cursor=''; }
+      else { el.removeAttribute('href'); el.style.cursor='default'; }
+    });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fixLinks); else fixLinks();
+  /* Capture the launch origin as early as possible, before any in-page nav. */
+  (function(){ try{
+    if(!sessionStorage.getItem(PORTAL_KEY) && document.referrer){
+      var r=new URL(document.referrer);
+      if(_isPlatformHost(r.hostname) && r.origin!==location.origin) sessionStorage.setItem(PORTAL_KEY,r.origin);
+    }
+  }catch(e){} })();
+
   function wire(){
     var b=document.getElementById('btn-run');
     if(b){ var nb=b.cloneNode(true); b.parentNode.replaceChild(nb,b);
-      nb.addEventListener('click', function(){ if(typeof ivRun==='function') ivRun(); else if(typeof runUnderwriting==='function') runUnderwriting(); }); }
+      nb.addEventListener('click', function(){ if(typeof ivRun==='function') ivRun(); else if(typeof runUnderwriting==='function') runUnderwriting(); if(typeof iaSave==='function') iaSave(); }); }
     if(typeof syncModuleInputs==='function') syncModuleInputs();
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',wire); else wire();
