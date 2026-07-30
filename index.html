@@ -2200,7 +2200,7 @@ var WORKSPACES = {
     clientName: 'NextNRG',
     accountTier: 'Enterprise',
     allowedDomain: 'nextnrg.com',   // only @nextnrg.com may use this workspace
-    requiredTools: ['editor','investment'],    // BESS Site Map + Investment always pinned to dashboard
+    requiredTools: ['editor','investment','sales'],    // BESS Site Map + Investment + Sales Proposal always pinned
     exportBrand: {
       logo: '/nextnrg-logo.png',    // client logo on customer-facing exports
       name: 'NextNRG',
@@ -4289,6 +4289,22 @@ function _paintDash(){
       href:'/spatco-ev-estimate.html'
     });
   }
+  // Sales Proposal fallback: if the shared catalog doesn't carry the 'sales'
+  // key (or under a different name) but this workspace requires it, render a
+  // direct tile so the Sales Proposal Builder always appears + stays locked.
+  if (_PORTAL_WS && _PORTAL_WS.requiredTools &&
+      _PORTAL_WS.requiredTools.indexOf('sales') >= 0 && !renderedKeys['sales']
+      && count < DASH_MAX){
+    html += _localTile({
+      key:'sales',
+      name:'Sales Proposal Builder',
+      desc:'Customer-facing 4-page PPA / cash proposals with AI site placement.',
+      category:'sales',
+      icon:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M9 13h6 M9 17h4',
+      href:'/sales-proposal.html?org=' + ((_PORTAL_WS && _PORTAL_WS.orgId) || '')
+    });
+    renderedKeys['sales'] = true; count++;
+  }
   el.innerHTML = html || '<div style="grid-column:1/-1;padding:24px;text-align:center;color:var(--cs-sub)">No tools pinned yet. Add some from the marketplace below.</div>';
 }
 
@@ -4743,6 +4759,14 @@ function _paintSideApps(){
         }
       }
     }
+      // Sales Proposal fallback: ensure it shows in the sidebar even if the
+      // shared catalog doesn't carry the 'sales' key (matches the dashboard).
+      if (_PORTAL_WS && _PORTAL_WS.requiredTools &&
+          _PORTAL_WS.requiredTools.indexOf('sales') >= 0 &&
+          html.indexOf('data-app="sales"') < 0){
+        var _salesHref = '/sales-proposal.html?org=' + ((_PORTAL_WS && _PORTAL_WS.orgId) || '');
+        html += '<a class="sn-app" data-app="sales" href="'+_salesHref+'"><span class="sn-app-dot"></span>Sales Proposal</a>';
+      }
   }catch(e){}
   list.innerHTML = html || '<a class="sn-app" href="/marketplace.html"><span class="sn-app-dot"></span>Browse Marketplace…</a>';
 }
