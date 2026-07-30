@@ -1076,7 +1076,7 @@ body{overflow-x:hidden}
 .edit-toggle.on{background:var(--sap-blue,#0070F2);color:#fff;border-color:var(--sap-blue,#0070F2)}
 
 /* When editing: dim the fixed dashboard, show builder overlay */
-body.dash-editing #dev-main > *:not(#bld-overlay){opacity:.15;pointer-events:none;filter:grayscale(.4)}
+body.dash-editing #dev-main > *:not(#bld-overlay):not(#edit-bar):not(#bld-config){opacity:.15;pointer-events:none;filter:grayscale(.4)}
 #bld-overlay{display:none}
 body.dash-editing #bld-overlay{display:flex;position:relative;z-index:5}
 
@@ -1117,7 +1117,7 @@ body.dash-editing #bld-overlay{display:flex;position:relative;z-index:5}
 .bld-editing-hint{background:#EAF3FF;border:1px solid #BBD9FF;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#0B4F9E;margin-bottom:12px}
 
 /* ── Builder: config panel (#2) + view-mode canvas (#4) ── */
-#bld-config{position:fixed;top:0;right:-360px;width:340px;height:100vh;background:#fff;z-index:600;
+#bld-config{position:fixed;top:0;right:-360px;width:340px;height:100vh;background:#fff;z-index:2147483600;
   box-shadow:-8px 0 30px rgba(16,40,64,.16);transition:right .24s ease;display:flex;flex-direction:column}
 #bld-config.open{right:0}
 .cfg-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--pol-border,#E1E6EC);font:700 15px/1 'DM Sans',sans-serif;color:var(--cs-navy,#08384F)}
@@ -1147,6 +1147,20 @@ body.dash-editing #bld-overlay{display:flex;position:relative;z-index:5}
 .sn-dm-item:hover{background:rgba(255,255,255,.07);color:#fff}
 .sn-dm-item.active{background:#1264A3;color:#fff}
 .sn-dm-item .dm-ava{width:20px;height:20px;border-radius:5px;background:#2C5D82;color:#fff;font:700 10px/20px sans-serif;text-align:center;flex:none}
+
+/* In edit mode, hide the view host and fixed dashboard entirely (only the builder shows) */
+body.dash-editing #bld-view, body.dash-editing #dev-fixed{display:none !important}
+/* Make sure the edit bar and config panel stay fully interactive while editing */
+body.dash-editing #edit-bar{opacity:1 !important;pointer-events:auto !important;filter:none !important;position:relative;z-index:10}
+
+/* Team Workspace hidden until a Workspace sidebar item is clicked (not a permanent dashboard block) */
+#sw{display:none}
+#sw.sw-open{display:flex}
+body.workspace-mode #dev-fixed{display:none}   /* when in a workspace view, hide the fixed dashboard */
+
+/* Chat DMs collapse under the Chat toggle (like My Applications) */
+.sn-subnav.sn-dm-list{padding-left:8px}
+.sn-subnav.sn-dm-list.open{max-height:400px;overflow-y:auto}
 </style>
 </head>
 <body>
@@ -1271,11 +1285,12 @@ window._omegaReady = function(){
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         <span>Company Feed</span>
       </a>
-      <a class="sn-item" data-sn="chat" href="#" onclick="snWork(event,'msgs')">
+      <button class="sn-item sn-toggle" data-sn="chat" onclick="snToggleChat(event)" aria-expanded="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 10h8M8 14h5M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/></svg>
         <span>Chat</span>
-      </a>
-      <div class="sn-dm-list" id="sn-dm-list"><!-- DM conversations injected here --></div>
+        <svg class="sn-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="sn-subnav sn-dm-list" id="sn-dm-list"><!-- DM conversations injected here --></div>
     </div>
   </nav>
   <div id="app-body">
@@ -1461,7 +1476,7 @@ window._omegaReady = function(){
     <div id="dev-main">
 
     <!-- ══ DASHBOARD BUILDER (edit mode) ══ -->
-    <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:6px">
+    <div id="edit-bar" style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:6px">
       <button class="edit-toggle" id="edit-toggle-btn" onclick="DB.toggle()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
         <span class="et-label">Edit Dashboard</span>
@@ -1562,11 +1577,7 @@ window._omegaReady = function(){
     <div id="bld-view" style="display:none"></div>
 
     <!-- Config / properties panel (#2) -->
-    <div id="bld-config">
-      <div class="cfg-head"><span>Widget Settings</span><button class="cfg-x" onclick="DB.closeConfig()">&times;</button></div>
-      <div class="cfg-body"></div>
-      <div class="cfg-actions"><button class="cfg-cancel" onclick="DB.closeConfig()">Cancel</button><button class="cfg-apply" onclick="DB.applyConfig()">Apply</button></div>
-    </div>
+
 
     <div id="dev-fixed">
     <!-- ══ MY APPLICATIONS ══ -->
@@ -3303,12 +3314,20 @@ function _paintSidebarDMs(){
   for (var i=0;i<_convos.length;i++){
     var c=_convos[i], on=(c.id===_convoOpen);
     var name=_convoTitle(c); var ini=(name||'?').charAt(0).toUpperCase();
-    h += '<a class="sn-dm-item'+(on?' active':'')+'" onclick="openConvo(&quot;'+c.id+'&quot;);return false;">'
+    h += '<a class="sn-dm-item'+(on?' active':'')+'" href="#" data-convo="'+c.id+'">'
       +  '<span class="dm-ava">'+ini+'</span><span>'+escHtml(name)+'</span></a>';
   }
   side.innerHTML=h;
 }
 
+// Delegated click for sidebar DM items (robust vs inline onclick encoding).
+if (!window.__snDmWired){
+  window.__snDmWired = true;
+  document.addEventListener('click', function(e){
+    var it = e.target && e.target.closest ? e.target.closest('.sn-dm-item') : null;
+    if (it){ e.preventDefault(); var id=it.getAttribute('data-convo'); if(id) openConvo(id); }
+  });
+}
 function openConvo(id){
   _convoOpen = id;
   if (window.swSelect) swSelect('msgs');
@@ -4586,8 +4605,10 @@ function snWork(ev, view){
   var snKey = (view==='msgs')?'chat':view;
   _snHighlight(snKey);
   var sw=document.getElementById('sw');
-  if (sw && sw.scrollIntoView) sw.scrollIntoView({behavior:'smooth', block:'start'});
+  if (sw){ sw.classList.add('sw-open'); }
+  document.body.classList.add('workspace-mode');   // hide the fixed dashboard while in a workspace view
   if (window.swSelect) swSelect(view);
+  if (sw && sw.scrollIntoView) sw.scrollIntoView({behavior:'smooth', block:'start'});
 }
 function snGo(ev, which){
   if (ev && ev.preventDefault) ev.preventDefault();
@@ -4596,10 +4617,24 @@ function snGo(ev, which){
   for (var i=0;i<items.length;i++){ items[i].classList.toggle('active', items[i].getAttribute('data-sn')===which); }
   // scroll to the matching in-page section
   var target=null;
-  if (which==='dashboard'){ target=document.querySelector('#developer-view .block-head'); }
+  if (which==='dashboard'){
+    var sw=document.getElementById('sw'); if(sw) sw.classList.remove('sw-open');
+    document.body.classList.remove('workspace-mode');
+    target=document.querySelector('#dev-fixed .block-head') || document.querySelector('#developer-view .block-head');
+  }
   else if (which==='team'){ target=document.getElementById('sw') || document.querySelector('[data-sw-view="team"]'); if(target&&window.swSelect) swSelect('team'); }
   else if (which==='chat'){ target=document.getElementById('sw'); if(target&&window.swSelect) swSelect('msgs'); }
   if (target && target.scrollIntoView){ target.scrollIntoView({behavior:'smooth', block:'start'}); }
+}
+function snToggleChat(ev){
+  if (ev && ev.preventDefault) ev.preventDefault();
+  var btn = ev.currentTarget;
+  var list = document.getElementById('sn-dm-list');
+  var open = list.classList.toggle('open');
+  btn.setAttribute('aria-expanded', open?'true':'false');
+  if (typeof _paintSidebarDMs==='function') _paintSidebarDMs();
+  // Opening Chat also reveals the workspace in the Messages view.
+  if (open){ snWork(ev, 'msgs'); }
 }
 function snToggleApps(ev){
   if (ev && ev.preventDefault) ev.preventDefault();
@@ -4619,8 +4654,15 @@ function _paintSideApps(){
       for (var i=0;i<tools.length && n<DASH_MAX;i++){
         var t=tools[i];
         if (_required(t) || _pinned(t.key)){
-          var href = (typeof OMEGATools!=='undefined' && OMEGATools.hrefFor)?OMEGATools.hrefFor(t):'#';
-          html += '<a class="sn-app" href="'+href+'"><span class="sn-app-dot"></span>'+ (t.name||t.key) +'</a>';
+          var label = (t.name||t.key);
+          if (t.key==='editor'){ label='Site Map'; }
+          // The Site Map editor opens the new-project flow; other tools use their href.
+          if (t.key==='editor'){
+            html += '<a class="sn-app" href="#" onclick="if(typeof openNewProjectModal===\'function\'){openNewProjectModal(\'bess\');}return false;"><span class="sn-app-dot"></span>'+label+'</a>';
+          } else {
+            var href = (typeof OMEGATools!=='undefined' && OMEGATools.hrefFor)?OMEGATools.hrefFor(t):'#';
+            html += '<a class="sn-app" href="'+href+'"><span class="sn-app-dot"></span>'+label+'</a>';
+          }
           n++;
         }
       }
@@ -4641,6 +4683,9 @@ var DB = (function(){
   var CATALOG = [
     { group:'Metrics', items:[
       { type:'kpis',    name:'KPI Summary',        w:12, h:2, icon:'<path d="M4 20V10M10 20V4M16 20v-8M22 20V8"/>' },
+      { type:'command', name:'Command Center',     w:12, h:2, icon:'<circle cx="12" cy="12" r="9"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>' },
+      { type:'pipeline',name:'Project Pipeline',   w:12, h:2, icon:'<circle cx="4" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="12" r="2"/><line x1="6" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="18" y2="12"/>' },
+      { type:'company', name:'Company Overview',    w:12, h:3, icon:'<rect x="3" y="10" width="4" height="11"/><rect x="10" y="4" width="4" height="17"/><rect x="17" y="7" width="4" height="14"/>' },
     ]},
     { group:'Charts', items:[
       { type:'stage',   name:'Projects by Stage',  w:4, h:5, icon:'<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>' },
@@ -4664,7 +4709,8 @@ var DB = (function(){
     capex:{title:'Top CapEx', opts:[{k:'limit',label:'Show top N',type:'number',def:8}]},
     owner:{title:'Revenue by Owner', opts:[{k:'limit',label:'Show top N',type:'number',def:8}]},
     storage:{title:'Storage by Stage'}, table:{title:'Portfolio Table', opts:[{k:'rows',label:'Max rows',type:'number',def:10}]},
-    team:{title:'Team & Chat'}, quick:{title:'Quick Access'}, guides:{title:'Guides & Training'}
+    team:{title:'Team & Chat'}, quick:{title:'Quick Access'}, guides:{title:'Guides & Training'},
+    command:{title:'Command Center'}, pipeline:{title:'Project Pipeline'}, company:{title:'Company Overview'}
   };
   var META={}; CATALOG.forEach(function(g){ g.items.forEach(function(it){ META[it.type]=it; }); });
 
@@ -4689,6 +4735,24 @@ var DB = (function(){
       var pt=document.getElementById('pt-body')||document.querySelector('.ptable');
       var tbl=document.querySelector('.table-wrap');
       body.innerHTML = tbl?('<div class="table-wrap" style="box-shadow:none;border:none">'+tbl.innerHTML+'</div>'):'<div style="color:#556B82;font-size:13px">Portfolio table</div>';
+      return;
+    }
+    // ── Command Center (overview strip) ──
+    if (card.type==='command'){
+      var ov=document.getElementById('ov-strip');
+      body.innerHTML = ov ? '<div class="ov-strip" style="border:none;box-shadow:none">'+_stripIds(ov.innerHTML)+'</div>' : '<div class="bld-ph">Command Center</div>';
+      return;
+    }
+    // ── Project Pipeline ──
+    if (card.type==='pipeline'){
+      var pt=document.getElementById('pipe-track');
+      body.innerHTML = pt ? '<div class="pipeline" style="border:none;box-shadow:none;padding:8px"><div class="pipe-track">'+_stripIds(pt.innerHTML)+'</div></div>' : '<div class="bld-ph">Pipeline</div>';
+      return;
+    }
+    // ── Company Overview ──
+    if (card.type==='company'){
+      var co=document.getElementById('co-ov-strip'); var cok=document.getElementById('co-kpi-grid');
+      body.innerHTML = (co||cok) ? '<div class="ov-strip" style="border:none;box-shadow:none">'+_stripIds(co?co.innerHTML:'')+'</div><div class="kpi-grid" style="margin-top:10px">'+_stripIds(cok?cok.innerHTML:'')+'</div>' : '<div class="bld-ph">Company Overview</div>';
       return;
     }
     // ── Composite portal widgets (clone visual markup, strip IDs to avoid collisions) ──
@@ -4935,5 +4999,10 @@ var DB = (function(){
 
 window.addEventListener("DOMContentLoaded",function(){ if(window.DB) DB.mount(); });
 </script>
+    <div id="bld-config">
+      <div class="cfg-head"><span>Widget Settings</span><button class="cfg-x" onclick="DB.closeConfig()">&times;</button></div>
+      <div class="cfg-body"></div>
+      <div class="cfg-actions"><button class="cfg-cancel" onclick="DB.closeConfig()">Cancel</button><button class="cfg-apply" onclick="DB.applyConfig()">Apply</button></div>
+    </div>
 </body>
 </html>
