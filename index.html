@@ -1209,6 +1209,40 @@ body.dash-edit-on .db-bar{display:flex;align-items:center;gap:10px;padding:5px 8
   .msgs-wrap{flex-direction:column}
   .msgs-wrap .convo-list{width:auto;border-right:none;border-bottom:1px solid var(--cs-border,#E1E6EC);max-height:34%}
 }
+
+/* ═══════════ PROJECT TASK FLOW WIDGET ═══════════ */
+.tf-picker-wrap{display:flex;align-items:center}
+.tf-project-select{padding:8px 12px;border:1.5px solid var(--cs-border,#E1E6EC);border-radius:9px;font:600 13px 'DM Sans',sans-serif;color:var(--cs-navy,#08384F);background:#fff;cursor:pointer;min-width:220px}
+.tf-progress{display:flex;align-items:center;gap:12px;margin:6px 0 16px}
+.tf-progress-track{flex:1;height:8px;background:#EAEef2;border-radius:5px;overflow:hidden}
+.tf-progress-fill{height:100%;width:0;background:linear-gradient(90deg,#00A9A4,#0070F2);border-radius:5px;transition:width .3s ease}
+.tf-progress-lbl{font:600 12px 'DM Sans',sans-serif;color:var(--cs-sub,#5A7180);white-space:nowrap;min-width:110px;text-align:right}
+.tf-empty{padding:28px;text-align:center;color:var(--cs-sub,#5A7180);font-size:13px}
+.tf-phase{border:1px solid var(--pol-border,#E1E6EC);border-radius:12px;margin-bottom:12px;overflow:hidden;background:#fff}
+.tf-phase.done{border-color:#9FD9C9}
+.tf-phase-head{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#F7F9FB;border-bottom:1px solid var(--pol-border,#E1E6EC)}
+.tf-phase.done .tf-phase-head{background:rgba(0,169,164,.07)}
+.tf-phase-badge{width:24px;height:24px;flex:none;border-radius:50%;background:var(--cs-navy,#08384F);color:#fff;font:700 12px 'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center}
+.tf-phase.done .tf-phase-badge{background:#00A9A4}
+.tf-phase-name{flex:1;font:700 14px 'DM Sans',sans-serif;color:var(--cs-navy,#08384F)}
+.tf-phase-dept{font:600 11px 'DM Sans',sans-serif;color:var(--cs-sub,#5A7180);background:#EEF2F6;padding:3px 9px;border-radius:20px}
+.tf-phase-count{font:700 12px 'DM Sans',sans-serif;color:var(--cs-sub,#5A7180);min-width:34px;text-align:right}
+.tf-tasks{padding:6px 10px}
+.tf-task{display:flex;align-items:center;gap:10px;padding:8px 8px;border-bottom:1px solid rgba(225,230,236,.6)}
+.tf-task:last-child{border-bottom:none}
+.tf-check{width:22px;height:22px;flex:none;border:1.8px solid var(--cs-border,#CFD9E4);border-radius:6px;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;padding:0;transition:all .12s}
+.tf-check svg{width:13px;height:13px;opacity:0}
+.tf-check.on{background:#00A9A4;border-color:#00A9A4}
+.tf-check.on svg{opacity:1}
+.tf-task-txt{flex:1;font-size:13px;color:var(--cs-text,#0F2733)}
+.tf-task.done .tf-task-txt{text-decoration:line-through;color:var(--cs-sub,#8A97A6)}
+.tf-assign-dept,.tf-assign-who{padding:6px 8px;border:1px solid var(--cs-border,#E1E6EC);border-radius:7px;font:500 11.5px 'DM Sans',sans-serif;color:var(--cs-text,#0F2733);background:#fff;cursor:pointer;max-width:150px}
+.tf-assign-dept{min-width:120px}
+.tf-assign-who{min-width:110px}
+@media (max-width:760px){
+  .tf-task{flex-wrap:wrap}
+  .tf-assign-dept,.tf-assign-who{max-width:none;flex:1}
+}
 </style>
 </head>
 <body>
@@ -1754,6 +1788,26 @@ window._omegaReady = function(){
 
     <!-- ══ PORTFOLIO ANALYTICS (Coupler-style charts, real Firestore data) ══ -->
     </div><!-- /.dash-block pipeline -->
+    <div class="dash-block" data-block="taskflow">
+      <div class="block-head">
+        <div>
+          <div class="block-title">Project Task Flow</div>
+          <div class="block-sub">Take a project from origination to interconnection & permitting — assign by department and teammate.</div>
+        </div>
+        <div class="tf-picker-wrap">
+          <select id="tf-project" class="tf-project-select" onchange="TASKFLOW.onPick(this.value)">
+            <option value="">Select a project…</option>
+          </select>
+        </div>
+      </div>
+      <div class="tf-progress">
+        <div class="tf-progress-track"><div class="tf-progress-fill" id="tf-progress-bar"></div></div>
+        <span class="tf-progress-lbl" id="tf-progress-lbl">—</span>
+      </div>
+      <div class="tf-body" id="tf-body">
+        <div class="tf-empty">Select a project above to see its task flow.</div>
+      </div>
+    </div><!-- /.dash-block taskflow -->
     <div class="dash-block" data-block="analytics">
     <div class="block-head">
       <div>
@@ -2090,6 +2144,17 @@ window._omegaReady = function(){
         <div class="acct-field" style="margin-top:14px">
           <label>Display name</label>
           <input id="acct-display-name" type="text" maxlength="60" placeholder="e.g. Tommy Gilmer" onkeydown="if(event.key==='Enter')saveProfile()">
+        </div>
+        <div class="acct-field">
+          <label>Department</label>
+          <select id="acct-department" style="width:100%;padding:11px 13px;border:1.5px solid var(--cs-border);border-radius:10px;font:400 14px 'DM Sans',sans-serif;color:var(--cs-text);background:#fff;outline:none">
+            <option value="">— Select department —</option>
+            <option value="bizdev">Business Development</option>
+            <option value="engineering">Engineering</option>
+            <option value="procurement">Procurement</option>
+            <option value="finance">Finance</option>
+            <option value="admin">Admin</option>
+          </select>
         </div>
         <button class="acct-btn" id="acct-profile-btn" onclick="saveProfile()">Save profile</button>
         <div class="acct-msg" id="acct-profile-msg"></div>
@@ -2517,6 +2582,7 @@ function showApp(user) {
 
   // Restore this user's saved dashboard layout now that auth + workspace are ready.
   try { if (window.DASH && DASH.mount) DASH.mount(); } catch(e){}
+  try { if (window.TASKFLOW && TASKFLOW.mount) TASKFLOW.mount(); } catch(e){}
 }
 
 // Developer tenant: keep the existing single-org command center.
@@ -3637,6 +3703,8 @@ function openAccount(){
   var myMember = _memberByEmail(_meEmail()) || {};
   var savedName = (_myProfile && _myProfile.name) || myMember.name || (u.displayName || '');
   document.getElementById('acct-display-name').value = savedName || '';
+  var deptSel = document.getElementById('acct-department');
+  if (deptSel) deptSel.value = (_myProfile && _myProfile.department) || myMember.department || '';
   _acctPendingPhoto = null;   // reset any unsaved pick
   renderAcctAvatar((_myProfile && _myProfile.photo) || myMember.photo || '', savedName || (u.email||''));
   _profileMsg('', '');
@@ -3722,7 +3790,9 @@ function saveProfile(){
 
   var btn = document.getElementById('acct-profile-btn'); btn.disabled = true; _profileMsg('Saving…', '');
   var id = currentOrg + '__' + _meEmail();
-  var payload = { orgId: currentOrg, email: _meEmail(), name: name,
+  var deptSel = document.getElementById('acct-department');
+  var dept = deptSel ? deptSel.value : '';
+  var payload = { orgId: currentOrg, email: _meEmail(), name: name, department: dept,
                   lastSeen: firebase.firestore.FieldValue.serverTimestamp() };
   if (_acctPendingPhoto === '__REMOVE__') payload.photo = '';
   else if (_acctPendingPhoto) payload.photo = _acctPendingPhoto;
@@ -3731,6 +3801,7 @@ function saveProfile(){
     // update local cache so the rest of the UI reflects it immediately
     if (!_myProfile) _myProfile = {};
     _myProfile.name = name;
+    _myProfile.department = dept;
     if (_acctPendingPhoto === '__REMOVE__') _myProfile.photo = '';
     else if (_acctPendingPhoto) _myProfile.photo = _acctPendingPhoto;
     _acctPendingPhoto = null;
@@ -5036,6 +5107,176 @@ var DASH = (function(){
   };
 })();
 /* DASH.mount() is called from the auth callback once the user is known. */
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   PROJECT TASK FLOW  —  lifecycle task board.
+   Walks a project from origination → analysis/pre-dev → plot plan +
+   engineering stamp → funding → interconnection → AHJ permitting →
+   construction/commissioning. Tasks are assignable by DEPARTMENT and
+   INDIVIDUAL, with completion tracking. Saved per project to Firestore
+   collection 'project_tasks' (doc id = "<org>__<projectId>").
+   ══════════════════════════════════════════════════════════════════════ */
+var TASKFLOW = (function(){
+  var DEPARTMENTS = [
+    { key:'bizdev',      label:'Business Development' },
+    { key:'engineering', label:'Engineering' },
+    { key:'procurement', label:'Procurement' },
+    { key:'finance',     label:'Finance' },
+    { key:'admin',       label:'Admin' }
+  ];
+  function deptLabel(k){ for(var i=0;i<DEPARTMENTS.length;i++){ if(DEPARTMENTS[i].key===k) return DEPARTMENTS[i].label; } return k||'Unassigned'; }
+
+  // Phases map onto the existing STAGE_KEYS so the pipeline stays in sync.
+  // Each phase carries default tasks with a suggested department.
+  var PHASES = [
+    { key:'origination', stage:'candidate',   name:'Origination & Analysis', dept:'bizdev',
+      tasks:['Intake & qualify the opportunity','Preliminary feasibility screen','Utility & tariff analysis','Load / bill analysis (12-mo history)'] },
+    { key:'predev', stage:'candidate', name:'Pre-Development', dept:'bizdev',
+      tasks:['Secure site control (lease/option)','Preliminary site layout','Confirm interconnection feasibility'] },
+    { key:'plotplan', stage:'package', name:'Plot Plan & Engineering', dept:'engineering',
+      tasks:['Build site map / plot plan','Internal design validation','Engineering review','Engineering stamp / PE sign-off'] },
+    { key:'funding', stage:'finance', name:'Funding', dept:'finance',
+      tasks:['Run investment analysis / pro forma','Determine financing path (self-funded vs external)','Secure funding commitment','Project funded ✓'] },
+    { key:'interconnection', stage:'submitted', name:'Interconnection', dept:'engineering',
+      tasks:['Prepare interconnection application','Submit to utility','Interconnection study / review','Receive interconnection agreement'] },
+    { key:'permitting', stage:'permitting', name:'AHJ Permitting', dept:'engineering',
+      tasks:['Assemble permit set','Submit plot plan for validation','Submit to AHJ','Respond to AHJ comments','Permit approved ✓'] },
+    { key:'construction', stage:'construction', name:'Construction & Commissioning', dept:'procurement',
+      tasks:['Procurement & equipment orders','Construction / installation','Commissioning & PTO','Project online ✓'] }
+  ];
+
+  var _proj = null;         // selected project {id,name,stage}
+  var _tasks = {};          // taskId -> {done, dept, assignee, note}
+  var _projects = [];       // list for the picker
+  var _saveT = null;
+
+  function _docRef(){
+    if (typeof db==='undefined' || !db || !_proj) return null;
+    var org = (typeof currentOrg!=='undefined' && currentOrg) || 'default';
+    return db.collection('project_tasks').doc(org+'__'+_proj.id);
+  }
+  function scheduleSave(){ clearTimeout(_saveT); _saveT=setTimeout(persist,500); }
+  function persist(){
+    var r=_docRef(); if(!r) return;
+    r.set({ orgId:(currentOrg||''), projectId:_proj.id, tasks:JSON.stringify(_tasks),
+            updatedAt:(firebase.firestore.FieldValue.serverTimestamp?firebase.firestore.FieldValue.serverTimestamp():Date.now()) },{merge:true})['catch'](function(){});
+  }
+  function load(cb){
+    var r=_docRef(); if(!r){ cb&&cb(); return; }
+    r.get().then(function(doc){
+      _tasks = {};
+      if (doc && doc.exists && doc.data().tasks){ try{ _tasks=JSON.parse(doc.data().tasks); }catch(e){} }
+      cb&&cb();
+    })['catch'](function(){ cb&&cb(); });
+  }
+
+  // Fetch the org's projects for the picker.
+  function _loadProjects(cb){
+    if (typeof db==='undefined' || !db || !currentOrg){ cb&&cb([]); return; }
+    db.collection('projects').where('orgId','==',currentOrg).get().then(function(snap){
+      var out=[]; snap.forEach(function(d){ var x=d.data(); out.push({id:d.id, name:x.name||'(untitled)', stage:x.stage||'candidate'}); });
+      cb&&cb(out);
+    })['catch'](function(){ cb&&cb([]); });
+  }
+
+  function _taskId(pi, ti){ return PHASES[pi].key+'_'+ti; }
+
+  function _teamOptions(selected){
+    var opts='<option value="">Anyone</option>';
+    var seen={};
+    if (typeof _teamMembers!=='undefined'){
+      for (var i=0;i<_teamMembers.length;i++){
+        var m=_teamMembers[i]; if(!m.email||seen[m.email])continue; seen[m.email]=1;
+        opts+='<option value="'+escHtml(m.email)+'"'+(selected===m.email?' selected':'')+'>'+escHtml(m.name||m.email)+'</option>';
+      }
+    }
+    return opts;
+  }
+  function _deptOptions(selected){
+    var o='<option value="">Any dept</option>';
+    for (var i=0;i<DEPARTMENTS.length;i++){ o+='<option value="'+DEPARTMENTS[i].key+'"'+(selected===DEPARTMENTS[i].key?' selected':'')+'>'+DEPARTMENTS[i].label+'</option>'; }
+    return o;
+  }
+
+  function _progress(){
+    var total=0, done=0;
+    for (var p=0;p<PHASES.length;p++){ for(var t=0;t<PHASES[p].tasks.length;t++){ total++; var id=_taskId(p,t); if(_tasks[id]&&_tasks[id].done) done++; } }
+    return { total:total, done:done, pct: total?Math.round(done/total*100):0 };
+  }
+
+  function render(){
+    var host=document.getElementById('tf-body'); if(!host) return;
+    if (!_proj){ host.innerHTML='<div class="tf-empty">Select a project above to see its task flow.</div>'; _renderProgress(); return; }
+    var html='';
+    for (var p=0;p<PHASES.length;p++){
+      var ph=PHASES[p];
+      // phase completion
+      var pt=ph.tasks.length, pd=0;
+      for (var t0=0;t0<pt;t0++){ var id0=_taskId(p,t0); if(_tasks[id0]&&_tasks[id0].done) pd++; }
+      var phaseDone = (pd===pt);
+      html += '<div class="tf-phase'+(phaseDone?' done':'')+'">'
+           +  '<div class="tf-phase-head">'
+           +    '<span class="tf-phase-badge">'+(p+1)+'</span>'
+           +    '<span class="tf-phase-name">'+escHtml(ph.name)+'</span>'
+           +    '<span class="tf-phase-dept">'+deptLabel(ph.dept)+'</span>'
+           +    '<span class="tf-phase-count">'+pd+'/'+pt+'</span>'
+           +  '</div>'
+           +  '<div class="tf-tasks">';
+      for (var t=0;t<ph.tasks.length;t++){
+        var id=_taskId(p,t), st=_tasks[id]||{};
+        html += '<div class="tf-task'+(st.done?' done':'')+'">'
+             +  '<button class="tf-check'+(st.done?' on':'')+'" onclick="TASKFLOW.toggle('+p+','+t+')" aria-label="Toggle done">'
+             +    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></button>'
+             +  '<span class="tf-task-txt">'+escHtml(ph.tasks[t])+'</span>'
+             +  '<select class="tf-assign-dept" onchange="TASKFLOW.setDept('+p+','+t+',this.value)">'+_deptOptions(st.dept||ph.dept)+'</select>'
+             +  '<select class="tf-assign-who" onchange="TASKFLOW.setAssignee('+p+','+t+',this.value)">'+_teamOptions(st.assignee||'')+'</select>'
+             +  '</div>';
+      }
+      html += '</div></div>';
+    }
+    host.innerHTML=html;
+    _renderProgress();
+  }
+
+  function _renderProgress(){
+    var pr=_progress();
+    var bar=document.getElementById('tf-progress-bar'); if(bar) bar.style.width=pr.pct+'%';
+    var lbl=document.getElementById('tf-progress-lbl'); if(lbl) lbl.textContent = _proj ? (pr.done+' / '+pr.total+' tasks · '+pr.pct+'%') : '—';
+  }
+
+  function toggle(p,t){ var id=_taskId(p,t); if(!_tasks[id])_tasks[id]={}; _tasks[id].done=!_tasks[id].done; scheduleSave(); render(); }
+  function setDept(p,t,v){ var id=_taskId(p,t); if(!_tasks[id])_tasks[id]={}; _tasks[id].dept=v; scheduleSave(); }
+  function setAssignee(p,t,v){ var id=_taskId(p,t); if(!_tasks[id])_tasks[id]={}; _tasks[id].assignee=v; scheduleSave(); }
+
+  function selectProject(id){
+    var proj=null;
+    for (var i=0;i<_projects.length;i++){ if(_projects[i].id===id){ proj=_projects[i]; break; } }
+    _proj=proj;
+    var sel=document.getElementById('tf-project'); if(sel) sel.value=id||'';
+    if (_proj){ load(function(){ render(); }); } else { _tasks={}; render(); }
+  }
+
+  function _paintPicker(){
+    var sel=document.getElementById('tf-project'); if(!sel) return;
+    var html='<option value="">Select a project…</option>';
+    for (var i=0;i<_projects.length;i++){ html+='<option value="'+escHtml(_projects[i].id)+'">'+escHtml(_projects[i].name)+'</option>'; }
+    sel.innerHTML=html;
+    if (_proj) sel.value=_proj.id;
+  }
+
+  return {
+    mount:function(){
+      if(!document.getElementById('tf-body')) return;
+      _loadProjects(function(list){ _projects=list||[]; _paintPicker(); render(); });
+    },
+    refresh:function(){ this.mount(); },
+    toggle:toggle, setDept:setDept, setAssignee:setAssignee,
+    onPick:function(v){ selectProject(v); },
+    DEPARTMENTS:DEPARTMENTS
+  };
+})();
 </script>
 
 </body>
