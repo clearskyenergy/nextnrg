@@ -524,7 +524,7 @@ body{overflow-x:hidden}
   .tm-panel{max-height:none}
   .tm-body{max-height:560px}
 }
-#app{display:flex;align-items:stretch;min-height:100vh}
+#app{display:flex !important;align-items:stretch;min-height:100vh}
 #side-nav{width:212px;flex:none;background:#0B2A3D;color:#C9D6E2;display:flex;flex-direction:column;
   position:sticky;top:0;height:100vh;overflow:hidden;z-index:60}
 #app-body{flex:1;min-width:0;display:flex;flex-direction:column}
@@ -782,7 +782,7 @@ function onAuth(user){
   }
   currentUser = user; WORKSPACE = ws; currentOrg = ws.orgId;
   window.OMEGA_WORKSPACE = ws; window.CS_BRAND = ws.clientName;
-  el('auth-screen').style.display='none'; el('app').style.display='block';
+  el('auth-screen').style.display='none'; el('app').style.display='flex';
   applyChrome(ws, user);
   loadCatalog(ws);
 }
