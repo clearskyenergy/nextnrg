@@ -1199,6 +1199,16 @@ body.dash-edit-on .db-bar{display:flex;align-items:center;gap:10px;padding:5px 8
 .dp-item{text-align:left;padding:12px 14px;border:1px solid var(--pol-border,#E1E6EC);border-radius:10px;background:#fff;cursor:pointer;font:600 13px/1 'DM Sans',sans-serif;color:var(--ink,#0F2733)}
 .dp-item:hover:not([disabled]){border-color:var(--sap-blue,#0070F2);color:var(--sap-blue,#0070F2)}
 .dp-item[disabled]{opacity:.5;cursor:default}
+
+/* Slack-style Messages drawer: conversation list + thread side by side */
+.msgs-wrap{display:flex;height:100%;min-height:0}
+.msgs-wrap .convo-list{width:260px;flex:none;border-right:1px solid var(--cs-border,#E1E6EC);display:flex;flex-direction:column;min-height:0}
+.msgs-wrap .convo-thread-pane{flex:1;min-width:0;display:flex;flex-direction:column}
+.msgs-wrap .convo-list-body{flex:1;overflow-y:auto;max-height:none}
+@media (max-width:760px){
+  .msgs-wrap{flex-direction:column}
+  .msgs-wrap .convo-list{width:auto;border-right:none;border-bottom:1px solid var(--cs-border,#E1E6EC);max-height:34%}
+}
 </style>
 </head>
 <body>
@@ -1432,7 +1442,7 @@ window._omegaReady = function(){
                         <span class="convo-list-title">Conversations</span>
                         <button class="convo-new-btn" onclick="openNewConvo()">+ New</button>
                       </div>
-                      <div class="convo-list-body" id="convo-list-body">
+                      <div class="convo-list-body" id="convo-list-body-nav">
                         <div class="th-empty" style="padding:20px 12px">No conversations yet. Start one with “+ New”.</div>
                       </div>
                     </div>
@@ -1498,24 +1508,62 @@ window._omegaReady = function(){
                             </div>
         </div>
         <div class="sw-view" data-sw-view="msgs">
-          <div class="convo-thread-pane">
-                                <div class="convo-thread-head" id="convo-thread-head">
-                                  <span class="convo-thread-title" id="convo-thread-title">Select a conversation</span>
-                                  <span class="convo-thread-sub" id="convo-thread-sub"></span>
-                                </div>
-                                <div class="convo-thread" id="convo-thread">
-                                  <div class="th-empty">Pick a conversation on the left, or start a new one.</div>
-                                </div>
-                                <div class="th-compose">
-                                  <div class="th-compose-row">
-                                    <input class="th-input" id="convo-text" type="text" placeholder="Type a message…" maxlength="1000" disabled onkeydown="if(event.key==='Enter'){event.preventDefault();sendConvoMessage();}">
-                                    <button class="th-send" id="convo-send" onclick="sendConvoMessage()" disabled>Send</button>
-                                  </div>
-                                </div>
-                              </div>
+          <div class="msgs-wrap">
+            <div class="convo-list">
+              <div class="convo-list-head">
+                <span class="convo-list-title">Messages</span>
+                <button class="convo-new-btn" onclick="openNewConvo()">+ New</button>
+              </div>
+              <div class="convo-list-body" id="convo-list-body">
+                <div class="th-empty" style="padding:16px">No conversations yet. Start one with the + New button.</div>
+              </div>
+            </div>
+            <div class="convo-thread-pane">
+              <div class="convo-thread-head" id="convo-thread-head">
+                <span class="convo-thread-title" id="convo-thread-title">Select a conversation</span>
+                <span class="convo-thread-sub" id="convo-thread-sub"></span>
+              </div>
+              <div class="convo-thread" id="convo-thread">
+                <div class="th-empty">Pick a conversation on the left, or start a new one.</div>
+              </div>
+              <div class="th-compose">
+                <div class="th-compose-row">
+                  <input class="th-input" id="convo-text" type="text" placeholder="Type a message" maxlength="1000" disabled onkeydown="if(event.key===&#39;Enter&#39;){event.preventDefault();sendConvoMessage();}">
+                  <button class="th-send" id="convo-send" onclick="sendConvoMessage()" disabled>Send</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </aside>
+
+    <!-- New conversation / group modal (Slack-style) -->
+    <div class="convo-modal-overlay" id="convo-modal">
+      <div class="convo-modal">
+        <div class="convo-modal-head">
+          <h3 id="convo-modal-title">New conversation</h3>
+          <button class="sw-drawer-x" onclick="closeNewConvo()" aria-label="Close">&times;</button>
+        </div>
+        <div class="convo-modal-body">
+          <div class="convo-tabs">
+            <button class="convo-tab on" id="convo-tab-dm" onclick="convoTab('dm')">Direct message</button>
+            <button class="convo-tab" id="convo-tab-group" onclick="convoTab('group')">Group</button>
+          </div>
+          <div id="convo-group-name-field" style="display:none;margin-bottom:14px">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--cs-sub);margin-bottom:6px">Group name</label>
+            <input type="text" id="convo-group-name" placeholder="e.g. Engineering" maxlength="60" style="width:100%;padding:9px 11px;border:1px solid var(--cs-border);border-radius:8px;font-size:13px">
+          </div>
+          <label id="convo-pick-label" style="display:block;font-size:12px;font-weight:600;color:var(--cs-sub);margin-bottom:8px">Choose a teammate</label>
+          <div class="convo-member-picker" id="convo-member-picker"></div>
+          <div class="acct-msg" id="convo-modal-msg" style="margin-top:10px"></div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+            <button class="btn-secondary" onclick="closeNewConvo()" style="padding:9px 16px;border:1px solid var(--cs-border);background:#fff;border-radius:9px;font:600 13px 'DM Sans',sans-serif;cursor:pointer">Cancel</button>
+            <button class="btn-primary" id="convo-create-btn" onclick="createConvo()" style="padding:9px 18px;border:none;background:var(--cs-navy);color:#fff;border-radius:9px;font:600 13px 'DM Sans',sans-serif;cursor:pointer">Start conversation</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="dev-main">
 
     <!-- ══ IN-PLACE DASHBOARD EDIT ══ -->
