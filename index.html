@@ -1135,6 +1135,18 @@ body.dash-editing #bld-overlay{display:flex;position:relative;z-index:5}
 #bld-view .bld-view-canvas{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:64px;gap:14px}
 #bld-view .bld-card{box-shadow:var(--pol-shadow)}
 .bld-ph{color:var(--sub,#556B82);font-size:13px;text-align:center;padding:20px}
+
+/* ── Merge Team Workspace into the sidebar: hide the module's own nav strip ── */
+.sw .sw-nav{display:none !important}
+.sw{height:auto;min-height:480px}
+.sw .sw-main{border-radius:16px}
+/* Sidebar DM list styling */
+.sn-dm-list{padding:2px 8px 0}
+.sn-dm-item{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 26px;color:#A9BCCC;text-decoration:none;
+  font:500 12.5px/1.2 'DM Sans',sans-serif;border-radius:7px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sn-dm-item:hover{background:rgba(255,255,255,.07);color:#fff}
+.sn-dm-item.active{background:#1264A3;color:#fff}
+.sn-dm-item .dm-ava{width:20px;height:20px;border-radius:5px;background:#2C5D82;color:#fff;font:700 10px/20px sans-serif;text-align:center;flex:none}
 </style>
 </head>
 <body>
@@ -1247,14 +1259,23 @@ window._omegaReady = function(){
       <div class="sn-divider"></div>
       <div class="sn-section-label">Workspace</div>
 
-      <a class="sn-item" data-sn="team" href="#" onclick="snGo(event,'team')">
+      <a class="sn-item" data-sn="todos" href="#" onclick="snWork(event,'todos')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span>To-Dos</span>
+      </a>
+      <a class="sn-item" data-sn="team" href="#" onclick="snWork(event,'team')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
         <span>Team</span>
       </a>
-      <a class="sn-item" data-sn="chat" href="#" onclick="snGo(event,'chat')">
+      <a class="sn-item" data-sn="feed" href="#" onclick="snWork(event,'feed')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>Company Feed</span>
+      </a>
+      <a class="sn-item" data-sn="chat" href="#" onclick="snWork(event,'msgs')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 10h8M8 14h5M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/></svg>
         <span>Chat</span>
       </a>
+      <div class="sn-dm-list" id="sn-dm-list"><!-- DM conversations injected here --></div>
     </div>
   </nav>
   <div id="app-body">
@@ -3271,10 +3292,28 @@ function renderConvoList(){
       +     '<div class="convo-item-last">'+sub+'</div></div></div>';
   }
   box.innerHTML = h;
+  _paintSidebarDMs();
+}
+
+// Mirror the conversation list into the left sidebar (#sn-dm-list)
+function _paintSidebarDMs(){
+  var side = document.getElementById('sn-dm-list'); if(!side) return;
+  if (!_convos.length){ side.innerHTML=''; return; }
+  var h='';
+  for (var i=0;i<_convos.length;i++){
+    var c=_convos[i], on=(c.id===_convoOpen);
+    var name=_convoTitle(c); var ini=(name||'?').charAt(0).toUpperCase();
+    h += '<a class="sn-dm-item'+(on?' active':'')+'" onclick="openConvo(&quot;'+c.id+'&quot;);return false;">'
+      +  '<span class="dm-ava">'+ini+'</span><span>'+escHtml(name)+'</span></a>';
+  }
+  side.innerHTML=h;
 }
 
 function openConvo(id){
   _convoOpen = id;
+  if (window.swSelect) swSelect('msgs');
+  _snHighlight('chat');
+  var sw=document.getElementById('sw'); if(sw&&sw.scrollIntoView) sw.scrollIntoView({behavior:'smooth',block:'start'});
   renderConvoList();
   var c = null; for (var i=0;i<_convos.length;i++){ if(_convos[i].id===id){ c=_convos[i]; break; } }
   if (!c) return;
@@ -4534,6 +4573,22 @@ function renderCharts(a){
 </script>
 <script>
 /* ══ LEFT SIDEBAR NAV ══ */
+// Highlight a sidebar item by data-sn value.
+function _snHighlight(which){
+  var items=document.querySelectorAll('#side-nav .sn-item');
+  for (var i=0;i<items.length;i++){ items[i].classList.toggle('active', items[i].getAttribute('data-sn')===which); }
+  var dms=document.querySelectorAll('#sn-dm-list .sn-dm-item');
+  for (var j=0;j<dms.length;j++){ dms[j].classList.remove('active'); }
+}
+// Sidebar → Team Workspace: highlight, reveal the workspace, switch the reading pane.
+function snWork(ev, view){
+  if (ev && ev.preventDefault) ev.preventDefault();
+  var snKey = (view==='msgs')?'chat':view;
+  _snHighlight(snKey);
+  var sw=document.getElementById('sw');
+  if (sw && sw.scrollIntoView) sw.scrollIntoView({behavior:'smooth', block:'start'});
+  if (window.swSelect) swSelect(view);
+}
 function snGo(ev, which){
   if (ev && ev.preventDefault) ev.preventDefault();
   // highlight
