@@ -189,6 +189,34 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--tex
    #rp now floats over the canvas and is hidden until launched from the View
    ribbon tab, so the site map gets the full width. Its inner content and all
    the functions that target #rp-summary / #rp-cost are unchanged. */
+/* ============ TOPOGRAPHY (Patch 12) =================================== */
+#e5-terrain .e3-card{ max-width:760px }
+.e5-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 14px; margin-bottom:12px }
+.e5-stat{
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius-md); padding:8px 10px;
+}
+.e5-stat label{
+  display:block; font-size:9px; font-weight:700; letter-spacing:.05em;
+  color:var(--sub); margin-bottom:3px;
+}
+.e5-stat b{ font-family:var(--font-mono); font-size:14px; color:var(--text); font-weight:600 }
+.e5-stat span{ font-size:9.5px; color:var(--sub); margin-left:3px }
+.e5-cut b{ color:#E8A15A }
+.e5-fill b{ color:#5AA9E8 }
+.e5-net b{ color:var(--accent) }
+#e5-canvas{
+  width:100%; height:210px; border:1px solid var(--border);
+  border-radius:var(--radius-md); background:var(--surface); display:block; margin-bottom:10px;
+}
+.e5-legend{
+  display:flex; gap:14px; justify-content:center; font-size:9.5px;
+  color:var(--sub); margin-bottom:12px; flex-wrap:wrap;
+}
+.e5-legend i{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px }
+.e5-bar{ height:4px; background:var(--border); border-radius:2px; overflow:hidden; margin-top:6px }
+.e5-bar i{ display:block; height:100%; width:0; background:var(--accent); transition:width .2s }
+
 /* ============ DELIVERABLES DRAWER (Patch 4) =========================== */
 #d4-scrim{
   position:fixed; inset:0; z-index:9700; background:rgba(4,6,10,.55);
@@ -1511,6 +1539,7 @@ window.onerror = function(msg, src, line, col, err) {
     <button class="menu-item" onclick="rbRun(d4Open)"><span class="mi-ico">&#128462;</span> Documentation&hellip;</button>
     <button class="menu-item" onclick="rbRun(e3BrowserOpen)"><span class="mi-ico">&#9636;</span> Equipment Library</button>
     <button class="menu-item" onclick="rbRun(e3MeteoOpen)"><span class="mi-ico">&#9728;</span> Meteo Data</button>
+    <button class="menu-item" onclick="rbRun(e5Open)"><span class="mi-ico">&#9968;</span> Topography</button>
     <button class="menu-item" onclick="rbRun(openBomSourcing)"><span class="mi-ico">⛃</span> Bill of Materials</button>
         <button class="menu-item" onclick="rbRun(openElectricalEstimate)"><span class="mi-ico">⚡</span> Electrical Estimate</button>
     <div class="menu-sep"></div>
@@ -3072,6 +3101,12 @@ if(document.readyState==='loading'){
 </div>
 
 <!-- ============ PATCH 3 MODALS ================================= -->
+<div class="e3-modal" id="e5-terrain"><div class="e3-card">
+  <div class="e3-head"><h3>&#9968; Topography</h3>
+    <button class="e3-x" onclick="e5Close()">&#10005;</button></div>
+  <div class="e3-body" id="e5-body"></div>
+</div></div>
+
 <div class="e3-modal" id="e3-meteo"><div class="e3-card">
   <div class="e3-head"><h3>&#9728; Meteo data</h3>
     <button class="e3-x" onclick="e3MeteoClose()">&#10005;</button></div>
@@ -5802,7 +5837,9 @@ const S={
   o2Hidden:{},            /* class key -> true when the class is off   */
   /* --- Patch 3: meteo + equipment ----------------------------------- */
   meteo:null,             /* {source,lat,lng,ghi,poa,acAnnual,pr,...}  */
-  eqSel:{}                /* picker: {container, pcs} keys             */
+  eqSel:{},               /* picker: {container, pcs} keys             */
+  /* --- Patch 12: topography ----------------------------------------- */
+  terrain:null            /* {samples,stats,grade,cut,fill,spacingFt,...} */
 };
 
 const BG={scale:1,tx:0,ty:0,rot:0,panning:false,lx:0,ly:0};
@@ -19084,6 +19121,9 @@ async function saveProject(){
       schemState,
       /* Patch 3: irradiance is project data, not a session preference. */
       meteo: (typeof S!=='undefined' && S.meteo) ? S.meteo : null,
+      /* Patch 12: terrain is project data. Samples can be a few hundred
+         rows, which is well inside the 1 MB document limit. */
+      terrain: (typeof S!=='undefined' && S.terrain) ? S.terrain : null,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
 
@@ -22752,6 +22792,438 @@ function applyValueStackEstimate() {
 }
 
 /* ====================================================================
+ *  TOPOGRAPHY                                             (Patch 12)
+ *  --------------------------------------------------------------
+ *  ACCURACY, up front, because this number can end up in a bid.
+ *
+ *  google.maps.ElevationService interpolates public DEMs -- about 10 m
+ *  post spacing over the US via 3DEP, 30 m over most of the world. That
+ *  is a SCREENING surface, not a survey.
+ *
+ *  Cut and fill are separately signed, so DEM error does NOT average out
+ *  the way it does for a mean elevation: a 1 ft vertical bias over 10
+ *  acres is about 16,000 cy that lands entirely in one column. On rolling
+ *  ground, volumes off a 10 m DEM are routinely 30-50% from the surveyed
+ *  answer. Treat these as go / no-go screening, and say so on any sheet
+ *  they appear on.
+ *
+ *  The module therefore reports its own effective sample spacing, and the
+ *  UI repeats the caveat rather than hiding it in a tooltip.
+ * ==================================================================== */
+
+var E5_MAX_PTS      = 1024;   /* hard cap; ElevationService bills per point */
+var E5_BATCH        = 400;    /* under the documented 512-per-request limit */
+var FT_PER_M        = 3.280839895;
+var FT_PER_DEG_LAT  = 111320 * FT_PER_M;
+
+var _e5 = { busy:false, grade:'plane', padFt:null, n:24 };
+
+function e5Open(){
+  var m=document.getElementById('e5-terrain'); if(!m) return;
+  m.classList.add('on'); e5Render();
+}
+function e5Close(){
+  if(_e5.busy) return;
+  var m=document.getElementById('e5-terrain'); if(m) m.classList.remove('on');
+}
+
+/* ---- site outline in lat/lng ---------------------------------------- */
+/* Prefer a real boundary. Patch 6 stamps _geoBoundary on any shape that has
+   one, so this works with the plot locked, when _pxToLatLng is unavailable. */
+function _e5Ring(){
+  try{
+    var best=null, bestN=0;
+    (S.shapes||[]).forEach(function(sh){
+      if(sh && sh._geoBoundary && sh._geoBoundary.length>2 && sh._geoBoundary.length>bestN){
+        best=sh._geoBoundary; bestN=sh._geoBoundary.length;
+      }
+    });
+    if(best) return best.filter(function(p){ return p && p.lat!=null; });
+  }catch(e){}
+  /* Otherwise convert the auto-layout boundary through the live map. */
+  try{
+    var ms=_liveMapState();
+    if(ms && window._alBoundary && _alBoundary.length>2){
+      var sz=_getCanvasSize();
+      return _alBoundary.map(function(p){
+        var g=_pxToLatLng(p.x,p.y,ms,sz.w,sz.h);
+        return g?{lat:g.lat,lng:g.lng}:null;
+      }).filter(Boolean);
+    }
+  }catch(e){}
+  return null;
+}
+
+/* Square fallback sized to the known acreage, centred on the site. */
+function _e5FallbackRing(){
+  var g=null; try{ g=omegaGeo(); }catch(e){}
+  if(!g) return null;
+  var ac=null; try{ ac=omegaAcres(); }catch(e){}
+  var acres=(ac && ac.total>0)?ac.total:10;
+  var halfFt=Math.sqrt(acres*43560)/2;
+  var dLat=halfFt/FT_PER_DEG_LAT;
+  var dLng=halfFt/(FT_PER_DEG_LAT*Math.cos(g.lat*Math.PI/180));
+  return [
+    {lat:g.lat-dLat, lng:g.lng-dLng},{lat:g.lat-dLat, lng:g.lng+dLng},
+    {lat:g.lat+dLat, lng:g.lng+dLng},{lat:g.lat+dLat, lng:g.lng-dLng}
+  ];
+}
+
+function _e5PtInRing(lat,lng,ring){
+  var inside=false;
+  for(var i=0,j=ring.length-1;i<ring.length;j=i++){
+    var xi=ring[i].lng, yi=ring[i].lat, xj=ring[j].lng, yj=ring[j].lat;
+    if(((yi>lat)!==(yj>lat)) && (lng < (xj-xi)*(lat-yi)/((yj-yi)||1e-12)+xi)) inside=!inside;
+  }
+  return inside;
+}
+
+/* ---- sampling -------------------------------------------------------- */
+
+function e5Sample(){
+  if(_e5.busy) return;
+  if(!(window.google && google.maps && google.maps.ElevationService)){
+    _e5Status('Google Maps has not finished loading. Try again in a moment.','var(--red)');
+    return;
+  }
+  var ring=_e5Ring(), usedFallback=false;
+  if(!ring || ring.length<3){ ring=_e5FallbackRing(); usedFallback=true; }
+  if(!ring || ring.length<3){
+    _e5Status('No site outline and no map centre \u2014 nothing to sample.','var(--red)');
+    return;
+  }
+
+  var lats=ring.map(function(p){return p.lat;}), lngs=ring.map(function(p){return p.lng;});
+  var minLat=Math.min.apply(null,lats), maxLat=Math.max.apply(null,lats);
+  var minLng=Math.min.apply(null,lngs), maxLng=Math.max.apply(null,lngs);
+  var midLat=(minLat+maxLat)/2;
+  var ftPerDegLng=FT_PER_DEG_LAT*Math.cos(midLat*Math.PI/180);
+
+  var n=Math.max(6, Math.min(40, _e5.n|0));
+  var pts=[], grid=[];
+  for(var r=0;r<n;r++){
+    for(var c=0;c<n;c++){
+      var la=minLat+(maxLat-minLat)*(r/(n-1));
+      var ln=minLng+(maxLng-minLng)*(c/(n-1));
+      if(!usedFallback && !_e5PtInRing(la,ln,ring)) continue;
+      grid.push({lat:la,lng:ln});
+      if(grid.length>=E5_MAX_PTS) break;
+    }
+    if(grid.length>=E5_MAX_PTS) break;
+  }
+  if(grid.length<9){
+    _e5Status('Only '+grid.length+' sample points fall inside the boundary. '
+      + 'Raise the grid density.','var(--red)');
+    return;
+  }
+
+  _e5.busy=true;
+  var svc=new google.maps.ElevationService();
+  var results=[], batches=Math.ceil(grid.length/E5_BATCH), done=0;
+
+  function batch(i){
+    if(i>=batches){ finish(); return; }
+    var slice=grid.slice(i*E5_BATCH,(i+1)*E5_BATCH);
+    _e5Status('Sampling '+(i*E5_BATCH+slice.length)+' of '+grid.length+' points\u2026',
+              null, (i/batches)*100);
+    svc.getElevationForLocations({locations:slice}, function(res, status){
+      if(status!=='OK' || !res){
+        _e5.busy=false;
+        _e5Status('Elevation service returned '+status+'. '
+          + (status==='OVER_QUERY_LIMIT'
+             ? 'The Elevation API quota is separate from Maps \u2014 check it is enabled and has quota.'
+             : 'Check that the Elevation API is enabled for this key.'), 'var(--red)');
+        return;
+      }
+      res.forEach(function(p,k){
+        results.push({ lat:slice[k].lat, lng:slice[k].lng, zFt:p.elevation*FT_PER_M });
+      });
+      done++;
+      batch(i+1);
+    });
+  }
+
+  function finish(){
+    _e5.busy=false;
+    if(results.length<9){ _e5Status('Not enough samples came back.','var(--red)'); return; }
+
+    /* Local tangent plane in feet, origin at the first sample. */
+    var lat0=results[0].lat, lng0=results[0].lng;
+    results.forEach(function(p){
+      p.x=(p.lng-lng0)*ftPerDegLng;
+      p.y=(p.lat-lat0)*FT_PER_DEG_LAT;
+    });
+
+    var zs=results.map(function(p){return p.zFt;});
+    var zMin=Math.min.apply(null,zs), zMax=Math.max.apply(null,zs);
+    var zMean=zs.reduce(function(a,b){return a+b;},0)/zs.length;
+
+    /* Effective spacing: site width divided by the grid count actually used. */
+    var wFt=(maxLng-minLng)*ftPerDegLng, hFt=(maxLat-minLat)*FT_PER_DEG_LAT;
+    var spacingFt=Math.max(wFt,hFt)/Math.max(1,n-1);
+
+    var areaFt2=null;
+    try{ var ac=omegaAcres(); if(ac && ac.total>0) areaFt2=ac.total*43560; }catch(e){}
+    if(areaFt2==null) areaFt2=Math.abs(wFt*hFt);
+
+    S.terrain={
+      samples:results, n:results.length, gridN:n,
+      lat0:lat0, lng0:lng0,
+      zMinFt:zMin, zMaxFt:zMax, zMeanFt:zMean, reliefFt:zMax-zMin,
+      spacingFt:spacingFt, areaFt2:areaFt2,
+      usedFallback:usedFallback,
+      fetchedAt:Date.now()
+    };
+    e5Compute();
+    _e5Status('Sampled '+results.length+' points at about '
+      + Math.round(spacingFt)+' ft spacing.', 'var(--green)', 100);
+    e5Render();
+  }
+
+  batch(0);
+}
+
+/* ---- best-fit plane + cut/fill --------------------------------------- */
+
+/* Least squares z = ax + by + c. Solved with Cramer's rule on the 3x3
+   normal equations; no matrix library needed for three unknowns. */
+function _e5Plane(pts){
+  var n=pts.length, Sx=0,Sy=0,Sz=0,Sxx=0,Syy=0,Sxy=0,Sxz=0,Syz=0;
+  pts.forEach(function(p){
+    Sx+=p.x; Sy+=p.y; Sz+=p.zFt;
+    Sxx+=p.x*p.x; Syy+=p.y*p.y; Sxy+=p.x*p.y;
+    Sxz+=p.x*p.zFt; Syz+=p.y*p.zFt;
+  });
+  var M=[[Sxx,Sxy,Sx],[Sxy,Syy,Sy],[Sx,Sy,n]];
+  var V=[Sxz,Syz,Sz];
+  function det3(m){
+    return m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1])
+         - m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0])
+         + m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+  }
+  var D=det3(M);
+  if(Math.abs(D)<1e-9) return {a:0,b:0,c:Sz/n};   /* degenerate: flat mean */
+  function sub(col){
+    var m=[M[0].slice(),M[1].slice(),M[2].slice()];
+    for(var i=0;i<3;i++) m[i][col]=V[i];
+    return det3(m)/D;
+  }
+  return { a:sub(0), b:sub(1), c:sub(2) };
+}
+
+function e5Compute(){
+  var T=S.terrain; if(!T || !T.samples) return;
+  var pts=T.samples;
+  var pl=_e5Plane(pts);
+  T.plane=pl;
+
+  /* Slope of the fitted plane: rise over run in the steepest direction. */
+  var slope=Math.sqrt(pl.a*pl.a+pl.b*pl.b);
+  T.slopePct=slope*100;
+  T.slopeDeg=Math.atan(slope)*180/Math.PI;
+  T.aspectDeg=(Math.atan2(-pl.b,-pl.a)*180/Math.PI+360)%360;
+
+  var grade=_e5.grade, label;
+  function proposedAt(p){
+    if(grade==='plane'){ return pl.a*p.x+pl.b*p.y+pl.c; }
+    if(grade==='pad'){   return T.zMeanFt; }
+    return (_e5.padFt!=null)?_e5.padFt:T.zMeanFt;
+  }
+  label = grade==='plane' ? 'balanced plane'
+        : grade==='pad'   ? 'flat pad at mean elevation'
+        :                   'flat pad at '+Math.round((_e5.padFt!=null)?_e5.padFt:T.zMeanFt)+' ft';
+
+  var cellFt2=T.areaFt2/pts.length;      /* each sample represents this area */
+  var cut=0, fill=0;
+  pts.forEach(function(p){
+    var dz=p.zFt-proposedAt(p);
+    p.dz=dz;
+    if(dz>0) cut  += dz*cellFt2;
+    else     fill += (-dz)*cellFt2;
+  });
+
+  T.grade=grade; T.gradeLabel=label;
+  T.cutCy=cut/27; T.fillCy=fill/27; T.netCy=(cut-fill)/27;
+  T.cellFt2=cellFt2;
+
+  try{ if(typeof omegaSetStale==='function') omegaSetStale(true); }catch(e){}
+  try{ if(typeof omegaRenderResults==='function') omegaRenderResults(); }catch(e){}
+  try{ if(typeof _brandMarkDirty==='function') _brandMarkDirty(); }catch(e){}
+}
+
+function e5SetGrade(g){
+  _e5.grade=g;
+  if(g==='custom'){
+    var v=prompt('Finished grade elevation, ft above sea level:',
+                 S.terrain?Math.round(S.terrain.zMeanFt):'');
+    if(v===null){ _e5.grade='plane'; }
+    else{
+      var f=parseFloat(v);
+      if(isFinite(f)) _e5.padFt=f; else _e5.grade='plane';
+    }
+  }
+  e5Compute(); e5Render();
+}
+
+/* ---- render ---------------------------------------------------------- */
+
+function _e5Status(msg,col,pct){
+  var s=document.getElementById('e5-status');
+  if(s){ s.textContent=msg||''; s.style.color=col||'var(--sub)'; }
+  var b=document.querySelector('#e5-bar i');
+  if(b) b.style.width=(pct==null?0:Math.max(0,Math.min(100,pct)))+'%';
+}
+
+function e5Render(){
+  var b=document.getElementById('e5-body'); if(!b) return;
+  var T=S.terrain;
+  var h='';
+
+  h += '<div class="e3-note warn"><strong>Screening grade.</strong> Elevation comes '
+     + 'from public DEMs \u2014 roughly 10 m post spacing over the US, 30 m elsewhere. '
+     + 'Cut and fill are separately signed, so DEM error does not cancel: on rolling '
+     + 'ground these volumes are routinely 30\u201350% from a surveyed answer. Use them '
+     + 'to compare options and screen a site, not to price earthwork.</div>';
+
+  if(!T){
+    h += '<div class="e3-grid" style="grid-template-columns:1fr 1fr;margin-bottom:12px">'
+       +   '<div class="e3-f"><label>GRID DENSITY (per side)</label>'
+       +     '<input id="e5-n" type="number" min="6" max="40" value="'+_e5.n+'"></div>'
+       +   '<div class="e3-f"><label>MAX SAMPLES</label>'
+       +     '<input value="'+E5_MAX_PTS+'" disabled></div>'
+       + '</div>';
+    var ring=_e5Ring();
+    h += '<div class="e3-note info">'
+       + (ring ? 'Will sample inside the site boundary ('+ring.length+' vertices).'
+               : 'No boundary found \u2014 will sample a square sized to the site acreage, '
+                 + 'centred on the map. Draw a boundary for a tighter result.')
+       + '</div>';
+  } else {
+    h += '<div class="e5-grid">'
+       +   _e5Stat('MIN ELEVATION', Math.round(T.zMinFt).toLocaleString(), 'ft')
+       +   _e5Stat('MAX ELEVATION', Math.round(T.zMaxFt).toLocaleString(), 'ft')
+       +   _e5Stat('RELIEF', Math.round(T.reliefFt).toLocaleString(), 'ft')
+       +   _e5Stat('MEAN SLOPE', T.slopePct.toFixed(2), '%')
+       +   _e5Stat('SLOPE ANGLE', T.slopeDeg.toFixed(2), '\u00b0')
+       +   _e5Stat('ASPECT', Math.round(T.aspectDeg), '\u00b0 from N')
+       + '</div>';
+    h += '<canvas id="e5-canvas"></canvas>';
+    h += '<div class="e5-legend">'
+       +   '<span><i style="background:#E8A15A"></i>cut (above grade)</span>'
+       +   '<span><i style="background:#5AA9E8"></i>fill (below grade)</span>'
+       +   '<span>'+T.n+' samples \u00b7 ~'+Math.round(T.spacingFt)+' ft spacing</span>'
+       + '</div>';
+    h += '<div class="e3-tabs">'
+       +   '<div class="e3-tab'+(_e5.grade==='plane'?' on':'')+'" onclick="e5SetGrade(\'plane\')">Balanced plane</div>'
+       +   '<div class="e3-tab'+(_e5.grade==='pad'?' on':'')+'" onclick="e5SetGrade(\'pad\')">Flat pad</div>'
+       +   '<div class="e3-tab'+(_e5.grade==='custom'?' on':'')+'" onclick="e5SetGrade(\'custom\')">Set elevation\u2026</div>'
+       + '</div>';
+    h += '<div class="e5-grid" style="grid-template-columns:1fr 1fr 1fr">'
+       +   '<div class="e5-stat e5-cut"><label>CUT</label><b>'
+       +     Math.round(T.cutCy).toLocaleString()+'</b><span>cy</span></div>'
+       +   '<div class="e5-stat e5-fill"><label>FILL</label><b>'
+       +     Math.round(T.fillCy).toLocaleString()+'</b><span>cy</span></div>'
+       +   '<div class="e5-stat e5-net"><label>NET</label><b>'
+       +     (T.netCy>=0?'+':'\u2212')+Math.abs(Math.round(T.netCy)).toLocaleString()
+       +     '</b><span>cy '+(T.netCy>=0?'export':'import')+'</span></div>'
+       + '</div>';
+    h += '<div class="e3-note info">Against a <strong>'+_omEsc(T.gradeLabel)+'</strong>. '
+       + 'A balanced plane is the grade that minimises total earthwork; it is the right '
+       + 'first look for a tracker field. A flat pad is what a BESS or equipment yard '
+       + 'actually needs, and will normally show much larger volumes.</div>';
+  }
+
+  h += '<div id="e5-status" style="font-size:10.5px;color:var(--sub);min-height:15px;'
+     + 'margin-top:8px">' + (T?'':'Nothing sampled yet.') + '</div>'
+     + '<div class="e5-bar"><i></i></div>';
+
+  h += '<div class="e3-foot" style="justify-content:space-between">'
+     +   '<div style="display:flex;gap:8px">'
+     +     (T?'<button class="e3-btn" onclick="e5Clear()">Clear</button>':'')
+     +     (T?'<button class="e3-btn" onclick="e5ExportXyz()">Export XYZ</button>':'')
+     +   '</div>'
+     +   '<div style="display:flex;gap:8px">'
+     +     '<button class="e3-btn" onclick="e5Close()">Close</button>'
+     +     '<button class="e3-btn pri" onclick="e5Sample()">'+(T?'Re-sample':'Sample terrain')+'</button>'
+     +   '</div>'
+     + '</div>';
+  b.innerHTML=h;
+  if(T) setTimeout(_e5Draw,30);
+}
+
+function _e5Stat(label,val,unit){
+  return '<div class="e5-stat"><label>'+label+'</label><b>'+val+'</b><span>'+unit+'</span></div>';
+}
+
+/* Cut/fill heat map. Deliberately plain: colour is cut vs fill and nothing
+   else, because a rainbow ramp on screening data reads as more precision
+   than there is. */
+function _e5Draw(){
+  var cv=document.getElementById('e5-canvas'); if(!cv) return;
+  var T=S.terrain; if(!T || !T.samples) return;
+  var w=cv.clientWidth, hh=cv.clientHeight;
+  cv.width=w*2; cv.height=hh*2;                /* retina */
+  var g=cv.getContext('2d'); g.scale(2,2);
+  g.clearRect(0,0,w,hh);
+
+  var xs=T.samples.map(function(p){return p.x;}), ys=T.samples.map(function(p){return p.y;});
+  var x0=Math.min.apply(null,xs), x1=Math.max.apply(null,xs);
+  var y0=Math.min.apply(null,ys), y1=Math.max.apply(null,ys);
+  var pad=8, sx=(w-pad*2)/((x1-x0)||1), sy=(hh-pad*2)/((y1-y0)||1);
+  var s=Math.min(sx,sy);
+  var ox=pad+((w-pad*2)-(x1-x0)*s)/2, oy=pad+((hh-pad*2)-(y1-y0)*s)/2;
+
+  var maxAbs=0;
+  T.samples.forEach(function(p){ maxAbs=Math.max(maxAbs,Math.abs(p.dz||0)); });
+  if(maxAbs<=0) maxAbs=1;
+
+  var cell=Math.max(2, s*(T.spacingFt||10)*0.9);
+  T.samples.forEach(function(p){
+    var px=ox+(p.x-x0)*s, py=oy+(hh-pad*2)-(p.y-y0)*s;
+    var t=Math.min(1,Math.abs(p.dz||0)/maxAbs);
+    g.fillStyle=(p.dz>=0)
+      ? 'rgba(232,161,90,'+(0.18+0.72*t)+')'
+      : 'rgba(90,169,232,'+(0.18+0.72*t)+')';
+    g.fillRect(px-cell/2, py-cell/2, cell, cell);
+  });
+}
+
+function e5Clear(){
+  S.terrain=null;
+  try{ if(typeof omegaRenderResults==='function') omegaRenderResults(); }catch(e){}
+  e5Render();
+}
+
+function e5TerrainCsv(){
+  var T=S.terrain; if(!T) return '';
+  var rows=[['ClearSky OMEGA \u2014 terrain samples (screening grade)'],
+            ['Source','Google Elevation Service / public DEM'],
+            ['Sample spacing ft', Math.round(T.spacingFt)],
+            ['Samples', T.n],
+            ['Finished grade', T.gradeLabel],
+            ['Cut cy', Math.round(T.cutCy)],
+            ['Fill cy', Math.round(T.fillCy)],
+            [],
+            ['lat','lng','x_ft','y_ft','elev_ft','cut_fill_ft']];
+  T.samples.forEach(function(p){
+    rows.push([p.lat.toFixed(7), p.lng.toFixed(7),
+               p.x.toFixed(2), p.y.toFixed(2),
+               p.zFt.toFixed(2), (p.dz==null?'':p.dz.toFixed(2))]);
+  });
+  return _d4Csv(rows);
+}
+
+function e5ExportXyz(){
+  var csv=e5TerrainCsv(); if(!csv) return;
+  var blob=new Blob([csv],{type:'text/csv'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download=_d4Proj()+'_terrain.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1500);
+}
+
+/* ====================================================================
  *  DELIVERABLES DRAWER                                     (Patch 4)
  *  --------------------------------------------------------------
  *  One surface, one zip. Every row is backed by a generator that already
@@ -22883,6 +23355,12 @@ function d4BuildRows(){
     sub:'Anchored equipment and runs, WGS84',
     formats:['GEOJSON','KML'], fmt:'GEOJSON', on:false, ok:haveGeo,
     why:haveGeo?'':'nothing anchored to the map yet', kind:'geo' });
+
+  var haveT=!!(typeof S!=='undefined' && S.terrain);
+  rows.push({ id:'terrain', grp:'Data', name:'Terrain XYZ',
+    sub:'Sampled elevations with cut/fill per point',
+    formats:['CSV'], fmt:'CSV', on:false, ok:haveT,
+    why:haveT?'':'no terrain sampled', kind:'csv', gen:'terrain' });
 
   rows.push({ id:'meteo', grp:'Data', name:'Meteo dataset',
     formats:['JSON'], fmt:'JSON', on:false,
@@ -23252,6 +23730,7 @@ async function d4Download(){
           var csv = r.gen==='bom'   ? bomToCSV(window._BOM_CACHE || buildBOM())
                   : r.gen==='fin'   ? _d4GenFin()
                   : r.gen==='p8760' ? _d4Gen8760()
+                  : r.gen==='terrain'? e5TerrainCsv()
                   :                   _d4GenProj();
           if(r.fmt==='XLSX'){
             if(typeof XLSX==='undefined'){
@@ -25535,10 +26014,27 @@ function omegaRenderResults(){
   try{ if(typeof trenchTotals==='function') tt=trenchTotals(); }catch(e){}
   cv += _omRow('Trench length', (tt && _omNum(tt.ft)) ? Math.round(tt.ft).toLocaleString()+' ft' : null);
   cv += _omRow('Conduit runs',  (S.conduits||[]).length || null);
-  cv += _omRow('Earthworks cut', null);
-  cv += _omRow('Earthworks fill', null);
-  cv += '<div class="rr-gate">Cut / fill needs terrain. Topography is Tier 3 '
-      + 'on the roadmap.</div>';
+  var T=(typeof S!=='undefined')?S.terrain:null;
+  if(T && T.cutCy!=null){
+    cv += _omRow('Earthworks cut',  Math.round(T.cutCy).toLocaleString()+' cy');
+    cv += _omRow('Earthworks fill', Math.round(T.fillCy).toLocaleString()+' cy');
+    cv += _omRow('Net',
+                 (T.netCy>=0?'+':'\u2212')+Math.abs(Math.round(T.netCy)).toLocaleString()+' cy',
+                 T.netCy>=0?'rr-neg':'rr-pos',
+                 T.netCy>=0 ? 'Surplus to haul off.' : 'Shortfall to import.');
+    cv += _omRow('Mean slope', _omFix(T.slopePct,2)+' %');
+    cv += _omRow('Relief', Math.round(T.reliefFt).toLocaleString()+' ft',
+                 null, 'Highest sample minus lowest.');
+    cv += '<div class="rr-note">Screening only \u2014 '
+        + Math.round(T.spacingFt)+' ft DEM sampling, '+T.gradeLabel+'. '
+        + 'Not a survey. Bid quantities need a DTM.</div>';
+  } else {
+    cv += _omRow('Earthworks cut', null);
+    cv += _omRow('Earthworks fill', null);
+    cv += '<div class="rr-gate">Cut / fill needs terrain. '
+        + '<a href="#" onclick="e5Open();return false" style="color:var(--accent)">'
+        + 'Sample the site</a> to populate.</div>';
+  }
   _omSet('rr-b-civil', cv);
 
   /* ENERGY -------------------------------------------------------- */
@@ -27138,6 +27634,10 @@ window.OmegaAnchor = {
       var g=(typeof omegaGeo==='function')?omegaGeo():null;
       r['omegaGeo()'] = g ? (g.lat.toFixed(5)+', '+g.lng.toFixed(5)+' '+g.zone+g.band) : 'null';
       r['S.pxPerFt'] = S.pxPerFt || '(unscaled)';
+      /* If this says no, geometry cannot track the map and everything else
+         in this table is downstream of that one fact. */
+      r['map listeners wired'] = window._geoListenersWired ? 'yes'
+        : ('NO \u2014 retries so far: ' + (window._geoWireRetries||0));
       var d=(typeof omegaDer==='function')?omegaDer():{};
       r['solar kWdc'] = d.solarKwDc+'  ('+d.solarUnits+' array/s)';
       r['wind kW']    = d.windKw+'  ('+d.windUnits+')';
@@ -27227,8 +27727,18 @@ window._geoStampAll=_geoStampAll;
 var _geoReprojecting=false;
 function _geoReprojectAll(){
   if(_geoReprojecting) return;
-  var ms=_liveMapState(); if(!ms) return;
   _geoReprojecting=true;
+  /* Patch 13: refresh the drawing scale BEFORE reading it.
+     zoom_changed -> _gmapAutoScale and bounds_changed -> _geoReprojectAll are
+     independent listeners with no ordering guarantee, so this function could
+     run against the previous zoom's S.pxPerFt and place everything wrong --
+     the "conduits jump on zoom, fix on drag" bug. Doing the scale update here
+     removes the dependency instead of trying to sequence two listeners that
+     fire on their own schedule. The reprojecting flag is already set, so any
+     repaint _gmapAutoScale triggers cannot re-enter. */
+  try{ if(typeof _gmapAutoScale==='function') _gmapAutoScale(); }catch(e){}
+  var ms=_liveMapState();
+  if(!ms){ _geoReprojecting=false; return; }
   try{
     var sz=_getCanvasSize();
     var toPx=function(lat,lng){ return _latLngToPx(lat,lng,ms,sz.w,sz.h); };
@@ -27276,15 +27786,47 @@ window._geoReprojectAll=_geoReprojectAll;
 /* Wire map-move listeners once, when a live map exists. Idempotent. */
 function _geoWireMapListeners(){
   try{
-    if(!window._gmap || window._geoListenersWired) return;
+    if(window._geoListenersWired) return;
+    /* Patch 13: the map lives on EITHER the lexical _gmap binding or
+       window._gmap depending on which path created it -- the same trap
+       Patch 8 fixed in omegaGeo(). Guarding on window._gmap alone meant
+       that on the lexical paths these listeners were never wired and
+       NOTHING reprojected on zoom. */
+    var m=null;
+    try{ if(typeof _gmap!=='undefined' && _gmap && _gmap.addListener) m=_gmap; }catch(e){}
+    if(!m && window._gmap && window._gmap.addListener) m=window._gmap;
+    if(!m){
+      /* Called before the map exists. Retry rather than give up silently:
+         the flag is deliberately not set, so a later call still works. */
+      if(!window._geoWireRetries) window._geoWireRetries=0;
+      if(window._geoWireRetries++ < 40){
+        setTimeout(_geoWireMapListeners, 500);
+      } else if(window.console){
+        console.warn('[omega/geo] no map after 20s \u2014 nothing will reproject on zoom.');
+      }
+      return;
+    }
     window._geoListenersWired=true;
-    _gmap.addListener('idle', _geoReprojectAll);
-    _gmap.addListener('bounds_changed', function(){
+
+    m.addListener('idle', _geoReprojectAll);
+    /* Explicit, so a zoom reprojects when the zoom lands rather than waiting
+       for whichever of bounds_changed/idle happens to arrive first. */
+    m.addListener('zoom_changed', function(){
+      if(window._geoZoomPending) return;
+      window._geoZoomPending=true;
+      requestAnimationFrame(function(){
+        window._geoZoomPending=false;
+        _geoReprojectAll();
+      });
+    });
+    m.addListener('bounds_changed', function(){
       /* Light-touch live tracking during drag (throttled by rAF). */
       if(window._geoRafPending) return;
       window._geoRafPending=true;
       requestAnimationFrame(function(){ window._geoRafPending=false; _geoReprojectAll(); });
     });
+    if(window.console) console.info('[omega/geo] map listeners wired \u2014 '
+      + 'geometry will track pan and zoom.');
   }catch(e){}
 }
 window._geoWireMapListeners=_geoWireMapListeners;
@@ -55608,6 +56150,13 @@ window._crmToastModal=_crmToastModal;
     try {
       var ppfNow = (typeof _derScale === 'function') ? _derScale() : 0;
       var ppfWas = sh._ppfAt || 0;
+      /* Patch 13: cap the per-pass ratio. A stale scale used to be able to
+         rescale by an absurd factor AND write _ppfAt, making the error
+         sticky. Anything beyond a 16x step in one pass is a bug, not a
+         zoom, so leave the geometry alone and let the next correct pass
+         handle it. */
+      var _ratio = (ppfWas > 0) ? (ppfNow / ppfWas) : 1;
+      if (_ratio > 16 || _ratio < 0.0625) { ppfWas = 0; }
       if (ppfNow > 0 && ppfWas > 0 && Math.abs(ppfNow - ppfWas) / ppfWas > 0.001
           && sh.boundary && sh.boundary.length) {
         var k = ppfNow / ppfWas;
