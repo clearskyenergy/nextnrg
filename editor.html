@@ -28244,7 +28244,24 @@ window._geoRestampAll=_geoRestampAll;
 
 /* Console diagnostic. `OmegaAnchor.check()` reports what is unanchored and
    what would drift, so this class of bug is visible without a screenshot. */
-window.OmegaAnchor = {
+/* ---------------------------------------------------------------------
+   Diagnostics live on OmegaDiag, NOT OmegaAnchor.
+
+   This file already assigns window.OmegaAnchor twice, both later in the
+   document than this point, so anything put there is overwritten before
+   the page finishes loading. That is exactly what happened to these
+   helpers between Patch 6 and Patch 16 -- they were defined, clobbered,
+   and never callable.
+   --------------------------------------------------------------------- */
+window.OMEGA_BUILD = 'patch17';
+try{
+  if(window.console) console.info('[omega] build ' + window.OMEGA_BUILD
+    + ' \u2014 diagnostics on OmegaDiag (OmegaAnchor belongs to the '
+    + 'drag-bake subsystem).');
+}catch(e){}
+
+window.OmegaDiag = {
+  build: function(){ return window.OMEGA_BUILD; },
   check: function(){
     var out={elements:{total:0,unanchored:0},
              shapes:{total:0,noPts:0,noBoundary:0,noTables:0,noCentre:0},
@@ -28272,7 +28289,7 @@ window.OmegaAnchor = {
   restamp: function(){
     _geoRestampAll();
     var r=this.check();
-    if(window.console) console.info('[omega/anchor] restamped from current pixels');
+    if(window.console) console.info('[omega/diag] restamped from current pixels');
     return r;
   },
   /* Give every pixel-sized shape a corner anchor at the CURRENT view, so a
@@ -28281,7 +28298,7 @@ window.OmegaAnchor = {
   upgrade: function(){
     var ms=(typeof _liveMapState==='function')?_liveMapState():null;
     if(!ms){
-      if(window.console) console.warn('[omega/anchor] no live map \u2014 unlock the '
+      if(window.console) console.warn('[omega/diag] no live map \u2014 unlock the '
         + 'plot, zoom so the site looks right, then run this again.');
       return 0;
     }
@@ -28299,12 +28316,37 @@ window.OmegaAnchor = {
       }
     });
     try{ if(typeof pushHist==='function') pushHist(); }catch(e){}
-    if(window.console) console.info('[omega/anchor] corner-anchored '+n+' shape(s)');
+    if(window.console) console.info('[omega/diag] corner-anchored '+n+' shape(s)');
     return n;
   },
   reproject: function(){
     if(typeof _geoReprojectAll==='function') _geoReprojectAll();
-    if(window.console) console.info('[omega/anchor] reprojected from stored lat/lng');
+    if(window.console) console.info('[omega/diag] reprojected from stored lat/lng');
+  },
+  /* Force the terrain layer to draw and report what happened. Use when the
+     key renders but the map stays empty. */
+  terrainDraw: function(mode){
+    var out={};
+    try{
+      if(!S.terrain){ out.status='no terrain sampled \u2014 File > Topography'; }
+      else{
+        if(mode) _tl.mode=mode;
+        else if(_tl.mode==='off') _tl.mode='slope';
+        out['mode']=_tl.mode;
+        var L=(typeof _tlLattice==='function')?_tlLattice():null;
+        out['lattice']= !L ? 'null' : (L.err ? ('FAILED: '+L.err)
+                       : (L.nRow+'x'+L.nCol+', '+L.filled+' filled'));
+        tlRender();
+        var svg=document.getElementById('terrain-svg');
+        out['svg nodes']=svg?svg.childNodes.length:'element missing';
+        out['svg class']=svg?(svg.getAttribute('class')||'(none)'):'?';
+        out['status']=(svg && svg.childNodes.length)
+          ? 'drew ' + svg.childNodes.length + ' nodes'
+          : 'drew nothing \u2014 see lattice row';
+      }
+    }catch(e){ out.error=e&&e.message; }
+    if(window.console) console.table(out);
+    return out;
   },
   /* Terrain layer state. Run this when the key renders but the map does not.
      Silent failure in this subsystem cost a round trip; this makes it loud. */
@@ -40147,7 +40189,7 @@ function _derRenderSolar(g, sh){
     /* Older array saved before the footprint was recorded in feet. Recover
        it once from the pixels and the scale in force right now. If the view
        has changed since it was drawn this will be off, which is what
-       OmegaAnchor.upgrade() exists to correct at a known-good zoom. */
+       OmegaDiag.upgrade() exists to correct at a known-good zoom. */
     if(_sppf>0 && sh.wPx>0 && sh.hPx>0){
       sh.wFt=+(sh.wPx/_sppf).toFixed(2);
       sh.hFt=+(sh.hPx/_sppf).toFixed(2);
@@ -40155,7 +40197,7 @@ function _derRenderSolar(g, sh){
         window._derFtBackfillWarned=1;
         console.info('[omega/der] recovered array footprint in feet from the '
           + 'current scale. If an array looks the wrong size, fix the zoom and '
-          + 'run OmegaAnchor.upgrade().');
+          + 'run OmegaDiag.upgrade().');
       }
     }
   }
