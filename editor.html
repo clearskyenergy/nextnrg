@@ -225,11 +225,11 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--tex
 }
 
 /* ============ TERRAIN MAP LAYER (Patch 14) ============================ */
-#terrain-svg{
-  position:absolute; top:0; left:0; width:100%; height:100%;
-  pointer-events:none; z-index:1; overflow:visible; display:none;
-}
-#terrain-svg.on{ display:block }
+/* Patch 21: terrain draws into #csvg as <g id="tl-g">, so it needs no
+   positioning or stacking of its own. The old #terrain-svg rules are gone
+   deliberately -- z-index 1 put it beneath #csvg (4) and #els (5), which is
+   why it was computed correctly and never seen. */
+#tl-g{ pointer-events:none }
 /* Patch 15: satellite imagery is bright and busy, so a thin translucent
    line disappears into it. A dark halo under a brighter line reads at any
    zoom, which is how paper topo sheets have always done it. */
@@ -2959,9 +2959,8 @@ if(document.readyState==='loading'){
         </div>
       </div>
     </div>
-    <!-- Patch 14: terrain layer. Sits above the basemap and below #els so it
-         never covers equipment. -->
-    <svg id="terrain-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <!-- Patch 21: the terrain layer is now a <g id="tl-g"> inside #csvg, not
+         a separate SVG. See _tlGroup(). This element is retired. -->
     <div id="tl-key"></div>
     <div id="els"></div>
     <svg id="csvg" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -23585,7 +23584,35 @@ function opToggleTerrainKey(){ OmegaPanels.toggle('tl-key'); }
 var TL_MODES = ['off','contours','elevation','slope','cutfill'];
 var _tl = { mode:'off', interval:0 };   /* interval 0 = auto */
 
-function _tlSvg(){ return document.getElementById('terrain-svg'); }
+/* The terrain group lives INSIDE #csvg, as its first child.
+   Patch 14 used a separate <svg id="terrain-svg"> at z-index 1, underneath
+   #csvg (4) and #els (5) -- and the map div has since been moved out of #sc
+   entirely, so positioning against #sc was no longer sound either. Drawing
+   into #csvg removes both problems: it is demonstrably visible (conduits
+   render there), and first-child means SVG paints it underneath them
+   without any z-index at all.
+
+   Re-created on demand because settleRender() wipes #csvg with
+   innerHTML='' on every settle. */
+function _tlGroup(create){
+  var host=document.getElementById('csvg');
+  if(!host) return null;
+  var g=document.getElementById('tl-g');
+  if(g && g.parentNode!==host){ try{ g.parentNode.removeChild(g); }catch(e){} g=null; }
+  if(!g){
+    if(!create) return null;
+    g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('id','tl-g');
+    g.setAttribute('pointer-events','none');
+    if(host.firstChild) host.insertBefore(g, host.firstChild);
+    else host.appendChild(g);
+  } else if(host.firstChild!==g){
+    /* Something drew after us; put terrain back underneath. */
+    try{ host.insertBefore(g, host.firstChild); }catch(e){}
+  }
+  return g;
+}
+function _tlSvg(){ return _tlGroup(true); }
 
 /* Lattice in pixels. Returns null when there is no way to place it. */
 /* Give every sample a row and column.
@@ -23760,16 +23787,18 @@ function _tlSlopeColor(pct){
 
 /* ---- render ---------------------------------------------------------- */
 function tlRender(){
-  var svg=_tlSvg(), key=document.getElementById('tl-key');
-  if(!svg) return;
+  var key=document.getElementById('tl-key');
   if(_tl.mode==='off' || !S.terrain){
-    svg.classList.remove('on'); svg.innerHTML='';
+    var off=_tlGroup(false);
+    if(off && off.parentNode) off.parentNode.removeChild(off);
     if(key) key.classList.remove('on');
     return;
   }
+  var svg=_tlGroup(true);
+  if(!svg) return;
   var L=_tlLattice();
   if(!L || L.err){
-    svg.classList.remove('on'); svg.innerHTML='';
+    svg.innerHTML='';
     if(key){
       key.classList.add('on');
       var why = (!L || L.err==='nomap')
@@ -23853,7 +23882,7 @@ function tlRender(){
   /* If the walk produced nothing there is no point claiming the layer is on:
      an empty overlay looks identical to a broken one. Say which it is. */
   if(!out){
-    svg.classList.remove('on'); svg.innerHTML='';
+    svg.innerHTML='';
     if(key){
       key.classList.add('on');
       key.innerHTML='<h5>TERRAIN</h5><div style="line-height:1.5">'
@@ -23866,7 +23895,6 @@ function tlRender(){
     return;
   }
   svg.innerHTML=out;
-  svg.classList.add('on');
   _tlKey();
 }
 
@@ -28312,7 +28340,7 @@ window._geoRestampAll=_geoRestampAll;
    helpers between Patch 6 and Patch 16 -- they were defined, clobbered,
    and never callable.
    --------------------------------------------------------------------- */
-window.OMEGA_BUILD = 'patch19';
+window.OMEGA_BUILD = 'patch21';
 try{
   if(window.console) console.info('[omega] build ' + window.OMEGA_BUILD
     + ' \u2014 diagnostics on OmegaDiag (OmegaAnchor belongs to the '
@@ -28402,11 +28430,12 @@ window.OmegaDiag = {
         out['lattice']= !L ? 'null' : (L.err ? ('FAILED: '+L.err)
                        : (L.nRow+'x'+L.nCol+', '+L.filled+' filled'));
         tlRender();
-        var svg=document.getElementById('terrain-svg');
-        out['svg nodes']=svg?svg.childNodes.length:'element missing';
-        out['svg class']=svg?(svg.getAttribute('class')||'(none)'):'?';
-        out['status']=(svg && svg.childNodes.length)
-          ? 'drew ' + svg.childNodes.length + ' nodes'
+        var g=document.getElementById('tl-g');
+        var host=document.getElementById('csvg');
+        out['tl-g nodes']=g?g.childNodes.length:'group not created';
+        out['parent is csvg']=(g&&host&&g.parentNode===host)?'yes':'no';
+        out['status']=(g && g.childNodes.length)
+          ? 'drew ' + g.childNodes.length + ' nodes into #csvg'
           : 'drew nothing \u2014 see lattice row';
       }
     }catch(e){ out.error=e&&e.message; }
@@ -28440,9 +28469,11 @@ window.OmegaDiag = {
       r['lattice']      = !L ? 'null'
                         : L.err ? ('FAILED: '+L.err)
                         : (L.nRow+' x '+L.nCol+', '+L.filled+' filled');
-      var svg=document.getElementById('terrain-svg');
-      r['svg nodes']    = svg ? svg.childNodes.length : 'element missing';
-      r['svg visible']  = svg ? (svg.classList.contains('on')?'yes':'no') : '?';
+      var g=document.getElementById('tl-g');
+      var host=document.getElementById('csvg');
+      r['tl-g nodes']   = g ? g.childNodes.length : 'group not created';
+      r['tl-g in csvg'] = (g && host && g.parentNode===host) ? 'yes' : 'no';
+      r['tl-g is first']= (g && host && host.firstChild===g) ? 'yes (under conduits)' : 'no';
     }catch(e){ r.error=e&&e.message; }
     if(window.console) console.table(r);
     return r;
@@ -28462,6 +28493,15 @@ window.OmegaDiag = {
          in this table is downstream of that one fact. */
       r['map listeners wired'] = window._geoListenersWired ? 'yes'
         : ('NO \u2014 retries so far: ' + (window._geoWireRetries||0));
+      /* If the reprojector is not wrapped, the zoom-hold is not installed and
+         geometry will be reprojected mid-animation. If it IS wrapped, our
+         listeners must be going through window to benefit -- which since
+         Patch 20 they do. */
+      try{
+        r['reprojector wrapped'] = (window._geoReprojectAll
+          && (window._geoReprojectAll.__omegaAnchor || window._geoReprojectAll.__omegaGround))
+          ? 'yes (zoom-hold active)' : 'no';
+      }catch(e){}
       var d=(typeof omegaDer==='function')?omegaDer():{};
       r['solar kWdc'] = d.solarKwDc+'  ('+d.solarUnits+' array/s)';
       r['wind kW']    = d.windKw+'  ('+d.windUnits+')';
@@ -28612,7 +28652,8 @@ function _geoReprojectAll(){
       }
     }catch(e){}
     /* Patch 14: the terrain layer is placed from lat/lng, so it redraws with
-       everything else and inherits the Patch 13 scale fix. */
+       everything else. Patch 20: this now runs only when the reprojector
+       actually runs -- i.e. once the view has settled, not mid-zoom. */
     try{ if(typeof tlRender==='function') tlRender(); }catch(e){}
     if(typeof _refreshConduitStyle==='function'){ try{ _refreshConduitStyle(); }catch(e){} }
   }catch(e){}
@@ -28645,22 +28686,35 @@ function _geoWireMapListeners(){
     }
     window._geoListenersWired=true;
 
-    m.addListener('idle', _geoReprojectAll);
-    /* Explicit, so a zoom reprojects when the zoom lands rather than waiting
-       for whichever of bounds_changed/idle happens to arrive first. */
-    m.addListener('zoom_changed', function(){
-      if(window._geoZoomPending) return;
-      window._geoZoomPending=true;
-      requestAnimationFrame(function(){
-        window._geoZoomPending=false;
-        _geoReprojectAll();
-      });
-    });
+    /* Patch 20: call through window, resolved at CALL time, so the
+       pre-existing zoom-hold wrapper applies.
+
+       The lexical name _geoReprojectAll resolves to the raw function. The
+       anchor subsystem's hold only ever replaces window._geoReprojectAll,
+       so passing the lexical binding bypassed it and reprojected at ~60 fps
+       through the whole zoom animation, against intermediate map states.
+       That was the conduit jumping. */
+    function _reproj(){
+      try{
+        var fn = window._geoReprojectAll || _geoReprojectAll;
+        if(typeof fn==='function') fn();
+      }catch(e){}
+    }
+
+    m.addListener('idle', _reproj);
+
+    /* No zoom_changed listener here on purpose. The anchor subsystem already
+       owns zoom_changed -> markZooming and idle -> settle, and settle()
+       calls _gmapAutoScale() and then reprojects once the view has actually
+       stopped. Adding a second zoom handler duplicated a job that was
+       already being done, and did it at the wrong moment. */
+
     m.addListener('bounds_changed', function(){
-      /* Light-touch live tracking during drag (throttled by rAF). */
+      /* Live tracking during a PAN. Held automatically during a zoom by the
+         wrapper, which is the behaviour we want. */
       if(window._geoRafPending) return;
       window._geoRafPending=true;
-      requestAnimationFrame(function(){ window._geoRafPending=false; _geoReprojectAll(); });
+      requestAnimationFrame(function(){ window._geoRafPending=false; _reproj(); });
     });
     if(window.console) console.info('[omega/geo] map listeners wired \u2014 '
       + 'geometry will track pan and zoom.');
@@ -48283,6 +48337,9 @@ window._crmToastModal=_crmToastModal;
         (S.conduits||[]).forEach(function(c){ try{ renderConduit(c); }catch(e){} });
       }
       if(typeof renderTrenchSpine==='function' && S._trench){ try{ renderTrenchSpine(); }catch(e){} }
+      /* Patch 21: settleRender wipes #csvg, which now holds the terrain
+         group too. Put it back. */
+      try{ if(typeof tlRender==='function') tlRender(); }catch(e){}
       if(typeof renderShape==='function'){
         (S.shapes||[]).forEach(function(sh){ try{ renderShape(sh); }catch(e){} });
       }
