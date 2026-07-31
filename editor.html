@@ -28514,6 +28514,13 @@ function _geoRestampAll(){
         });
       }
     });
+    (S._trenches||[]).forEach(function(t){       /* Patch 24 */
+      if(t.pts && t.pts.length){
+        t._geoPts=t.pts.map(function(p){
+          var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null;
+        });
+      }
+    });
   }catch(e){}
 }
 window._geoRestampAll=_geoRestampAll;
@@ -28529,7 +28536,7 @@ window._geoRestampAll=_geoRestampAll;
    helpers between Patch 6 and Patch 16 -- they were defined, clobbered,
    and never callable.
    --------------------------------------------------------------------- */
-window.OMEGA_BUILD = 'patch23';
+window.OMEGA_BUILD = 'patch24';
 try{
   if(window.console) console.info('[omega] build ' + window.OMEGA_BUILD
     + ' \u2014 diagnostics on OmegaDiag (OmegaAnchor belongs to the '
@@ -28553,6 +28560,13 @@ window.OmegaDiag = {
         if(sh.boundary && sh.boundary.length && !sh._geoBoundary) out.shapes.noBoundary++;
         if(sh.tables && sh.tables.length && !sh._geoTables) out.shapes.noTables++;
         if(typeof sh.cx==='number' && !sh._geoC) out.shapes.noCentre++;
+      });
+      /* Patch 24: guided-build runs are a separate collection. Reporting
+         only S.conduits hid the fact that these were never anchored. */
+      out.trenches={ total:0, unanchored:0 };
+      (S._trenches||[]).forEach(function(t){
+        out.trenches.total++;
+        if(t.pts && t.pts.length && !t._geoPts) out.trenches.unanchored++;
       });
       (S.conduits||[]).forEach(function(c){
         out.conduits.total++;
@@ -28779,6 +28793,17 @@ function _geoStampAll(){
         c._geoPts=c.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
       }
     });
+    /* Patch 24: guided-build runs live in S._trenches, NOT S.conduits.
+       Nothing in this file had ever anchored them -- they were raw pixels
+       from whatever zoom they were drawn at, so they could not track the
+       map and drifted away from the equipment they connect. Same treatment
+       as conduits; the shape of the record is identical. */
+    (S._trenches||[]).forEach(function(t){
+      if(t._geoPts) return;
+      if(t.pts && t.pts.length){
+        t._geoPts=t.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
+      }
+    });
   }catch(e){}
 }
 window._geoStampAll=_geoStampAll;
@@ -28837,7 +28862,18 @@ function _geoReprojectAll(){
     });
     /* Repaint shapes + conduits now that their points moved. */
     if(typeof renderShape==='function' && S.shapes){ try{ S.shapes.forEach(function(sh){ renderShape(sh); }); }catch(e){} }
+    /* Patch 24: reproject the guided-build trenches too. */
+    (S._trenches||[]).forEach(function(t){
+      if(!t._geoPts || !t.pts) return;
+      for(var i=0;i<t.pts.length && i<t._geoPts.length;i++){
+        var g=t._geoPts[i]; if(!g) continue;
+        var px=toPx(g.lat,g.lng);
+        if(px){ t.pts[i].x=px.x; t.pts[i].y=px.y; }
+      }
+    });
     if(typeof renderConduit==='function' && S.conduits){ try{ S.conduits.forEach(function(c){ renderConduit(c); }); }catch(e){} }
+    /* Trench corridors are drawn as one layer, not per-run. */
+    try{ if(typeof _dcfcRenderTrenches==='function') _dcfcRenderTrenches(); }catch(e){}
     /* Patch 18: the pixels now match the anchors by construction, so record
        that. Without this the conduit stamper would read every reprojection
        as an edit and re-anchor the drawing to itself on every map move. */
@@ -28845,6 +28881,11 @@ function _geoReprojectAll(){
       if(typeof window.__omegaCondPxSig==='function'){
         (S.conduits||[]).forEach(function(c){
           if(c && c._geoPts) c._geoSig=window.__omegaCondPxSig(c);
+        });
+        /* Patch 24: same for trenches, so a reprojection is not later
+           mistaken for someone having moved them. */
+        (S._trenches||[]).forEach(function(t){
+          if(t && t._geoPts) t._geoSig=window.__omegaCondPxSig(t);
         });
       }
     }catch(e){}
@@ -43756,6 +43797,8 @@ function _dcfcFinishRun(){
   DCFC._activeRun=run;
   DCFC._lastEnd={ x:run.pts[run.pts.length-1].x, y:run.pts[run.pts.length-1].y }; // chain next run from here
   _dcfcDraw=null; DCFC.phase='placeon';
+  /* Patch 24: as _bgbFinishRun -- anchor on commit, not on the next sweep. */
+  try{ if(typeof _geoStampAll==='function') _geoStampAll(); }catch(e){}
   _dcfcRenderTrenches(); _dcfcGuideRender(); _dcfcPrompt();
   if(typeof pushHist==='function') pushHist();
 }
@@ -44339,6 +44382,10 @@ function _bgbFinishRun(){
   BGB._activeRun=run;
   BGB._lastEnd={ x:run.pts[run.pts.length-1].x, y:run.pts[run.pts.length-1].y };
   _dcfcDraw=null; BGB.phase='placeon';
+  /* Patch 24: anchor the run at the view it was drawn in, immediately.
+     Waiting for the periodic sweep left a window in which a pan or zoom
+     would move everything else and leave this run behind. */
+  try{ if(typeof _geoStampAll==='function') _geoStampAll(); }catch(e){}
   _dcfcRenderTrenches(); _bgbGuideRender(); _bgbPrompt();
   if(typeof pushHist==='function') pushHist();
 }
