@@ -8946,6 +8946,41 @@ function _asmElecFromSpec(spec){
    Returns { units, totalKwh, totalKw, totalCost, byModel:{model:{qty,kwh,kw,cost}} }. */
 function _ppCollectFleet(){
   var out={ units:0, totalKwh:0, totalKw:0, totalCost:0, byModel:{}, anyMissingCost:false };
+
+  /* Patch 25: the guided BESS build does not create an assembly/bespad
+     SHAPE. placeBgbAt() commits an ELEMENT via _evAdd('bess', ...) and
+     hangs the rating on it as bgbKw / bgbKwh / bgbRole. Walking shapes
+     alone therefore reported a guided build as no battery at all -- which
+     is why Value Stack said "no battery on the site map" while the results
+     rail showed a figure it had quietly taken from the BESS Config dialog
+     instead of the drawing.
+
+     Counted here rather than in each consumer because the legend, the BOM,
+     the cost sheet, Value Stack and the rail all read this function. Fixing
+     it once means they cannot disagree afterwards. */
+  try{
+    (S.elements||[]).forEach(function(el){
+      if(!el || el.bgbRole!=='bess') return;
+      var gkw =+el.bgbKw ||0;
+      var gkwh=+el.bgbKwh||0;
+      if(gkw<=0 && gkwh<=0) return;
+      out.units++;
+      out.totalKw+=gkw; out.totalKwh+=gkwh;
+      /* A guided element carries no unit cost. Flag it rather than let the
+         cost sheet quietly under-total. */
+      out.anyMissingCost=true;
+      var gkey=el.bessModel || el.label || 'BESS Assembly (guided)';
+      if(!out.byModel[gkey]){
+        out.byModel[gkey]={ qty:0, kwh:gkwh, kw:gkw, cost:null,
+                            groupKwh:0, groupKw:0, groupCost:0, mixed:false };
+      }
+      var G=out.byModel[gkey];
+      G.qty++;
+      G.groupKwh+=gkwh; G.groupKw+=gkw;
+      if(G.kwh!==gkwh || G.kw!==gkw) G.mixed=true;
+    });
+  }catch(e){}
+
   for(var i=0;i<S.shapes.length;i++){
     var s=S.shapes[i]; if(s.kind!=='assembly' && s.kind!=='bespad') continue;
     out.units++;
@@ -25783,6 +25818,9 @@ function o2Members(key){
       return s && (s.kind==='assembly' || s.kind==='bespad' || s.type==='bess-asm');
     });
     out.elements = els.filter(function(e){
+      /* Patch 25: a guided-build BESS is identified by bgbRole, not by its
+         type string, so the class count read 0 on a site that had one. */
+      if(e && e.bgbRole==='bess') return true;
       var t=elType(e); return t.indexOf('bess')>=0 || t==='ems' || t.indexOf('battery')>=0;
     });
   } else if(key==='ev'){
@@ -26594,7 +26632,12 @@ function omegaBessFleet(){
       }
     }
   }catch(e){}
-  /* Nothing placed -- fall back to the sizing dialog so a preview reads out. */
+  /* Nothing placed -- fall back to the sizing dialog so a preview reads out.
+     Patch 25: this fallback used to fire on any site built with the guided
+     tool, because those units were invisible to _ppCollectFleet(). The rail
+     then showed the CONFIG DIALOG's rating while Value Stack correctly said
+     there was no battery drawn. Now that guided units are counted, this
+     path only runs when genuinely nothing is placed. */
   try{
     (S.bessList||[]).forEach(function(b){
       var q=+(b.qty||1);
@@ -26888,10 +26931,19 @@ function omegaRenderResults(){
   var pw='';
   pw += _omRow('BESS power'+unitSfx(BF.units),
                bKw ? Math.round(bKw).toLocaleString()+' kW' : null,
-               null,
+               BF.source==='configured' ? 'rr-warn' : null,
                BF.source==='configured'
-                 ? 'From the BESS Config dialog \u2014 nothing placed on the drawing yet.'
+                 ? 'NOT ON THE DRAWING \u2014 this is the BESS Config dialog. '
+                   + 'Place a BESS to make it real.'
                  : null);
+  /* Patch 25: make the distinction impossible to miss. A number sourced
+     from the sizing dialog looked identical to one read off the drawing,
+     which is how a guided build could appear to be counted when it was
+     not. */
+  if(BF.source==='configured' && bKw>0){
+    pw += '<div class="rr-gate">The BESS above is from the Config dialog, not '
+        + 'the site map. Nothing is placed.</div>';
+  }
   pw += _omRow('BESS energy', bKwh ? (bKwh/1000).toFixed(2)+' MWh' : null);
   /* Duration is the number an offtaker asks for first; C-rate is what the
      cell datasheet is rated against. Both fall straight out of the fleet. */
@@ -28536,7 +28588,7 @@ window._geoRestampAll=_geoRestampAll;
    helpers between Patch 6 and Patch 16 -- they were defined, clobbered,
    and never callable.
    --------------------------------------------------------------------- */
-window.OMEGA_BUILD = 'patch24';
+window.OMEGA_BUILD = 'patch25';
 try{
   if(window.console) console.info('[omega] build ' + window.OMEGA_BUILD
     + ' \u2014 diagnostics on OmegaDiag (OmegaAnchor belongs to the '
@@ -28717,6 +28769,12 @@ window.OmegaDiag = {
         r['bess kWh'] = bf.kwh;
         r['bess h']   = (bf.kw>0&&bf.kwh>0)?(bf.kwh/bf.kw).toFixed(2):'--';
       }
+      try{
+        r['guided BESS elements'] = (S.elements||[]).filter(function(e){
+          return e && e.bgbRole==='bess'; }).length;
+        r['assembly/bespad shapes'] = (S.shapes||[]).filter(function(s){
+          return s && (s.kind==='assembly'||s.kind==='bespad'); }).length;
+      }catch(e){}
       /* If these two disagree the rail and the legend are reading different
          things, which is the bug this patch existed to kill. */
       try{
