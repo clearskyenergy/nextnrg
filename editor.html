@@ -18988,7 +18988,15 @@ async function saveProject(){
   /* Patch 1: Save is SOFT-guarded, not blocked. Hard-blocking a cloud save
      risks losing drawing work, which is worse than a stale number in a
      saved doc. Flip OMEGA_HARD_GUARD_SAVE to true to make it a hard stop. */
-  if(S.resultsStale && !omegaGuard("Save", {soft:!OMEGA_HARD_GUARD_SAVE})) return;
+  /* Patch 19: Save is deliberately NOT guarded on stale results.
+     saveProject() runs on a 60-second timer, 300 ms after an edit, and on
+     exit. A confirm() here fired about once a minute during normal work,
+     and -- worse -- returning early on dismissal meant the autosave silently
+     did not happen. A correctness guard that costs saves is a bad trade.
+     The EXPORT guards are the ones that matter and they are untouched:
+     issuing a plan set whose one-line disagrees with the geometry is the
+     actual hazard. Saving stale results costs nothing; the stale flag is
+     saved with the project and Run recomputes. */
   if(!_currentUser||!_db){
     const si = document.getElementById('sign-in-btn');
     if(si) {
@@ -23620,9 +23628,39 @@ function _tlEnsureRowCol(T){
   return true;
 }
 
+/* Resolve a map state the terrain layer can place against.
+   _liveMapState() returns null by design once a plot is locked or frozen,
+   which is a perfectly normal working state -- and it left the terrain
+   layer with no way to place a single sample, so it drew nothing. Every
+   other positioned thing in this file resolves through fallbacks; this
+   does the same. */
+function _tlMapState(){
+  var ms=null;
+  try{ ms=_liveMapState(); }catch(e){}
+  if(ms) return ms;
+  /* A frozen plot still knows where it is. */
+  try{
+    if(window._frozenMapState && window._frozenMapState.lat!=null) return window._frozenMapState;
+  }catch(e){}
+  try{
+    if(window._savedMapState && window._savedMapState.lat!=null) return window._savedMapState;
+  }catch(e){}
+  /* Last resort: read the map object directly, either binding. */
+  try{
+    var m=null;
+    try{ if(typeof _gmap!=='undefined' && _gmap && _gmap.getCenter) m=_gmap; }catch(e){}
+    if(!m && window._gmap && window._gmap.getCenter) m=window._gmap;
+    if(m){
+      var c=m.getCenter();
+      if(c) return { lat:c.lat(), lng:c.lng(), zoom:m.getZoom() };
+    }
+  }catch(e){}
+  return null;
+}
+
 function _tlLattice(){
   var T=S.terrain; if(!T || !T.samples || !T.samples.length) return null;
-  var ms=null; try{ ms=_liveMapState(); }catch(e){}
+  var ms=_tlMapState();
   if(!ms) return { err:'nomap' };
   if(!_tlEnsureRowCol(T)) return { err:'nolattice' };
 
@@ -26290,6 +26328,9 @@ function _o2PlaceBadgeBelowToolbar(){
  * ==================================================================== */
 
 /* Set true to make Save a hard stop while results are stale. */
+/* Patch 19: retired. Save is no longer guarded in either mode -- see the
+   note in saveProject(). Kept as a no-op so any external reference to it
+   does not throw. */
 var OMEGA_HARD_GUARD_SAVE = false;
 
 function _omEsc(s){
@@ -26805,7 +26846,20 @@ function _omPlaceBadge(){
 
 function omegaSetStale(v){
   var next = !!v;
+  var was = S.resultsStale;
   S.resultsStale = next;
+  /* Patch 19: with the Save modal gone, the passive indicators are the only
+     signal, so make sure the banner is actually reachable the first time a
+     drawing goes stale rather than relying on the rail being open. */
+  try{
+    if(next && !was && !window._omStaleToldOnce){
+      window._omStaleToldOnce = 1;
+      if(typeof showBanner==='function'){
+        showBanner('shape','Drawing changed \u2014 press Run before exporting. '
+          + 'Saving is unaffected.');
+      }
+    }
+  }catch(e){}
   var banner = document.getElementById('rr-stale');
   var badge  = document.getElementById('rr-mapbadge');
   var run    = document.getElementById('rr-run');
@@ -26823,6 +26877,11 @@ function omegaSetStale(v){
 
 /* Gate for anything that emits a deliverable.
    opts.soft -> warn and let the user proceed. */
+/* Blocks an action while the results are stale.
+   Used ONLY by the export paths. Soft mode (a confirm rather than a block)
+   exists but has no callers since Patch 19 removed the Save guard: a modal
+   on anything that can fire from a timer is the wrong shape. If a future
+   caller wants soft mode, make sure it is user-initiated. */
 function omegaGuard(what, opts){
   if(!S.resultsStale) return true;
   opts = opts||{};
@@ -28253,7 +28312,7 @@ window._geoRestampAll=_geoRestampAll;
    helpers between Patch 6 and Patch 16 -- they were defined, clobbered,
    and never callable.
    --------------------------------------------------------------------- */
-window.OMEGA_BUILD = 'patch17';
+window.OMEGA_BUILD = 'patch19';
 try{
   if(window.console) console.info('[omega] build ' + window.OMEGA_BUILD
     + ' \u2014 diagnostics on OmegaDiag (OmegaAnchor belongs to the '
@@ -28281,6 +28340,12 @@ window.OmegaDiag = {
       (S.conduits||[]).forEach(function(c){
         out.conduits.total++;
         if(c.pts && c.pts.length && !c._geoPts) out.conduits.unanchored++;
+        /* Patch 18: an anchor whose signature no longer matches the pixels
+           is stale, and a stale anchor is what makes a run jump back. */
+        else if(c._geoSig!=null && typeof window.__omegaCondPxSig==='function'
+                && c._geoSig!==window.__omegaCondPxSig(c)){
+          out.conduits.stale=(out.conduits.stale||0)+1;
+        }
       });
     }catch(e){}
     if(window.console) console.table(out);
@@ -28364,6 +28429,13 @@ window.OmegaDiag = {
       r['spacing ft']   = T.spacingFt!=null ? Math.round(T.spacingFt) : '?';
       r['extent']       = T.extent || 'boundary';
       r['layer mode']   = (typeof _tl!=='undefined') ? _tl.mode : '?';
+      /* Which resolver produced a placement, and whether the strict one
+         (which a locked plot deliberately fails) was the blocker. */
+      var lms=null; try{ lms=_liveMapState(); }catch(e){}
+      r['_liveMapState'] = lms ? 'ok' : 'null (plot locked or frozen)';
+      var tms=(typeof _tlMapState==='function')?_tlMapState():null;
+      r['_tlMapState']   = tms ? (tms.lat.toFixed(5)+', '+tms.lng.toFixed(5)+' z'+tms.zoom)
+                               : 'null \u2014 nothing can place the layer';
       var L=(typeof _tlLattice==='function')?_tlLattice():null;
       r['lattice']      = !L ? 'null'
                         : L.err ? ('FAILED: '+L.err)
@@ -28529,6 +28601,16 @@ function _geoReprojectAll(){
     /* Repaint shapes + conduits now that their points moved. */
     if(typeof renderShape==='function' && S.shapes){ try{ S.shapes.forEach(function(sh){ renderShape(sh); }); }catch(e){} }
     if(typeof renderConduit==='function' && S.conduits){ try{ S.conduits.forEach(function(c){ renderConduit(c); }); }catch(e){} }
+    /* Patch 18: the pixels now match the anchors by construction, so record
+       that. Without this the conduit stamper would read every reprojection
+       as an edit and re-anchor the drawing to itself on every map move. */
+    try{
+      if(typeof window.__omegaCondPxSig==='function'){
+        (S.conduits||[]).forEach(function(c){
+          if(c && c._geoPts) c._geoSig=window.__omegaCondPxSig(c);
+        });
+      }
+    }catch(e){}
     /* Patch 14: the terrain layer is placed from lat/lng, so it redraws with
        everything else and inherits the Patch 13 scale fix. */
     try{ if(typeof tlRender==='function') tlRender(); }catch(e){}
@@ -65681,6 +65763,19 @@ window._crmToastModal=_crmToastModal;
 
   /* A run needs stamping if it has no anchor, or the anchor no longer
      describes the same number of vertices (a vertex was added or removed). */
+  /* Signature of a run's pixel geometry. Cheap, order-sensitive, and
+     rounded so sub-pixel float noise from a reprojection does not read as
+     an edit. */
+  function pxSig(c) {
+    if (!c || !c.pts || !c.pts.length) return '';
+    var s = '';
+    for (var i = 0; i < c.pts.length; i++) {
+      s += Math.round(c.pts[i].x) + ',' + Math.round(c.pts[i].y) + ';';
+    }
+    return s;
+  }
+  window.__omegaCondPxSig = pxSig;
+
   function needsStamp(c) {
     if (!c || !c.pts || !c.pts.length) return false;
     if (!c._geoPts) return true;
@@ -65689,6 +65784,16 @@ window._crmToastModal=_crmToastModal;
       var g = c._geoPts[i];
       if (!g || g.lat == null || g.lng == null) return true;
     }
+    /* Patch 18: the anchor existing is not the same as the anchor being
+       CURRENT. A trench rebuild, a corridor recompute, a drag or a guided
+       re-route all rewrite c.pts in pixel space and leave this anchor
+       describing the old position; the next reprojection then pulls the run
+       back there. If the pixels no longer match what was stamped, something
+       other than the reprojector moved them, so re-stamp.
+
+       _geoSig is refreshed by the reprojector too, so a legitimate
+       reprojection does not look like an edit. */
+    if (c._geoSig != null && c._geoSig !== pxSig(c)) return true;
     return false;
   }
 
@@ -65713,6 +65818,7 @@ window._crmToastModal=_crmToastModal;
       }
       if (!ok) return;
       c._geoPts = geo;
+      c._geoSig = pxSig(c);      /* Patch 18: remember the pixels we stamped */
       n++;
     });
     if (n && !quiet && window.console) {
