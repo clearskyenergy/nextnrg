@@ -189,14 +189,54 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--tex
    #rp now floats over the canvas and is hidden until launched from the View
    ribbon tab, so the site map gets the full width. Its inner content and all
    the functions that target #rp-summary / #rp-cost are unchanged. */
+/* ============ FLOATING PANEL MANAGER (Patch 15) ======================= */
+.op-panel{
+  position:absolute; z-index:120; background:rgba(20,20,20,.93);
+  border:1px solid var(--border); border-radius:var(--radius-md);
+  box-shadow:0 8px 24px rgba(0,0,0,.5); overflow:hidden;
+  min-width:120px; max-width:min(420px,60vw);
+}
+.op-panel.op-hidden{ display:none }
+.op-bar{
+  display:flex; align-items:center; gap:4px; padding:4px 5px 4px 8px;
+  background:rgba(255,255,255,.05); border-bottom:1px solid var(--border);
+  cursor:move; user-select:none;
+}
+.op-bar.op-dragging{ background:rgba(47,181,74,.18) }
+.op-bar .op-title{
+  flex:1; font-family:'IBM Plex Sans',sans-serif; font-size:8.5px;
+  font-weight:700; letter-spacing:.08em; color:var(--sub); white-space:nowrap;
+}
+.op-bar button{
+  background:transparent; border:none; color:var(--sub); cursor:pointer;
+  width:17px; height:17px; border-radius:3px; font-size:10px; line-height:1;
+  font-family:inherit; padding:0; flex:0 0 17px;
+}
+.op-bar button:hover{ background:rgba(255,255,255,.12); color:var(--text) }
+.op-body{ padding:0 }
+.op-panel.op-min .op-body{ display:none }
+.op-panel.op-min{ min-width:0 }
+/* Wrapped panels lose their own positioning; the manager owns it. */
+.op-panel > .op-body > #o2-coords,
+.op-panel > .op-body > #tl-key{
+  position:static !important; display:block !important;
+  box-shadow:none !important; border:none !important; background:transparent !important;
+  left:auto !important; right:auto !important; top:auto !important; bottom:auto !important;
+}
+
 /* ============ TERRAIN MAP LAYER (Patch 14) ============================ */
 #terrain-svg{
   position:absolute; top:0; left:0; width:100%; height:100%;
   pointer-events:none; z-index:1; overflow:visible; display:none;
 }
 #terrain-svg.on{ display:block }
-.tl-contour{ fill:none; stroke:#F5C77E; stroke-width:0.9; opacity:.75 }
-.tl-contour-idx{ stroke-width:1.7; opacity:.95 }
+/* Patch 15: satellite imagery is bright and busy, so a thin translucent
+   line disappears into it. A dark halo under a brighter line reads at any
+   zoom, which is how paper topo sheets have always done it. */
+.tl-halo{ fill:none; stroke:rgba(12,14,18,.72); stroke-width:3.2; stroke-linecap:round }
+.tl-halo-idx{ stroke-width:4.6 }
+.tl-contour{ fill:none; stroke:#FFD79A; stroke-width:1.3; opacity:.95; stroke-linecap:round }
+.tl-contour-idx{ stroke-width:2.2; stroke:#FFE7BE; opacity:1 }
 .tl-lbl{
   fill:#F5C77E; font-family:var(--font-mono); font-size:8.5px;
   paint-order:stroke; stroke:rgba(10,12,16,.85); stroke-width:2.5;
@@ -1982,6 +2022,9 @@ window.onerror = function(msg, src, line, col, err) {
         <button class="rbtn" onclick="rbRun(toggleDiagPanel)" title="Anchor diagnostics — why equipment is or is not locked to the ground"><span class="rb-ico">⚠</span><span class="rb-lbl">Diagnose</span></button>
         <button class="rbtn" onclick="rbRun(toggleCompassPanel)" title="Compass — pan the view north / south / east / west, and frame the drawing"><span class="rb-ico">⊕</span><span class="rb-lbl">Compass</span></button>
         <button class="rbtn" onclick="toggleLayersPanel()" title="Layers — list, select, hide, reorder, delete all elements"><span class="rb-ico">▧</span><span class="rb-lbl">Layers</span></button>
+        <button class="rbtn" id="rb-op-o2-coords" aria-pressed="true" onclick="rbRun(opToggleCoords)" title="Coordinate readout &mdash; active area, UTM zone, X and Y"><span class="rb-ico">&#8982;</span><span class="rb-lbl">Coordinates</span></button>
+        <button class="rbtn" id="rb-op-tl-key" aria-pressed="true" onclick="rbRun(opToggleTerrainKey)" title="Terrain key &mdash; contour interval or colour ramp for the terrain layer"><span class="rb-ico">&#9968;</span><span class="rb-lbl">Terrain Key</span></button>
+        <button class="rbtn" onclick="rbRun(tlCycle)" title="Terrain layer &mdash; cycle off / contours / elevation / slope / cut-fill"><span class="rb-ico">&#9776;</span><span class="rb-lbl">Terrain Layer</span></button>
         <button class="rbtn" onclick="rbRun(engSchedToggleVisible)" title="Conduit schedule — show or hide the run schedule panel"><span class="rb-ico">≔</span><span class="rb-lbl">Conduit<br>Schedule</span></button>
         <div class="omega-addr" title="Type a site address and press Enter to load the satellite map there"><span class="omega-addr-ico">◎</span><input id="omega-addr-in" type="text" placeholder="Site address…" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter'){event.preventDefault();omegaLoadMap();}"><button type="button" id="omega-addr-go" onclick="omegaLoadMap()">Load</button></div>
       </div>
@@ -22849,7 +22892,7 @@ var E5_BATCH        = 400;    /* under the documented 512-per-request limit */
 var FT_PER_M        = 3.280839895;
 var FT_PER_DEG_LAT  = 111320 * FT_PER_M;
 
-var _e5 = { busy:false, grade:'plane', padFt:null, n:24 };
+var _e5 = { busy:false, grade:'plane', padFt:null, n:24, extent:'boundary' };
 
 function e5Open(){
   var m=document.getElementById('e5-terrain'); if(!m) return;
@@ -22887,6 +22930,27 @@ function _e5Ring(){
   return null;
 }
 
+/* The current map viewport, so terrain can be sampled over what is on
+   screen rather than only inside a drawn boundary. */
+function _e5ViewRing(){
+  try{
+    var m=null;
+    try{ if(typeof _gmap!=='undefined' && _gmap && _gmap.getBounds) m=_gmap; }catch(e){}
+    if(!m && window._gmap && window._gmap.getBounds) m=window._gmap;
+    if(!m) return null;
+    var b=m.getBounds(); if(!b) return null;
+    var ne=b.getNorthEast(), sw=b.getSouthWest();
+    /* Inset slightly so the grid does not sit on the very edge of the view. */
+    var dLat=(ne.lat()-sw.lat())*0.04, dLng=(ne.lng()-sw.lng())*0.04;
+    return [
+      {lat:sw.lat()+dLat, lng:sw.lng()+dLng},
+      {lat:sw.lat()+dLat, lng:ne.lng()-dLng},
+      {lat:ne.lat()-dLat, lng:ne.lng()-dLng},
+      {lat:ne.lat()-dLat, lng:sw.lng()+dLng}
+    ];
+  }catch(e){ return null; }
+}
+
 /* Square fallback sized to the known acreage, centred on the site. */
 function _e5FallbackRing(){
   var g=null; try{ g=omegaGeo(); }catch(e){}
@@ -22919,8 +22983,22 @@ function e5Sample(){
     _e5Status('Google Maps has not finished loading. Try again in a moment.','var(--red)');
     return;
   }
-  var ring=_e5Ring(), usedFallback=false;
-  if(!ring || ring.length<3){ ring=_e5FallbackRing(); usedFallback=true; }
+  /* Patch 15: extent is a choice. Taking it from the site boundary is right
+     for cut/fill, but on a project whose only boundary is one solar array
+     it means contours appear inside that rectangle and nowhere else --
+     which reads as "topography is not working". Sampling the current map
+     view is what "show me the topography" usually means. */
+  var ring=null, usedFallback=false;
+  if(_e5.extent==='view'){
+    ring=_e5ViewRing(); usedFallback=true;
+    if(!ring){
+      _e5Status('No live map to read the view from.','var(--red)');
+      return;
+    }
+  } else {
+    ring=_e5Ring();
+    if(!ring || ring.length<3){ ring=_e5FallbackRing(); usedFallback=true; }
+  }
   if(!ring || ring.length<3){
     _e5Status('No site outline and no map centre \u2014 nothing to sample.','var(--red)');
     return;
@@ -22936,6 +23014,10 @@ function e5Sample(){
      skipping outside points. Marching squares needs four valid corners per
      cell, and skipping left holes that broke the contours. Cut/fill still
      counts only the inside points, so the volumes are unchanged. */
+  try{
+    var _ni=document.getElementById('e5-n');
+    if(_ni && parseInt(_ni.value,10)>0) _e5.n=parseInt(_ni.value,10);
+  }catch(e){}
   var n=Math.max(6, Math.min(32, _e5.n|0));
   while(n*n > E5_MAX_PTS && n > 6) n--;      /* keep inside the point budget */
   var grid=[], insideCount=0;
@@ -23014,6 +23096,7 @@ function e5Sample(){
       zMinFt:zMin, zMaxFt:zMax, zMeanFt:zMean, reliefFt:zMax-zMin,
       spacingFt:spacingFt, areaFt2:areaFt2,
       usedFallback:usedFallback,
+      extent:_e5.extent,
       fetchedAt:Date.now()
     };
     e5Compute();
@@ -23100,6 +23183,10 @@ function e5Compute(){
   try{ if(typeof _brandMarkDirty==='function') _brandMarkDirty(); }catch(e){}
 }
 
+function e5SetExtent(x){
+  _e5.extent=(x==='view')?'view':'boundary';
+  e5Render();
+}
 function e5SetGrade(g){
   _e5.grade=g;
   if(g==='custom'){
@@ -23136,17 +23223,28 @@ function e5Render(){
      + 'to compare options and screen a site, not to price earthwork.</div>';
 
   if(!T){
+    h += '<div class="e3-tabs" style="margin-bottom:10px">'
+       +   '<div class="e3-tab'+(_e5.extent==='boundary'?' on':'')+'" '
+       +     'onclick="e5SetExtent(\'boundary\')">Site boundary</div>'
+       +   '<div class="e3-tab'+(_e5.extent==='view'?' on':'')+'" '
+       +     'onclick="e5SetExtent(\'view\')">Current map view</div>'
+       + '</div>';
     h += '<div class="e3-grid" style="grid-template-columns:1fr 1fr;margin-bottom:12px">'
        +   '<div class="e3-f"><label>GRID DENSITY (per side)</label>'
-       +     '<input id="e5-n" type="number" min="6" max="40" value="'+_e5.n+'"></div>'
+       +     '<input id="e5-n" type="number" min="6" max="32" value="'+_e5.n+'"></div>'
        +   '<div class="e3-f"><label>MAX SAMPLES</label>'
        +     '<input value="'+E5_MAX_PTS+'" disabled></div>'
        + '</div>';
-    var ring=_e5Ring();
+    var ring=(_e5.extent==='view')?_e5ViewRing():_e5Ring();
     h += '<div class="e3-note info">'
-       + (ring ? 'Will sample inside the site boundary ('+ring.length+' vertices).'
-               : 'No boundary found \u2014 will sample a square sized to the site acreage, '
-                 + 'centred on the map. Draw a boundary for a tighter result.')
+       + (_e5.extent==='view'
+            ? (ring ? 'Will sample the whole visible map. Best for seeing the shape of '
+                      + 'the ground; pan and zoom to frame what you want first.'
+                    : 'No live map to read a viewport from.')
+            : (ring ? 'Will sample inside the site boundary ('+ring.length+' vertices). '
+                      + 'Tightest cut/fill, but contours appear only inside that outline.'
+                    : 'No boundary found \u2014 will sample a square sized to the site '
+                      + 'acreage, centred on the map.'))
        + '</div>';
   } else {
     h += '<div class="e5-grid">'
@@ -23286,6 +23384,177 @@ function e5ExportXyz(){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function(){ URL.revokeObjectURL(url); },1500);
 }
+
+/* ====================================================================
+ *  FLOATING PANEL MANAGER                                 (Patch 15)
+ *  --------------------------------------------------------------
+ *  Wraps any existing element in a draggable, minimisable, closable
+ *  frame and registers it so View > Panels can bring it back.
+ *
+ *  The compass already did all of this, but privately. Rather than copy
+ *  that code a third time, this generalises it and matches its behaviour
+ *  deliberately: grab anywhere on the bar, clamp inside the canvas,
+ *  persist position, and tell the user where to find a panel they just
+ *  closed. A panel that vanishes with no way back is worse than one that
+ *  cannot be closed at all.
+ * ==================================================================== */
+
+var OmegaPanels = (function(){
+  var reg = {};        /* id -> {el, wrap, title} */
+
+  function key(id){ return 'omega_panel_'+id; }
+
+  function load(id){
+    try{ return JSON.parse(localStorage.getItem(key(id))||'{}'); }
+    catch(e){ return {}; }
+  }
+  function save(id, st){
+    try{ localStorage.setItem(key(id), JSON.stringify(st)); }catch(e){}
+  }
+
+  function wrap(id, title, opts){
+    opts=opts||{};
+    var el=document.getElementById(id);
+    if(!el || reg[id]) return reg[id]||null;
+    var host=document.getElementById('sc'); if(!host) return null;
+
+    var w=document.createElement('div');
+    w.className='op-panel';
+    w.id='op-'+id;
+    w.innerHTML='<div class="op-bar">'
+      + '<span class="op-title">'+_omEsc(title)+'</span>'
+      + '<button data-op="min" title="Minimise">&#9472;</button>'
+      + '<button data-op="close" title="Close (reopen from View &gt; Panels)">&#10005;</button>'
+      + '</div><div class="op-body"></div>';
+
+    el.parentNode.insertBefore(w, el);
+    w.querySelector('.op-body').appendChild(el);
+    host.appendChild(w);
+
+    var st=load(id);
+    w.style.left = (st.left!=null?st.left:(opts.left!=null?opts.left:10))+'px';
+    w.style.top  = (st.top !=null?st.top :(opts.top !=null?opts.top :400))+'px';
+    if(st.min) w.classList.add('op-min');
+    if(st.hidden) w.classList.add('op-hidden');
+
+    var bar=w.querySelector('.op-bar');
+    bar.addEventListener('click', function(e){
+      var b=e.target.closest && e.target.closest('button'); if(!b) return;
+      e.stopPropagation();
+      if(b.getAttribute('data-op')==='min'){
+        w.classList.toggle('op-min');
+        save(id,{left:parseInt(w.style.left,10),top:parseInt(w.style.top,10),
+                 min:w.classList.contains('op-min'),hidden:w.classList.contains('op-hidden')});
+      } else {
+        hide(id);
+        if(typeof showBanner==='function'){
+          try{ showBanner('wiz', title+' closed. Reopen from View \u203a Panels.'); }catch(e){}
+        }
+      }
+    });
+
+    /* Drag. Matches the compass: grab the bar, clamp inside the canvas. */
+    var sx,sy,ox,oy,on=false;
+    function down(e){
+      if(e.target.closest && e.target.closest('button')) return;
+      on=true; bar.classList.add('op-dragging');
+      var t=(e.touches&&e.touches[0])||e;
+      sx=t.clientX; sy=t.clientY;
+      ox=parseInt(w.style.left||10,10); oy=parseInt(w.style.top||400,10);
+      e.preventDefault();
+    }
+    function move(e){
+      if(!on) return;
+      var t=(e.touches&&e.touches[0])||e;
+      var maxX=host.clientWidth - w.offsetWidth - 4;
+      var maxY=host.clientHeight - 28;
+      w.style.left=Math.max(4, Math.min(maxX, ox+(t.clientX-sx)))+'px';
+      w.style.top =Math.max(4, Math.min(maxY, oy+(t.clientY-sy)))+'px';
+      e.preventDefault();
+    }
+    function up(){
+      if(!on) return; on=false; bar.classList.remove('op-dragging');
+      save(id,{left:parseInt(w.style.left,10),top:parseInt(w.style.top,10),
+               min:w.classList.contains('op-min'),hidden:w.classList.contains('op-hidden')});
+    }
+    bar.addEventListener('mousedown',down);
+    bar.addEventListener('touchstart',down,{passive:false});
+    document.addEventListener('mousemove',move);
+    document.addEventListener('touchmove',move,{passive:false});
+    document.addEventListener('mouseup',up);
+    document.addEventListener('touchend',up);
+
+    reg[id]={ el:el, wrap:w, title:title };
+    return reg[id];
+  }
+
+  function show(id){
+    var r=reg[id]; if(!r) return;
+    r.wrap.classList.remove('op-hidden');
+    var st=load(id); st.hidden=false; save(id,st);
+    _syncBtns();
+  }
+  function hide(id){
+    var r=reg[id]; if(!r) return;
+    r.wrap.classList.add('op-hidden');
+    var st=load(id); st.hidden=true; save(id,st);
+    _syncBtns();
+  }
+  function toggle(id){
+    var r=reg[id]; if(!r) return;
+    if(r.wrap.classList.contains('op-hidden')) show(id); else hide(id);
+  }
+  function isOpen(id){
+    var r=reg[id]; return !!(r && !r.wrap.classList.contains('op-hidden'));
+  }
+  function list(){ return Object.keys(reg); }
+
+  /* Keep the ribbon buttons' pressed state honest. */
+  function _syncBtns(){
+    try{
+      Object.keys(reg).forEach(function(id){
+        var b=document.getElementById('rb-op-'+id);
+        if(b) b.setAttribute('aria-pressed', isOpen(id)?'true':'false');
+      });
+    }catch(e){}
+  }
+
+  return { wrap:wrap, show:show, hide:hide, toggle:toggle,
+           isOpen:isOpen, list:list, sync:_syncBtns };
+})();
+window.OmegaPanels=OmegaPanels;
+
+/* Register the small floating readouts. Deferred so the elements exist. */
+(function opBoot(){
+  function go(){
+    try{
+      OmegaPanels.wrap('o2-coords','COORDINATES',{left:10, top:null});
+      OmegaPanels.wrap('tl-key','TERRAIN KEY',{left:10, top:null});
+      /* Default them near the bottom-left, where they used to live, unless
+         the user has already moved them. */
+      var host=document.getElementById('sc');
+      if(host){
+        ['o2-coords','tl-key'].forEach(function(id,i){
+          var w=document.getElementById('op-'+id);
+          if(!w) return;
+          var st=null;
+          try{ st=JSON.parse(localStorage.getItem('omega_panel_'+id)||'null'); }catch(e){}
+          if(!st || st.top==null){
+            w.style.left='10px';
+            w.style.top=Math.max(60, host.clientHeight - 150 - i*96)+'px';
+          }
+        });
+      }
+      OmegaPanels.sync();
+    }catch(e){ if(window.console) console.warn('[omega/panels]', e); }
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded', function(){ setTimeout(go,900); });
+  } else { setTimeout(go,900); }
+})();
+
+function opToggleCoords(){ OmegaPanels.toggle('o2-coords'); }
+function opToggleTerrainKey(){ OmegaPanels.toggle('tl-key'); }
 
 /* ====================================================================
  *  TERRAIN MAP LAYER                                      (Patch 14)
@@ -23467,7 +23736,9 @@ function tlRender(){
         dstr += 'M'+s[0].x.toFixed(1)+' '+s[0].y.toFixed(1)
              +  'L'+s[1].x.toFixed(1)+' '+s[1].y.toFixed(1);
       });
-      out += '<path class="tl-contour'+(idxLine?' tl-contour-idx':'')+'" d="'+dstr+'"/>';
+      /* Halo first, line over it. */
+      out += '<path class="tl-halo'+(idxLine?' tl-halo-idx':'')+'" d="'+dstr+'"/>'
+           + '<path class="tl-contour'+(idxLine?' tl-contour-idx':'')+'" d="'+dstr+'"/>';
       if(idxLine && segs.length){
         var mid=segs[Math.floor(segs.length/2)][0];
         out += '<text class="tl-lbl" x="'+(mid.x+3).toFixed(1)+'" y="'
@@ -23488,7 +23759,9 @@ function _tlKey(){
   var h='';
   if(_tl.mode==='contours'){
     h = '<h5>CONTOURS</h5><div>'+(_tl.lastInterval||'--')+' ft interval</div>'
-      + '<div style="opacity:.7">index every 5th</div>';
+      + '<div style="opacity:.7">index every 5th</div>'
+      + '<div style="opacity:.7">'+(T.nAll||T.n)+' pts · '
+      + (T.extent==='view'?'map view':'site boundary')+'</div>';
   } else if(_tl.mode==='elevation'){
     h = '<h5>ELEVATION</h5>'
       + '<div class="tl-ramp" style="background:linear-gradient(90deg,'
