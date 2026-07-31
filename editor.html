@@ -11486,8 +11486,9 @@ function applyGroundLayout(boundary, layout, exclusions){
     densityOnly:layout.tooMany,
     kw:layout.kw, gcr:layout.gcr, setbackFt:layout.setbackFt,
     sqft:Math.round((bb.w/ppf)*(bb.h/ppf)),
-    /* Patch 10: the scale this geometry was written at, so the renderer can
-       tell how far the view has moved since and rescale to match. */
+    /* Patch 23: the scale this geometry was authored at. The feet model is
+       captured from it on the first render, and pixels are derived from
+       feet thereafter. */
     _ppfAt:ppf,
     style:(typeof S!=='undefined'?S.shapeStyle:''),
     scaled:(typeof _derScaled==='function')?_derScaled():false
@@ -25963,6 +25964,8 @@ function _o2CloneShape(sh, dx, dy){
      the copy snaps back on top of the original at the next map idle. Drop
      it; pushHist() re-stamps from the offset pixels. */
   if(typeof _geoClearAnchor==='function') _geoClearAnchor(c);
+  /* Patch 23: the feet model is relative to pts[0], which the clone keeps,
+     so it survives the offset correctly and does NOT need clearing. */
   dx=dx||30; dy=dy||30;
   if(typeof c.cx==='number'){ c.cx+=dx; c.cy+=dy; }
   if(c.pts && c.pts.length) c.pts=c.pts.map(function(p){ return {x:p.x+dx,y:p.y+dy}; });
@@ -26226,9 +26229,13 @@ function o2ApplyGeom(){
      describe a layout that no longer exists, so clear them and let
      _o2Commit -> pushHist re-stamp from the new geometry. */
   try{ delete sh._geoTables; }catch(e){}
-  /* Patch 10: relayout rewrote the geometry at the CURRENT scale, so that is
-     the new reference. Leaving a stale mark would rescale it a second time. */
-  try{ sh._ppfAt=(typeof _derScale==='function')?_derScale():S.pxPerFt; }catch(e){}
+  /* Patch 23: relayout produced brand-new geometry at the current scale, so
+     the stored feet model describes an array that no longer exists. Drop it
+     and let the next render capture it again. */
+  try{
+    delete sh._ftBoundary; delete sh._ftExcl; delete sh._ftTables;
+    sh._ppfAt=(typeof _derScale==='function')?_derScale():S.pxPerFt;
+  }catch(e){}
   _o2Commit();
   if(typeof showBanner==='function'){
     try{
@@ -28522,7 +28529,7 @@ window._geoRestampAll=_geoRestampAll;
    helpers between Patch 6 and Patch 16 -- they were defined, clobbered,
    and never callable.
    --------------------------------------------------------------------- */
-window.OMEGA_BUILD = 'patch22';
+window.OMEGA_BUILD = 'patch23';
 try{
   if(window.console) console.info('[omega] build ' + window.OMEGA_BUILD
     + ' \u2014 diagnostics on OmegaDiag (OmegaAnchor belongs to the '
@@ -28724,6 +28731,12 @@ window.OmegaDiag = {
       var sol=(S.shapes||[]).filter(function(s){ return s&&s.kind==='dersolar'; });
       r['arrays sized from feet'] = sol.filter(function(s){ return s.wFt>0; }).length
                                     + ' of ' + sol.length;
+      /* Patch 23: an auto-layout array without a feet model is one that will
+         drift, because pixels would be its only record of its own size. */
+      var auto=sol.filter(function(s){ return s.autoLayout; });
+      r['auto arrays w/ feet model'] =
+        auto.filter(function(s){ return s._ftBoundary || s._ftTables; }).length
+        + ' of ' + auto.length;
       r['auto-layout arrays'] = sol.filter(function(s){ return s.autoLayout; }).length;
     }catch(e){ r.error=e&&e.message; }
     if(window.console) console.table(r);
@@ -57218,6 +57231,80 @@ window._crmToastModal=_crmToastModal;
   }
 
   /* ── rotated tables need a rotated renderer ────────────────────────── */
+  /* ---------------------------------------------------------------
+     FEET MODEL FOR AUTO-LAYOUT ARRAYS                    (Patch 23)
+
+     boundary[], exclusions[][] and tables[] are pixel caches. The truth
+     is _ftBoundary / _ftExcl / _ftTables: the same geometry in FEET,
+     relative to the shape origin pts[0]. Pixels are derived from that on
+     every render, by assignment.
+
+     Feet, not lat/lng, because this must work with the plot locked --
+     when _liveMapState() returns null by design and no reprojection can
+     run. Position is still anchored geographically through pts[0]; only
+     the SHAPE is held in feet.
+     --------------------------------------------------------------- */
+  function _derFtCapture(sh, ppf) {
+    if (!(ppf > 0) || !sh.pts || !sh.pts.length) return false;
+    var ox = sh.pts[0].x, oy = sh.pts[0].y;
+    if (sh.boundary && sh.boundary.length) {
+      sh._ftBoundary = sh.boundary.map(function (p) {
+        return { x: (p.x - ox) / ppf, y: (p.y - oy) / ppf };
+      });
+    }
+    if (sh.exclusions && sh.exclusions.length) {
+      sh._ftExcl = sh.exclusions.map(function (z) {
+        return z.map(function (p) {
+          return { x: (p.x - ox) / ppf, y: (p.y - oy) / ppf };
+        });
+      });
+    }
+    if (sh.tables && sh.tables.length) {
+      sh._ftTables = sh.tables.map(function (t) {
+        return { x: (t.x - ox) / ppf, y: (t.y - oy) / ppf,
+                 w: (t.w || 0) / ppf, h: (t.h || 0) / ppf, a: t.a || 0 };
+      });
+    }
+    return true;
+  }
+
+  /* Rebuild the pixel caches from feet at the current scale. Pure
+     assignment: safe to call any number of times. */
+  function _derFtSync(sh) {
+    var ppf = (typeof _derScale === 'function') ? _derScale() : 0;
+    if (!(ppf > 0) || !sh || !sh.pts || !sh.pts.length) return;
+
+    /* Older array, or one just built: capture the feet model once from
+       whatever pixels exist at the scale in force right now. */
+    if (!sh._ftBoundary && !sh._ftTables) {
+      _derFtCapture(sh, ppf);
+      sh._ppfAt = ppf;
+      return;                       /* already correct at this scale */
+    }
+
+    var ox = sh.pts[0].x, oy = sh.pts[0].y;
+    if (sh._ftBoundary) {
+      sh.boundary = sh._ftBoundary.map(function (p) {
+        return { x: ox + p.x * ppf, y: oy + p.y * ppf };
+      });
+    }
+    if (sh._ftExcl) {
+      sh.exclusions = sh._ftExcl.map(function (z) {
+        return z.map(function (p) {
+          return { x: ox + p.x * ppf, y: oy + p.y * ppf };
+        });
+      });
+    }
+    if (sh._ftTables) {
+      sh.tables = sh._ftTables.map(function (t) {
+        return { x: ox + t.x * ppf, y: oy + t.y * ppf,
+                 w: t.w * ppf, h: t.h * ppf, a: t.a };
+      });
+    }
+    sh._ppfAt = ppf;
+  }
+  window._derFtSync = _derFtSync;
+
   function renderAutoLayoutV2(g, sh) {
     var NS = 'http://www.w3.org/2000/svg';
     /* Patch 10: an auto-layout array keeps boundary[] and tables[] in
@@ -57225,34 +57312,20 @@ window._crmToastModal=_crmToastModal;
        the plot is locked, so the array stayed a fixed pixel size on zoom.
        Rescale about the centroid by how much the scale has moved since the
        geometry was last written. Cheap, and it needs no map. */
-    try {
-      var ppfNow = (typeof _derScale === 'function') ? _derScale() : 0;
-      var ppfWas = sh._ppfAt || 0;
-      /* Patch 13: cap the per-pass ratio. A stale scale used to be able to
-         rescale by an absurd factor AND write _ppfAt, making the error
-         sticky. Anything beyond a 16x step in one pass is a bug, not a
-         zoom, so leave the geometry alone and let the next correct pass
-         handle it. */
-      var _ratio = (ppfWas > 0) ? (ppfNow / ppfWas) : 1;
-      if (_ratio > 16 || _ratio < 0.0625) { ppfWas = 0; }
-      if (ppfNow > 0 && ppfWas > 0 && Math.abs(ppfNow - ppfWas) / ppfWas > 0.001
-          && sh.boundary && sh.boundary.length) {
-        var k = ppfNow / ppfWas;
-        var cx = 0, cy = 0, n = sh.boundary.length;
-        sh.boundary.forEach(function (p) { cx += p.x / n; cy += p.y / n; });
-        var sc = function (p) { p.x = cx + (p.x - cx) * k; p.y = cy + (p.y - cy) * k; };
-        sh.boundary.forEach(sc);
-        (sh.exclusions || []).forEach(function (z) { z.forEach(sc); });
-        (sh.tables || []).forEach(function (t) {
-          var tcx = t.x + (t.w || 0) / 2, tcy = t.y + (t.h || 0) / 2;
-          var ncx = cx + (tcx - cx) * k, ncy = cy + (tcy - cy) * k;
-          t.w = (t.w || 0) * k; t.h = (t.h || 0) * k;
-          t.x = ncx - t.w / 2;  t.y = ncy - t.h / 2;
-        });
-        if (sh.pts && sh.pts.length === 1) sc(sh.pts[0]);
-      }
-      if (ppfNow > 0) sh._ppfAt = ppfNow;
-    } catch (e) {}
+    /* Patch 23: scale ABSOLUTELY from feet, never relatively from the last
+       render.
+
+       Patch 10 multiplied the stored geometry by ppfNow/ppfWas on every
+       pass. That made rendering non-idempotent -- and #csvg is re-rendered
+       by settleRender(), by _geoReprojectAll(), by pushHist and by the
+       __omegaGround wrapper, so double renders are routine. The error was
+       multiplicative, so it compounded and left no original to recover.
+       That is why the array shrank a little on each pass.
+
+       The geometry is now captured once in FEET relative to the shape
+       origin, and pixels are recomputed from it every time. Rendering ten
+       times gives the same answer as rendering once. */
+    try { _derFtSync(sh); } catch (e) {}
     if (sh.boundary && sh.boundary.length) {
       var poly = document.createElementNS(NS, 'polygon');
       poly.setAttribute('class', 'o2-bnd');   /* Patch 2: preview-mode hook */
