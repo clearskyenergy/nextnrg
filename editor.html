@@ -189,6 +189,35 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--tex
    #rp now floats over the canvas and is hidden until launched from the View
    ribbon tab, so the site map gets the full width. Its inner content and all
    the functions that target #rp-summary / #rp-cost are unchanged. */
+/* ============ TERRAIN MAP LAYER (Patch 14) ============================ */
+#terrain-svg{
+  position:absolute; top:0; left:0; width:100%; height:100%;
+  pointer-events:none; z-index:1; overflow:visible; display:none;
+}
+#terrain-svg.on{ display:block }
+.tl-contour{ fill:none; stroke:#F5C77E; stroke-width:0.9; opacity:.75 }
+.tl-contour-idx{ stroke-width:1.7; opacity:.95 }
+.tl-lbl{
+  fill:#F5C77E; font-family:var(--font-mono); font-size:8.5px;
+  paint-order:stroke; stroke:rgba(10,12,16,.85); stroke-width:2.5;
+}
+#tl-key{
+  position:absolute; left:10px; bottom:120px; z-index:118;
+  background:rgba(20,20,20,.92); border:1px solid var(--border);
+  border-radius:var(--radius-md); padding:8px 10px; display:none;
+  font-family:var(--font-mono); font-size:9px; color:var(--sub);
+  box-shadow:0 6px 18px rgba(0,0,0,.45); min-width:120px;
+}
+#tl-key.on{ display:block }
+#tl-key h5{
+  margin:0 0 5px; font-family:'IBM Plex Sans',sans-serif; font-size:9px;
+  font-weight:700; letter-spacing:.06em; color:var(--text);
+}
+.tl-ramp{ height:8px; border-radius:2px; margin:4px 0 3px }
+.tl-ends{ display:flex; justify-content:space-between; font-size:8.5px }
+.tl-row{ display:flex; align-items:center; gap:6px; margin-top:3px }
+.tl-row i{ width:9px; height:9px; border-radius:2px; flex:0 0 9px }
+
 /* ============ TOPOGRAPHY (Patch 12) =================================== */
 #e5-terrain .e3-card{ max-width:760px }
 .e5-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 14px; margin-bottom:12px }
@@ -2887,6 +2916,10 @@ if(document.readyState==='loading'){
         </div>
       </div>
     </div>
+    <!-- Patch 14: terrain layer. Sits above the basemap and below #els so it
+         never covers equipment. -->
+    <svg id="terrain-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="tl-key"></div>
     <div id="els"></div>
     <svg id="csvg" xmlns="http://www.w3.org/2000/svg"></svg>
     <div id="cov" onclick="covClick(event)" onmousemove="covMove(event)" ondblclick="if(typeof SHAPE_MODES!=='undefined'&&S.mode==='polyline'&&S.shapeDrawing){event.stopPropagation();finishPolyline();}"></div>
@@ -22899,21 +22932,25 @@ function e5Sample(){
   var midLat=(minLat+maxLat)/2;
   var ftPerDegLng=FT_PER_DEG_LAT*Math.cos(midLat*Math.PI/180);
 
-  var n=Math.max(6, Math.min(40, _e5.n|0));
-  var pts=[], grid=[];
+  /* Patch 14: walk the FULL bounding box and flag inside/outside rather than
+     skipping outside points. Marching squares needs four valid corners per
+     cell, and skipping left holes that broke the contours. Cut/fill still
+     counts only the inside points, so the volumes are unchanged. */
+  var n=Math.max(6, Math.min(32, _e5.n|0));
+  while(n*n > E5_MAX_PTS && n > 6) n--;      /* keep inside the point budget */
+  var grid=[], insideCount=0;
   for(var r=0;r<n;r++){
     for(var c=0;c<n;c++){
       var la=minLat+(maxLat-minLat)*(r/(n-1));
       var ln=minLng+(maxLng-minLng)*(c/(n-1));
-      if(!usedFallback && !_e5PtInRing(la,ln,ring)) continue;
-      grid.push({lat:la,lng:ln});
-      if(grid.length>=E5_MAX_PTS) break;
+      var ins = usedFallback ? true : _e5PtInRing(la,ln,ring);
+      if(ins) insideCount++;
+      grid.push({lat:la, lng:ln, row:r, col:c, inside:ins});
     }
-    if(grid.length>=E5_MAX_PTS) break;
   }
-  if(grid.length<9){
-    _e5Status('Only '+grid.length+' sample points fall inside the boundary. '
-      + 'Raise the grid density.','var(--red)');
+  if(insideCount<9){
+    _e5Status('Only '+insideCount+' of '+grid.length+' grid points fall inside '
+      + 'the boundary. Raise the grid density, or check the outline.','var(--red)');
     return;
   }
 
@@ -22936,7 +22973,8 @@ function e5Sample(){
         return;
       }
       res.forEach(function(p,k){
-        results.push({ lat:slice[k].lat, lng:slice[k].lng, zFt:p.elevation*FT_PER_M });
+        results.push({ lat:slice[k].lat, lng:slice[k].lng, zFt:p.elevation*FT_PER_M,
+                       row:slice[k].row, col:slice[k].col, inside:slice[k].inside });
       });
       done++;
       batch(i+1);
@@ -22954,7 +22992,11 @@ function e5Sample(){
       p.y=(p.lat-lat0)*FT_PER_DEG_LAT;
     });
 
-    var zs=results.map(function(p){return p.zFt;});
+    /* Statistics describe the SITE, so they read the inside points only.
+       The outside ring exists purely to close the contour lattice. */
+    var inPts=results.filter(function(p){ return p.inside; });
+    if(inPts.length<9) inPts=results;
+    var zs=inPts.map(function(p){return p.zFt;});
     var zMin=Math.min.apply(null,zs), zMax=Math.max.apply(null,zs);
     var zMean=zs.reduce(function(a,b){return a+b;},0)/zs.length;
 
@@ -22967,7 +23009,7 @@ function e5Sample(){
     if(areaFt2==null) areaFt2=Math.abs(wFt*hFt);
 
     S.terrain={
-      samples:results, n:results.length, gridN:n,
+      samples:results, n:inPts.length, gridN:n, nAll:results.length,
       lat0:lat0, lng0:lng0,
       zMinFt:zMin, zMaxFt:zMax, zMeanFt:zMean, reliefFt:zMax-zMin,
       spacingFt:spacingFt, areaFt2:areaFt2,
@@ -22975,6 +23017,10 @@ function e5Sample(){
       fetchedAt:Date.now()
     };
     e5Compute();
+    /* Show the result immediately rather than making the user find the
+       toggle to discover the sample worked. */
+    if(_tl.mode==='off') _tl.mode='contours';
+    try{ tlRender(); }catch(e){}
     _e5Status('Sampled '+results.length+' points at about '
       + Math.round(spacingFt)+' ft spacing.', 'var(--green)', 100);
     e5Render();
@@ -23013,7 +23059,9 @@ function _e5Plane(pts){
 
 function e5Compute(){
   var T=S.terrain; if(!T || !T.samples) return;
-  var pts=T.samples;
+  /* Volumes count only what is inside the boundary. */
+  var pts=T.samples.filter(function(p){ return p.inside!==false; });
+  if(pts.length<3) pts=T.samples;
   var pl=_e5Plane(pts);
   T.plane=pl;
 
@@ -23035,11 +23083,12 @@ function e5Compute(){
 
   var cellFt2=T.areaFt2/pts.length;      /* each sample represents this area */
   var cut=0, fill=0;
+  /* dz is set on EVERY sample so the map layer can shade the full lattice,
+     but only inside points contribute to the volumes. */
+  T.samples.forEach(function(p){ p.dz=p.zFt-proposedAt(p); });
   pts.forEach(function(p){
-    var dz=p.zFt-proposedAt(p);
-    p.dz=dz;
-    if(dz>0) cut  += dz*cellFt2;
-    else     fill += (-dz)*cellFt2;
+    if(p.dz>0) cut  += p.dz*cellFt2;
+    else       fill += (-p.dz)*cellFt2;
   });
 
   T.grade=grade; T.gradeLabel=label;
@@ -23063,6 +23112,7 @@ function e5SetGrade(g){
     }
   }
   e5Compute(); e5Render();
+  try{ tlRender(); }catch(e){}
 }
 
 /* ---- render ---------------------------------------------------------- */
@@ -23137,6 +23187,19 @@ function e5Render(){
      + 'margin-top:8px">' + (T?'':'Nothing sampled yet.') + '</div>'
      + '<div class="e5-bar"><i></i></div>';
 
+  if(T){
+    h += '<div class="e3-tabs" style="margin-top:12px">'
+       +   '<div class="e3-tab'+(_tl.mode==='off'?' on':'')+'" onclick="tlSetMode(\'off\');e5Render()">Layer off</div>'
+       +   '<div class="e3-tab'+(_tl.mode==='contours'?' on':'')+'" onclick="tlSetMode(\'contours\');e5Render()">Contours</div>'
+       +   '<div class="e3-tab'+(_tl.mode==='elevation'?' on':'')+'" onclick="tlSetMode(\'elevation\');e5Render()">Elevation</div>'
+       +   '<div class="e3-tab'+(_tl.mode==='slope'?' on':'')+'" onclick="tlSetMode(\'slope\');e5Render()">Slope</div>'
+       +   '<div class="e3-tab'+(_tl.mode==='cutfill'?' on':'')+'" onclick="tlSetMode(\'cutfill\');e5Render()">Cut / fill</div>'
+       + '</div>'
+       + '<div class="e3-note info" style="margin-top:8px">Shows on the site map '
+       + 'under the equipment. '
+       + '<a href="#" onclick="tlInterval();return false" style="color:var(--accent)">'
+       + 'Set contour interval\u2026</a></div>';
+  }
   h += '<div class="e3-foot" style="justify-content:space-between">'
      +   '<div style="display:flex;gap:8px">'
      +     (T?'<button class="e3-btn" onclick="e5Clear()">Clear</button>':'')
@@ -23189,7 +23252,8 @@ function _e5Draw(){
 }
 
 function e5Clear(){
-  S.terrain=null;
+  S.terrain=null; _tl.mode='off';
+  try{ tlRender(); }catch(e){}
   try{ if(typeof omegaRenderResults==='function') omegaRenderResults(); }catch(e){}
   e5Render();
 }
@@ -23222,6 +23286,264 @@ function e5ExportXyz(){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function(){ URL.revokeObjectURL(url); },1500);
 }
+
+/* ====================================================================
+ *  TERRAIN MAP LAYER                                      (Patch 14)
+ *  --------------------------------------------------------------
+ *  Draws the Patch 12 samples onto the site map, under the equipment.
+ *  Positions come from each sample's lat/lng converted at paint time, so
+ *  the layer is anchored by the same machinery as everything else rather
+ *  than a second parallel one -- and inherits the Patch 13 fix for free.
+ *
+ *  Same accuracy caveat as the source data: this is a DEM-derived
+ *  screening surface. Contours off a 10 m DEM are indicative of shape,
+ *  not of any particular elevation at any particular point. They are not
+ *  survey contours and must not be issued as such.
+ * ==================================================================== */
+
+var TL_MODES = ['off','contours','elevation','slope','cutfill'];
+var _tl = { mode:'off', interval:0 };   /* interval 0 = auto */
+
+function _tlSvg(){ return document.getElementById('terrain-svg'); }
+
+/* Lattice in pixels. Returns null when there is no way to place it. */
+function _tlLattice(){
+  var T=S.terrain; if(!T || !T.samples || !T.samples.length) return null;
+  var ms=null; try{ ms=_liveMapState(); }catch(e){}
+  if(!ms) return null;
+  var sz=_getCanvasSize();
+  var nCol=T.gridN, nRow=Math.ceil(T.samples.length/nCol);
+  var cells=new Array(nCol*nRow);
+  var okAny=false;
+  T.samples.forEach(function(p){
+    var px=_latLngToPx(p.lat,p.lng,ms,sz.w,sz.h);
+    if(!px) return;
+    var r=(p.row!=null)?p.row:0, c=(p.col!=null)?p.col:0;
+    cells[r*nCol+c]={ px:px.x, py:px.y, z:p.zFt, dz:p.dz,
+                      ok:true, inside:(p.inside!==false) };
+    okAny=true;
+  });
+  if(!okAny) return null;
+  return { cells:cells, nRow:nRow, nCol:nCol };
+}
+
+/* ---- marching squares ------------------------------------------------ */
+/* Standard 16-case lattice walk. Corner bits: TL=1, TR=2, BR=4, BL=8.
+   Cells with a missing corner are skipped, which is why the sampler now
+   keeps the full bounding box instead of only the inside points. */
+function _tlContour(L, level){
+  var segs=[], nC=L.nCol;
+  function ip(p,q){
+    var t=(level-p.z)/((q.z-p.z)||1e-9);
+    return { x:p.px+(q.px-p.px)*t, y:p.py+(q.py-p.py)*t };
+  }
+  for(var r=0;r<L.nRow-1;r++){
+    for(var c=0;c<nC-1;c++){
+      var a=L.cells[r*nC+c], b=L.cells[r*nC+c+1];
+      var d=L.cells[(r+1)*nC+c+1], e=L.cells[(r+1)*nC+c];
+      if(!a||!b||!d||!e) continue;
+      var idx=(a.z>=level?1:0)|(b.z>=level?2:0)|(d.z>=level?4:0)|(e.z>=level?8:0);
+      if(idx===0||idx===15) continue;
+      var T_=ip(a,b), R_=ip(b,d), B_=ip(e,d), Lf=ip(a,e);
+      switch(idx){
+        case 1: case 14: segs.push([Lf,T_]); break;
+        case 2: case 13: segs.push([T_,R_]); break;
+        case 3: case 12: segs.push([Lf,R_]); break;
+        case 4: case 11: segs.push([R_,B_]); break;
+        case 6: case 9:  segs.push([T_,B_]); break;
+        case 7: case 8:  segs.push([Lf,B_]); break;
+        /* Saddles. Split them the same way every time so contours do not
+           flicker between renders. */
+        case 5:  segs.push([Lf,T_]); segs.push([R_,B_]); break;
+        case 10: segs.push([T_,R_]); segs.push([Lf,B_]); break;
+      }
+    }
+  }
+  return segs;
+}
+
+/* A round contour interval that yields roughly 8-15 lines over the relief. */
+function _tlAutoInterval(relief){
+  if(!(relief>0)) return 1;
+  var raw=relief/11;
+  var steps=[0.5,1,2,2.5,5,10,20,25,50,100,200,250,500];
+  for(var i=0;i<steps.length;i++) if(raw<=steps[i]) return steps[i];
+  return 1000;
+}
+
+/* ---- colour ramps ---------------------------------------------------- */
+function _tlHypso(t){
+  /* Low to high: deep green, tan, brown, near-white. Classic hypsometric,
+     which reads as terrain rather than as data. */
+  var stops=[[46,86,58],[122,138,74],[176,152,92],[150,110,74],[214,206,196]];
+  t=Math.max(0,Math.min(0.9999,t));
+  var f=t*(stops.length-1), i=Math.floor(f), k=f-i;
+  var A=stops[i], B=stops[Math.min(stops.length-1,i+1)];
+  return 'rgb('+Math.round(A[0]+(B[0]-A[0])*k)+','
+              +Math.round(A[1]+(B[1]-A[1])*k)+','
+              +Math.round(A[2]+(B[2]-A[2])*k)+')';
+}
+function _tlSlopeColor(pct){
+  /* Thresholds a developer actually uses: under 5% is easy for a tracker,
+     5-10% needs grading or terrain-following, over 15% is usually out. */
+  if(pct<5)  return 'rgba(74,222,128,0.42)';
+  if(pct<10) return 'rgba(250,204,21,0.42)';
+  if(pct<15) return 'rgba(249,146,58,0.46)';
+  return 'rgba(224,90,90,0.50)';
+}
+
+/* ---- render ---------------------------------------------------------- */
+function tlRender(){
+  var svg=_tlSvg(), key=document.getElementById('tl-key');
+  if(!svg) return;
+  if(_tl.mode==='off' || !S.terrain){
+    svg.classList.remove('on'); svg.innerHTML='';
+    if(key) key.classList.remove('on');
+    return;
+  }
+  var L=_tlLattice();
+  if(!L){
+    svg.classList.remove('on'); svg.innerHTML='';
+    if(key){
+      key.classList.add('on');
+      key.innerHTML='<h5>TERRAIN</h5><div>Needs a live map to place.</div>';
+    }
+    return;
+  }
+  var T=S.terrain, NS='http://www.w3.org/2000/svg', out='';
+
+  if(_tl.mode==='elevation' || _tl.mode==='slope' || _tl.mode==='cutfill'){
+    /* One rect per cell, drawn from its four corners so it follows the
+       projection rather than assuming a square. */
+    var maxAbs=0;
+    if(_tl.mode==='cutfill'){
+      L.cells.forEach(function(c){ if(c) maxAbs=Math.max(maxAbs,Math.abs(c.dz||0)); });
+      if(maxAbs<=0) maxAbs=1;
+    }
+    for(var r=0;r<L.nRow-1;r++){
+      for(var c2=0;c2<L.nCol-1;c2++){
+        var a=L.cells[r*L.nCol+c2], b=L.cells[r*L.nCol+c2+1];
+        var d=L.cells[(r+1)*L.nCol+c2+1], e=L.cells[(r+1)*L.nCol+c2];
+        if(!a||!b||!d||!e) continue;
+        if(!(a.inside||b.inside||d.inside||e.inside)) continue;
+        var fill;
+        if(_tl.mode==='elevation'){
+          var zm=(a.z+b.z+d.z+e.z)/4;
+          var t=(T.reliefFt>0)?((zm-T.zMinFt)/T.reliefFt):0.5;
+          fill=_tlHypso(t);
+        } else if(_tl.mode==='slope'){
+          var runX=Math.abs(b.px-a.px), runY=Math.abs(e.py-a.py);
+          var runFt=Math.max(1e-6,(T.spacingFt||10));
+          var dzx=Math.abs(b.z-a.z), dzy=Math.abs(e.z-a.z);
+          var sl=Math.sqrt(dzx*dzx+dzy*dzy)/runFt*100;
+          fill=_tlSlopeColor(sl);
+        } else {
+          var dzm=(a.dz+b.dz+d.dz+e.dz)/4;
+          var tt=Math.min(1,Math.abs(dzm)/maxAbs);
+          fill=(dzm>=0) ? 'rgba(232,161,90,'+(0.12+0.62*tt)+')'
+                        : 'rgba(90,169,232,'+(0.12+0.62*tt)+')';
+        }
+        out += '<polygon points="'
+             + a.px.toFixed(1)+','+a.py.toFixed(1)+' '
+             + b.px.toFixed(1)+','+b.py.toFixed(1)+' '
+             + d.px.toFixed(1)+','+d.py.toFixed(1)+' '
+             + e.px.toFixed(1)+','+e.py.toFixed(1)
+             + '" fill="'+fill+'" stroke="none"/>';
+      }
+    }
+  }
+
+  if(_tl.mode==='contours'){
+    var iv=_tl.interval>0 ? _tl.interval : _tlAutoInterval(T.reliefFt);
+    var lo=Math.ceil(T.zMinFt/iv)*iv, hi=Math.floor(T.zMaxFt/iv)*iv;
+    var count=0;
+    for(var lv=lo; lv<=hi+1e-9; lv+=iv){
+      if(++count>60) break;                 /* guard against a silly interval */
+      var segs=_tlContour(L, lv);
+      if(!segs.length) continue;
+      var idxLine=(Math.round(lv/iv)%5===0);
+      var dstr='';
+      segs.forEach(function(s){
+        dstr += 'M'+s[0].x.toFixed(1)+' '+s[0].y.toFixed(1)
+             +  'L'+s[1].x.toFixed(1)+' '+s[1].y.toFixed(1);
+      });
+      out += '<path class="tl-contour'+(idxLine?' tl-contour-idx':'')+'" d="'+dstr+'"/>';
+      if(idxLine && segs.length){
+        var mid=segs[Math.floor(segs.length/2)][0];
+        out += '<text class="tl-lbl" x="'+(mid.x+3).toFixed(1)+'" y="'
+             + (mid.y-3).toFixed(1)+'">'+Math.round(lv)+'</text>';
+      }
+    }
+    _tl.lastInterval=iv;
+  }
+
+  svg.innerHTML=out;
+  svg.classList.add('on');
+  _tlKey();
+}
+
+function _tlKey(){
+  var key=document.getElementById('tl-key'); if(!key) return;
+  var T=S.terrain; if(!T){ key.classList.remove('on'); return; }
+  var h='';
+  if(_tl.mode==='contours'){
+    h = '<h5>CONTOURS</h5><div>'+(_tl.lastInterval||'--')+' ft interval</div>'
+      + '<div style="opacity:.7">index every 5th</div>';
+  } else if(_tl.mode==='elevation'){
+    h = '<h5>ELEVATION</h5>'
+      + '<div class="tl-ramp" style="background:linear-gradient(90deg,'
+      + _tlHypso(0)+','+_tlHypso(.25)+','+_tlHypso(.5)+','+_tlHypso(.75)+','+_tlHypso(1)+')"></div>'
+      + '<div class="tl-ends"><span>'+Math.round(T.zMinFt)+'</span>'
+      + '<span>'+Math.round(T.zMaxFt)+' ft</span></div>';
+  } else if(_tl.mode==='slope'){
+    h = '<h5>SLOPE</h5>'
+      + '<div class="tl-row"><i style="background:rgba(74,222,128,.8)"></i>under 5%</div>'
+      + '<div class="tl-row"><i style="background:rgba(250,204,21,.8)"></i>5 \u2013 10%</div>'
+      + '<div class="tl-row"><i style="background:rgba(249,146,58,.85)"></i>10 \u2013 15%</div>'
+      + '<div class="tl-row"><i style="background:rgba(224,90,90,.9)"></i>over 15%</div>';
+  } else if(_tl.mode==='cutfill'){
+    h = '<h5>CUT / FILL</h5>'
+      + '<div class="tl-row"><i style="background:rgba(232,161,90,.9)"></i>cut</div>'
+      + '<div class="tl-row"><i style="background:rgba(90,169,232,.9)"></i>fill</div>'
+      + '<div style="opacity:.7;margin-top:4px">'+_omEsc(T.gradeLabel||'')+'</div>';
+  }
+  if(h){
+    h += '<div style="opacity:.55;margin-top:5px;font-size:8px;line-height:1.4">'
+       + 'DEM screening \u2014 not survey contours</div>';
+    key.innerHTML=h; key.classList.add('on');
+  } else { key.classList.remove('on'); }
+}
+
+function tlSetMode(m){
+  if(TL_MODES.indexOf(m)<0) m='off';
+  if(m!=='off' && !S.terrain){
+    if(typeof e5Open==='function') e5Open();
+    if(typeof showBanner==='function'){
+      try{ showBanner('shape','Sample the terrain first \u2014 no elevation data yet.'); }catch(e){}
+    }
+    return;
+  }
+  _tl.mode=m;
+  tlRender();
+  try{ if(typeof renderLayersPanel==='function') renderLayersPanel(); }catch(e){}
+  if(typeof showBanner==='function' && m!=='off'){
+    try{ showBanner('shape','Terrain: '+m+'.'); }catch(e){}
+  }
+}
+function tlCycle(){
+  var i=TL_MODES.indexOf(_tl.mode);
+  tlSetMode(TL_MODES[(i+1)%TL_MODES.length]);
+}
+function tlInterval(){
+  var v=prompt('Contour interval in feet (blank for automatic):',
+               _tl.interval||'');
+  if(v===null) return;
+  var f=parseFloat(v);
+  _tl.interval=(isFinite(f)&&f>0)?f:0;
+  if(_tl.mode!=='contours') _tl.mode='contours';
+  tlRender();
+}
+window.tlRender=tlRender;
 
 /* ====================================================================
  *  DELIVERABLES DRAWER                                     (Patch 4)
@@ -25451,6 +25773,14 @@ function o2LegendHtml(){
     var gw=document.getElementById('gmap-wrap');
     mapOn = !!(gw && gw.style.display!=='none');
   }catch(e){}
+  /* Patch 14: terrain is a layer, so it belongs in the layer list. */
+  var tOn=(typeof _tl!=='undefined' && _tl.mode!=='off');
+  h += '<div class="o2-lgd-row'+(tOn?'':' off')+'" data-o2cls="__terrain">'
+     +   '<span class="o2-lgd-eye">'+(tOn?'\u25C9':'\u2298')+'</span>'
+     +   '<span class="o2-lgd-name">Terrain</span>'
+     +   '<span class="o2-lgd-n">'+(tOn?_tl.mode:'off')+'</span>'
+     + '</div>'
+     + '<span class="o2-lgd-rule" style="background:#F5C77E;opacity:'+(tOn?'1':'.2')+'"></span>';
   h += '<div class="o2-lgd-row'+(mapOn?'':' off')+'" data-o2cls="__basemap">'
      +   '<span class="o2-lgd-eye">'+(mapOn?'\u25C9':'\u2298')+'</span>'
      +   '<span class="o2-lgd-name">Satellite basemap</span>'
@@ -25467,6 +25797,7 @@ function o2WireLegend(){
       e.stopPropagation();
       var k=row.getAttribute('data-o2cls');
       if(k==='__basemap'){ o2ToggleBasemap(); return; }
+      if(k==='__terrain'){ tlCycle(); return; }
       o2ToggleClass(k);
     });
   });
@@ -27777,6 +28108,9 @@ function _geoReprojectAll(){
     /* Repaint shapes + conduits now that their points moved. */
     if(typeof renderShape==='function' && S.shapes){ try{ S.shapes.forEach(function(sh){ renderShape(sh); }); }catch(e){} }
     if(typeof renderConduit==='function' && S.conduits){ try{ S.conduits.forEach(function(c){ renderConduit(c); }); }catch(e){} }
+    /* Patch 14: the terrain layer is placed from lat/lng, so it redraws with
+       everything else and inherits the Patch 13 scale fix. */
+    try{ if(typeof tlRender==='function') tlRender(); }catch(e){}
     if(typeof _refreshConduitStyle==='function'){ try{ _refreshConduitStyle(); }catch(e){} }
   }catch(e){}
   _geoReprojecting=false;
