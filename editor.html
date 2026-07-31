@@ -23142,6 +23142,10 @@ function _e5Plane(pts){
 
 function e5Compute(){
   var T=S.terrain; if(!T || !T.samples) return;
+  /* Terrain loaded from a project saved before Patch 14 has no row/col and
+     no inside flag. Recover the lattice up front so the map layer and the
+     volumes both work without the user re-sampling. */
+  try{ _tlEnsureRowCol(T); }catch(e){}
   /* Volumes count only what is inside the boundary. */
   var pts=T.samples.filter(function(p){ return p.inside!==false; });
   if(pts.length<3) pts=T.samples;
@@ -23576,24 +23580,79 @@ var _tl = { mode:'off', interval:0 };   /* interval 0 = auto */
 function _tlSvg(){ return document.getElementById('terrain-svg'); }
 
 /* Lattice in pixels. Returns null when there is no way to place it. */
+/* Give every sample a row and column.
+   Patch 14 records them at sample time, but terrain captured before that --
+   including anything saved with Patch 12/13 terrain and reloaded -- has
+   neither. The grid is regular, so the distinct latitudes ARE the rows and
+   the distinct longitudes ARE the columns; recovering them is exact, and it
+   means old data works without being re-sampled.
+
+   Rounded to 1e-7 degrees (about 1 cm) before grouping, because the values
+   come back through JSON and float noise would otherwise split one row into
+   several. */
+function _tlEnsureRowCol(T){
+  if(!T || !T.samples || !T.samples.length) return false;
+  var have=T.samples.every(function(p){ return p.row!=null && p.col!=null; });
+  if(have && T.gridN>0) return true;
+
+  var R=function(v){ return Math.round(v*1e7)/1e7; };
+  var lats=[], lngs=[], seenLat={}, seenLng={};
+  T.samples.forEach(function(p){
+    var a=R(p.lat), b=R(p.lng);
+    if(!seenLat[a]){ seenLat[a]=1; lats.push(a); }
+    if(!seenLng[b]){ seenLng[b]=1; lngs.push(b); }
+  });
+  if(lats.length<2 || lngs.length<2) return false;
+  lats.sort(function(x,y){ return x-y; });
+  lngs.sort(function(x,y){ return x-y; });
+
+  var latIdx={}, lngIdx={};
+  lats.forEach(function(v,i){ latIdx[v]=i; });
+  lngs.forEach(function(v,i){ lngIdx[v]=i; });
+  T.samples.forEach(function(p){
+    p.row=latIdx[R(p.lat)];
+    p.col=lngIdx[R(p.lng)];
+  });
+  T.gridN=lngs.length;
+  T.gridRows=lats.length;
+  if(window.console) console.info('[omega/terrain] recovered a '
+    + lats.length+' x '+lngs.length+' lattice from sample coordinates.');
+  return true;
+}
+
 function _tlLattice(){
   var T=S.terrain; if(!T || !T.samples || !T.samples.length) return null;
   var ms=null; try{ ms=_liveMapState(); }catch(e){}
-  if(!ms) return null;
+  if(!ms) return { err:'nomap' };
+  if(!_tlEnsureRowCol(T)) return { err:'nolattice' };
+
   var sz=_getCanvasSize();
-  var nCol=T.gridN, nRow=Math.ceil(T.samples.length/nCol);
-  var cells=new Array(nCol*nRow);
-  var okAny=false;
+  var nCol=T.gridN;
+  var nRow=T.gridRows || Math.ceil(T.samples.length/nCol);
+  if(!(nCol>1) || !(nRow>1)) return { err:'nolattice' };
+
+  var cells=new Array(nCol*nRow), filled=0;
   T.samples.forEach(function(p){
+    if(p.row==null || p.col==null) return;
     var px=_latLngToPx(p.lat,p.lng,ms,sz.w,sz.h);
     if(!px) return;
-    var r=(p.row!=null)?p.row:0, c=(p.col!=null)?p.col:0;
-    cells[r*nCol+c]={ px:px.x, py:px.y, z:p.zFt, dz:p.dz,
-                      ok:true, inside:(p.inside!==false) };
-    okAny=true;
+    cells[p.row*nCol+p.col]={ px:px.x, py:px.y, z:p.zFt, dz:p.dz,
+                              ok:true, inside:(p.inside!==false) };
+    filled++;
   });
-  if(!okAny) return null;
-  return { cells:cells, nRow:nRow, nCol:nCol };
+
+  /* A lattice with no complete 2x2 block cannot produce a contour or a
+     shaded cell. Returning it anyway is what made this fail silently. */
+  var blocks=0;
+  for(var r=0;r<nRow-1 && blocks===0;r++){
+    for(var c=0;c<nCol-1;c++){
+      if(cells[r*nCol+c] && cells[r*nCol+c+1]
+         && cells[(r+1)*nCol+c] && cells[(r+1)*nCol+c+1]){ blocks++; break; }
+    }
+  }
+  if(!blocks) return { err:'nolattice', filled:filled, nRow:nRow, nCol:nCol };
+
+  return { cells:cells, nRow:nRow, nCol:nCol, filled:filled };
 }
 
 /* ---- marching squares ------------------------------------------------ */
@@ -23671,11 +23730,16 @@ function tlRender(){
     return;
   }
   var L=_tlLattice();
-  if(!L){
+  if(!L || L.err){
     svg.classList.remove('on'); svg.innerHTML='';
     if(key){
       key.classList.add('on');
-      key.innerHTML='<h5>TERRAIN</h5><div>Needs a live map to place.</div>';
+      var why = (!L || L.err==='nomap')
+        ? 'Needs a live map to place. Unlock the satellite view.'
+        : 'Sample grid could not be rebuilt'
+          + (L.filled!=null ? (' ('+L.filled+' points, '+L.nRow+'\u00d7'+L.nCol+').') : '.')
+          + ' Re-sample from File \u203a Topography.';
+      key.innerHTML='<h5>TERRAIN</h5><div style="line-height:1.5">'+why+'</div>';
     }
     return;
   }
@@ -23748,6 +23812,21 @@ function tlRender(){
     _tl.lastInterval=iv;
   }
 
+  /* If the walk produced nothing there is no point claiming the layer is on:
+     an empty overlay looks identical to a broken one. Say which it is. */
+  if(!out){
+    svg.classList.remove('on'); svg.innerHTML='';
+    if(key){
+      key.classList.add('on');
+      key.innerHTML='<h5>TERRAIN</h5><div style="line-height:1.5">'
+        + 'Nothing to draw at this level. '
+        + (_tl.mode==='contours'
+            ? 'The relief may be flat relative to the interval \u2014 try a smaller one.'
+            : 'The sampled area may be off screen \u2014 zoom to the site.')
+        + '</div>';
+    }
+    return;
+  }
   svg.innerHTML=out;
   svg.classList.add('on');
   _tlKey();
@@ -28226,6 +28305,33 @@ window.OmegaAnchor = {
   reproject: function(){
     if(typeof _geoReprojectAll==='function') _geoReprojectAll();
     if(window.console) console.info('[omega/anchor] reprojected from stored lat/lng');
+  },
+  /* Terrain layer state. Run this when the key renders but the map does not.
+     Silent failure in this subsystem cost a round trip; this makes it loud. */
+  terrain: function(){
+    var r={};
+    try{
+      var T=S.terrain;
+      if(!T){ r.status='no terrain sampled'; if(window.console) console.table(r); return r; }
+      r['samples']      = T.samples ? T.samples.length : 0;
+      r['inside']       = T.n;
+      r['gridN x rows'] = (T.gridN||'?')+' x '+(T.gridRows||'?');
+      r['has row/col']  = (T.samples||[]).every(function(p){ return p.row!=null; })
+                          ? 'yes' : 'NO \u2014 will be recovered from coordinates';
+      r['relief ft']    = T.reliefFt!=null ? +T.reliefFt.toFixed(2) : '?';
+      r['spacing ft']   = T.spacingFt!=null ? Math.round(T.spacingFt) : '?';
+      r['extent']       = T.extent || 'boundary';
+      r['layer mode']   = (typeof _tl!=='undefined') ? _tl.mode : '?';
+      var L=(typeof _tlLattice==='function')?_tlLattice():null;
+      r['lattice']      = !L ? 'null'
+                        : L.err ? ('FAILED: '+L.err)
+                        : (L.nRow+' x '+L.nCol+', '+L.filled+' filled');
+      var svg=document.getElementById('terrain-svg');
+      r['svg nodes']    = svg ? svg.childNodes.length : 'element missing';
+      r['svg visible']  = svg ? (svg.classList.contains('on')?'yes':'no') : '?';
+    }catch(e){ r.error=e&&e.message; }
+    if(window.console) console.table(r);
+    return r;
   },
   /* Print exactly what every collector sees. If a number reads "--" on
      screen, run this and the reason is in the output. */
