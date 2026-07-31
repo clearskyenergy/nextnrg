@@ -189,6 +189,16 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--tex
    #rp now floats over the canvas and is hidden until launched from the View
    ribbon tab, so the site map gets the full width. Its inner content and all
    the functions that target #rp-summary / #rp-cost are unchanged. */
+/* ============ 3DEP TILE OVERLAY (Patch 22) ============================ */
+#tt-bar{
+  display:flex; align-items:center; gap:8px; margin:10px 0 4px;
+  padding:8px 10px; background:var(--surface);
+  border:1px solid var(--border); border-radius:var(--radius-md);
+}
+#tt-bar label{ font-size:9.5px; font-weight:700; letter-spacing:.05em; color:var(--sub) }
+#tt-bar input[type=range]{ flex:1; accent-color:var(--accent) }
+#tt-bar span.tt-pct{ font-family:var(--font-mono); font-size:10px; color:var(--text); width:34px; text-align:right }
+
 /* ============ FLOATING PANEL MANAGER (Patch 15) ======================= */
 .op-panel{
   position:absolute; z-index:120; background:rgba(20,20,20,.93);
@@ -2024,7 +2034,8 @@ window.onerror = function(msg, src, line, col, err) {
         <button class="rbtn" onclick="toggleLayersPanel()" title="Layers — list, select, hide, reorder, delete all elements"><span class="rb-ico">▧</span><span class="rb-lbl">Layers</span></button>
         <button class="rbtn" id="rb-op-o2-coords" aria-pressed="true" onclick="rbRun(opToggleCoords)" title="Coordinate readout &mdash; active area, UTM zone, X and Y"><span class="rb-ico">&#8982;</span><span class="rb-lbl">Coordinates</span></button>
         <button class="rbtn" id="rb-op-tl-key" aria-pressed="true" onclick="rbRun(opToggleTerrainKey)" title="Terrain key &mdash; contour interval or colour ramp for the terrain layer"><span class="rb-ico">&#9968;</span><span class="rb-lbl">Terrain Key</span></button>
-        <button class="rbtn" onclick="rbRun(tlCycle)" title="Terrain layer &mdash; cycle off / contours / elevation / slope / cut-fill"><span class="rb-ico">&#9776;</span><span class="rb-lbl">Terrain Layer</span></button>
+        <button class="rbtn" onclick="rbRun(tlCycle)" title="Sampled terrain layer &mdash; cycle off / contours / elevation / slope / cut-fill"><span class="rb-ico">&#9776;</span><span class="rb-lbl">Terrain Layer</span></button>
+        <button class="rbtn" onclick="rbRun(ttCycle)" title="USGS 3DEP terrain tiles &mdash; real LiDAR relief, slope, aspect and contours drawn straight onto the map. US only."><span class="rb-ico">&#9968;</span><span class="rb-lbl">3DEP Tiles</span></button>
         <button class="rbtn" onclick="rbRun(engSchedToggleVisible)" title="Conduit schedule — show or hide the run schedule panel"><span class="rb-ico">≔</span><span class="rb-lbl">Conduit<br>Schedule</span></button>
         <div class="omega-addr" title="Type a site address and press Enter to load the satellite map there"><span class="omega-addr-ico">◎</span><input id="omega-addr-in" type="text" placeholder="Site address…" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter'){event.preventDefault();omegaLoadMap();}"><button type="button" id="omega-addr-go" onclick="omegaLoadMap()">Load</button></div>
       </div>
@@ -23227,6 +23238,8 @@ function e5Render(){
   var T=S.terrain;
   var h='';
 
+  h += '<div style="font-size:9.5px;font-weight:700;letter-spacing:.06em;'
+     + 'color:var(--sub);margin-bottom:6px">SAMPLED GRID \u2014 FOR MEASUREMENT</div>';
   h += '<div class="e3-note warn"><strong>Screening grade.</strong> Elevation comes '
      + 'from public DEMs \u2014 roughly 10 m post spacing over the US, 30 m elsewhere. '
      + 'Cut and fill are separately signed, so DEM error does not cancel: on rolling '
@@ -23296,6 +23309,9 @@ function e5Render(){
      + 'margin-top:8px">' + (T?'':'Nothing sampled yet.') + '</div>'
      + '<div class="e5-bar"><i></i></div>';
 
+  /* Tiles need no sampling, so they are offered whether or not a grid
+     exists -- and they are the faster answer to "show me the ground". */
+  h += ttTabsHtml();
   if(T){
     h += '<div class="e3-tabs" style="margin-top:12px">'
        +   '<div class="e3-tab'+(_tl.mode==='off'?' on':'')+'" onclick="tlSetMode(\'off\');e5Render()">Layer off</div>'
@@ -23394,6 +23410,164 @@ function e5ExportXyz(){
   a.href=url; a.download=_d4Proj()+'_terrain.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function(){ URL.revokeObjectURL(url); },1500);
+}
+
+/* ====================================================================
+ *  USGS 3DEP TERRAIN TILES                                (Patch 22)
+ *  --------------------------------------------------------------
+ *  A real map overlay, rendered server-side by USGS and handed to Google
+ *  Maps as an ImageMapType. Google owns the tiling, panning and zooming,
+ *  so there is nothing here to anchor, reproject or restamp -- which is
+ *  the whole family of bugs the sampled layer kept hitting.
+ *
+ *  Source: 3DEP LiDAR. 1 m where flown, 10 m elsewhere in CONUS. Better
+ *  than the Elevation API the sampled grid uses, and free.
+ *
+ *  This does NOT replace the sampled grid. Tiles are pictures; they
+ *  cannot produce cut/fill volumes, a best-fit plane or an XYZ export.
+ *  Use tiles to SEE the ground and the grid to MEASURE it.
+ *
+ *  US and territories only. Elsewhere the tiles return empty.
+ * ==================================================================== */
+
+var TT_BASE = 'https://elevation.nationalmap.gov/arcgis/rest/services/'
+            + '3DEPElevation/ImageServer/exportImage';
+
+/* Raster functions published by the service. Names must match exactly. */
+var TT_MODES = [
+  { key:'off',      label:'Off',            fn:null },
+  { key:'tinted',   label:'Tinted relief',  fn:'Hillshade Elevation Tinted' },
+  { key:'hillshade',label:'Hillshade',      fn:'Multi Directional Hillshade' },
+  { key:'slope',    label:'Slope',          fn:'Slope Map' },
+  { key:'aspect',   label:'Aspect',         fn:'Aspect Map' },
+  { key:'contour',  label:'Contours',       fn:'Contour 25' }
+];
+
+var _tt = { mode:'off', opacity:0.55, layer:null };
+
+function _ttMap(){
+  try{ if(typeof _gmap!=='undefined' && _gmap && _gmap.overlayMapTypes) return _gmap; }catch(e){}
+  if(window._gmap && window._gmap.overlayMapTypes) return window._gmap;
+  return null;
+}
+function _ttMode(k){
+  for(var i=0;i<TT_MODES.length;i++) if(TT_MODES[i].key===k) return TT_MODES[i];
+  return TT_MODES[0];
+}
+
+/* Web-Mercator tile -> bounding box in EPSG:3857 metres, which is what the
+   image service wants. This is the only geometry in the whole module. */
+function _ttTileBbox(x, y, z){
+  var R = 20037508.342789244;
+  var span = (2*R) / Math.pow(2, z);
+  var minX = -R + x*span;
+  var maxY =  R - y*span;
+  return [minX, maxY - span, minX + span, maxY];
+}
+
+function ttSetMode(k){
+  var m=_ttMap();
+  var mode=_ttMode(k);
+  _tt.mode = mode.key;
+
+  /* Remove whatever is currently up. */
+  if(m && _tt.layer){
+    try{
+      var idx=-1;
+      m.overlayMapTypes.forEach(function(t,i){ if(t===_tt.layer) idx=i; });
+      if(idx>=0) m.overlayMapTypes.removeAt(idx);
+    }catch(e){}
+    _tt.layer=null;
+  }
+  if(!mode.fn){ _ttSyncUI(); return; }
+
+  if(!m){
+    if(typeof showBanner==='function'){
+      try{ showBanner('shape','No live map yet \u2014 unlock the satellite view first.'); }catch(e){}
+    }
+    _tt.mode='off'; _ttSyncUI(); return;
+  }
+
+  var layer = new google.maps.ImageMapType({
+    name: 'USGS 3DEP \u2014 ' + mode.label,
+    tileSize: new google.maps.Size(256,256),
+    minZoom: 1, maxZoom: 22,
+    opacity: _tt.opacity,
+    getTileUrl: function(coord, zoom){
+      /* Google asks for tiles outside the world at low zoom; wrap X and
+         drop out-of-range Y rather than requesting nonsense. */
+      var n = Math.pow(2, zoom);
+      var x = ((coord.x % n) + n) % n;
+      if(coord.y < 0 || coord.y >= n) return null;
+      var bb = _ttTileBbox(x, coord.y, zoom);
+      return TT_BASE
+        + '?bbox=' + bb.join('%2C')
+        + '&bboxSR=3857&imageSR=3857&size=256%2C256'
+        + '&format=png32&transparent=true&f=image'
+        + '&renderingRule=' + encodeURIComponent(
+            JSON.stringify({ rasterFunction: mode.fn }));
+    }
+  });
+  m.overlayMapTypes.push(layer);
+  _tt.layer = layer;
+  _ttSyncUI();
+
+  if(typeof showBanner==='function'){
+    try{
+      showBanner('shape','USGS 3DEP: '+mode.label
+        + '. Real LiDAR terrain \u2014 US coverage only.');
+    }catch(e){}
+  }
+}
+
+function ttOpacity(v){
+  _tt.opacity = Math.max(0, Math.min(1, (+v)/100));
+  if(_tt.layer && _tt.layer.setOpacity){
+    try{ _tt.layer.setOpacity(_tt.opacity); }catch(e){}
+  }
+  var pc=document.getElementById('tt-pct');
+  if(pc) pc.textContent = Math.round(_tt.opacity*100)+'%';
+}
+
+function ttCycle(){
+  var i=0;
+  for(var k=0;k<TT_MODES.length;k++) if(TT_MODES[k].key===_tt.mode) i=k;
+  ttSetMode(TT_MODES[(i+1)%TT_MODES.length].key);
+}
+
+function _ttSyncUI(){
+  try{
+    TT_MODES.forEach(function(m){
+      var el=document.getElementById('tt-tab-'+m.key);
+      if(el) el.className = 'e3-tab' + (_tt.mode===m.key ? ' on' : '');
+    });
+    var bar=document.getElementById('tt-bar');
+    if(bar) bar.style.display = (_tt.mode==='off') ? 'none' : 'flex';
+  }catch(e){}
+}
+
+/* Markup for the Topography dialog. */
+function ttTabsHtml(){
+  var h='<div style="font-size:9.5px;font-weight:700;letter-spacing:.06em;'
+      + 'color:var(--sub);margin:14px 0 6px">USGS 3DEP TERRAIN TILES</div>';
+  h += '<div class="e3-tabs">';
+  TT_MODES.forEach(function(m){
+    h += '<div class="e3-tab'+(_tt.mode===m.key?' on':'')+'" id="tt-tab-'+m.key+'" '
+       +   'onclick="ttSetMode(\'' + m.key + '\')">'+m.label+'</div>';
+  });
+  h += '</div>';
+  h += '<div id="tt-bar" style="display:'+(_tt.mode==='off'?'none':'flex')+'">'
+     +   '<label>OPACITY</label>'
+     +   '<input type="range" min="10" max="100" value="'+Math.round(_tt.opacity*100)+'" '
+     +     'oninput="ttOpacity(this.value)">'
+     +   '<span class="tt-pct" id="tt-pct">'+Math.round(_tt.opacity*100)+'%</span>'
+     + '</div>';
+  h += '<div class="e3-note info">Rendered by USGS from 3DEP LiDAR \u2014 1 m where '
+     + 'flown, 10 m elsewhere. Free, no key, and it tracks the map natively because '
+     + 'Google draws the tiles. Better source data than the sampled grid above, but '
+     + 'it is a picture: cut/fill, slope statistics and XYZ export still come from '
+     + 'sampling. <strong>US and territories only.</strong></div>';
+  return h;
 }
 
 /* ====================================================================
@@ -26192,6 +26366,13 @@ function o2LegendHtml(){
     mapOn = !!(gw && gw.style.display!=='none');
   }catch(e){}
   /* Patch 14: terrain is a layer, so it belongs in the layer list. */
+  var ttOn=(typeof _tt!=='undefined' && _tt.mode!=='off');
+  h += '<div class="o2-lgd-row'+(ttOn?'':' off')+'" data-o2cls="__3dep">'
+     +   '<span class="o2-lgd-eye">'+(ttOn?'\u25C9':'\u2298')+'</span>'
+     +   '<span class="o2-lgd-name">USGS 3DEP tiles</span>'
+     +   '<span class="o2-lgd-n">'+(ttOn?_tt.mode:'off')+'</span>'
+     + '</div>'
+     + '<span class="o2-lgd-rule" style="background:#B08A5C;opacity:'+(ttOn?'1':'.2')+'"></span>';
   var tOn=(typeof _tl!=='undefined' && _tl.mode!=='off');
   h += '<div class="o2-lgd-row'+(tOn?'':' off')+'" data-o2cls="__terrain">'
      +   '<span class="o2-lgd-eye">'+(tOn?'\u25C9':'\u2298')+'</span>'
@@ -26216,6 +26397,7 @@ function o2WireLegend(){
       var k=row.getAttribute('data-o2cls');
       if(k==='__basemap'){ o2ToggleBasemap(); return; }
       if(k==='__terrain'){ tlCycle(); return; }
+      if(k==='__3dep'){ ttCycle(); return; }
       o2ToggleClass(k);
     });
   });
@@ -28340,7 +28522,7 @@ window._geoRestampAll=_geoRestampAll;
    helpers between Patch 6 and Patch 16 -- they were defined, clobbered,
    and never callable.
    --------------------------------------------------------------------- */
-window.OMEGA_BUILD = 'patch21';
+window.OMEGA_BUILD = 'patch22';
 try{
   if(window.console) console.info('[omega] build ' + window.OMEGA_BUILD
     + ' \u2014 diagnostics on OmegaDiag (OmegaAnchor belongs to the '
@@ -28458,6 +28640,8 @@ window.OmegaDiag = {
       r['spacing ft']   = T.spacingFt!=null ? Math.round(T.spacingFt) : '?';
       r['extent']       = T.extent || 'boundary';
       r['layer mode']   = (typeof _tl!=='undefined') ? _tl.mode : '?';
+      r['3DEP tiles']   = (typeof _tt!=='undefined')
+        ? (_tt.mode + (_tt.layer ? ' (overlay attached)' : ' (no overlay)')) : '?';
       /* Which resolver produced a placement, and whether the strict one
          (which a locked plot deliberately fails) was the blocker. */
       var lms=null; try{ lms=_liveMapState(); }catch(e){}
