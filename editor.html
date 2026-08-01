@@ -24829,6 +24829,71 @@ async function d4Download(){
   try{
     _d4Prog('Loading libraries\u2026', 3);
     await _d4LoadZip();
+
+    /* ── SAME PREPARATION AS Output > Plot Plan ──────────────────────────
+       _ppRenderPlot() and _olRender() do not fetch anything themselves.
+       They read state the EXPORT path is expected to have prepared:
+
+         _ppEnsureMapImage()   the satellite backdrop, needed when the map
+                               is unlocked (no frozen snapshot to fall back on)
+         _ppCanvasCapture      a bitmap of the live canvas — satellite plus
+                               equipment exactly as placed. E1.0/E1.1 embed
+                               this rather than reconstructing the scene, which
+                               is what used to misplace equipment and drop
+                               stencils
+         openOneLineExport()   populates the one-line's fields when empty
+
+       Output ran all three. This path ran none, so it rendered the same
+       sheets against empty state: a plot plan with no background and a
+       single line missing its content. Do the identical preparation here so
+       both entry points produce the same drawing. */
+    var _needPlot = rows.some(function(r){
+      return r.kind==='sheet' && r.sheet && r.sheet.fn==='_ppRenderPlot'; });
+    var _needOl = rows.some(function(r){
+      return r.kind==='sheet' && r.sheet && r.sheet.ol; });
+
+    if(_needPlot || _needOl){
+      _d4Prog('Preparing map\u2026', 5);
+      try{ if(typeof _ppEnsureMapImage==='function') await _ppEnsureMapImage(); }catch(e){
+        notes.push('Background map could not be prepared; sheets may render without it.');
+      }
+    }
+
+    window._ppCanvasCapture=null;
+    window._ppCanvasCaptureW=0; window._ppCanvasCaptureH=0;
+    if(_needPlot && typeof _captureCanvasWithSVG==='function' && typeof html2canvas!=='undefined'){
+      _d4Prog('Capturing site\u2026', 8);
+      try{
+        var _sc=document.getElementById('sc');
+        if(_sc){
+          var _cap=await _captureCanvasWithSVG(_sc, {
+            useCORS:true, allowTaint:true, scale:2,
+            backgroundColor:'#ffffff', logging:false,
+            width:_sc.offsetWidth, height:_sc.offsetHeight
+          });
+          if(_cap && _cap.width){
+            window._ppCanvasCapture=_cap.toDataURL('image/jpeg',0.92);
+            window._ppCanvasCaptureW=_sc.offsetWidth;
+            window._ppCanvasCaptureH=_sc.offsetHeight;
+          }
+        }
+      }catch(e){
+        notes.push('Site capture failed; the plot plan will fall back to reconstructed linework.');
+      }
+    }
+
+    if(_needOl){
+      try{
+        if(!document.getElementById('ol-modal') && _d4Have('_olBuildModal')) _olBuildModal();
+        /* Exactly what Output does: if the project field is still blank the
+           one-line has never been populated, so open the export dialog once to
+           fill it. Without this E2.0 renders as an empty frame. */
+        if(typeof openOneLineExport==='function'
+           && !(document.getElementById('ol-project')||{}).value){
+          openOneLineExport();
+        }
+      }catch(e){ notes.push('One-line fields could not be prepared.'); }
+    }
     if(rows.some(function(r){ return r.fmt==='XLSX'; })){
       try{ await _d4LoadXlsx(); }
       catch(e){ notes.push('Spreadsheet library failed to load; XLSX rows fall back to CSV.'); }
@@ -31609,13 +31674,96 @@ function _olGatherNodes(){
 
 // Detect what KIND of project this is from what's placed.
 // Returns 'bess' | 'ev' | 'both' | 'bess' (default).
-function _olDetectMode(){
+/* ── WHAT IS ACTUALLY IN THIS SYSTEM ────────────────────────────────────
+   The one-line used to answer one question: BESS, EV, or both. A site can
+   hold storage, solar, EV charging, a generator or fuel cell, building
+   load and data-centre compute in any combination, and a diagram that
+   omits a source or a load is wrong in a way a plan reviewer will catch.
+
+   This walks the canvas once and reports everything present, with the
+   numbers attached. Detection and the mode note both read it, so what the
+   diagram claims and what the drawing contains cannot drift apart. */
+function _olInventory(){
   var nodes=_olGatherNodes();
-  var hasBess=false, hasEv=false;
-  nodes.forEach(function(n){ if(n.role==='bess'||n.role==='pcs') hasBess=true; if(n.role==='charger') hasEv=true; });
-  if(hasBess&&hasEv) return 'both';
-  if(hasEv&&!hasBess) return 'ev';
-  if(hasBess&&!hasEv) return 'bess';
+  var inv={
+    bess:false, bessKw:0, bessKwh:0,
+    solar:false, solarKw:0,
+    ev:false, evCount:0, evKw:0,
+    der:false, derKw:0,          /* genset, fuel cell, wind, other generation */
+    load:false, loadKw:0, loadKind:null, loadItKw:0, loadPue:null,
+    utility:false
+  };
+
+  nodes.forEach(function(n){
+    if(n.role==='bess'||n.role==='pcs') inv.bess=true;
+    else if(n.role==='charger'){ inv.ev=true; inv.evCount++; inv.evKw+=(+n.kw||0); }
+    else if(n.role==='der'){ inv.der=true; inv.derKw+=(+n.kw||0); }
+    else if(n.role==='service'||n.role==='meter') inv.utility=true;
+  });
+
+  /* Storage capacity comes from the configuration, not the icon. */
+  try{
+    (S.bessList||[]).forEach(function(b){
+      var q=+(b.qty||1)||1;
+      inv.bessKw += (parseFloat(b.kw)||0)*q;
+      inv.bessKwh += (parseFloat(b.kwh)||0)*q;
+      if(inv.bessKwh>0||inv.bessKw>0) inv.bess=true;
+    });
+  }catch(e){}
+
+  /* Solar: arrays carry their own DC rating. */
+  try{
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh) return;
+      var k=(sh.kind||'')+'';
+      if(k.indexOf('solar')>=0 || k==='pv' || sh.pvKw){
+        inv.solar=true; inv.solarKw += (+sh.pvKw||+sh.kw||0);
+      }
+    });
+    if(typeof BGB!=='undefined' && BGB.pvKw>0){ inv.solar=true; inv.solarKw=Math.max(inv.solarKw, +BGB.pvKw||0); }
+  }catch(e){}
+
+  /* Load: typed by the user, stamped on the placed load node. */
+  try{
+    (S.elements||[]).forEach(function(el){
+      if(!el || !el.loadKw) return;
+      inv.load=true;
+      inv.loadKw += (+el.loadKw||0);
+      inv.loadKind = el.loadKind || inv.loadKind || 'building';
+      if(el.loadItKw){ inv.loadItKw += (+el.loadItKw||0); inv.loadPue = el.loadPue || inv.loadPue; }
+    });
+    if(!inv.load && typeof BGB!=='undefined' && BGB.loadKw>0){
+      inv.load=true; inv.loadKw=+BGB.loadKw||0;
+      inv.loadKind=BGB.loadKind||'building';
+      inv.loadItKw=+BGB.loadItKw||0; inv.loadPue=BGB.loadPue||null;
+    }
+  }catch(e){}
+
+  return inv;
+}
+window._olInventory=_olInventory;
+
+/* Plain-language summary of the above, for the mode note and diagnostics. */
+function _olInventoryText(){
+  var i=_olInventory(), bits=[];
+  function mw(k){ return k>=1000 ? (k/1000).toFixed(2)+' MW' : Math.round(k)+' kW'; }
+  if(i.bess)  bits.push('BESS '+mw(i.bessKw)+(i.bessKwh?(' / '+(i.bessKwh>=1000?(i.bessKwh/1000).toFixed(2)+' MWh':Math.round(i.bessKwh)+' kWh')):''));
+  if(i.solar) bits.push('Solar '+mw(i.solarKw)+'-DC');
+  if(i.ev)    bits.push('EV '+i.evCount+' charger'+(i.evCount>1?'s':'')+(i.evKw?(' / '+mw(i.evKw)):''));
+  if(i.der)   bits.push('DER '+mw(i.derKw));
+  if(i.load){
+    bits.push((i.loadKind==='datacenter'?'Data centre ':'Building load ')
+      + mw(i.loadKw)
+      + (i.loadItKw?(' ('+mw(i.loadItKw)+' IT x PUE '+(i.loadPue||'?')+')'):''));
+  }
+  return bits.length ? bits.join('  \u00b7  ') : 'nothing placed yet';
+}
+window._olInventoryText=_olInventoryText;
+
+function _olDetectMode(){
+  var i=_olInventory();
+  if(i.bess && i.ev) return 'both';
+  if(i.ev && !i.bess) return 'ev';
   return 'bess';
 }
 
@@ -31772,7 +31920,9 @@ function _olSyncMode(){
   if(asm) bits.push('BESS assembly');
   var spineNames=(ev.spine||[]).map(function(n){return n.role;}).filter(function(v,i,a){return a.indexOf(v)===i;});
   if(chosen==='auto'){
-    note.textContent='Detected: '+detected.toUpperCase()+(bits.length?(' \u2014 '+bits.join(', ')):' \u2014 nothing placed yet')+(spineNames.length?(' \u2022 upstream: '+spineNames.join(' \u2192 ')):'');
+    note.textContent='Detected: '+detected.toUpperCase()+' \u2014 '
+      + ((typeof _olInventoryText==='function')?_olInventoryText():(bits.join(', ')||'nothing placed yet'))
+      + (spineNames.length?(' \u2022 upstream: '+spineNames.join(' \u2192 ')):'');
   } else {
     note.textContent='Drawing '+chosen.toUpperCase()+(bits.length?(' \u2014 canvas has: '+bits.join(', ')):'');
   }
@@ -32227,6 +32377,63 @@ function _olRender(sizeKey, withSched){
   if(d.acsize) chain+=condCallout(busX+8, yBusFeed+10, ['(N) '+d.acsize, 'THWN-2 CU + EGC', 'PVC SCH 40']);
 
   /* --- main vertical spine from bus down --- */
+  /* ── SOLAR LEG ────────────────────────────────────────────────────────
+     AC-coupled: the PV inverter and the BESS PCS are separate sources that
+     each tap the same collection bus and share the interconnection. Drawing
+     the array as a branch off the BESS chain would say DC-coupled, which is
+     a different machine and a different interconnection study.
+
+     Only drawn when the system actually contains solar — the inventory is
+     the single source of truth, so the sheet cannot claim an array that is
+     not on the site, or omit one that is. */
+  var _inv = (typeof _olInventory==='function') ? _olInventory() : null;
+  if(_inv && _inv.solar && _inv.solarKw>0){
+    var pvX = Math.round(areaL + Math.max(70, (busX-areaL)*0.32));
+    var pvTop = yBess + 6;
+
+    /* Array: module rows, the conventional PV symbol. */
+    var aw=54, ah=34, ax=pvX-aw/2, ay=pvTop-ah/2;
+    chain+='<rect x="'+ax+'" y="'+ay+'" width="'+aw+'" height="'+ah+'" fill="none" stroke="#1a1a1a" stroke-width="1.4"/>';
+    for(var pr=1;pr<3;pr++){
+      chain+='<line x1="'+ax+'" y1="'+(ay+ah*pr/3)+'" x2="'+(ax+aw)+'" y2="'+(ay+ah*pr/3)+'" stroke="#1a1a1a" stroke-width="0.5"/>';
+    }
+    for(var pc=1;pc<3;pc++){
+      chain+='<line x1="'+(ax+aw*pc/3)+'" y1="'+ay+'" x2="'+(ax+aw*pc/3)+'" y2="'+(ay+ah)+'" stroke="#1a1a1a" stroke-width="0.5"/>';
+    }
+    chain+=_olLabel(pvX, ay-16, 'PV ARRAY', 'middle', 8, 700);
+    chain+=_olLabel(pvX, ay-6,
+      (_inv.solarKw>=1000 ? (_inv.solarKw/1000).toFixed(2)+' MW-DC' : Math.round(_inv.solarKw)+' kW-DC'),
+      'middle', 7);
+
+    /* DC home run to the inverter. */
+    var yPvInv = yPcs;
+    chain+=_olWire(pvX, ay+ah, pvX, yPvInv-22);
+    chain+=condCallout(pvX+16, yPvInv-52,
+      ['(N) PV SOURCE CIRCUITS', '#10 AWG PV WIRE / #6 AWG EGC', '1" RMC \u2014 DC']);
+
+    /* Inverter: the standard DC/AC split box. */
+    var iw=46, ih=44, ix=pvX-iw/2, iy=yPvInv-22;
+    chain+='<rect x="'+ix+'" y="'+iy+'" width="'+iw+'" height="'+ih+'" fill="none" stroke="#1a1a1a" stroke-width="1.4"/>';
+    chain+='<line x1="'+ix+'" y1="'+(iy+ih)+'" x2="'+(ix+iw)+'" y2="'+iy+'" stroke="#1a1a1a" stroke-width="1"/>';
+    chain+=_olLabel(ix+6,  iy+12, 'DC', 'start', 6.5);
+    chain+=_olLabel(ix+iw-6, iy+ih-6, 'AC', 'end', 6.5);
+    chain+=_olLabel(pvX, iy+ih+13, 'PV INVERTER', 'middle', 8, 700);
+    var _acKw = Math.round(_inv.solarKw/1.25);   /* 1.25 DC/AC unless told otherwise */
+    chain+=_olLabel(pvX, iy+ih+23,
+      (_acKw>=1000?(_acKw/1000).toFixed(2)+' MW-AC':_acKw+' kW-AC')+' \u00b7 '+(d.sysv||'480V')+' 3\u03c6',
+      'middle', 7);
+
+    /* AC run across to the collection bus, then down into it. */
+    var yPvTap = yBusFeed - 18;
+    chain+=_olWire(pvX, iy+ih+28, pvX, yPvTap);
+    chain+=_olWire(pvX, yPvTap, busX, yPvTap);
+    chain+=_olWire(busX, yPvTap, busX, yBusFeed);
+    chain+=condCallout(pvX+16, yPvTap-30,
+      ['(N) PV AC OUTPUT', '(3) #4/0 AWG THWN-2 CU + #4 EGC', '2" PVC SCH 40']);
+    chain+=_olLabel(Math.round((pvX+busX)/2), yPvTap-5, 'PV AC \u2014 AC-COUPLED AT THE BUS', 'middle', 6.5, 600);
+    if(yTopUsed>ay-20) yTopUsed=ay-20;
+  }
+
   var y = yBusFeed;
   function seg(dyStep){ var y2=y+dyStep; chain+=_olWire(busX,y,busX,y2); y=y2; }
 
@@ -53488,7 +53695,65 @@ window._crmToastModal=_crmToastModal;
   setInterval(restructure, 500);
   addEventListener('resize', restructure);
 
+  /* #cov MUST FOLLOW THE MODE IMMEDIATELY, NOT ON THE NEXT TICK.
+     ------------------------------------------------------------------
+     setMode() adds .on to #cov the instant a drawing tool is picked, but
+     the pointer-events that make #cov accept a drag were only applied by
+     the 500ms pass above. Between those two moments #cov still reads
+     pointer-events:none, so the first mousedown falls through to the map
+     underneath: the tool looks selected, the status bar says DRAW
+     POLYLINE, and nothing draws. Clicking again a moment later works,
+     which is exactly how this presents — intermittently.
+
+     Watch the class and apply it synchronously. */
+  try{
+    var _cov=document.getElementById('cov');
+    if(_cov && typeof MutationObserver==='function'){
+      var syncCov=function(){
+        try{
+          if(!document.body.classList.contains('omega-map-surface')) return;
+          var want=_cov.classList.contains('on') ? 'auto' : 'none';
+          if(_cov.style.pointerEvents!==want){
+            _cov.style.setProperty('pointer-events', want, 'important');
+          }
+        }catch(e){}
+      };
+      new MutationObserver(syncCov).observe(_cov, {attributes:true, attributeFilter:['class']});
+      syncCov();
+      window._omegaSyncCov=syncCov;
+    }
+  }catch(e){}
+
   window.OmegaSurface={
+    /* Why is my drawing tool doing nothing? One call, plain answer. */
+    whyNoDraw:function(){
+      var cov=document.getElementById('cov'), sc=document.getElementById('sc');
+      var o={ mode:(window.MODE||window.mode||'(unknown)'),
+              covExists:!!cov,
+              covOn: cov?cov.classList.contains('on'):false,
+              covPointerEvents: cov?getComputedStyle(cov).pointerEvents:'absent',
+              scPointerEvents: sc?getComputedStyle(sc).pointerEvents:'absent',
+              surfaceMode: document.body.classList.contains('omega-map-surface') };
+      o.verdict = !o.covExists ? '#cov is missing — the drawing overlay never built.'
+        : !o.covOn ? 'No drawing tool is active — #cov has no .on class.'
+        : o.covPointerEvents==='none'
+          ? '#cov is active but cannot take input. Run OmegaSurface.fixDraw().'
+          : 'Drawing surface is live — clicks should reach it.';
+      console.table?console.table(o):console.log(o);
+      console.info(o.verdict);
+      return o;
+    },
+    fixDraw:function(){
+      try{ if(window._omegaSyncCov){ window._omegaSyncCov(); } }catch(e){}
+      var cov=document.getElementById('cov');
+      if(cov && cov.classList.contains('on')){
+        cov.style.setProperty('pointer-events','auto','important');
+        console.info('[surface] drawing surface re-enabled.');
+        return true;
+      }
+      console.info('[surface] no drawing tool is active — pick one first.');
+      return false;
+    },
     status:function(){
       var md=document.getElementById('_gmapDiv'), sc=document.getElementById('sc'),
           cw=document.getElementById('cw');
@@ -56231,6 +56496,22 @@ window._crmToastModal=_crmToastModal;
       + (pv?('<div>Solar <b>'+pv+' kW-DC</b>  \u00b7  DC/AC ratio <b>'
              + (kw? (pv/ (kw||1)).toFixed(2) : '\u2014')+'</b></div>'):'')
       + (units>1?('<div>Units <b>'+units+'</b></div>'):'')
+      + (function(){
+          var lt=(document.getElementById('sos-loadtype')||{}).value||'building';
+          var pr=document.getElementById('sos-pue-row');
+          if(pr) pr.style.display = (lt==='datacenter') ? '' : 'none';
+          var raw=num((document.getElementById('sos-load')||{}).value);
+          if(raw<=0) return '';
+          var pue=(lt==='datacenter') ? num((document.getElementById('sos-pue')||{}).value) : 0;
+          var LBL={building:'Building load', datacenter:'Data centre',
+                   ev:'EV charging', industrial:'Industrial load', mixed:'Mixed load'};
+          var fac = (pue>0) ? Math.round(raw*pue) : raw;
+          var hrs = (kwh>0 && fac>0) ? Math.round((kwh/fac)*100)/100 : null;
+          var head = (pue>0)
+            ? (LBL[lt]+' <b>'+raw+' kW IT</b>  \u00b7  PUE <b>'+pue+'</b>  \u00b7  <b>'+fac+' kW facility</b>')
+            : (LBL[lt]+' <b>'+fac+' kW</b>');
+          return '<div>'+head+(hrs?('  \u00b7  storage carries it <b>'+hrs+' hr</b>'):'')+'</div>';
+        })()
       + (m.placeholder?('<div style="opacity:.75">Manufacturer, enclosure and PCS '
           +'not yet selected \u2014 the capacity above carries through the design '
           +'and the layout does not change when a real unit is chosen.</div>'):'');
@@ -56258,6 +56539,25 @@ window._crmToastModal=_crmToastModal;
       +     '<div><label for="sos-pv">Solar (kW-DC)</label>'
       +       '<input id="sos-pv" type="number" min="0" step="10" value="0" oninput="_sosSpec()"></div>'
       +   '</div>'
+      +   '<div class="sos-two">'
+      +     '<div><label for="sos-load">Building load (kW)</label>'
+      +       '<input id="sos-load" type="number" min="0" step="10" value="" '
+      +         'placeholder="optional" oninput="_sosSpec()"></div>'
+      +     '<div><label for="sos-loadtype">Load type</label>'
+      +       '<select id="sos-loadtype" onchange="_sosSpec()">'
+      +         '<option value="building">Building load</option>'
+      +         '<option value="datacenter">Data centre / compute</option>'
+      +         '<option value="ev">EV charging</option>'
+      +         '<option value="industrial">Industrial / process</option>'
+      +         '<option value="mixed">Mixed</option>'
+      +       '</select></div>'
+      +   '</div>'
+      +   '<div class="sos-two" id="sos-pue-row" style="display:none">'
+      +     '<div><label for="sos-pue">PUE</label>'
+      +       '<input id="sos-pue" type="number" min="1" max="3" step="0.05" value="1.4" '
+      +         'oninput="_sosSpec()"></div>'
+      +     '<div></div>'
+      +   '</div>'
       +   '<div class="sos-two" id="sos-gen" style="display:none">'
       +     '<div><label for="sos-gen-kwh">Storage (kWh)</label>'
       +       '<input id="sos-gen-kwh" type="number" min="0" step="10" value="2000" oninput="_sosSpec()"></div>'
@@ -56283,14 +56583,72 @@ window._crmToastModal=_crmToastModal;
     var k=(document.getElementById('sos-bat')||{}).value;
     var units=Math.max(1, parseInt((document.getElementById('sos-units')||{}).value,10)||1);
     var pv=num((document.getElementById('sos-pv')||{}).value);
+    var loadRaw=num((document.getElementById('sos-load')||{}).value);
+    var loadType=(document.getElementById('sos-loadtype')||{}).value||'building';
+    var loadPue=(loadType==='datacenter')
+      ? num((document.getElementById('sos-pue')||{}).value) : 0;
+    var loadKw = loadRaw>0 ? ((loadPue>0) ? Math.round(loadRaw*loadPue) : loadRaw) : 0;
     var m = (k==='__GENERIC__') ? genericUnit() : (C?C[k]:null);
 
     /* Hand the choice to the guided build the same way its own config
        does, so the placed equipment matches what was picked here. */
     try{
       var s=S_();
+
+      /* REGISTER THE GENERIC UNIT AS A REAL CONFIGURATION.
+         ------------------------------------------------------------------
+         Everything downstream — the Results panel (BESS power / energy /
+         duration / C-rate), the legend, the BOM, the estimate and the plot
+         plan — reads S.bessList. Passing the typed size only through BGB
+         left that list empty, so the design behaved as though no storage
+         had been configured: the panel stayed blank and the sheets had
+         nothing to print, even though the equipment was placed.
+
+         Write a normal entry, in the same shape saveBessConfig() produces,
+         so no consumer needs to know it came from here. It is flagged
+         placeholder so a proposal can still say the make is undecided. */
+      if(s && k==='__GENERIC__' && m){
+        var _kwh = num(m.kwh)*units, _kw = num(m.kw)*units;
+        var _mk = function(){
+          try{ return (typeof uid==='function') ? uid() : ('gen-'+Date.now()); }
+          catch(e){ return 'gen-'+Date.now(); }
+        };
+        var gb = {
+          id:_mk(),
+          name:'BESS-01',
+          mfr:'', model:'Generic BESS \u2014 make/model TBD',
+          chem:'LFP', placeholder:true,
+          kwh:String(_kwh), usable:String(Math.round(_kwh*0.94)),
+          kw:String(_kw),
+          dur:String(_kw>0 ? Math.round((_kwh/_kw)*100)/100 : ''),
+          dcv:'TBD', acv:'480',
+          inv:'Integrated PCS (assumed)', ikva:String(_kw),
+          xfmr:'TBD', disco:'TBD',
+          eqcost:null,
+          notes:'PLACEHOLDER \u2014 capacity carried through the design; '
+              + 'manufacturer, enclosure and PCS not yet selected.',
+          qty:'1',
+          catalogKey:'GENERIC-BESS',
+          _greenfield:false, _gridForming:false, _gridConnectV:'', _controller:'',
+          /* Assume the PCS ships inside the enclosure and the step-up and
+             disconnect are separate pad equipment — the common arrangement,
+             and the one the guided build draws. */
+          _incPCS:true, _incDisco:false, _incXfmr:false
+        };
+        s.bessList = s.bessList || [];
+        if(!s.bessList.length) s.bessList.push(gb);
+        else s.bessList[0] = gb;
+        /* Refresh the consumers that render from the list. */
+        try{ if(typeof renderBessList==='function') renderBessList(); }catch(e){}
+        try{ if(typeof renderLegend==='function') renderLegend(); }catch(e){}
+        try{ if(typeof updateSummaryPanel==='function') updateSummaryPanel(); }catch(e){}
+      }
+
       if(s){
         s._sosChoice={ key:k, units:units, pvKw:pv,
+                       loadKw:loadKw||null,
+                       loadItKw:(loadPue>0?loadRaw:null),
+                       loadPue:(loadPue>0?loadPue:null),
                        placeholder:!!(m&&m.placeholder),
                        model:(m&&m.model)||'', mfr:(m&&m.mfr)||'',
                        kwh:num(m&&m.kwh)*units, kw:num(m&&m.kw)*units };
@@ -56300,6 +56658,15 @@ window._crmToastModal=_crmToastModal;
       if(typeof BGB!=='undefined'){
         BGB.mode='SOLAR_BESS';
         BGB.model=k; BGB.units=units; BGB.pvKw=pv;
+        /* Typed here, so the loads step does not ask again. Facility load is
+           what the design is sized against; the IT figure and PUE are kept so
+           a data-centre sheet can show how it was derived. */
+        if(loadKw>0){
+          BGB.loadKw=loadKw;
+          BGB.loadKind=loadType;
+          if(loadPue>0){ BGB.loadItKw=loadRaw; BGB.loadPue=loadPue; }
+          else { BGB.loadItKw=null; BGB.loadPue=null; }
+        }
         if(m){ BGB.kwh=num(m.kwh)*units; BGB.kw=num(m.kw)*units; }
         /* Give the guided build a real config object for the generic unit, so
            the placed assembly carries a model string and the plot plan and
