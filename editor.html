@@ -15650,6 +15650,7 @@ const BESS_CATALOG = {
   'PYTES-30-60-SE': {mfr:'Pytes',model:'Pytes 30 kW / 60 kWh SE Bundle',chem:'LFP',kwh:61.44,usable:55,kw:30,dur:2.05,dcv:'285-345.6V',eqcost:44307,inv:'Sol-Ark 30K-3P',ikva:30,xfmr:'75KVA 480/480V',disco:'200A 480V',notes:'Sol-Ark 30K-3P + HV48100 SE 6S2P. Pytes Installer Pricing 3/9/26.'},
   'PYTES-60-120-SE': {mfr:'Pytes',model:'Pytes 60 kW / 120 kWh SE Bundle',chem:'LFP',kwh:122.88,usable:110,kw:60,dur:2.05,dcv:'570-691.2V',eqcost:77058,inv:'Sol-Ark 60K-3P',ikva:60,xfmr:'100KVA 480/480V',disco:'200A 480V',notes:'Sol-Ark 60K-3P + HV48100 SE 12S1P. Pytes Installer Pricing 3/9/26.'},
   'PYTES-60-193-SEMAX': {mfr:'Pytes',model:'Pytes 60 kW / 192.9 kWh SE MAX',chem:'LFP',kwh:192.92,usable:174,kw:60,dur:3.22,dcv:'537.6-691.2V',eqcost:80245,inv:'Sol-Ark 60K-3P',ikva:60,xfmr:'100KVA 480/480V',disco:'200A 480V',notes:'Sol-Ark 60K-3P + HV48300SE MAX-12S1P. Pytes Installer Pricing 3/9/26.'},
+  'GENERIC-BESS': {mfr:'',model:'Generic BESS — size only, make/model TBD',chem:'LFP (assumed)',kwh:null,usable:null,kw:null,dur:null,dcv:'TBD',eqcost:null,inv:'Integrated PCS (assumed)',ikva:null,xfmr:'TBD',disco:'TBD',placeholder:true,notes:'PLACEHOLDER used by the guided build. Carries capacity (kW/kWh) through the design while the manufacturer is undecided. Enter kW and kWh; everything else stays TBD until a real unit is selected.'},
   'CATL-QUOTE-REQ-CI': {mfr:'CATL',model:'CATL C&I BESS -- Quote Required',chem:'LFP',kwh:null,usable:null,kw:null,dur:null,dcv:'TBD',eqcost:null,inv:'TBD',ikva:null,xfmr:'TBD',disco:'TBD',notes:'Manufacturer/vendor quote required. Contact CATL integrator.'},
   'CATL-QUOTE-REQ-UTILITY': {mfr:'CATL',model:'CATL Utility-Scale BESS -- Quote Required',chem:'LFP',kwh:null,usable:null,kw:null,dur:null,dcv:'TBD',eqcost:null,inv:'TBD',ikva:null,xfmr:'TBD',disco:'TBD',notes:'Manufacturer/vendor quote required. Contact CATL integrator.'},
 };
@@ -23471,6 +23472,231 @@ function e5ExportXyz(){
  *
  *  US and territories only. Elsewhere the tiles return empty.
  * ==================================================================== */
+
+/* ====================================================================
+ *  UI SCALE  (small / high-density screens)
+ *  --------------------------------------------------------------------
+ *  The chrome is laid out in fixed pixels, so on a 13" laptop the ribbon
+ *  captions and status text sit near the limit of readability.
+ *
+ *  CSS `zoom` is applied to the chrome CONTAINERS only, never to the map
+ *  or the drawing canvas. Two reasons that matters: the site map is
+ *  measured in real feet, so scaling it would corrupt every dimension on
+ *  screen; and `transform:scale()` would leave the browser hit-testing
+ *  against unscaled geometry, so clicks would land in the wrong place.
+ *  `zoom` reflows properly and keeps pointer coordinates honest.
+ *
+ *  Persisted per browser, so it survives a reload.
+ * ==================================================================== */
+var UI_SCALE_KEY='omegaUiScale';
+var UI_SCALE_TARGETS=['#tb','#ribbon','#doc-tabs','#tabs','#ws','#bb',
+                      '.op-panel','#results','#rp','#legend'];
+
+function _uiScaleRead(){
+  var v=1;
+  try{ v=parseFloat(localStorage.getItem(UI_SCALE_KEY))||1; }catch(e){}
+  return Math.max(0.8, Math.min(1.8, v));
+}
+
+function _uiScaleApply(v){
+  v=Math.max(0.8, Math.min(1.8, +v||1));
+  var el=document.getElementById('omega-ui-scale');
+  if(!el){
+    el=document.createElement('style');
+    el.id='omega-ui-scale';
+    (document.head||document.documentElement).appendChild(el);
+  }
+  if(v===1){ el.textContent=''; }
+  else{
+    /* Only the chrome. #cw / #sc / #csvg / the map are deliberately absent. */
+    el.textContent = UI_SCALE_TARGETS.join(',')+'{zoom:'+v+'}';
+  }
+  try{ localStorage.setItem(UI_SCALE_KEY, String(v)); }catch(e){}
+  /* The ribbon owns a height variable; keep the canvas below it in step. */
+  try{
+    var rh = 62*v;
+    document.documentElement.style.setProperty('--ribbon-h', rh+'px');
+  }catch(e){}
+  return v;
+}
+
+window.OmegaUI={
+  scale:function(v){
+    if(v==null){ console.info('[ui] scale '+_uiScaleRead()); return _uiScaleRead(); }
+    var out=_uiScaleApply(v);
+    console.info('[ui] scale '+out+'  (OmegaUI.reset() for 100%)');
+    return out;
+  },
+  bigger:function(){ return this.scale(_uiScaleRead()+0.1); },
+  smaller:function(){ return this.scale(_uiScaleRead()-0.1); },
+  reset:function(){ return this.scale(1); },
+  status:function(){
+    var o={ scale:_uiScaleRead(), targets:UI_SCALE_TARGETS.length,
+            note:'chrome only \u2014 the map and drawing are never scaled' };
+    console.table?console.table(o):console.log(o);
+    return o;
+  }
+};
+
+/* Restore on load, and bind Ctrl/Cmd + Alt + [ = ] - 0 so it can be changed
+   without the console. Alt is included so the browser's own page zoom
+   (Cmd +/-) still works and is not shadowed. */
+(function(){
+  function boot(){
+    try{ var v=_uiScaleRead(); if(v!==1) _uiScaleApply(v); }catch(e){}
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+
+  document.addEventListener('keydown', function(e){
+    if(!(e.ctrlKey||e.metaKey) || !e.altKey) return;
+    if(e.key==='='||e.key==='+'){ e.preventDefault(); OmegaUI.bigger(); }
+    else if(e.key==='-'||e.key==='_'){ e.preventDefault(); OmegaUI.smaller(); }
+    else if(e.key==='0'){ e.preventDefault(); OmegaUI.reset(); }
+  });
+})();
+
+/* ====================================================================
+ *  PARCEL BOUNDARIES  (zoning / property lines)
+ *  --------------------------------------------------------------------
+ *  Google's JavaScript API publishes no parcel layer. The property lines
+ *  visible in the consumer Maps app are not exposed to developers, so an
+ *  overlay has to come from a cadastral source.
+ *
+ *  Parcels are maintained by county assessors, and most publish an ArcGIS
+ *  service. Point this at the county covering the site and it draws real
+ *  boundaries; there is no national free source that covers everywhere.
+ *  Statewide services exist in some states and are used where they do.
+ *
+ *  Two ways to add a county:
+ *    1. Find its parcel FeatureServer/MapServer (search
+ *       "<county> parcels arcgis rest services").
+ *    2. OmegaParcels.addSource({name, url, type:'tile'|'query'}).
+ *
+ *  Commercial wall-to-wall coverage (Regrid, ReportAll, LightBox) is a
+ *  paid API; register one with OmegaParcels.setKey() if you licence it.
+ *
+ *  Drawn as an ImageMapType where the service exports images, so Google
+ *  owns tiling and panning and there is nothing to anchor or reproject.
+ * ==================================================================== */
+var PARCEL_SOURCES = [
+  /* Statewide services — verified public ArcGIS endpoints. */
+  { id:'nc',   name:'North Carolina — statewide parcels',
+    url:'https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer',
+    type:'tile', layers:'show:0' },
+  { id:'sc',   name:'South Carolina — statewide parcels',
+    url:'https://services1.arcgis.com/VaY7cY9pvUYUP1Lf/ArcGIS/rest/services/Parcels/MapServer',
+    type:'tile', layers:'show:0' },
+  { id:'fl',   name:'Florida — statewide parcels (FDOR)',
+    url:'https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/MapServer',
+    type:'tile', layers:'show:0' }
+];
+
+var _pc = { layer:null, srcId:null, opacity:0.85 };
+
+/* Which map are we drawing on? Same resolution the rest of the file uses. */
+function _pcMap(){
+  try{
+    var m=(typeof _gmap!=='undefined'&&_gmap)?_gmap:window._gmap;
+    return (m && m.overlayMapTypes) ? m : null;
+  }catch(e){ return null; }
+}
+
+function _pcSource(id){
+  for(var i=0;i<PARCEL_SOURCES.length;i++){
+    if(PARCEL_SOURCES[i].id===id) return PARCEL_SOURCES[i];
+  }
+  return null;
+}
+
+/* Web-mercator bbox for an XYZ tile — same maths the 3DEP layer uses. */
+function _pcTileBbox(x,y,z){
+  var W=20037508.342789244, n=Math.pow(2,z), sz=(W*2)/n;
+  return [ -W + x*sz, W - (y+1)*sz, -W + (x+1)*sz, W - y*sz ];
+}
+
+function _pcOff(){
+  var m=_pcMap();
+  if(m && _pc.layer){
+    try{
+      var arr=m.overlayMapTypes;
+      for(var i=arr.getLength()-1;i>=0;i--){ if(arr.getAt(i)===_pc.layer) arr.removeAt(i); }
+    }catch(e){}
+  }
+  _pc.layer=null; _pc.srcId=null;
+}
+
+function _pcOn(id){
+  var src=_pcSource(id);
+  if(!src){ if(window.console) console.warn('[parcels] unknown source: '+id); return false; }
+  var m=_pcMap();
+  if(!m){
+    if(typeof showBanner==='function'){
+      try{ showBanner('shape','No live map yet \u2014 load the satellite view first.'); }catch(e){}
+    }
+    return false;
+  }
+  _pcOff();
+
+  var layer=new google.maps.ImageMapType({
+    name:'Parcels \u2014 '+src.name,
+    tileSize:new google.maps.Size(256,256),
+    minZoom:12,                /* boundaries are noise when zoomed out */
+    maxZoom:22,
+    opacity:_pc.opacity,
+    getTileUrl:function(coord,zoom){
+      var n=Math.pow(2,zoom);
+      var x=((coord.x%n)+n)%n;
+      if(coord.y<0||coord.y>=n) return null;
+      var bb=_pcTileBbox(x,coord.y,zoom);
+      return src.url+'/export'
+        + '?bbox='+bb.join('%2C')
+        + '&bboxSR=3857&imageSR=3857&size=256%2C256'
+        + '&layers='+encodeURIComponent(src.layers||'show:0')
+        + '&format=png32&transparent=true&f=image';
+    }
+  });
+  m.overlayMapTypes.push(layer);
+  _pc.layer=layer; _pc.srcId=id;
+
+  if(typeof showBanner==='function'){
+    try{ showBanner('shape','Parcel boundaries: '+src.name
+      + ' \u2014 reference only, confirm against the recorded plat before relying on a setback.'); }catch(e){}
+  }
+  return true;
+}
+
+window.OmegaParcels={
+  sources:function(){
+    var rows=PARCEL_SOURCES.map(function(s){ return {id:s.id, name:s.name, type:s.type}; });
+    console.table?console.table(rows):console.log(rows);
+    console.info('[parcels] OmegaParcels.on(\'<id>\') to show. '
+      + 'OmegaParcels.addSource({id,name,url}) to add a county.');
+    return rows;
+  },
+  on:function(id){ return _pcOn(id||(PARCEL_SOURCES[0]&&PARCEL_SOURCES[0].id)); },
+  off:function(){ _pcOff(); console.info('[parcels] off'); return true; },
+  toggle:function(id){ return _pc.layer ? (this.off(), false) : this.on(id); },
+  opacity:function(v){
+    var o=parseFloat(v); if(!isFinite(o)) return _pc.opacity;
+    _pc.opacity=Math.max(0,Math.min(1,o));
+    if(_pc.layer) try{ _pc.layer.setOpacity(_pc.opacity); }catch(e){}
+    return _pc.opacity;
+  },
+  addSource:function(cfg){
+    if(!cfg||!cfg.url||!cfg.id){ console.warn('[parcels] need {id, name, url}'); return false; }
+    PARCEL_SOURCES.push({ id:cfg.id, name:cfg.name||cfg.id, url:cfg.url,
+                          type:cfg.type||'tile', layers:cfg.layers||'show:0' });
+    console.info('[parcels] added '+cfg.id+' \u2014 OmegaParcels.on(\''+cfg.id+'\')');
+    return true;
+  },
+  status:function(){
+    var o={ on:!!_pc.layer, source:_pc.srcId||'(none)',
+            opacity:_pc.opacity, liveMap:!!_pcMap(), sources:PARCEL_SOURCES.length };
+    console.table?console.table(o):console.log(o);
+    return o;
+  }
+};
 
 var TT_BASE = 'https://elevation.nationalmap.gov/arcgis/rest/services/'
             + '3DEPElevation/ImageServer/exportImage';
@@ -44140,8 +44366,54 @@ var BGB = {
   active:false, phase:'poi', stepIx:0, placed:{}, lastEl:null,
   mode:'BTM', _surface:'soil', _activeRun:null, _lastEnd:null,
   kw:1000, kwh:2000, seq:[], cfg:null,
-  incXfmr:false, incPcs:false, incDisco:false
+  incXfmr:false, incPcs:false, incDisco:false,
+  /* Site demand, typed by the user at the loads / data-centre step.
+     loadKw    — connected building load in kW
+     loadKind  — 'building' | 'datacenter'
+     loadItKw  — IT/critical draw for a data centre, before PUE
+     loadPue   — power usage effectiveness, so facility = IT x PUE */
+  loadKw:null, loadKind:'building', loadItKw:null, loadPue:1.4
 };
+
+/* Ask for the load in kW at the moment the load node is placed. Concept-stage
+   designs previously placed "Building Loads" with no number attached, so the
+   BESS could not be sized against demand and the energy summary had nothing
+   to work from. A prompt keeps it to one step and can be skipped. */
+function _bgbAskLoad(kind){
+  try{
+    var isDc = (kind==='datacenter' || kind==='datactr');
+    if(isDc){
+      var it = window.prompt('Data centre IT / critical load (kW)\n\n'
+        + 'The compute draw before cooling and losses.', BGB.loadItKw || 500);
+      if(it===null) return null;
+      var itKw = parseFloat(it); if(!isFinite(itKw) || itKw<=0) return null;
+      var pue = window.prompt('Power usage effectiveness (PUE)\n\n'
+        + 'Facility load = IT load x PUE. Typical 1.2-1.6; '
+        + 'use 1.0 to enter facility load directly.', BGB.loadPue || 1.4);
+      var p = parseFloat(pue); if(!isFinite(p) || p<=0) p = 1.4;
+      BGB.loadKind='datacenter'; BGB.loadItKw=itKw; BGB.loadPue=p;
+      BGB.loadKw = Math.round(itKw * p);
+      return BGB.loadKw;
+    }
+    var v = window.prompt('Connected building load (kW)\n\n'
+      + 'Used to size the BESS against demand and to compute duration '
+      + 'in the energy summary.', BGB.loadKw || 250);
+    if(v===null) return null;
+    var kw = parseFloat(v); if(!isFinite(kw) || kw<=0) return null;
+    BGB.loadKind='building'; BGB.loadKw=Math.round(kw);
+    BGB.loadItKw=null;
+    return BGB.loadKw;
+  }catch(e){ return null; }
+}
+window._bgbAskLoad=_bgbAskLoad;
+
+/* Hours the configured storage can carry the typed load. */
+function _bgbLoadHours(){
+  var kwh=+BGB.kwh||0, kw=+BGB.loadKw||0;
+  if(kwh<=0 || kw<=0) return null;
+  return Math.round((kwh/kw)*100)/100;
+}
+window._bgbLoadHours=_bgbLoadHours;
 
 /* Real interconnection topologies. The PCS/inverter is ALWAYS inside the BESS
    enclosure, so it's never a separate node. Whether the STEP-UP TRANSFORMER and
@@ -44229,9 +44501,47 @@ function _bgbCurKind(){ var sq=_bgbSeq(); return BGB.stepIx<sq.length ? sq[BGB.s
 function _bgbLegCond(kind){ return (BGB_PRESETS[BGB.mode]||BGB_PRESETS.BTM).legs[kind]||'EV-FEEDER'; }
 function _bgbLegColor(kind){ var c=_bgbLegCond(kind); return c==='EV-MAIN'?'#FF0000':c==='EV-FEEDER'?'#FFFF00':c==='EV-BRANCH'?'#00FFFF':c==='EMT-BMS'?'#2563EB':c==='MV-UG'?'#EF4444':'#00FF00'; }
 
+/* GENERIC BESS PLACEHOLDER.
+   ------------------------------------------------------------------
+   The guided build previously required a configured unit from
+   BESS_CATALOG. With none chosen, BGB.cfg stayed null, the placed
+   assembly got no bessModel, and every downstream consumer — labels,
+   summary, one-line, BOM, the exported plot plan — had nothing to
+   print. At concept stage the manufacturer is genuinely unknown, so
+   the honest default is a sized, unbranded unit: the capacity is real
+   and drives the layout, while make and model read TBD until someone
+   picks one.
+
+   Anything built on this is flagged placeholder:true so a proposal can
+   tell "not decided yet" apart from "specified". */
+function _bgbGenericCfg(kw, kwh){
+  kw  = +kw  || BGB.kw  || 1000;
+  kwh = +kwh || BGB.kwh || 2000;
+  var dur = kw>0 ? Math.round((kwh/kw)*100)/100 : null;
+  function fmt(n){ return (n>=1000) ? (Math.round(n/100)/10)+' MW' : n+' kW'; }
+  function fmtH(n){ return (n>=1000) ? (Math.round(n/100)/10)+' MWh' : n+' kWh'; }
+  return {
+    id:'GENERIC-BESS',
+    placeholder:true,
+    mfr:'',                                   /* deliberately blank */
+    model:'BESS '+fmt(kw)+' / '+fmtH(kwh)+' (make/model TBD)',
+    chem:'LFP (assumed)',
+    kw:kw, kwh:kwh, usable:Math.round(kwh*0.94), dur:dur,
+    qty:1,
+    dcv:'TBD', inv:'Integrated PCS (assumed)', ikva:kw,
+    xfmr:'TBD', disco:'TBD', eqcost:null,
+    notes:'PLACEHOLDER — capacity is carried through the design, but the '
+        + 'manufacturer, enclosure and PCS are not yet selected. Replace via '
+        + 'BESS Config when a unit is chosen; nothing else in the layout changes.'
+  };
+}
+window._bgbGenericCfg=_bgbGenericCfg;
+
 function _bgbLoadConfig(){
   var b=(typeof S!=='undefined' && S.bessList && S.bessList[0]) ? S.bessList[0] : null;
-  BGB.cfg=b||null;
+  /* No unit configured -> use the sized placeholder rather than nothing, so
+     the guided build always has a standard offering to place and print. */
+  BGB.cfg = b || _bgbGenericCfg(BGB.kw, BGB.kwh);
   if(b){
     if(b.kw)  BGB.kw  = +(b.kw)*(+(b.qty||1));
     if(b.kwh) BGB.kwh = +(b.kwh)*(+(b.qty||1));
@@ -44547,7 +44857,16 @@ function placeBgbAt(p){
     var bess=_evAdd('bess', p.x, p.y, 'BESS Assembly', _spec);
     bess.bgbKw=BGB.kw; bess.bgbKwh=BGB.kwh; bess.bgbRole='bess';
     bess.bgbIncXfmr=BGB.incXfmr; bess.bgbIncDisco=BGB.incDisco; bess.bgbIncPcs=BGB.incPcs;
-    if(BGB.cfg){ bess.bessCfgId=BGB.cfg.id||null; bess.bessModel=((BGB.cfg.mfr||'')+' '+(BGB.cfg.model||'')).trim(); }
+    /* Stamp the configuration onto the element so labels, the summary, the
+       one-line, the BOM and the exported plot plan all have something to
+       read. Falls back to the sized placeholder when nothing is configured —
+       previously this branch was skipped entirely and the assembly carried
+       no model at all, which is why an export came out blank. */
+    var _cfg = BGB.cfg || _bgbGenericCfg(BGB.kw, BGB.kwh);
+    bess.bessCfgId   = _cfg.id||null;
+    bess.bessModel   = ((_cfg.mfr||'')+' '+(_cfg.model||'')).trim();
+    bess.bessPlaceholder = !!_cfg.placeholder;
+    bess.bessKw = BGB.kw; bess.bessKwh = BGB.kwh;
     BGB.placed.bess=bess; BGB.lastEl=bess; BGB.stepIx=1; // bess is seq[0] for BTM/FOM
     try{ if(window.OMEGA_GUIDED_BOLLARDS===true) _dcfcBollards(bess); }catch(e){}
     if(typeof _reRenderEl==='function') _reRenderEl(bess.id);
@@ -44572,8 +44891,30 @@ function placeBgbAt(p){
     else if(kind==='panel'){ spec=BGB.svcA+'A 480V switchgear/distribution'; }
     else if(kind==='meter'){ spec='Revenue meter \u00b7 CT/PT set'; }
     else if(kind==='service'){ spec='Utility POI \u00b7 '+BGB.mode+' interconnection'; }
+    else if(kind==='loads' || kind==='datacenter' || kind==='datactr'){
+      _bgbAskLoad(kind);
+      if(BGB.loadKind==='datacenter' && BGB.loadItKw){
+        spec = BGB.loadItKw+' kW IT \u00b7 PUE '+BGB.loadPue
+             + ' \u00b7 '+BGB.loadKw+' kW facility';
+      } else if(BGB.loadKw){
+        spec = BGB.loadKw+' kW connected load';
+      } else {
+        spec = 'Load not specified';
+      }
+      var _h=_bgbLoadHours();
+      if(_h) spec += ' \u00b7 '+_h+' hr from storage';
+    }
     var el=_evAdd(n.evKind||kind, snap.x, snap.y, n.label, spec);
     el.bgbRole=kind; el.evRole=kind;
+    /* Stamp the demand onto the element so the summary, one-line and exports
+       can read it rather than re-deriving it from the label text. */
+    if(kind==='loads' || kind==='datacenter' || kind==='datactr'){
+      el.loadKw   = BGB.loadKw||null;
+      el.loadKind = BGB.loadKind||'building';
+      el.loadItKw = BGB.loadItKw||null;
+      el.loadPue  = (BGB.loadKind==='datacenter') ? BGB.loadPue : null;
+      el.loadHours= _bgbLoadHours();
+    }
     BGB.placed[kind]=el; BGB.lastEl=el;
     _dcfcConduitAlongRun(el, run, snap, _bgbLegCond(kind), (BGB_LEGNAME[kind]||n.label));
     /* Bollards are protection detail, not topology - off unless asked for. */
@@ -55837,7 +56178,11 @@ window._crmToastModal=_crmToastModal;
            + (m.kw? ' / '+(num(m.kw)>=1000?(num(m.kw)/1000).toFixed(2)+' MW':Math.round(num(m.kw))+' kW'):'')
            + '</option>';
     }
-    var out=real.map(opt).join('');
+    /* Generic placeholder FIRST and preselected: at concept stage the make is
+       usually unknown, and picking a named unit implies a specification that
+       has not been made. Sizing is typed in below instead. */
+    var out = '<option value="__GENERIC__">Generic BESS \u2014 enter size, make/model TBD</option>'
+            + real.map(opt).join('');
     if(tbd.length){
       out += '<optgroup label="Quote required \u2014 size not published">'
            + tbd.map(function(k){ return '<option value="'+esc(k)+'">'+esc(C[k].mfr||k)+'</option>'; }).join('')
@@ -55846,10 +56191,27 @@ window._crmToastModal=_crmToastModal;
     return out;
   }
 
+  /* The generic unit is built from the typed size rather than looked up. */
+  function genericUnit(){
+    var kwh=num((document.getElementById('sos-gen-kwh')||{}).value);
+    var kw =num((document.getElementById('sos-gen-kw') ||{}).value);
+    if(kwh<=0) kwh=2000;
+    if(kw <=0) kw =Math.max(1, Math.round(kwh/2));
+    return { placeholder:true, mfr:'', kwh:kwh, kw:kw,
+             usable:Math.round(kwh*0.94),
+             dur:Math.round((kwh/kw)*100)/100,
+             chem:'LFP (assumed)', dcv:'TBD',
+             model:'Generic BESS \u2014 make/model TBD' };
+  }
+
   function spec(){
     var C=cat(); if(!C) return;
     var k=(document.getElementById('sos-bat')||{}).value;
-    var m=C[k]; var el=document.getElementById('sos-spec'); if(!el) return;
+    var isGen = (k==='__GENERIC__');
+    var gen=document.getElementById('sos-gen');
+    if(gen) gen.style.display = isGen ? '' : 'none';
+    var m = isGen ? genericUnit() : C[k];
+    var el=document.getElementById('sos-spec'); if(!el) return;
     if(!m){ el.innerHTML='Select a battery system.'; return; }
     if(num(m.kwh)<=0){
       el.innerHTML='<div>'+esc(m.model||k)+'</div>'
@@ -55868,7 +56230,10 @@ window._crmToastModal=_crmToastModal;
       + (m.chem?('<div>Chemistry <b>'+esc(m.chem)+'</b>'+(m.dcv?('  \u00b7  DC '+esc(m.dcv)):'')+'</div>'):'')
       + (pv?('<div>Solar <b>'+pv+' kW-DC</b>  \u00b7  DC/AC ratio <b>'
              + (kw? (pv/ (kw||1)).toFixed(2) : '\u2014')+'</b></div>'):'')
-      + (units>1?('<div>Units <b>'+units+'</b></div>'):'');
+      + (units>1?('<div>Units <b>'+units+'</b></div>'):'')
+      + (m.placeholder?('<div style="opacity:.75">Manufacturer, enclosure and PCS '
+          +'not yet selected \u2014 the capacity above carries through the design '
+          +'and the layout does not change when a real unit is chosen.</div>'):'');
   }
   window._sosSpec=spec;
 
@@ -55893,6 +56258,12 @@ window._crmToastModal=_crmToastModal;
       +     '<div><label for="sos-pv">Solar (kW-DC)</label>'
       +       '<input id="sos-pv" type="number" min="0" step="10" value="0" oninput="_sosSpec()"></div>'
       +   '</div>'
+      +   '<div class="sos-two" id="sos-gen" style="display:none">'
+      +     '<div><label for="sos-gen-kwh">Storage (kWh)</label>'
+      +       '<input id="sos-gen-kwh" type="number" min="0" step="10" value="2000" oninput="_sosSpec()"></div>'
+      +     '<div><label for="sos-gen-kw">Power (kW)</label>'
+      +       '<input id="sos-gen-kw" type="number" min="0" step="10" value="1000" oninput="_sosSpec()"></div>'
+      +   '</div>'
       +   '<div id="sos-spec">Select a battery system.</div>'
       +   '<div class="sos-note">Builds AC-coupled: the BESS AC block and the solar inverter '
       +     'each tap the main switchgear and share the interconnection. Seven pieces, '
@@ -55912,7 +56283,7 @@ window._crmToastModal=_crmToastModal;
     var k=(document.getElementById('sos-bat')||{}).value;
     var units=Math.max(1, parseInt((document.getElementById('sos-units')||{}).value,10)||1);
     var pv=num((document.getElementById('sos-pv')||{}).value);
-    var m=C?C[k]:null;
+    var m = (k==='__GENERIC__') ? genericUnit() : (C?C[k]:null);
 
     /* Hand the choice to the guided build the same way its own config
        does, so the placed equipment matches what was picked here. */
@@ -55920,6 +56291,8 @@ window._crmToastModal=_crmToastModal;
       var s=S_();
       if(s){
         s._sosChoice={ key:k, units:units, pvKw:pv,
+                       placeholder:!!(m&&m.placeholder),
+                       model:(m&&m.model)||'', mfr:(m&&m.mfr)||'',
                        kwh:num(m&&m.kwh)*units, kw:num(m&&m.kw)*units };
       }
       /* survives _bgbLoadConfig(), which runs inside _bgbStartPlacing */
@@ -55928,6 +56301,12 @@ window._crmToastModal=_crmToastModal;
         BGB.mode='SOLAR_BESS';
         BGB.model=k; BGB.units=units; BGB.pvKw=pv;
         if(m){ BGB.kwh=num(m.kwh)*units; BGB.kw=num(m.kw)*units; }
+        /* Give the guided build a real config object for the generic unit, so
+           the placed assembly carries a model string and the plot plan and
+           exports have something to print. */
+        if(m && m.placeholder && typeof _bgbGenericCfg==='function'){
+          BGB.cfg=_bgbGenericCfg(BGB.kw, BGB.kwh);
+        }
       }
     }catch(e){}
 
