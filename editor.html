@@ -7342,12 +7342,16 @@ async function exportSpecsForCADTool() {
   // Maps element type/eqId -> CAD tool equipment type
   function mapType(el) {
     if (el.type === 'bess-asm') return 'bess';
-    if (el.type === 'eq') {
-      if (el.eqId === 'xfmr') return 'transformer';
-      if (el.eqId === 'disco') return 'disconnect';
-      if (el.eqId === 'pcs') return 'inverter';
-      if (el.eqId === 'ups') return 'ups';
-      if (el.eqId === 'bess') return 'bess';
+    /* Guided-build kit is type:'evgear' with the role on .evKind, so the
+       'eq' test below skipped all of it and the CAD hand-off exported a
+       site with no equipment on it. Resolve the role first. */
+    var _r = (typeof _eqRole === 'function') ? _eqRole(el) : (el.type === 'eq' ? el.eqId : null);
+    if (_r) {
+      if (_r === 'xfmr') return 'transformer';
+      if (_r === 'disco') return 'disconnect';
+      if (_r === 'pcs') return 'inverter';
+      if (_r === 'ups') return 'ups';
+      if (_r === 'bess') return 'bess';
       // NOTE: individually-placed bollards are intentionally NOT exported.
       // The CAD tool auto-generates its own correctly-spaced, correctly-sized
       // bollard ring around the BESS pad per CFC 1207.11.7.3(1) — importing
@@ -8960,10 +8964,22 @@ function _ppCollectFleet(){
      it once means they cannot disagree afterwards. */
   try{
     (S.elements||[]).forEach(function(el){
-      if(!el || el.bgbRole!=='bess') return;
-      var gkw =+el.bgbKw ||0;
-      var gkwh=+el.bgbKwh||0;
+      /* Two field names exist for the same thing. placeBgbAt() writes
+         bgbKw/bgbKwh; the multi-piece Solar+Storage build and the backfill
+         write bessKw/bessKwh. Reading only the first meant a BESS placed by
+         the multi-piece build counted as no battery at all — which is why
+         the rail still said "Nothing is placed" next to a correct rating it
+         had fallen back to taking from the Config dialog. Accept both, and
+         match on the shared role predicate rather than bgbRole alone so a
+         ribbon-placed BESS is counted too. */
+      if(!el) return;
+      var _r=(typeof _eqRole==='function')?_eqRole(el):null;
+      if(_r!=='bess' && el.bgbRole!=='bess') return;
+      var gkw =+el.bgbKw ||+el.bessKw ||0;
+      var gkwh=+el.bgbKwh||+el.bessKwh||0;
       if(gkw<=0 && gkwh<=0) return;
+      var _u=+el.bessUnits||1;
+      gkw*=_u; gkwh*=_u;
       out.units++;
       out.totalKw+=gkw; out.totalKwh+=gkwh;
       /* A guided element carries no unit cost. Flag it rather than let the
@@ -11671,6 +11687,360 @@ function _alPolyAreaPx(pts){
   for(var i=0,j=pts.length-1;i<pts.length;j=i++){ a+=(pts[j].x+pts[i].x)*(pts[j].y-pts[i].y); }
   return a/2;
 }
+/* ══════════════════════════════════════════════════════════════════════
+ *  OmegaSelfTest.run()  —  END-TO-END DIAGNOSTIC
+ *  --------------------------------------------------------------------
+ *  The bugs in this area were all the same shape: a stage that silently
+ *  saw nothing and passed an empty result to the next stage, so the
+ *  failure only became visible several steps later on an exported sheet.
+ *  Reading the sheet backwards to find which stage went blind is slow and
+ *  needs a person in front of the browser.
+ *
+ *  This walks the real project through every stage in order and reports
+ *  what each one actually sees. The first FAIL is the stage to fix — no
+ *  guessing from a PDF.
+ *
+ *  Run it in the console:  OmegaSelfTest.run()
+ * ══════════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════
+ *  BACKFILL — repair equipment placed before the stamp existed
+ *  --------------------------------------------------------------------
+ *  Stamping the configuration at placement time only helps things placed
+ *  AFTERWARDS. Every project already drawn still holds a BESS element
+ *  with no model and no rating, so its sheets keep printing blanks and
+ *  the fix looks like it did not work.
+ *
+ *  This repairs them in place from what the project already knows, in
+ *  priority order: the saved BESS configuration, then the guided build's
+ *  own sizing. It never invents a manufacturer — an element with nothing
+ *  to recover from is left alone and reported, rather than filled with a
+ *  plausible guess.
+ * ══════════════════════════════════════════════════════════════════════ */
+function _bessBackfill(){
+  var s=(typeof S!=='undefined')?S:null;
+  if(!s) return {repaired:0, skipped:0, already:0};
+
+  var cfg=(s.bessList && s.bessList[0]) || null;
+  var out={repaired:0, skipped:0, already:0, detail:[]};
+
+  (s.elements||[]).forEach(function(el){
+    var role=(typeof _eqRole==='function')?_eqRole(el):null;
+    if(role!=='bess') return;
+
+    var hasModel=!!(el.bessModel && String(el.bessModel).trim());
+    var hasSize =!!(el.bessKwh || el.bessKw);
+    if(hasModel && hasSize){ out.already++; return; }
+
+    var model=null, kwh=null, kw=null, ph=false, cid=null;
+
+    if(cfg){
+      var q=+(cfg.qty||1)||1;
+      model=((cfg.mfr||'')+' '+(cfg.model||'')).trim() || null;
+      kwh=(parseFloat(cfg.kwh)||0)*q || null;
+      kw =(parseFloat(cfg.kw) ||0)*q || null;
+      ph =!!cfg.placeholder; cid=cfg.id||null;
+    }
+    if((!kwh||!kw) && typeof BGB!=='undefined'){
+      kwh=kwh||BGB.kwh||null; kw=kw||BGB.kw||null;
+      if(!model && BGB.cfg) model=((BGB.cfg.mfr||'')+' '+(BGB.cfg.model||'')).trim()||null;
+    }
+    /* Last resort: describe the size we do know, without naming a maker. */
+    if(!model && (kwh||kw) && typeof _bgbGenericCfg==='function'){
+      var g=_bgbGenericCfg(kw, kwh);
+      model=g.model; ph=true; cid=cid||g.id;
+    }
+
+    if(!model && !kwh && !kw){
+      out.skipped++;
+      out.detail.push({id:el.id, action:'left alone \u2014 nothing to recover from'});
+      return;
+    }
+    if(model) el.bessModel=model;
+    if(kwh)   el.bessKwh=kwh;
+    if(kw)    el.bessKw=kw;
+    if(cid)   el.bessCfgId=cid;
+    el.bessPlaceholder=ph;
+    out.repaired++;
+    out.detail.push({id:el.id, action:'stamped', model:model||'(size only)',
+                     kwh:kwh||'?', kw:kw||'?'});
+  });
+
+  if(out.repaired){
+    try{ if(typeof pushHist==='function') pushHist(); }catch(e){}
+    try{ if(typeof updateSummaryPanel==='function') updateSummaryPanel(); }catch(e){}
+    try{ if(typeof renderLegend==='function') renderLegend(); }catch(e){}
+  }
+  return out;
+}
+window.OmegaRepair = {
+  bess:function(){
+    var r=_bessBackfill();
+    if(r.detail && r.detail.length){ console.table?console.table(r.detail):console.log(r.detail); }
+    console.info('[repair] '+r.repaired+' stamped, '+r.already+' already complete, '
+      +r.skipped+' left alone.'
+      +(r.repaired?' Press Run, then re-export.':''));
+    return r;
+  }
+};
+
+window.OmegaSelfTest = {
+  run: function () {
+    var out = [], fails = 0;
+    function T(stage, detail, ok, hint) {
+      if (!ok) fails++;
+      out.push({ stage: stage, result: ok ? 'PASS' : 'FAIL', detail: detail, next: ok ? '' : (hint || '') });
+    }
+    var s = (typeof S !== 'undefined') ? S : null;
+    if (!s) { console.error('[selftest] no project loaded.'); return; }
+
+    /* 1 — what is on the canvas at all */
+    var els = s.elements || [], shapes = s.shapes || [], conds = s.conduits || [];
+    T('1. canvas', els.length + ' element(s), ' + shapes.length + ' shape(s), ' + conds.length + ' conduit(s)',
+      els.length > 0 || shapes.length > 0, 'Place something first.');
+
+    /* 2 — can the shared predicate see guided-build kit */
+    var eqCount = 0, roles = {};
+    els.forEach(function (e) {
+      var r = (typeof _eqRole === 'function') ? _eqRole(e) : null;
+      if (r) { eqCount++; roles[r] = (roles[r] || 0) + 1; }
+    });
+    var guided = els.filter(function (e) { return e && e.type === 'evgear'; }).length;
+    T('2. equipment recognised', eqCount + ' of ' + els.length + ' (' + guided + ' from a guided build) \u2014 ' + JSON.stringify(roles),
+      els.length === 0 || eqCount > 0, '_eqRole() is not seeing this element shape.');
+
+    /* 3 — the BESS specifically */
+    var bessEls = els.filter(function (e) {
+      return e && ((typeof _eqRole === 'function' ? _eqRole(e) : null) === 'bess');
+    });
+    var b0 = bessEls[0];
+    var bStamped = !!(b0 && b0.bessModel && (b0.bessKwh || b0.bessKw));
+    T('3. BESS on the map', bessEls.length + ' found' + (b0 ? (' \u2014 model "' + (b0.bessModel || '(none)') + '", ' + (b0.bessKwh || '?') + ' kWh / ' + (b0.bessKw || '?') + ' kW') : ''),
+      bessEls.length === 0 || bStamped,
+      bessEls.length && !bStamped
+        ? 'Placed before the configuration was stamped \u2014 run OmegaRepair.bess()'
+        : 'No BESS element; place one via a guided build or the ribbon.');
+
+    /* 4 — the plot plan's view of it */
+    var asm = (typeof _ppFindAssembly === 'function') ? _ppFindAssembly() : null;
+    T('4. plot plan sees it', asm ? ('assembly "' + (asm.model || asm.label || '?') + '"' + (asm._fromElement ? ' (from the placed element)' : ' (assembly shape)')) : 'none',
+      !!asm || bessEls.length === 0, '_ppFindAssembly() returned null \u2014 the cover sheet will say "no assembly".');
+
+    /* 5 — the one-line census that picks the template */
+    var inv = (typeof _olInventory === 'function') ? _olInventory() : null;
+    T('5. one-line inventory', inv ? ((typeof _olInventoryText === 'function') ? _olInventoryText() : JSON.stringify(inv)) : 'unavailable',
+      !!inv && (!bessEls.length || inv.bess), 'The inventory cannot see the BESS.');
+
+    /* 6 — topology: nodes AND the links between them */
+    var topo = null;
+    try { topo = (window.OmegaSLD && OmegaSLD.status) ? OmegaSLD.status() : null; } catch (e) {}
+    var nodeN = 0, edgeN = 0;
+    try {
+      if (window.OmegaSLD && OmegaSLD.preview) {
+        var rows = OmegaSLD.preview() || [];
+        nodeN = rows.length;
+        edgeN = rows.reduce(function (a, r) { return a + (r.conduits || 0); }, 0);
+      }
+    } catch (e) {}
+    T('6. one-line topology', nodeN + ' node(s), ' + edgeN + ' link(s)',
+      nodeN === 0 || edgeN > 0, 'Nodes exist but nothing connects them \u2014 the sheet will draw isolated boxes.');
+
+    /* 7 — anchoring, i.e. will the drawing hold on zoom */
+    var anchored = 0, partial = 0, none = 0;
+    conds.forEach(function (c) {
+      if (!c || !c.pts) return;
+      if (!c._geoPts) { none++; return; }
+      var okAll = c._geoPts.length === c.pts.length &&
+        c._geoPts.every(function (g) { return g && g.lat != null && g.lng != null; });
+      if (okAll) anchored++; else partial++;
+    });
+    T('7. conduit anchoring', anchored + ' anchored, ' + partial + ' partial, ' + none + ' unanchored',
+      partial === 0, 'Partial anchors are what make a run jump on zoom.');
+
+    /* 8 — the parcel */
+    var site = (typeof _siteBoundaryInfo === 'function') ? _siteBoundaryInfo() : null;
+    T('8. parcel boundary', site && site.present
+        ? (site.sqft.toLocaleString() + ' sq ft (' + site.acres + ' acres)' + (site.derived ? ' \u2014 GUESSED from the largest shape' : ' \u2014 designated') + ', from ' + site.source)
+        : ('none \u2014 ' + (site ? site.reason : 'unavailable')),
+      !!(site && site.present && !site.derived), 'Run OmegaSite.setBoundary() with the parcel selected.');
+
+    /* 9 — are the results current */
+    T('9. results', s.resultsStale ? 'STALE \u2014 exports will print old numbers' : 'current',
+      !s.resultsStale, 'Press Run before exporting.');
+
+    /* 10 — nothing fabricated */
+    var txt = [asm && asm.model, b0 && b0.bessModel].join(' ').toLowerCase();
+    T('10. no invented vendor', txt.trim() ? txt.slice(0, 60) : '(nothing to check)',
+      txt.indexOf('gotion') < 0 || (b0 && /gotion/i.test(b0.bessModel || '')),
+      'A vendor name appeared that was not chosen.');
+
+    console.table ? console.table(out) : console.log(out);
+    console.info(fails
+      ? ('[selftest] ' + fails + ' stage(s) failed. Fix the FIRST one \u2014 later stages read from it.')
+      : '[selftest] every stage passed. What is on the canvas will reach the sheets.');
+    return out;
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  STEP 1 — THE PARCEL BOUNDARY AS A FIRST-CLASS OBJECT
+ *  --------------------------------------------------------------------
+ *  Today a "boundary" is whichever closed shape happens to be biggest
+ *  (_alFindBoundary). That is fine for auto-layout, which only needs an
+ *  area to fill, but it cannot carry a plan set: a reviewer checking
+ *  setbacks needs to know WHICH line is the property line, and the area
+ *  printed on the sheet has to be the real one.
+ *
+ *  Two things this fixes:
+ *
+ *  1. AMBIGUITY. The boundary is now designated explicitly
+ *     (sh.isSiteBoundary), so drawing an exclusion zone or an array
+ *     outline larger than the parcel cannot silently become the property
+ *     line. The largest-shape guess remains, but only as a fallback, and
+ *     it reports itself as a guess.
+ *
+ *  2. AREA MEASURED ON THE GROUND, NOT ON SCREEN. _alPolyAcres divides
+ *     pixel area by pxPerFt squared. That is correct only while the
+ *     drawing scale is exactly right, and it silently changes if the
+ *     scale is ever recalibrated. A parcel area on a submittal has to
+ *     come from the ground coordinates, so this uses the geodesic area
+ *     of the anchored lat/lngs when they exist and only falls back to
+ *     pixels when the shape has never been anchored.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/* Geodesic area of a lat/lng ring, in square metres (spherical excess). */
+function _siteGeoAreaM2(ring){
+  if(!ring || ring.length<3) return 0;
+  var R=6378137, total=0;
+  for(var i=0;i<ring.length;i++){
+    var a=ring[i], b=ring[(i+1)%ring.length];
+    if(!a||!b||a.lat==null||b.lat==null) return 0;
+    total += (b.lng-a.lng)*Math.PI/180 *
+             (2 + Math.sin(a.lat*Math.PI/180) + Math.sin(b.lat*Math.PI/180));
+  }
+  return Math.abs(total*R*R/2);
+}
+
+/* Ground perimeter of a lat/lng ring, in feet. */
+function _siteGeoPerimFt(ring){
+  if(!ring || ring.length<2) return 0;
+  var R=20902231, tot=0;   /* earth radius, feet */
+  for(var i=0;i<ring.length;i++){
+    var a=ring[i], b=ring[(i+1)%ring.length];
+    if(!a||!b||a.lat==null||b.lat==null) return 0;
+    var dLat=(b.lat-a.lat)*Math.PI/180, dLng=(b.lng-a.lng)*Math.PI/180;
+    var la=a.lat*Math.PI/180, lb=b.lat*Math.PI/180;
+    var h=Math.sin(dLat/2)*Math.sin(dLat/2)
+        + Math.sin(dLng/2)*Math.sin(dLng/2)*Math.cos(la)*Math.cos(lb);
+    tot += 2*R*Math.asin(Math.min(1,Math.sqrt(h)));
+  }
+  return tot;
+}
+
+/* The designated parcel, or null. Never guesses. */
+function _siteBoundaryShape(){
+  var shapes=(typeof S!=='undefined' && S.shapes)||[];
+  for(var i=0;i<shapes.length;i++){
+    if(shapes[i] && shapes[i].isSiteBoundary) return shapes[i];
+  }
+  return null;
+}
+
+/* Everything the sheets need to know about the parcel. `derived:true`
+   means nothing was designated and this is the largest-shape guess —
+   consumers print it differently so a guess is never mistaken for a
+   surveyed line. */
+function _siteBoundaryInfo(){
+  var sh=_siteBoundaryShape(), derived=false;
+  if(!sh){
+    var shapes=(typeof S!=='undefined' && S.shapes)||[], best=null, bestA=0;
+    shapes.forEach(function(x){
+      if(!x) return;
+      if(x.kind==='rect'||x.kind==='poly'||x.kind==='polyline'){
+        var p=(typeof _alShapePts==='function')?_alShapePts(x):x.pts;
+        if(p && p.length>=3){
+          var a=Math.abs((typeof _alPolyAreaPx==='function')?_alPolyAreaPx(p):0);
+          if(a>bestA){ bestA=a; best=x; }
+        }
+      }
+    });
+    if(!best) return { present:false, derived:false, reason:'no closed shape on the drawing' };
+    sh=best; derived=true;
+  }
+
+  var pts=(typeof _alShapePts==='function')?_alShapePts(sh):sh.pts;
+  if(!pts || pts.length<3) return { present:false, derived:derived, reason:'boundary has fewer than 3 points' };
+
+  var ring=sh._geoPts && sh._geoPts.length===pts.length ? sh._geoPts : null;
+  var anchored = !!ring && ring.every(function(g){ return g && g.lat!=null && g.lng!=null; });
+
+  var sqft, perimFt, source;
+  if(anchored){
+    sqft    = _siteGeoAreaM2(ring)*10.7639104;
+    perimFt = _siteGeoPerimFt(ring);
+    source  = 'ground coordinates';
+  }else{
+    var ppf=(typeof _derScale==='function')?_derScale():((typeof S!=='undefined'&&S.pxPerFt)||6);
+    sqft = Math.abs((typeof _alPolyAreaPx==='function')?_alPolyAreaPx(pts):0)/(ppf*ppf);
+    perimFt=0;
+    for(var i=0;i<pts.length;i++){
+      var a=pts[i], b=pts[(i+1)%pts.length];
+      perimFt += Math.hypot(b.x-a.x, b.y-a.y)/ppf;
+    }
+    source = 'drawing scale (boundary not anchored \u2014 recheck after locking the map)';
+  }
+
+  return {
+    present:true, derived:derived, shape:sh, pts:pts, ring:ring, anchored:anchored,
+    sqft:Math.round(sqft), acres:+(sqft/43560).toFixed(3),
+    perimFt:Math.round(perimFt), vertices:pts.length, source:source
+  };
+}
+window._siteBoundaryInfo=_siteBoundaryInfo;
+
+window.OmegaSite = {
+  /* Mark the selected (or largest) shape as THE property line. */
+  setBoundary:function(id){
+    var shapes=(typeof S!=='undefined' && S.shapes)||[], target=null;
+    if(id){ target=shapes.filter(function(x){ return x && String(x.id)===String(id); })[0]; }
+    if(!target && typeof S!=='undefined' && S.sel){
+      target=shapes.filter(function(x){ return x && x.id===S.sel; })[0];
+    }
+    if(!target){
+      var info=_siteBoundaryInfo();
+      target=info.present?info.shape:null;
+    }
+    if(!target){ console.warn('[site] draw a closed shape around the parcel first.'); return false; }
+    shapes.forEach(function(x){ if(x) delete x.isSiteBoundary; });
+    target.isSiteBoundary=true;
+    try{ if(typeof pushHist==='function') pushHist(); }catch(e){}
+    var i=_siteBoundaryInfo();
+    console.info('[site] property line set \u2014 '+i.sqft.toLocaleString()+' sq ft ('+i.acres+' acres), '
+      +i.perimFt+' ft perimeter, measured from '+i.source);
+    return true;
+  },
+  clearBoundary:function(){
+    ((typeof S!=='undefined' && S.shapes)||[]).forEach(function(x){ if(x) delete x.isSiteBoundary; });
+    console.info('[site] property line cleared.');
+    return true;
+  },
+  info:function(){
+    var i=_siteBoundaryInfo();
+    if(!i.present){ console.warn('[site] no boundary: '+i.reason); return i; }
+    var o={ 'parcel area (sq ft)':i.sqft.toLocaleString(),
+            'parcel area (acres)':i.acres,
+            'perimeter (ft)':i.perimFt,
+            'vertices':i.vertices,
+            'measured from':i.source,
+            'designated':!i.derived };
+    console.table?console.table(o):console.log(o);
+    if(i.derived) console.warn('[site] this is the LARGEST SHAPE, not a designated property '
+      + 'line. Run OmegaSite.setBoundary() with the parcel selected so the sheets can trust it.');
+    if(!i.anchored) console.warn('[site] boundary is not ground-anchored, so the area comes from '
+      + 'the drawing scale. Lock the map and re-check before submitting.');
+    return i;
+  }
+};
+
 function _alPolyAcres(pts){
   var ppf=(typeof _derScale==='function')?_derScale():6;
   return Math.abs(_alPolyAreaPx(pts))/(ppf*ppf)/43560;
@@ -41563,7 +41933,8 @@ function derTotals(){
   if(S.elements){
     for(var j=0;j<S.elements.length;j++){
       var el=S.elements[j];
-      if(el.type==='eq' && DERC_DC[el.eqId]){ t.dcLoadKw+=DERC_DC[el.eqId].kw; t.dcUnits++; }
+      var _r=(typeof _eqRole==='function')?_eqRole(el):(el.type==='eq'?el.eqId:null);
+      if(_r && DERC_DC[_r]){ t.dcLoadKw+=DERC_DC[_r].kw; t.dcUnits++; }
     }
   }
   return t;
@@ -45497,6 +45868,31 @@ function placeBgbAt(p){
     }
     var el=_evAdd(n.evKind||kind, snap.x, snap.y, n.label, spec);
     el.bgbRole=kind; el.evRole=kind;
+
+    /* STAMP THE BESS CONFIGURATION HERE TOO.
+       There are two placement paths. placeBgbAt() (the single-BESS build)
+       stamps bessModel/bessKw/bessKwh onto the element; this one — the
+       multi-piece Solar+Storage / Engineering build — did not. The result
+       was a BESS element carrying no configuration at all: the self-test
+       read model "(none)", ? kWh, while the inventory still showed
+       1.00 MW / 2.00 MWh because it falls back to BGB. Everything that
+       reads the ELEMENT rather than BGB — the plot-plan schedule, the
+       one-line label, the spec sheet — therefore printed blanks.
+       Same stamp, both paths. */
+    if(kind==='bess'){
+      var _bc = BGB.cfg || (typeof _bgbGenericCfg==='function'
+                            ? _bgbGenericCfg(BGB.kw, BGB.kwh) : null);
+      if(_bc){
+        el.bessCfgId     = _bc.id || null;
+        el.bessModel     = ((_bc.mfr||'')+' '+(_bc.model||'')).trim();
+        el.bessPlaceholder = !!_bc.placeholder;
+      }
+      /* Ratings come from the build, which is what the user actually sized. */
+      el.bessKw  = BGB.kw  || (_bc && _bc.kw)  || null;
+      el.bessKwh = BGB.kwh || (_bc && _bc.kwh) || null;
+      if(BGB.units && BGB.units>1) el.bessUnits = BGB.units;
+    }
+
     /* Stamp the demand onto the element so the summary, one-line and exports
        can read it rather than re-deriving it from the label text. */
     if(kind==='loads' || kind==='datacenter' || kind==='datactr'){
@@ -64427,8 +64823,10 @@ window._crmToastModal=_crmToastModal;
     if (typeof orig !== 'function' || orig.__omegaInsert) return false;
     var wrapped = function (el) {
       try {
-        if (el && el.type === 'eq' && el.eqId) {
-          var f = footprintOf(el.eqId);
+        var _role = el && ((typeof _eqRole === 'function') ? _eqRole(el)
+                            : (el.type === 'eq' ? el.eqId : null));
+        if (el && _role) {
+          var f = footprintOf(_role);
           if (f) {
             if (el.lf == null) el.lf = f.lf;
             if (el.wf == null) el.wf = f.wf;
