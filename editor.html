@@ -5606,7 +5606,7 @@ function bessAssemblySVG(cfg,w){
   const xfmr=cfg?cfg.xfmr:'1000KVA 480/480V';
   const disco=cfg?cfg.disco:'1200A 480V';
   const mfr=cfg?cfg.mfr:'Great Power';
-  const model=cfg?cfg.model:'MAX-20HC-5000';
+  const model=cfg?cfg.model:'BESS \u2014 make/model TBD';
   return`<svg width="${w}" height="${h}" viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <marker id="bah-${uid}" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
@@ -29593,7 +29593,28 @@ function openPlotPlanExport(){
     def('pp-batmodel', (bess&&bess.label)||asm.model||'');
     def('pp-street', pname);
   }
-  def('pp-batmfr','Great Power');
+  /* NEVER default to a real manufacturer.
+     'Great Power' was pre-filled whenever the field was empty, so a design
+     with a generic or unselected battery exported a permit set naming a
+     vendor the user never chose — on a stamped drawing. Read what is
+     actually configured; if nothing is, leave it blank so the sheet says
+     TBD rather than something false. */
+  (function(){
+    var m='', mo='';
+    try{
+      var els=(S&&S.elements)||[];
+      for(var i=0;i<els.length;i++){
+        var e=els[i];
+        if(e && (e.bgbRole==='bess' || (e.type==='evgear'&&e.evKind==='bess'))){
+          mo=e.bessModel||''; break;
+        }
+      }
+      var b=(S&&S.bessList&&S.bessList[0])||null;
+      if(b){ m=b.mfr||''; mo=mo||b.model||''; }
+    }catch(e){}
+    if(m) def('pp-batmfr', m);
+    if(mo) def('pp-batmodel', mo);
+  })();
   def('pp-sysv','480 VAC 3\u00d8');
   def('pp-flood','X');
   def('pp-ahj','2023 NEC / IFC');
@@ -29655,11 +29676,15 @@ function _ppBuildModal(){
     '<input type="text" id="pp-street" placeholder="e.g. 123 Main St, City, ST" style="width:100%;padding:7px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;font-size:12px"></div>'+
     '<details style="margin-bottom:10px"><summary style="font-size:10px;color:var(--sub);cursor:pointer;letter-spacing:.04em">E0 COVER DETAILS (auto-filled \u2014 click to edit)</summary>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 10px;margin-top:8px">'+
-    _ppFld('Battery mfr','pp-batmfr','Great Power')+
+    _ppFld('Battery mfr','pp-batmfr','')+
     _ppFld('Battery model','pp-batmodel','GOTION-GRID-3421')+
     _ppFld('Battery energy (kWh)','pp-batkwh','')+
-    _ppFld('Battery voltage','pp-batv','1331.2 VDC')+
-    _ppFld('Battery max weight','pp-batwt','86,000 lbs')+
+    /* These were pre-filled with one specific container's figures. On any
+       other unit they are simply wrong, and they are exactly the numbers a
+       structural reviewer relies on. Blank unless the selected unit
+       supplies them. */
+    _ppFld('Battery voltage','pp-batv','')+
+    _ppFld('Battery max weight','pp-batwt','')+
     _ppFld('Inverter mfr/model','pp-invmodel','')+
     _ppFld('Inverter rating (kVA)','pp-invkva','')+
     _ppFld('System voltage','pp-sysv','480 VAC 3\u00d8')+
@@ -30553,7 +30578,7 @@ function _ppRenderPOISignage(sizeKey, street){
   var pname=(document.getElementById('pname')||{}).value||'BESS Project';
   var asm=_ppFindAssembly();
   function gv(id){ var e=document.getElementById(id); return e?e.value:''; }
-  var model=gv('pp-batmodel')||(asm&&asm.model)||'GOTION BESS';
+  var model=gv('pp-batmodel')||(asm&&asm.model)||'BESS \u2014 MAKE/MODEL TBD';
   var xfmrkva=gv('ol-xfmrkva')||gv('pp-invkva')||'';
   var acDiscA=gv('ol-aic')||'1200A';
   var sysv=gv('pp-sysv')||gv('ol-sysv')||'480Y/277V 3PH 4W';
@@ -30708,7 +30733,9 @@ function _ppRenderBessPad(sizeKey, street){
   var asm=_ppFindAssembly();
   var pd=_sPadDims(asm);
   function gv(id){ var e=document.getElementById(id); return e?e.value:''; }
-  var maxWt=gv('pp-batwt')||'86,000 lbs';
+  /* One container's weight is not every container's weight, and this figure
+     goes onto a structural pad detail. */
+  var maxWt=gv('pp-batwt')||'TBD \u2014 PER MANUFACTURER SUBMITTAL';
 
   var s='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="Arial, sans-serif">';
   s+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#ffffff"/>';
@@ -30908,8 +30935,8 @@ function _ppRenderGrounding(sizeKey, street){
   var pname=(document.getElementById('pname')||{}).value||'BESS Project';
   var asm=_ppFindAssembly();
   function gv(id){ var e=document.getElementById(id); return e?e.value:''; }
-  var mfr=gv('pp-batmfr')||'Great Power';
-  var model=gv('pp-batmodel')||(asm&&asm.model)||'BESS';
+  var mfr=gv('pp-batmfr')||'';
+  var model=gv('pp-batmodel')||(asm&&asm.model)||'BESS \u2014 MAKE/MODEL TBD';
   var ground=gv('ol-ground')||'#6 AWG Cu';
 
   var s='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="Arial, sans-serif">';
@@ -31251,8 +31278,8 @@ function _ppRenderE0(sizeKey, street){
     return null;
   })();
   var model=pref(gv('pp-batmodel'), gv('ol-model'), (asm&&asm.model),
-                 (_sysB&&_sysB.model), 'GOTION BESS');
-  var mfr=pref(gv('pp-batmfr'), gv('ol-mfr'), (_sysB&&_sysB.mfr), 'Gotion');
+                 (_sysB&&_sysB.model), 'BESS \u2014 MAKE/MODEL TBD');
+  var mfr=pref(gv('pp-batmfr'), gv('ol-mfr'), (_sysB&&_sysB.mfr), 'TBD');
   /* "Gotion Gotion EDGE 160" — the model string already carries the maker,
      so printing both duplicated it. Drop the prefix when it is redundant. */
   if(mfr && model && String(model).toLowerCase().indexOf(String(mfr).toLowerCase())===0){
@@ -35046,8 +35073,10 @@ function _psE1(P, ai, today, sheet, sn, img, aiSketch) {
     + '<tr style="background:#0B1E35;color:#fff"><th colspan="2" style="border:1px solid #333;padding:2px 5px;text-align:left">SYSTEM &nbsp; POI-1</th></tr>'
     + [
         ['Inverter', (P.invMfr||'Dynapower') + ' ' + (P.invModel||'CPS-1250') + ' ' + kw + ' kW'],
-        ['Battery Cabinet', '1 ' + (P.batMfr||'Great Power') + ' ' + (P.batModel||'MAX-20HC-5000') + ' (' + kwh + ' kWh)'],
-        ['Battery Racks', '12 ' + (P.batMfr||'Great Power') + ' 1P416S (372.7 kWh ea.)'],
+        /* Do not name a vendor or a rack configuration that was never chosen —
+           this is a proposal line item a client reads as a commitment. */
+        ['Battery Cabinet', '1 ' + ((P.batMfr?P.batMfr+' ':'') + (P.batModel||'BESS \u2014 make/model TBD')) + ' (' + kwh + ' kWh)'],
+        ['Battery Racks', (P.batMfr||P.batModel) ? ('Per ' + (P.batMfr||P.batModel) + ' submittal') : 'Per manufacturer submittal'],
         ['DC Size', kwh.toLocaleString() + ' kWh'],
         ['AC Size', 'Derated to ' + kw + ' kW'],
       ].map(function(r,i){
@@ -35097,7 +35126,7 @@ function _psE1(P, ai, today, sheet, sn, img, aiSketch) {
       <!-- BESS pad -->
       <rect x="140" y="140" width="200" height="120" fill="rgba(30,64,175,0.08)" stroke="#1d4ed8" stroke-width="2"/>
       <text x="240" y="195" text-anchor="middle" font-size="8" font-weight="bold" fill="#1d4ed8">BESS CONTAINER</text>
-      <text x="240" y="208" text-anchor="middle" font-size="7" fill="#1d4ed8">${_h(P.batMfr||'GREAT POWER')} ${_h(P.batModel||'MAX-20HC-5000')}</text>
+      <text x="240" y="208" text-anchor="middle" font-size="7" fill="#1d4ed8">${_h(((P.batMfr||'')+' '+(P.batModel||'')).trim()||'BESS \u2014 MAKE/MODEL TBD')}</text>
       <!-- Bollards -->
       ${[130,160,190,220,250,280,310,140,340,140,340].map(function(bx,i){
         var by = i<3?130:(i<5?270:(i<8?140:(i===8?140:(i===9?270:270))));
@@ -36559,9 +36588,9 @@ async function exportPermitPPTX() {
       ['401 CONGRESS AVE STE 2750', (P.ownerAddr||'[OWNER ADDRESS]')],
       ['AUSTIN,TX 78701', ''],
       // Equipment
-      ['Guangzhou Great Power Energy Storage Technology Co., Ltd', (P.batMfr||'Great Power')],
-      ['MAX-20HC-5000 (5016kWh)', (P.batModel||'MAX-20HC-5000') + ' (' + kwh + 'kWh)'],
-      ['MAX-20HC-5000', (P.batModel||'MAX-20HC-5000')],
+      ['Battery manufacturer', (P.batMfr||'TBD \u2014 not yet selected')],
+      ['Battery model (with capacity)', (P.batModel||'BESS \u2014 make/model TBD') + ' (' + kwh + 'kWh)'],
+      ['Battery model', (P.batModel||'BESS \u2014 make/model TBD')],
       ['982 kW ENERGY STORAGE INVERTER', kw + ' kW ENERGY STORAGE INVERTER'],
       ['DYNA POWER COMPANY LLC', (P.invMfr||'Dynapower').toUpperCase()],
       ['DYNAPOWER', (P.invMfr||'Dynapower').toUpperCase()],
