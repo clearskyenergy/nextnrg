@@ -23461,25 +23461,52 @@ function _geoStampAll(){
       var g=toGeo(el.x+((el.w||60)/2), el.y+((el.h||el.w||60)/2));
       if(g){ el._geoLat=g.lat; el._geoLng=g.lng; }
     });
+    /* An existing anchor is never overwritten here.
+
+       A previous revision re-stamped whenever a geometry fingerprint no
+       longer matched, to catch runs that a trench rebuild had re-laid.
+       That was the wrong trade. Every drawing saved before that revision
+       carries _geoPts but no _geoSig, so the comparison failed on load and
+       the whole drawing was re-anchored against whatever view the map
+       happened to be at before it had settled — silently replacing correct
+       ground coordinates with wrong ones. The bug it was fixing was about
+       thirteen pixels of drift after a rebuild; the cost was a drawing.
+
+       Geometry that really has been re-laid is invalidated explicitly, at
+       the moment it changes, by _geoInvalidate(). Everything else is left
+       exactly as it was saved. */
     _each(S.shapes, function(sh){
       if(!sh.pts || !sh.pts.length) return;
-      var sig=_geoSigOf(sh.pts);
-      if(sh._geoPts && sh._geoSig===sig) return;      /* anchor still describes this geometry */
+      if(sh._geoPts){ if(sh._geoSig===undefined) sh._geoSig=_geoSigOf(sh.pts); return; }
       sh._geoPts=sh.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
-      sh._geoSig=sig;
+      sh._geoSig=_geoSigOf(sh.pts);
     });
     _each(S.conduits, function(c){
       if(!c.pts || !c.pts.length) return;
-      var csig=_geoSigOf(c.pts);
-      if(c._geoPts && c._geoSig===csig) return;       /* ditto */
+      if(c._geoPts){ if(c._geoSig===undefined) c._geoSig=_geoSigOf(c.pts); return; }
       c._geoPts=c.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
-      c._geoSig=csig;
+      c._geoSig=_geoSigOf(c.pts);
     });
   }catch(e){ try{ console.warn('[omega/geo] stamp pass aborted:', e && e.message); }catch(_){} }
   if(_fail && window.console) console.warn('[omega/geo] '+_fail+' object(s) could not be anchored '
     + '\u2014 they will not hold position through a zoom. OmegaLen.anchors() lists them.');
 }
 window._geoStampAll=_geoStampAll;
+
+/* Drop the ground anchor on objects whose geometry was just re-laid in
+   code, so the next stamp re-cuts it. Call this immediately after the
+   change, while the new pixel positions are known to be correct for the
+   current view — never on load, and never speculatively. */
+function _geoInvalidate(list){
+  var n=0;
+  (list||[]).forEach(function(o){
+    if(!o) return;
+    if(o._geoPts||o._geoSig){ delete o._geoPts; delete o._geoSig; n++; }
+  });
+  if(n){ try{ _geoStampAll(); }catch(e){} }
+  return n;
+}
+window._geoInvalidate=_geoInvalidate;
 
 /* Re-project every geo-anchored element to the current map view and move its
    DOM node. Runs on map idle so equipment tracks pan/zoom. */
@@ -56857,6 +56884,12 @@ window._crmToastModal=_crmToastModal;
     return ids.filter(isClusterPad);
   }
 
+  /* A cheap fingerprint of where a run currently sits. */
+  function sig(c) {
+    if (!c || !c.pts) return '';
+    return c.pts.map(function (p) { return Math.round(p.x) + ',' + Math.round(p.y); }).join(';');
+  }
+
   function relay(why) {
     if (pending) return;
     pending = true;
@@ -56864,7 +56897,29 @@ window._crmToastModal=_crmToastModal;
       pending = false;
       try {
         if (!(window.OmegaTrench && OmegaTrench.rebuild)) return;
+        var s = S_();
+        var before = {};
+        if (s && s.conduits) s.conduits.forEach(function (c) { if (c) before[c.id] = sig(c); });
+
         var r = OmegaTrench.rebuild();
+
+        /* Re-cut the ground anchor on exactly the runs the rebuild moved,
+           now, while their new pixel positions are known to be right for
+           the current view. Anything it did not touch keeps the anchor it
+           was saved with — a rebuild is not a reason to re-georeference
+           the rest of the drawing. */
+        var moved = [];
+        if (s && s.conduits) {
+          s.conduits.forEach(function (c) {
+            if (!c) return;
+            if (before[c.id] !== undefined && before[c.id] !== sig(c)) moved.push(c);
+          });
+        }
+        if (moved.length && typeof _geoInvalidate === 'function') {
+          _geoInvalidate(moved);
+          if (window.console) console.info(TAG + ' re-anchored ' + moved.length + ' re-laid run(s)');
+        }
+
         if (r && window.console) {
           console.info(TAG + ' pad ' + why + ' \u2014 re-laid ' + r.created
             + ' run(s) at ' + r.headingDeg + '\u00b0');
@@ -60877,13 +60932,10 @@ window._crmToastModal=_crmToastModal;
       var g = c._geoPts[i];
       if (!g || g.lat == null || g.lng == null) return true;
     }
-    /* Count matching is not the same as position matching. A re-laid run
-       usually has the SAME number of vertices in a NEW place, which slipped
-       straight through the checks above and left the anchors describing the
-       old route until the next zoom put the run back there. */
-    try {
-      if (typeof _geoSigOf === 'function' && c._geoSig !== _geoSigOf(c.pts)) return true;
-    } catch (e) {}
+    /* Deliberately does NOT compare vertex positions. Treating a changed
+       fingerprint as "re-anchor me" re-cut the ground coordinates of every
+       drawing saved before fingerprints existed. Re-laid geometry is
+       invalidated explicitly by _geoInvalidate() instead. */
     return false;
   }
 
@@ -62387,7 +62439,7 @@ window._crmToastModal=_crmToastModal;
 <script>
 /* Build fingerprint — so it is possible to tell from the console whether the
    deployed file carries a given fix, instead of guessing. */
-window.OMEGA_BUILD = { stamp: 'OMEGA-BUILD-STAMP 2026-07-31 geo-sig+len+solar+geo-isolate+hourly-eb+dc-custom',
+window.OMEGA_BUILD = { stamp: 'OMEGA-BUILD-STAMP 2026-07-31 geo-sig+len+solar+geo-isolate+hourly-eb+dc-custom+SAFE-ANCHOR',
   has: { e20Template:1, bessSizing:1, emsLegs:1, condAudit:1,
          lenZoomFix:1, corridorFt:1, solarEstimate:1, geoSigStale:1, hourlyEnergyBalance:1, customDataCentre:1 } };
 try{ console.info('[omega/build]', window.OMEGA_BUILD.stamp); }catch(e){}
