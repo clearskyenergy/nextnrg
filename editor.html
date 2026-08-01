@@ -24556,6 +24556,21 @@ function d4BuildRows(){
 /* ---- drawer chrome --------------------------------------------------- */
 
 function d4Open(){
+  /* Do not just block on stale results — recompute, then open. The export
+     is supposed to reflect what is on the map, and the numbers it prints
+     come from the run. Blocking made the user press Run and come back;
+     running here means the sheets and the drawing always agree. */
+  if(S.resultsStale && typeof omegaRunAndWait==='function'){
+    omegaRunAndWait().then(function(ok){
+      if(!ok && typeof omegaGuard==='function' && !omegaGuard('Documentation export')) return;
+      _d4Rows = d4BuildRows();
+      d4Render();
+      var s2=document.getElementById('d4-scrim'), d2=document.getElementById('d4');
+      if(s2) s2.classList.add('on');
+      if(d2) d2.classList.add('on');
+    });
+    return;
+  }
   if(typeof omegaGuard==='function' && !omegaGuard('Documentation export')) return;
   _d4Rows = d4BuildRows();
   d4Render();
@@ -24827,6 +24842,13 @@ async function d4Download(){
   var proj=_d4Proj();
 
   try{
+    /* The drawing can change while this dialog sits open. Recompute again so
+       the schedules, lengths and ratings in the bundle match the geometry
+       being drawn on the sheets. */
+    if(S.resultsStale && typeof omegaRunAndWait==='function'){
+      _d4Prog('Running design\u2026', 2);
+      await omegaRunAndWait();
+    }
     _d4Prog('Loading libraries\u2026', 3);
     await _d4LoadZip();
 
@@ -27463,6 +27485,27 @@ function omegaGuard(what, opts){
   return false;
 }
 
+/* Run, and tell the caller when it has finished.
+   omegaRunDesign() does its work inside a setTimeout, so an export that
+   called it and carried straight on would render against the OLD numbers —
+   the recompute would land after the sheets were already built. This waits
+   for the run to complete (or resolves immediately if nothing is stale). */
+function omegaRunAndWait(){
+  return new Promise(function(resolve){
+    try{
+      if(!S.resultsStale && !S.running) return resolve(true);
+      if(typeof omegaRunDesign==='function') omegaRunDesign();
+      var waited=0;
+      (function poll(){
+        if(!S.running && !S.resultsStale) return resolve(true);
+        if(waited>12000) return resolve(false);      /* never hang an export */
+        waited+=120; setTimeout(poll,120);
+      })();
+    }catch(e){ resolve(false); }
+  });
+}
+window.omegaRunAndWait=omegaRunAndWait;
+
 /* Recompute. Reuses the existing engines rather than duplicating them. */
 function omegaRunDesign(){
   if(S.running) return;
@@ -29529,6 +29572,24 @@ function _ppFld(label,id,ph){
 }
 function _ppFindAssembly(){
   for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].kind==='assembly') return S.shapes[i]; }
+  /* A guided build does not create an 'assembly' SHAPE — it places a BESS
+     ELEMENT on the trench. Treat that as the assembly so the cover sheet,
+     the schedules and the one-line all see the storage that is plainly on
+     the canvas. Returned in the same shape the callers expect, carrying the
+     configuration stamped on it at placement. */
+  var els=(S && S.elements)||[];
+  for(var j=0;j<els.length;j++){
+    var e=els[j]; if(!e) continue;
+    var isBess=(e.bgbRole==='bess') || (e.type==='evgear' && e.evKind==='bess')
+            || (e.type==='eq' && e.eqId==='bess');
+    if(!isBess) continue;
+    return { kind:'assembly', _fromElement:true, id:e.id,
+             x:e.x, y:e.y, w:e.w, h:e.h, rot:e.rot||0,
+             label:e.label||'BESS Assembly',
+             model:e.bessModel||'', bessCfgId:e.bessCfgId||null,
+             kw:e.bessKw||e.bgbKw||null, kwh:e.bessKwh||e.bgbKwh||null,
+             placeholder:!!e.bessPlaceholder, parts:[] };
+  }
   return null;
 }
 function _ppBuildModal(){
@@ -31651,9 +31712,22 @@ function _olClassifyType(t){
 function _olGatherNodes(){
   var nodes=[];
   (S.elements||[]).forEach(function(el){
-    if(el.type!=='eq') return;
-    var role=_olClassifyType(el.eqId);
-    if(role) nodes.push({id:el.id, role:role, label:el.label||el.eqId, kw:el.kw||null, obj:el, src:'element'});
+    /* The guided builds place equipment as type:'evgear' with the role on
+       .evKind, NOT type:'eq' with .eqId. Only 'eq' was gathered, so every
+       piece the Solar+BESS / EV / BESS guided build placed was invisible to
+       the one-line, the plot-plan cover and the layer counts — the canvas
+       showed a BESS AC block while the exporters reported "no assembly on
+       canvas". Read both shapes of element. */
+    var key = (el.type==='eq') ? el.eqId
+            : (el.type==='evgear') ? (el.evKind||el.bgbRole||el.evRole)
+            : null;
+    if(!key) return;
+    var role=_olClassifyType(key);
+    /* bgbRole is authoritative when present — it is what the guided build
+       intended this node to be. */
+    if(!role && el.bgbRole) role=_olClassifyType(el.bgbRole);
+    if(role) nodes.push({id:el.id, role:role, label:el.label||key,
+                         kw:el.kw||el.bgbKw||null, obj:el, src:'element'});
   });
   (S.shapes||[]).forEach(function(sh){
     var role=_olClassifyType(sh.kind);
@@ -31689,7 +31763,7 @@ function _olInventory(){
     bess:false, bessKw:0, bessKwh:0,
     solar:false, solarKw:0,
     ev:false, evCount:0, evKw:0,
-    der:false, derKw:0,          /* genset, fuel cell, wind, other generation */
+    der:false, derKw:0, derKind:null, derLabel:null,  /* genset, fuel cell, wind */
     load:false, loadKw:0, loadKind:null, loadItKw:0, loadPue:null,
     utility:false
   };
@@ -31697,9 +31771,32 @@ function _olInventory(){
   nodes.forEach(function(n){
     if(n.role==='bess'||n.role==='pcs') inv.bess=true;
     else if(n.role==='charger'){ inv.ev=true; inv.evCount++; inv.evKw+=(+n.kw||0); }
-    else if(n.role==='der'){ inv.der=true; inv.derKw+=(+n.kw||0); }
+    else if(n.role==='der'){
+      inv.der=true; inv.derKw+=(+n.kw||0);
+      /* Kind decides how it connects — see the DER leg in _olRender. */
+      var _lk=((n.label||'')+' '+((n.obj&&n.obj.kind)||'')).toLowerCase();
+      var _k = /fuel\s*cell|sofc|pem/.test(_lk) ? 'fuelcell'
+             : /wind|turbine/.test(_lk)          ? 'wind'
+             : /gen\s*set|genset|generator|diesel|gas/.test(_lk) ? 'genset'
+             : (inv.derKind||'genset');
+      inv.derKind = inv.derKind && inv.derKind!==_k ? 'mixed' : _k;
+      inv.derLabel = n.label || inv.derLabel || null;
+    }
     else if(n.role==='service'||n.role==='meter') inv.utility=true;
   });
+
+  /* A placed BESS counts as storage even when nothing was saved into
+     bessList — the guided build stamps kW/kWh straight onto the element. */
+  try{
+    (S.elements||[]).forEach(function(el){
+      if(!el) return;
+      if(el.bgbRole==='bess' || (el.type==='evgear'&&el.evKind==='bess')){
+        inv.bess=true;
+        inv.bessKw  = Math.max(inv.bessKw,  +el.bessKw ||+el.bgbKw ||0);
+        inv.bessKwh = Math.max(inv.bessKwh, +el.bessKwh||+el.bgbKwh||0);
+      }
+    });
+  }catch(e){}
 
   /* Storage capacity comes from the configuration, not the icon. */
   try{
@@ -31750,7 +31847,7 @@ function _olInventoryText(){
   if(i.bess)  bits.push('BESS '+mw(i.bessKw)+(i.bessKwh?(' / '+(i.bessKwh>=1000?(i.bessKwh/1000).toFixed(2)+' MWh':Math.round(i.bessKwh)+' kWh')):''));
   if(i.solar) bits.push('Solar '+mw(i.solarKw)+'-DC');
   if(i.ev)    bits.push('EV '+i.evCount+' charger'+(i.evCount>1?'s':'')+(i.evKw?(' / '+mw(i.evKw)):''));
-  if(i.der)   bits.push('DER '+mw(i.derKw));
+  if(i.der)   bits.push('DER '+(i.derKind?i.derKind+' ':'')+mw(i.derKw));
   if(i.load){
     bits.push((i.loadKind==='datacenter'?'Data centre ':'Building load ')
       + mw(i.loadKw)
@@ -32432,6 +32529,159 @@ function _olRender(sizeKey, withSched){
       ['(N) PV AC OUTPUT', '(3) #4/0 AWG THWN-2 CU + #4 EGC', '2" PVC SCH 40']);
     chain+=_olLabel(Math.round((pvX+busX)/2), yPvTap-5, 'PV AC \u2014 AC-COUPLED AT THE BUS', 'middle', 6.5, 600);
     if(yTopUsed>ay-20) yTopUsed=ay-20;
+  }
+
+  /* ── LOAD LEG ─────────────────────────────────────────────────────────
+     A load is not a source: it hangs off the collection bus through its own
+     breaker, on the opposite side from the PV leg so the sheet reads
+     sources-left / loads-right.
+
+     Compute is drawn differently from a building on purpose. A data centre
+     sits behind a UPS and PDUs, and its rating is quoted two ways — the IT
+     load and the facility load that the service must actually carry. A
+     sheet showing only the IT figure understates the service by the PUE,
+     which is exactly the error that undersizes a transformer. Both numbers
+     are printed, with the derivation shown. */
+  if(_inv && _inv.load && _inv.loadKw>0){
+    var isDC   = (_inv.loadKind==='datacenter');
+    var ldX    = Math.round(busX + Math.max(90, (areaR-busX)*0.34));
+    var yLdTap = yBusFeed - 18;
+
+    function fmtKW(v){ return v>=1000 ? (v/1000).toFixed(2)+' MW' : Math.round(v)+' kW'; }
+
+    /* Tap off the bus, out to the load leg. */
+    chain+=_olWire(busX, yLdTap, ldX, yLdTap);
+    chain+=_olLabel(Math.round((busX+ldX)/2), yLdTap-5,
+      isDC ? 'FACILITY FEED' : 'LOAD FEED', 'middle', 6.5, 600);
+
+    var yLd = yLdTap;
+    /* Load breaker at the bus. */
+    chain+=_olWire(ldX, yLd, ldX, yLd+26);
+    if(typeof _olBreaker==='function') chain+=_olBreaker(ldX, yLd+26, '');
+    chain+=_olLabel(ldX+16, yLd+24, 'LOAD BREAKER', 'start', 7, 700);
+    yLd+=26;
+
+    if(isDC){
+      /* UPS. */
+      chain+=_olWire(ldX, yLd+4, ldX, yLd+38);
+      chain+=_olBox(ldX, yLd+56, 120, 34, '');
+      chain+=_olLabel(ldX, yLd+52, 'UPS / STATIC SWITCH', 'middle', 8, 700);
+      chain+=_olLabel(ldX, yLd+64, 'N+1 \u00b7 '+(d.sysv||'480V')+' 3\u03c6', 'middle', 7);
+      yLd+=73;
+      /* PDU lineup. */
+      chain+=_olWire(ldX, yLd, ldX, yLd+30);
+      chain+=_olBox(ldX, yLd+48, 120, 34, '');
+      chain+=_olLabel(ldX, yLd+44, 'PDU LINEUP', 'middle', 8, 700);
+      chain+=_olLabel(ldX, yLd+56, 'TO RACK BUSWAY', 'middle', 7);
+      yLd+=65;
+      /* IT load. */
+      chain+=_olWire(ldX, yLd, ldX, yLd+30);
+      chain+=_olBox(ldX, yLd+48, 130, 40, '');
+      chain+=_olLabel(ldX, yLd+42, 'IT / COMPUTE LOAD', 'middle', 8, 700);
+      chain+=_olLabel(ldX, yLd+54,
+        (_inv.loadItKw>0 ? fmtKW(_inv.loadItKw)+' IT' : fmtKW(_inv.loadKw)), 'middle', 7);
+      if(_inv.loadItKw>0 && _inv.loadPue){
+        chain+=_olLabel(ldX, yLd+64,
+          'PUE '+_inv.loadPue+' \u2192 '+fmtKW(_inv.loadKw)+' FACILITY', 'middle', 6.5);
+      }
+      chain+=condCallout(ldX+72, yLd+20,
+        ['(N) FACILITY FEED', 'SIZED ON '+fmtKW(_inv.loadKw)+' \u2014 NOT THE IT FIGURE',
+         'MECHANICAL / COOLING INCLUDED']);
+      if(yBotUsed<yLd+90) yBotUsed=yLd+90;
+    } else {
+      /* Building / industrial / EV / mixed: panel then the load itself. */
+      var LBL={ building:'BUILDING LOADS', industrial:'PROCESS LOAD',
+                ev:'EV CHARGING LOAD', mixed:'MIXED LOAD' };
+      chain+=_olWire(ldX, yLd+4, ldX, yLd+40);
+      chain+=_olBox(ldX, yLd+58, 120, 34, '');
+      chain+=_olLabel(ldX, yLd+54, 'DISTRIBUTION PANEL', 'middle', 8, 700);
+      chain+=_olLabel(ldX, yLd+66, (d.sysv||'480V')+' 3\u03c6', 'middle', 7);
+      yLd+=75;
+      chain+=_olWire(ldX, yLd, ldX, yLd+30);
+      chain+=_olBox(ldX, yLd+48, 130, 36, '');
+      chain+=_olLabel(ldX, yLd+44, LBL[_inv.loadKind]||'CONNECTED LOAD', 'middle', 8, 700);
+      chain+=_olLabel(ldX, yLd+56, fmtKW(_inv.loadKw)+' CONNECTED', 'middle', 7);
+      chain+=condCallout(ldX+72, yLd+18,
+        ['(N) LOAD FEED', 'SIZED ON '+fmtKW(_inv.loadKw)]);
+      if(yBotUsed<yLd+86) yBotUsed=yLd+86;
+    }
+  }
+
+  /* ── DER LEG ──────────────────────────────────────────────────────────
+     A generator is not another PV inverter. How it connects depends on
+     whether it is allowed to run in parallel with the utility:
+
+       STANDBY (typical genset) — open-transition transfer switch. The set
+         never closes onto a live utility, so there is no export path and
+         no interconnection study. Drawing it as a parallel tap would claim
+         a machine the utility has not approved.
+
+       PARALLELING (fuel cell, prime power, peak shaving) — closes onto the
+         bus through paralleling switchgear with protection (25/27/59/81),
+         and IS an interconnected source.
+
+     Fuel cells and wind default to parallel, gensets to standby, and the
+     assumption is printed on the sheet so it gets checked rather than
+     inherited. */
+  if(_inv && _inv.der && _inv.derKw>0){
+    var derKind = _inv.derKind||'genset';
+    var parallels = (derKind==='fuelcell' || derKind==='wind');
+    var dX = Math.round(areaL + Math.max(60, (busX-areaL)*0.12));
+    var dTop = yPcs + 30;
+    function fmtD(v){ return v>=1000 ? (v/1000).toFixed(2)+' MW' : Math.round(v)+' kW'; }
+
+    var TITLE = derKind==='fuelcell' ? 'FUEL CELL'
+              : derKind==='wind'     ? 'WIND TURBINE'
+              : derKind==='mixed'    ? 'DER \u2014 MIXED'
+              : 'STANDBY GENERATOR';
+
+    /* Source symbol: circle with G / FC, the conventional rotating-machine
+       or generating-source mark. */
+    chain+='<circle cx="'+dX+'" cy="'+dTop+'" r="20" fill="none" stroke="#1a1a1a" stroke-width="1.4"/>';
+    chain+=_olLabel(dX, dTop+4,
+      derKind==='fuelcell'?'FC':(derKind==='wind'?'W':'G'), 'middle', 11, 700);
+    chain+=_olLabel(dX, dTop-30, TITLE, 'middle', 8, 700);
+    chain+=_olLabel(dX, dTop-20, fmtD(_inv.derKw)+' \u00b7 '+(d.sysv||'480V')+' 3\u03c6', 'middle', 7);
+
+    /* Machine breaker. */
+    var yD = dTop+20;
+    chain+=_olWire(dX, yD, dX, yD+26);
+    if(typeof _olBreaker==='function') chain+=_olBreaker(dX, yD+26, '');
+    chain+=_olLabel(dX-16, yD+24, 'MACHINE BKR', 'end', 7, 700);
+    yD+=26;
+
+    if(parallels){
+      /* Paralleling switchgear with utility-interactive protection. */
+      chain+=_olWire(dX, yD+4, dX, yD+40);
+      chain+=_olBox(dX, yD+58, 130, 36, '');
+      chain+=_olLabel(dX, yD+53, 'PARALLELING SWGR', 'middle', 8, 700);
+      chain+=_olLabel(dX, yD+65, 'PROT 25 / 27 / 59 / 81', 'middle', 6.5);
+      yD+=76;
+      chain+=_olWire(dX, yD, dX, yBusFeed-34);
+      chain+=_olWire(dX, yBusFeed-34, busX, yBusFeed-34);
+      chain+=_olLabel(Math.round((dX+busX)/2), yBusFeed-39,
+        'DER \u2014 PARALLEL WITH UTILITY (INTERCONNECTED SOURCE)', 'middle', 6.5, 600);
+      chain+=condCallout(dX+72, yD-30,
+        ['(N) DER OUTPUT', 'PARALLEL OPERATION \u2014 INTERCONNECTION STUDY REQUIRED',
+         'ANTI-ISLANDING PER IEEE 1547']);
+    } else {
+      /* Open-transition transfer switch: utility OR generator, never both. */
+      chain+=_olWire(dX, yD+4, dX, yD+40);
+      chain+=_olBox(dX, yD+58, 130, 36, '');
+      chain+=_olLabel(dX, yD+53, 'AUTOMATIC TRANSFER SW', 'middle', 8, 700);
+      chain+=_olLabel(dX, yD+65, 'OPEN TRANSITION \u00b7 NO PARALLEL', 'middle', 6.5);
+      yD+=76;
+      chain+=_olWire(dX, yD, dX, yBusFeed-34);
+      chain+=_olWire(dX, yBusFeed-34, busX, yBusFeed-34);
+      chain+=_olLabel(Math.round((dX+busX)/2), yBusFeed-39,
+        'STANDBY \u2014 OPEN TRANSITION, NO EXPORT', 'middle', 6.5, 600);
+      chain+=condCallout(dX+72, yD-30,
+        ['(N) EMERGENCY FEED', 'OPEN TRANSITION \u2014 SET NEVER CLOSES ON LIVE UTILITY',
+         'NOT AN INTERCONNECTED SOURCE']);
+    }
+    chain+=_olLabel(dX, yD+18,
+      'ARRANGEMENT ASSUMED FROM DER TYPE \u2014 CONFIRM WITH UTILITY', 'middle', 6, 400);
+    if(yBotUsed<yD+30) yBotUsed=yD+30;
   }
 
   var y = yBusFeed;
