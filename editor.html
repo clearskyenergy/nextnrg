@@ -19884,7 +19884,8 @@ function _initGMap(address){
     const loc=results[0].geometry.location;
     const zoom=parseInt(document.getElementById('map-zoom').value)||18;
     if(!_gmap){
-      _gmap=new google.maps.Map(md,{center:loc,zoom,mapTypeId:'satellite',tilt:0,streetViewControl:false,fullscreenControl:false,isFractionalZoomEnabled:false});
+      _gmap=new google.maps.Map(md,{center:loc,zoom,mapTypeId:'satellite',tilt:0,streetViewControl:false,fullscreenControl:false,isFractionalZoomEnabled:false,
+        gestureHandling:'greedy'   /* interactive; user pans/zooms, then Lock */});
       /* Publish it so every consumer sees the same map, whichever
          binding they happen to read. */
       window._gmap=_gmap;
@@ -19911,7 +19912,15 @@ function _initGMap(address){
     _gmapMarkers.push(new google.maps.Marker({position:loc,map:_gmap,title:address}));
     document.getElementById('gmap-status').textContent='OK Satellite loaded -- click   Lock to place equipment';
     document.getElementById('lock-btn').style.display='block';
-    window._mapLocked=false;
+    /* Use the single source of truth. Setting window._mapLocked on its own
+       left FOUR other layers untouched — #sc sits on top of the map and
+       swallows every pointer event, _gmapDiv/wrap/frame keep their
+       pointer-events, #gmap-block may still be shown, and gestureHandling
+       stays at Google's default. The visible result on a brand-new project
+       was a satellite image that rendered fine but would not pan or zoom.
+       setMapInteractive(true) clears all of them together. */
+    if(typeof setMapInteractive==='function'){ setMapInteractive(true); }
+    else { window._mapLocked=false; }
     showBanner('wiz','  Live map loaded \u2014 pan and place freely.');
   });
 }
