@@ -29628,6 +29628,27 @@ function _ppFld(label,id,ph){
   return '<div style="margin-bottom:6px"><label style="font-size:9px;color:var(--sub);display:block;margin-bottom:2px">'+label+'</label>'+
     '<input type="text" id="'+id+'" placeholder="'+(ph||'')+'" style="width:100%;padding:5px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:11px;box-sizing:border-box"></div>';
 }
+/* IS THIS ELEMENT A PIECE OF ELECTRICAL KIT?
+   ------------------------------------------------------------------
+   Two shapes exist on the canvas and they are easy to confuse:
+
+     type:'eq'      placed from the ribbon — role on .eqId
+     type:'evgear'  placed by a GUIDED BUILD — role on .evKind/.bgbRole
+
+   Consumer after consumer tested only `type==='eq'`, so anything a guided
+   build produced was skipped: it never reached the plot-plan extent, the
+   equipment overlay, the system spec, the inventory or the BESS count.
+   That is the single disconnect behind "it shows up when I draw it but not
+   when I use the guided build". One predicate now, used by all of them. */
+function _eqRole(el){
+  if(!el) return null;
+  if(el.type==='eq') return el.eqId||null;
+  if(el.type==='evgear') return el.evKind||el.bgbRole||el.evRole||null;
+  return null;
+}
+function _isEq(el){ return !!_eqRole(el); }
+window._eqRole=_eqRole; window._isEq=_isEq;
+
 function _ppFindAssembly(){
   for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].kind==='assembly') return S.shapes[i]; }
   /* A guided build does not create an 'assembly' SHAPE — it places a BESS
@@ -30018,7 +30039,7 @@ function _ppSceneExtentPx(asm){
      so the plot plan fits the whole guided-build layout, not just the BESS */
   if(S.elements){
     for(var e=0;e<S.elements.length;e++){
-      var el=S.elements[e]; if(el.type!=='eq') continue;
+      var el=S.elements[e]; if(!_isEq(el)) continue;
       var exc=el.x+(el.w||36)/2, eyc=el.y+(el.w||36)/2;
       minx=Math.min(minx,exc); maxx=Math.max(maxx,exc);
       miny=Math.min(miny,eyc); maxy=Math.max(maxy,eyc);
@@ -30186,7 +30207,7 @@ function _ppDrawEquipment(asm, cxA, cyA, pxPerFt){
     var eqLabels={ ems:'EMS', util_poi:'UTILITY POI', der_poi:'DER POI', xfmr:'XFMR',
                    meter:'M', panel:'PANEL', charger:'EVSE', jbox:'JB', disco:'DISC', pcs:'PCS' };
     for(var ei=0;ei<S.elements.length;ei++){
-      var el=S.elements[ei]; if(el.type!=='eq') continue;
+      var el=S.elements[ei]; if(!_isEq(el)) continue;
       var w0=(el.w||36)*scale; if(!(w0>8)) w0=14;
       var ex=mapX(el.x+(el.w||36)/2), ey=mapY(el.y+(el.w||36)/2);
       var half=w0/2;
@@ -31106,8 +31127,8 @@ function _ppDynamicNotes(){
     der_poi:'DER Point of Interconnection', xfmr:'step-up transformer', meter:'utility revenue meter',
     panel:'distribution panel', charger:'EV charger', jbox:'junction box',
     disco:'AC disconnect', pcs:'power conversion system (PCS)' };
-  if(S.elements){ for(i=0;i<S.elements.length;i++){ el=S.elements[i]; if(el.type!=='eq') continue;
-    var nm=eqName[el.eqId]||(el.label||'equipment'); eqCount[nm]=(eqCount[nm]||0)+1; } }
+  if(S.elements){ for(i=0;i<S.elements.length;i++){ el=S.elements[i]; if(!_isEq(el)) continue;
+    var nm=eqName[_eqRole(el)]||(el.label||'equipment'); eqCount[nm]=(eqCount[nm]||0)+1; } }
   /* -- BESS fleet -- */
   var fleet=(typeof _ppCollectFleet==='function')?_ppCollectFleet():{units:0};
   /* -- shapes: EV chargers, DER, fence, bollards, grounding -- */
@@ -31179,8 +31200,8 @@ function _ppBuildInventory(){
     meter:'Utility meter', panel:'Distribution panel', charger:'EV charger', jbox:'Junction box',
     disco:'AC disconnect', pcs:'PCS' };
   var i;
-  if(S.elements){ for(i=0;i<S.elements.length;i++){ var el=S.elements[i]; if(el.type!=='eq') continue;
-    var nm=eqName[el.eqId]||el.label||'Equipment'; inv.equipment[nm]=(inv.equipment[nm]||0)+1; } }
+  if(S.elements){ for(i=0;i<S.elements.length;i++){ var el=S.elements[i]; if(!_isEq(el)) continue;
+    var nm=eqName[_eqRole(el)]||el.label||'Equipment'; inv.equipment[nm]=(inv.equipment[nm]||0)+1; } }
   if(S.shapes){ for(i=0;i<S.shapes.length;i++){ var sh=S.shapes[i];
     if(sh.kind==='evpost'||sh.kind==='evcab'||sh.kind==='evunit'||sh.kind==='evl2'){
       inv.ev_chargers.push({ model: sh.model||sh.label||'EV charger', kw: sh.kw||null }); }
@@ -31773,7 +31794,7 @@ function _olCountStrings(){
   if(S.elements){
     for(var j=0;j<S.elements.length;j++){
       var el=S.elements[j];
-      if(el && el.type==='eq' && /bess/i.test(el.eqId||'')) n++;
+      if(el && /bess/i.test(_eqRole(el)||'')) n++;
     }
   }
   return n>0?n:1;
@@ -31798,6 +31819,12 @@ function _olClassifyType(t){
   if(t==='jbox') return 'jbox';
   if(t==='ups') return 'cabinet';           // power cabinet
   if(t==='pole'||t==='building') return 'service';
+  /* Guided-build role names. 'service' is the utility POI node the guided
+     builds place, and 'loads' / 'datacenter' are the load node. Neither
+     appeared here, so both were dropped from the one-line — the drawing
+     ended at the switchgear with no source and no load. */
+  if(t==='service') return 'service';
+  if(t==='loads'||t==='datacenter'||t==='datactr') return 'loads';
   if(t==='charger') return 'charger';
   if(t==='evpost'||t==='evunit'||t==='evcab'||t==='evl2'||t==='evstencil') return 'charger';
   if(t==='solar'||t==='dersolar'||t==='derwind'||t==='deralt'||t==='genset') return 'der';
@@ -31943,7 +31970,7 @@ function _olInventoryText(){
   if(i.bess)  bits.push('BESS '+mw(i.bessKw)+(i.bessKwh?(' / '+(i.bessKwh>=1000?(i.bessKwh/1000).toFixed(2)+' MWh':Math.round(i.bessKwh)+' kWh')):''));
   if(i.solar) bits.push('Solar '+mw(i.solarKw)+'-DC');
   if(i.ev)    bits.push('EV '+i.evCount+' charger'+(i.evCount>1?'s':'')+(i.evKw?(' / '+mw(i.evKw)):''));
-  if(i.der)   bits.push('DER '+(i.derKind?i.derKind+' ':'')+mw(i.derKw));
+  if(i.der && i.derKw>0) bits.push('DER '+(i.derKind?i.derKind+' ':'')+mw(i.derKw));
   if(i.load){
     bits.push((i.loadKind==='datacenter'?'Data centre ':'Building load ')
       + mw(i.loadKw)
@@ -61770,11 +61797,126 @@ window._crmToastModal=_crmToastModal;
     (s.elements || []).forEach(add);
     (s.shapes || []).forEach(add);
 
+    /* GUIDED-BUILD RUNS HAVE ONLY ONE NAMED END.
+       _dcfcConduitAlongRun() records fromId (the equipment) and leaves
+       toId null, because the other end is a point on a shared TRENCH, not
+       a device. Every such conduit therefore failed the test below and was
+       discarded — so the generator received nodes with no edges at all and
+       had no chain to draw. That is the last link in the guided-build
+       disconnect: the kit was found, but nothing joined it up.
+
+       Reconstruct the missing end from the run: equipment placed on the
+       same trench, in placement order, is what the trench connects. */
+    /* Inference is DERIVED, so it lives in a local map — never on the
+       conduit. Writing it onto the object would persist a guessed endpoint
+       into the saved project, where later code could not tell it from a real
+       one the user drew. */
+    var inferredTo = {};
+    var ordered = {};
+    (function reconnectTrenchRuns(){
+      var byRun={};
+      (s.conduits||[]).forEach(function(c){
+        if(!c || !c.evRun) return;
+        if(c.fromId==null || c.toId!=null) return;      /* nothing to infer */
+        (byRun[c.evRun]=byRun[c.evRun]||[]).push(c);
+      });
+      Object.keys(byRun).forEach(function(runId){
+        var list=byRun[runId];
+        /* Order by DISTANCE TRAVELLED ALONG THE TRENCH, not by raw x/y.
+           A trench that turns back on itself — out, down, and west again,
+           which is the common shape when equipment lines a building — has
+           taps whose x order bears no relation to their order along the
+           run. Sorting on x produced chains like BESS -> POI -> DISCO ->
+           XFMR -> SWGR: every device present, wired in an order that never
+           existed. Projecting each tap onto the polyline and measuring how
+           far along it lands gives the true sequence for any shape. */
+        var runPts = null;
+        try{
+          var rr=(s._trenches||[]).filter(function(t){ return t && t.id===runId; })[0];
+          runPts = rr && rr.pts;
+        }catch(e){}
+        function alongRun(pt){
+          if(!runPts || runPts.length<2 || !pt) return 0;
+          var best=Infinity, bestD=0, acc=0;
+          for(var i=1;i<runPts.length;i++){
+            var a=runPts[i-1], b=runPts[i];
+            var dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy;
+            var t=L2 ? Math.max(0, Math.min(1, ((pt.x-a.x)*dx+(pt.y-a.y)*dy)/L2)) : 0;
+            var px=a.x+t*dx, py=a.y+t*dy;
+            var d=Math.hypot(pt.x-px, pt.y-py);
+            if(d<best){ best=d; bestD=acc+Math.hypot(px-a.x, py-a.y); }
+            acc+=Math.hypot(dx,dy);
+          }
+          return bestD;
+        }
+        function tapOf(c){ return (c.pts && c.pts.length) ? c.pts[c.pts.length-1] : null; }
+        list.sort(function(p,q){
+          var pa=tapOf(p), qa=tapOf(q);
+          if(!pa||!qa) return 0;
+          if(runPts && runPts.length>1) return alongRun(pa)-alongRun(qa);
+          return (pa.x-qa.x)||(pa.y-qa.y);      /* no run geometry: best effort */
+        });
+        for(var i=0;i<list.length-1;i++){
+          var here=list[i], next=list[i+1];
+          if(here.toId==null && next.fromId!=null && next.fromId!==here.fromId){
+            inferredTo[here.id] = next.fromId;
+          }
+        }
+        /* Remember the ends so separate runs can be joined below. */
+        ordered[runId] = list;
+      });
+
+      /* JOIN RUN TO RUN.
+         The guided build chains trenches: run 2 starts where run 1 ended
+         (DCFC._lastEnd). Inferring only WITHIN a run therefore left the
+         last device on run 1 unconnected to the first on run 2 — the chain
+         silently broke at every trench boundary, so a five-device layout
+         drawn as two runs produced two disjoint fragments instead of one
+         line. Join them by matching each run's end point to the next run's
+         start. */
+      var runIds = Object.keys(ordered);
+      if (runIds.length > 1) {
+        var geom = {};
+        runIds.forEach(function(rid){
+          try{
+            var rr=(s._trenches||[]).filter(function(t){ return t && t.id===rid; })[0];
+            if(rr && rr.pts && rr.pts.length>1){
+              geom[rid] = { a: rr.pts[0], b: rr.pts[rr.pts.length-1] };
+            }
+          }catch(e){}
+        });
+        runIds.forEach(function(rid){
+          var g=geom[rid]; if(!g) return;
+          var mine=ordered[rid]; if(!mine || !mine.length) return;
+          var tail=mine[mine.length-1];
+          if(tail.toId!=null || inferredTo[tail.id]!=null) return;   /* already joined */
+
+          /* Which other run begins closest to where this one ends? */
+          var bestId=null, bestD=Infinity;
+          runIds.forEach(function(oid){
+            if(oid===rid) return;
+            var og=geom[oid]; if(!og) return;
+            var d=Math.hypot(og.a.x-g.b.x, og.a.y-g.b.y);
+            if(d<bestD){ bestD=d; bestId=oid; }
+          });
+          /* Only join runs that actually meet — a distant run is a separate
+             circuit, not a continuation. 6 ft at typical scale. */
+          if(bestId && bestD<=40){
+            var head=(ordered[bestId]||[])[0];
+            if(head && head.fromId!=null && head.fromId!==tail.fromId){
+              inferredTo[tail.id]=head.fromId;
+            }
+          }
+        });
+      }
+    })();
+
     var edges = [];
     (s.conduits || []).forEach(function (c) {
       if (!c) return;
       var a = (c.fromId != null) ? c.fromId : c.fromElId;
-      var b = (c.toId != null) ? c.toId : c.toElId;
+      var b = (c.toId != null) ? c.toId
+            : (c.toElId != null ? c.toElId : inferredTo[c.id]);
       if (a == null || b == null || a === b) return;
       if (!nodes[a] || !nodes[b]) return;          /* one end is not one-line kit */
       edges.push({
