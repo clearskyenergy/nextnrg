@@ -45808,6 +45808,9 @@ window._crmToastModal=_crmToastModal;
     if(!s||!m||!sph()) return {shapes:0,conduits:0,elements:0,skipped:0};
     clear();
     var count={shapes:0,conduits:0,elements:0,skipped:0}, P=ppf();
+    /* Record WHICH objects the native layer actually drew, so the legacy
+       layer can be hidden per object instead of all-or-nothing. */
+    _drawn={shape:{},conduit:{}};
 
     (s.shapes||[]).forEach(function(sh){
       if(!sh._geoPts || !sh._geoPts.length){ count.skipped++; return; }
@@ -45838,7 +45841,7 @@ window._crmToastModal=_crmToastModal;
               paths:ring, map:MAP(), strokeColor:col, strokeWeight:1.5, strokeOpacity:.95,
               fillColor:col, fillOpacity:.55, clickable:false, zIndex:7
             }));
-            count.shapes++; return;
+            count.shapes++; _drawn.shape[sh.id]=1; return;
           }
         }
         /* Artwork where we can. GroundOverlay cannot rotate, so a rotated
@@ -45847,15 +45850,15 @@ window._crmToastModal=_crmToastModal;
         var glyphKind = (sh.kind==='evstencil'||sh.kind==='adastencil');
         if(glyphKind){
           var ov=stencilOverlay(sh, sh._geoPts[0], wF, hF);
-          if(ov){ objs.push(ov); count.shapes++; return; }
+          if(ov){ objs.push(ov); count.shapes++; _drawn.shape[sh.id]=1; return; }
         }
         var r=rectFt(sh._geoPts[0], wF, hF, sh.rot||0);
-        if(r){ objs.push(poly(r,col,0.18,{obj:sh,__single:true})); count.shapes++; }
+        if(r){ objs.push(poly(r,col,0.18,{obj:sh,__single:true})); count.shapes++; _drawn.shape[sh.id]=1; }
         return;
       }
       var pts=sh._geoPts.filter(Boolean);
-      if(pts.length>=3){ objs.push(poly(pts,col,0.18,{obj:sh})); count.shapes++; }
-      else if(pts.length===2){ objs.push(line(pts,col)); count.shapes++; }
+      if(pts.length>=3){ objs.push(poly(pts,col,0.18,{obj:sh})); count.shapes++; _drawn.shape[sh.id]=1; }
+      else if(pts.length===2){ objs.push(line(pts,col)); count.shapes++; _drawn.shape[sh.id]=1; }
       else count.skipped++;
     });
 
@@ -45863,7 +45866,7 @@ window._crmToastModal=_crmToastModal;
       var pts=(c._geoPts||[]).filter(Boolean);
       if(pts.length<2){ count.skipped++; return; }
       objs.push(line(pts, c.color||'#00D4FF', false));
-      count.conduits++;
+      count.conduits++; _drawn.conduit[c.id]=1;
     });
 
     /* EQUIPMENT IS NOT DRAWN NATIVELY.
@@ -45900,8 +45903,43 @@ window._crmToastModal=_crmToastModal;
     if(els && els.style.display==='none') els.style.display='';
   }
 
+  /* PER-OBJECT LEGACY VISIBILITY.
+     ------------------------------------------------------------------
+     hideLegacy() is all-or-nothing: #csvg only disappears once EVERY
+     object carries a lat/lng. That is the right instinct - an unanchored
+     shape must never become invisible - but the cost is that ONE
+     unanchored object keeps the whole pixel-space drawing on screen.
+     Every anchored conduit is then drawn twice: once natively (correct,
+     geo-anchored) and once in pixel space. The pixel copy does not track
+     the map, so it drifts apart on the first pan or zoom, and the
+     engineering geometry visibly disagrees with the native layer.
+
+     Resolve it per object instead. build() records what it actually drew;
+     hide exactly those legacy nodes and leave the stragglers visible, so
+     nothing ever vanishes and nothing is ever drawn twice. */
+  function syncLegacyPerObject(active){
+    var s=S_(); if(!s) return;
+    function apply(sel, hide){
+      var nodes=document.querySelectorAll(sel);
+      for(var i=0;i<nodes.length;i++){ nodes[i].style.display = hide ? 'none' : ''; }
+    }
+    function q(v){ return String(v).replace(/["\\]/g,'\\$&'); }
+
+    (s.conduits||[]).forEach(function(c){
+      if(!c || c.id==null) return;
+      apply('[data-cid="'+q(c.id)+'"]', !!(active && _drawn.conduit[c.id]));
+      /* Labels are separate nodes keyed by the same id. */
+      apply('[data-clbl-id="'+q(c.id)+'"]', !!(active && _drawn.conduit[c.id]));
+    });
+    (s.shapes||[]).forEach(function(sh){
+      if(!sh || sh.id==null) return;
+      apply('[data-shid="'+q(sh.id)+'"]', !!(active && _drawn.shape[sh.id]));
+    });
+  }
+
   var warned=false;
   var syncMap=null;
+  var _drawn={shape:{},conduit:{}};
   function sync(force){
     if(!on) return;
     /* If the map instance changed, every existing object belongs to the
@@ -45926,6 +45964,11 @@ window._crmToastModal=_crmToastModal;
        coverage, not the assumption. */
     var complete = (total===0) || (c.skipped===0 && drawn>0);
     hideLegacy(complete);
+    /* When coverage is partial, #csvg stays up as the safety net — but only
+       the objects the native layer could NOT draw should still be showing
+       through it. Everything else would otherwise be double-drawn. */
+    if(!complete) syncLegacyPerObject(true);
+    else syncLegacyPerObject(false);
 
     if(!complete && !warned){
       warned=true;
@@ -45949,7 +45992,9 @@ window._crmToastModal=_crmToastModal;
       return true;
     },
     disable:function(){
-      on=false; clear(); hideLegacy(false);
+      /* Restore every legacy node before dropping out — otherwise anything
+         hidden while native was on stays invisible with nothing drawing it. */
+      on=false; clear(); syncLegacyPerObject(false); hideLegacy(false);
       if(timer){ clearInterval(timer); timer=null; }
       lastSig='';
       var b=document.getElementById('rb-native'); if(b) b.setAttribute('aria-pressed','false');
