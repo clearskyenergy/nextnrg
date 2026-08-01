@@ -23450,6 +23450,26 @@ function _geoSigOf(pts){
 }
 window._geoSigOf=_geoSigOf;
 
+/* Re-cutting a ground anchor reads the CURRENT view. Before the saved
+   center/zoom has been applied and settled, that view is wherever the map
+   happened to open — so a re-cut then bakes wrong coordinates into the saved
+   drawing permanently. Gate it: repair only after the first 'idle'. Fresh
+   stamping of never-anchored geometry is unaffected. */
+window._omegaViewSettled = window._omegaViewSettled || false;
+(function(){
+  function arm(){
+    try{
+      if(!window._gmap) return setTimeout(arm, 250);
+      google.maps.event.addListenerOnce(window._gmap,'idle',function(){
+        window._omegaViewSettled = true;
+      });
+      /* Fallback: never leave repair permanently disabled. */
+      setTimeout(function(){ window._omegaViewSettled = true; }, 8000);
+    }catch(e){ setTimeout(function(){ window._omegaViewSettled = true; }, 8000); }
+  }
+  arm();
+})();
+
 function _geoStampAll(){
   var ms=_liveMapState(); if(!ms) return;
   var sz=_getCanvasSize();
@@ -23499,6 +23519,7 @@ function _geoStampAll(){
           return;
         }
       }
+      if(shPartial && !window._omegaViewSettled) return;
       var shCut=sh.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
       for(var sc=0; sc<shCut.length; sc++){ if(!shCut[sc]) return; }   /* all or nothing */
       sh._geoPts=shCut;
@@ -23534,6 +23555,8 @@ function _geoStampAll(){
         }
       }
 
+      /* Repair only once the view is the saved one — see _omegaViewSettled. */
+      if(partial && !window._omegaViewSettled) return;
       var cut=c.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
       for(var ci=0; ci<cut.length; ci++){
         if(!cut[ci]){
@@ -44294,7 +44317,15 @@ window._crmToastModal=_crmToastModal;
   }
   function blocked(s){
     if(!s.hasMap || s.committedPlot || s.userLocked) return false;
-    return s.mapLocked || s.mapDivPointerEv==='none' || s.wrapPointerEv==='none'
+    /* SURFACE MODE: #gmap-wrap is the LEGACY iframe container. It is held
+       pointer-events:none on purpose — it blankets the canvas ABOVE the
+       reparented map, so making it interactive is what blocks the map, not
+       what frees it. Reading its 'none' as a lockout made this heal fire on
+       every cycle, undo itself, and fire again (the #1..#18 run in console). */
+    var surface = false;
+    try{ surface = document.body.classList.contains('omega-map-surface'); }catch(e){}
+    var wrapBad = !surface && s.wrapPointerEv==='none';
+    return s.mapLocked || s.mapDivPointerEv==='none' || wrapBad
         || s.blockOverlay==='block' || s.gestureHandling==='none';
   }
   function heal(why){
@@ -44471,7 +44502,86 @@ window._crmToastModal=_crmToastModal;
     wrapped=true;
   }
 
+  /* ── GHOST FINDER / RE-ANCHOR ───────────────────────────────────────────
+     A run whose ground anchor is wrong renders far from the rest of the
+     drawing — a faint stray line across the site. Wrong anchors are saved
+     data, so no code change removes them; they have to be re-cut from a view
+     that is known to be correct.
+
+     OmegaGeo.ghosts()   lists runs whose anchor sits far from the drawing's
+                         own centre of mass, with the distance in feet.
+     OmegaGeo.reanchor() drops those anchors and re-stamps them from the
+                         CURRENT view. Get the map showing the site correctly
+                         first — that view is what the new coordinates mean.
+                         Pass an id to fix one run: OmegaGeo.reanchor('C4').
+     ─────────────────────────────────────────────────────────────────────── */
+  function _geoCentre(){
+    var pts=[], S2=window.S;
+    if(!S2) return null;
+    (S2.conduits||[]).concat(S2.shapes||[]).forEach(function(o){
+      (o&&o._geoPts||[]).forEach(function(g){ if(g&&g.lat!=null) pts.push(g); });
+    });
+    (S2.elements||[]).forEach(function(e){
+      if(e&&e._geoLat!=null) pts.push({lat:e._geoLat,lng:e._geoLng});
+    });
+    if(!pts.length) return null;
+    /* Median, not mean — a ghost far out would drag a mean towards itself. */
+    var la=pts.map(function(p){return p.lat;}).sort(function(a,b){return a-b;});
+    var ln=pts.map(function(p){return p.lng;}).sort(function(a,b){return a-b;});
+    return { lat:la[Math.floor(la.length/2)], lng:ln[Math.floor(ln.length/2)] };
+  }
+  function _ftBetween(a,b){
+    var R=20902231; /* earth radius, feet */
+    var dLat=(b.lat-a.lat)*Math.PI/180, dLng=(b.lng-a.lng)*Math.PI/180;
+    var la=a.lat*Math.PI/180, lb=b.lat*Math.PI/180;
+    var h=Math.sin(dLat/2)*Math.sin(dLat/2)
+        + Math.sin(dLng/2)*Math.sin(dLng/2)*Math.cos(la)*Math.cos(lb);
+    return Math.round(2*R*Math.asin(Math.min(1,Math.sqrt(h))));
+  }
+  function _ghosts(limitFt){
+    var S2=window.S, c=_geoCentre(), out=[];
+    if(!S2||!c) return out;
+    var lim = limitFt||2000;
+    (S2.conduits||[]).forEach(function(k){
+      var g=(k._geoPts||[]).filter(Boolean)[0];
+      if(!g) return;
+      var d=_ftBetween(c,g);
+      if(d>lim) out.push({ id:k.id, kind:'conduit', feetFromSite:d });
+    });
+    (S2.shapes||[]).forEach(function(sh){
+      var g=(sh._geoPts||[]).filter(Boolean)[0];
+      if(!g) return;
+      var d=_ftBetween(c,g);
+      if(d>lim) out.push({ id:sh.id, kind:'shape', feetFromSite:d });
+    });
+    return out;
+  }
+
   window.OmegaGeo={
+    ghosts:function(limitFt){
+      var g=_ghosts(limitFt);
+      if(!g.length){ console.info('[geo] no run is anchored far from the site.'); return g; }
+      console.table?console.table(g):console.log(g);
+      console.info('[geo] '+g.length+' object(s) anchored away from the drawing. '
+        + 'Position the map correctly, then run OmegaGeo.reanchor().');
+      return g;
+    },
+    reanchor:function(id){
+      var S2=window.S; if(!S2) return 0;
+      var targets = id
+        ? (S2.conduits||[]).concat(S2.shapes||[]).filter(function(o){ return o && String(o.id)===String(id); })
+        : _ghosts().map(function(g){
+            return (g.kind==='conduit'?(S2.conduits||[]):(S2.shapes||[]))
+              .filter(function(o){ return o && String(o.id)===String(g.id); })[0];
+          }).filter(Boolean);
+      if(!targets.length){ console.info('[geo] nothing to re-anchor.'); return 0; }
+      window._omegaViewSettled = true;            /* this call IS the confirmation */
+      var n = (typeof window._geoInvalidate==='function') ? window._geoInvalidate(targets) : 0;
+      try{ if(window.OmegaNative) OmegaNative.refresh(); }catch(e){}
+      console.info('[geo] re-anchored '+n+' object(s) from the current view. '
+        + 'Check the drawing, then save.');
+      return n;
+    },
     status:function(){
       var o={ unanchored:pending(), pxPerFoot:ppf(), mapLive:!!live(), scaling:scaling };
       o.verdict = !o.mapLive ? 'No live map (absent, or plot frozen) - nothing can anchor yet.'
