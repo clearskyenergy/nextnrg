@@ -11772,7 +11772,95 @@ function _bessBackfill(){
   }
   return out;
 }
+/* ── ANCHOR REPAIR ────────────────────────────────────────────────────
+   A conduit only holds its ground position once every point carries a
+   lat/lng. _geoStampAll() does that automatically, but only when the map
+   can convert the point at the moment it runs — during load, while the
+   map is still settling, or on a project drawn before anchoring existed,
+   runs can end up with no anchor at all. They then sit in pixel space and
+   slide as soon as the view changes.
+
+   This stamps them from the CURRENT view, so the map must be showing the
+   site correctly before you run it — that view is what the coordinates
+   will mean. It reports what it could and could not do rather than
+   silently half-finishing. */
+function _anchorRepair(){
+  var s=(typeof S!=='undefined')?S:null;
+  var out={ conduits:{fixed:0, already:0, failed:0},
+            shapes:{fixed:0, already:0, failed:0},
+            elements:{fixed:0, already:0, failed:0}, note:'' };
+  if(!s) return out;
+
+  var ms=(typeof _liveMapState==='function')?_liveMapState():null;
+  if(!ms){
+    out.note='No live map \u2014 load the satellite view first; nothing can anchor without it.';
+    return out;
+  }
+  /* Use the SAME canvas size and converter the automatic stamper uses.
+     Measuring the canvas differently here would anchor everything to
+     coordinates a few feet off, which is worse than leaving it alone. */
+  var sz=(typeof _getCanvasSize==='function')?_getCanvasSize():null;
+  if(!sz){ out.note='Canvas size unavailable.'; return out; }
+  var toGeo=function(x,y){
+    try{ return _pxToLatLng(x,y,ms,sz.w,sz.h); }catch(e){ return null; }
+  };
+  function complete(o){
+    return o._geoPts && o.pts && o._geoPts.length===o.pts.length &&
+      o._geoPts.every(function(g){ return g && g.lat!=null && g.lng!=null; });
+  }
+
+  (s.conduits||[]).forEach(function(c){
+    if(!c || !c.pts || !c.pts.length) return;
+    if(complete(c)){ out.conduits.already++; return; }
+    var cut=c.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
+    for(var i=0;i<cut.length;i++){ if(!cut[i]){ out.conduits.failed++; return; } }
+    c._geoPts=cut; out.conduits.fixed++;
+  });
+
+  /* Shapes carry position in pts, boundary, exclusions AND tables — hand
+     them to the real stamper rather than reimplementing that here. */
+  (s.shapes||[]).forEach(function(sh){
+    if(!sh) return;
+    if(complete(sh)){ out.shapes.already++; return; }
+    try{
+      if(typeof _geoStampShape==='function'){ _geoStampShape(sh, toGeo, false); out.shapes.fixed++; }
+      else out.shapes.failed++;
+    }catch(e){ out.shapes.failed++; }
+  });
+
+  (s.elements||[]).forEach(function(el){
+    if(!el) return;
+    if(el._geoLat!=null && el._geoLng!=null){ out.elements.already++; return; }
+    var b=(typeof _elBox==='function')?_elBox(el):null;
+    var g=toGeo(b?b.cx:el.x, b?b.cy:el.y);
+    if(!g){ out.elements.failed++; return; }
+    el._geoLat=g.lat; el._geoLng=g.lng;
+    out.elements.fixed++;
+  });
+
+  var fixed=out.conduits.fixed+out.shapes.fixed+out.elements.fixed;
+  if(fixed){
+    try{ if(typeof pushHist==='function') pushHist(); }catch(e){}
+    try{ if(typeof _geoReprojectAll==='function') _geoReprojectAll(); }catch(e){}
+  }
+  return out;
+}
+
 window.OmegaRepair = {
+  anchors:function(){
+    var r=_anchorRepair();
+    if(r.note){ console.warn('[repair] '+r.note); return r; }
+    console.table?console.table({
+      conduits:r.conduits, shapes:r.shapes, elements:r.elements
+    }):console.log(r);
+    var fixed=r.conduits.fixed+r.shapes.fixed+r.elements.fixed;
+    var failed=r.conduits.failed+r.shapes.failed+r.elements.failed;
+    console.info('[repair] '+fixed+' object(s) anchored from the current view.'
+      + (failed?(' '+failed+' could not be converted \u2014 pan so the whole site is '
+                 +'on screen and run it again.'):'')
+      + (fixed?' They will now hold position through pan and zoom. Save the project.':''));
+    return r;
+  },
   bess:function(){
     var r=_bessBackfill();
     if(r.detail && r.detail.length){ console.table?console.table(r.detail):console.log(r.detail); }
