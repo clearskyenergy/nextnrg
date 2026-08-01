@@ -23486,15 +23486,71 @@ function _geoStampAll(){
        exactly as it was saved. */
     _each(S.shapes, function(sh){
       if(!sh.pts || !sh.pts.length) return;
-      if(sh._geoPts){ if(sh._geoSig===undefined) sh._geoSig=_geoSigOf(sh.pts); return; }
-      sh._geoPts=sh.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
+
+      var shPartial=false;
+      if(sh._geoPts){
+        if(sh._geoPts.length !== sh.pts.length) shPartial=true;
+        else for(var si=0; si<sh._geoPts.length; si++){
+          var sg=sh._geoPts[si];
+          if(!sg || sg.lat==null || sg.lng==null){ shPartial=true; break; }
+        }
+        if(!shPartial){
+          if(sh._geoSig===undefined) sh._geoSig=_geoSigOf(sh.pts);
+          return;
+        }
+      }
+      var shCut=sh.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
+      for(var sc=0; sc<shCut.length; sc++){ if(!shCut[sc]) return; }   /* all or nothing */
+      sh._geoPts=shCut;
       sh._geoSig=_geoSigOf(sh.pts);
     });
+    /* A PARTIAL ANCHOR IS WORSE THAN NONE.
+       toGeo() returns null for a point the current view cannot convert, and
+       the old code stored that null straight into _geoPts. _geoReprojectAll()
+       then walks the run and moves ONLY the points that have coordinates —
+       so on zoom one end of the conduit tracks the ground while the other
+       stays pinned to a screen pixel, and the run stretches across the map.
+       That is the "conduit jumps around when I zoom out" report.
+
+       Record an anchor only when EVERY point converted, and re-cut a set
+       that is already incomplete. Note this is not the speculative
+       re-stamping warned about above: that overwrote anchors which were
+       complete and correct. This only touches sets that are already broken,
+       and it re-cuts them from the pixels currently on screen — which is
+       exactly where the run is being drawn right now. */
     _each(S.conduits, function(c){
       if(!c.pts || !c.pts.length) return;
-      if(c._geoPts){ if(c._geoSig===undefined) c._geoSig=_geoSigOf(c.pts); return; }
-      c._geoPts=c.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
+
+      var partial = false;
+      if(c._geoPts){
+        if(c._geoPts.length !== c.pts.length) partial = true;
+        else for(var pi=0; pi<c._geoPts.length; pi++){
+          var gp=c._geoPts[pi];
+          if(!gp || gp.lat==null || gp.lng==null){ partial = true; break; }
+        }
+        if(!partial){
+          if(c._geoSig===undefined) c._geoSig=_geoSigOf(c.pts);
+          return;                              /* complete — leave it alone */
+        }
+      }
+
+      var cut=c.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
+      for(var ci=0; ci<cut.length; ci++){
+        if(!cut[ci]){
+          /* Still cannot convert every point. Leave the run unanchored rather
+             than half-anchored; the next pass tries again. */
+          if(partial && window.console){
+            console.warn('[omega/geo] conduit '+c.id+' has an incomplete ground anchor '
+              + 'and could not be re-cut from this view — it will not hold on zoom yet.');
+          }
+          return;
+        }
+      }
+      c._geoPts=cut;
       c._geoSig=_geoSigOf(c.pts);
+      if(partial && window.console){
+        console.info('[omega/geo] conduit '+c.id+' had a partial ground anchor; re-cut from the current view.');
+      }
     });
   }catch(e){ try{ console.warn('[omega/geo] stamp pass aborted:', e && e.message); }catch(_){} }
   if(_fail && window.console) console.warn('[omega/geo] '+_fail+' object(s) could not be anchored '
@@ -23560,6 +23616,13 @@ function _geoReprojectAll(){
     /* Conduits: reproject each routing point from its stored lat/lng. */
     _each(S.conduits, function(c){
       if(!c._geoPts || !c.pts) return;
+      /* Move the whole run or none of it. Advancing only the anchored points
+         is what tears a conduit apart across the map on zoom. */
+      if(c._geoPts.length !== c.pts.length) return;
+      for(var jc=0; jc<c._geoPts.length; jc++){
+        var gq=c._geoPts[jc];
+        if(!gq || gq.lat==null || gq.lng==null) return;
+      }
       for(var j=0;j<c.pts.length && j<c._geoPts.length;j++){
         var g2=c._geoPts[j]; if(!g2) continue;
         var px2=toPx(g2.lat,g2.lng); if(px2){ c.pts[j].x=px2.x; c.pts[j].y=px2.y; }
@@ -45948,7 +46011,7 @@ window._crmToastModal=_crmToastModal;
      Resolve it per object instead. build() records what it actually drew;
      hide exactly those legacy nodes and leave the stragglers visible, so
      nothing ever vanishes and nothing is ever drawn twice. */
-  function syncLegacyPerObject(active){
+  function syncLegacyPerObject(active, hideAll){
     var s=S_(); if(!s) return;
     function apply(sel, hide){
       var nodes=document.querySelectorAll(sel);
@@ -45958,13 +46021,15 @@ window._crmToastModal=_crmToastModal;
 
     (s.conduits||[]).forEach(function(c){
       if(!c || c.id==null) return;
-      apply('[data-cid="'+q(c.id)+'"]', !!(active && _drawn.conduit[c.id]));
+      var hide = hideAll ? !!active : !!(active && _drawn.conduit[c.id]);
+      apply('[data-cid="'+q(c.id)+'"]', hide);
       /* Labels are separate nodes keyed by the same id. */
-      apply('[data-clbl-id="'+q(c.id)+'"]', !!(active && _drawn.conduit[c.id]));
+      apply('[data-clbl-id="'+q(c.id)+'"]', hide);
     });
     (s.shapes||[]).forEach(function(sh){
       if(!sh || sh.id==null) return;
-      apply('[data-shid="'+q(sh.id)+'"]', !!(active && _drawn.shape[sh.id]));
+      apply('[data-shid="'+q(sh.id)+'"]',
+            hideAll ? !!active : !!(active && _drawn.shape[sh.id]));
     });
   }
 
@@ -46002,17 +46067,28 @@ window._crmToastModal=_crmToastModal;
        coverage, not the assumption. */
     var complete = (total===0) || (c.skipped===0 && drawn>0);
     lastComplete = complete;
-    hideLegacy(complete);
-    /* When coverage is partial, #csvg stays up as the safety net — but only
-       the objects the native layer could NOT draw should still be showing
-       through it. Everything else would otherwise be double-drawn. */
-    if(!complete) syncLegacyPerObject(true);
-    else syncLegacyPerObject(false);
+
+    /* Is the legacy pixel space still meaningful? Only while the canvas the
+       drawing was saved against is the one on screen. Once a stale frozen
+       snapshot has been swapped out for the live map, those coordinates point
+       at nothing — keeping them visible produces a faint, offset copy of the
+       drawing sitting wherever the old canvas happened to put it. That is a
+       ghost, not a safety net. */
+    var staleSpace = !!window._omegaStaleSnapshotCleared;
+
+    hideLegacy(complete || staleSpace);
+    if(!complete && !staleSpace) syncLegacyPerObject(true, false);
+    else syncLegacyPerObject(false, false);
 
     if(!complete && !warned){
       warned=true;
-      var msg=c.skipped+' object(s) have no lat/lng yet, so the original '
-            + 'drawing is being kept visible. They will switch to native once anchored.';
+      var msg = staleSpace
+        ? (c.skipped+' object(s) have no lat/lng and the saved pixel positions are '
+           + 'stale (the frozen snapshot they were drawn on is gone), so they are '
+           + 'hidden rather than shown in the wrong place. Run OmegaGeo.audit() to '
+           + 'find them, or OmegaNative.showLegacy() to see them where they were.')
+        : (c.skipped+' object(s) have no lat/lng yet, so the original '
+           + 'drawing is being kept visible. They will switch to native once anchored.');
       if(window.console) console.warn('[native] '+msg);
       if(typeof showBanner==='function'){ try{ showBanner('wiz', msg); }catch(e){} }
     }
@@ -46042,6 +46118,13 @@ window._crmToastModal=_crmToastModal;
     toggle:function(){ return on ? (OmegaNative.disable(), false) : OmegaNative.enable(); },
     isOn:function(){ return on; },
     refresh:function(){ sync(true); },
+    /* Bring the pixel-space drawing back on screen for inspection. Positions
+       may be stale; this is for finding lost objects, not for working in. */
+    showLegacy:function(){
+      hideLegacy(false); syncLegacyPerObject(false, false);
+      console.info('[native] legacy drawing shown. OmegaNative.refresh() to re-apply.');
+      return true;
+    },
     status:function(){
       /* Report on what is already drawn. An earlier version called build()
          here, which created a second set of map objects just for asking a
@@ -48176,6 +48259,11 @@ window._crmToastModal=_crmToastModal;
       var f=document.getElementById('frozen-map-img');
       if(f && getComputedStyle(f).display!=='none'){
         f.style.setProperty('display','none','important');
+        /* The saved drawing was positioned against THIS snapshot. Now that the
+           live map is underneath instead, every pixel coordinate refers to a
+           canvas that is gone — so pixel-space geometry can no longer be
+           trusted as a fallback. The native layer reads this flag. */
+        window._omegaStaleSnapshotCleared = true;
         if(!told){
           told=true;
           if(window.console) console.info('[frozen] stale snapshot hidden - showing the live map');
