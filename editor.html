@@ -19827,6 +19827,9 @@ async function _loadProject(id){
             _gmap.setCenter({lat:ms.lat,lng:ms.lng});
             _gmap.setZoom(ms.zoom||18);
           }
+          /* Track the view from here on, so a later save stores where the user
+             actually left the map — not the coordinates it opened at. */
+          try{ if(typeof _wireViewRecorder==='function') _wireViewRecorder(_gmap); }catch(e){}
           if(ms.locked){
             // Restore the LOCKED state directly (don't re-run the full lock
             // routine, which would re-fetch a snapshot and could shift the view).
@@ -20608,7 +20611,8 @@ function _initGMap(address){
     const loc=results[0].geometry.location;
     const zoom=parseInt(document.getElementById('map-zoom').value)||18;
     if(!_gmap){
-      _gmap=new google.maps.Map(md,{center:loc,zoom,mapTypeId:'satellite',tilt:0,streetViewControl:false,fullscreenControl:false,isFractionalZoomEnabled:false});
+      _gmap=new google.maps.Map(md,{center:loc,zoom,mapTypeId:'satellite',tilt:0,streetViewControl:false,fullscreenControl:false,isFractionalZoomEnabled:false,
+        gestureHandling:'greedy'   /* interactive; user pans/zooms, then Lock */});
       /* Publish it so every consumer sees the same map, whichever
          binding they happen to read. */
       window._gmap=_gmap;
@@ -20618,6 +20622,8 @@ function _initGMap(address){
       // Continuously record the LIVE view so Lock freezes exactly what's on
       // screen (not the originally-typed address). Fixes the "map jumps to a
       // different place on lock" bug.
+      /* Shared recorder — see _wireViewRecorder. Kept local here too so the
+         address path still works if that helper is not yet defined. */
       var _recLive=function(){
         try{
           var c=_gmap.getCenter();
@@ -28356,6 +28362,51 @@ function _getCanvasSize() {
    ══════════════════════════════════════════════════════════════════════ */
 
 /* Current live-map state, or null if no live map / frozen. */
+/* RECORD THE LIVE VIEW ON EVERY MAP.
+   Save reads _gmap.getCenter() first and falls back to window._lastCenter.
+   The recorder keeping _lastCenter fresh was wired only on the address path;
+   the project-RESTORE path built its map without it. On a reopened project
+   the fallback therefore held the view the project was FIRST created at, and
+   any save that could not read the live map wrote that stale centre back —
+   so reopening landed there instead of where the work was left. */
+function _wireViewRecorder(map){
+  try{
+    if(!map || map.__omegaViewRec) return;
+    map.__omegaViewRec = true;
+    var rec=function(){
+      try{
+        var c=map.getCenter(); if(!c) return;
+        window._lastCenter={lat:c.lat(),lng:c.lng()};
+        window._lastZoom=map.getZoom();
+      }catch(e){}
+    };
+    google.maps.event.addListener(map,'idle',rec);
+    google.maps.event.addListener(map,'center_changed',rec);
+    google.maps.event.addListener(map,'zoom_changed',rec);
+    rec();
+  }catch(e){}
+}
+window._wireViewRecorder=_wireViewRecorder;
+
+/* What a save would write right now. */
+window.OmegaView={
+  status:function(){
+    var m=(typeof _gmap!=='undefined'&&_gmap)?_gmap:window._gmap, live=null;
+    try{ var c=m&&m.getCenter(); if(c) live={lat:+c.lat().toFixed(6),lng:+c.lng().toFixed(6),zoom:m.getZoom()}; }catch(e){}
+    var o={ liveMap:!!m,
+            liveView: live?JSON.stringify(live):'(unreadable)',
+            recorded: window._lastCenter
+              ? JSON.stringify({lat:+window._lastCenter.lat.toFixed(6),
+                                lng:+window._lastCenter.lng.toFixed(6),
+                                zoom:window._lastZoom}) : '(none)',
+            locked:!!window._mapLocked };
+    o.willSave = live ? o.liveView : o.recorded;
+    console.table?console.table(o):console.log(o);
+    console.info('[view] a save right now would store: '+o.willSave);
+    return o;
+  }
+};
+
 function _liveMapState(){
   try{
     /* The map may live on EITHER binding: _initGMap (the address path)
@@ -45953,8 +46004,15 @@ function setMapInteractive(on, intent){
     var fr   = document.getElementById('gmap-frame');
     var blk  = document.getElementById('gmap-block');
     if(gmd){ gmd.style.pointerEvents=pe; gmd.style.touchAction=ta; }
-    if(wrap) wrap.style.pointerEvents=pe;
-    if(fr)   fr.style.pointerEvents=pe;
+    /* SURFACE MODE: #_gmapDiv has been reparented OUT of #gmap-wrap, so the
+       wrap and frame are legacy containers sitting ABOVE the map. Making them
+       interactive drops a full-canvas sheet over it that eats every mouse
+       event — the map then renders but will not pan or zoom, while the
+       compass (programmatic panBy) still works. Hold them inert here. */
+    var _surface=false;
+    try{ _surface=document.body.classList.contains('omega-map-surface'); }catch(e){}
+    if(wrap) wrap.style.pointerEvents = _surface ? 'none' : pe;
+    if(fr)   fr.style.pointerEvents   = _surface ? 'none' : pe;
     if(blk)  blk.style.display = on ? 'none' : 'block';
     /* CRITICAL for desktop + touch: #sc sits on TOP of the map and, by
        default, catches every mouse/touch event — so an unlocked live map
@@ -49403,6 +49461,14 @@ window._crmToastModal=_crmToastModal;
   }
   function blocked(s){
     if(!s.hasMap || s.committedPlot || s.userLocked) return false;
+    /* In surface mode #gmap-wrap is held pointer-events:none deliberately —
+       see setMapInteractive. Reading that as a lockout made this heal fire,
+       undo itself and fire again on every cycle. */
+    try{
+      if(document.body.classList.contains('omega-map-surface') && s.wrapPointerEv==='none'
+         && !s.mapLocked && s.mapDivPointerEv!=='none'
+         && s.blockOverlay!=='block' && s.gestureHandling!=='none') return false;
+    }catch(e){}
     return s.mapLocked || s.mapDivPointerEv==='none' || s.wrapPointerEv==='none'
         || s.blockOverlay==='block' || s.gestureHandling==='none';
   }
