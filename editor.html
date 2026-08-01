@@ -61715,11 +61715,36 @@ window._crmToastModal=_crmToastModal;
       if (MAP[o.eqId]) return MAP[o.eqId];
     }
     if (o.type === 'bess-asm') return 'bess';
+    /* GUIDED-BUILD EQUIPMENT.
+       The guided builds place kit as type:'evgear' with the role on
+       .evKind / .bgbRole — there is no .eqId and no .kind. typeOf()
+       consulted neither, so every piece returned null, readTopology()
+       dropped it, and the generated one-line contained only the PV chain
+       that happened to come from shapes. That is why a BESS plainly on
+       the canvas never reached E2.0 however the diagram type was set. */
+    var gk = o.evKind || o.bgbRole || o.evRole;
+    if (gk) {
+      if (gk === 'ems') return 'pcs';
+      if (MAP[gk]) return MAP[gk];
+      if (gk === 'bess') return 'bess';
+      if (gk === 'service') return MAP['service'] || 'utility';
+      if (gk === 'loads' || gk === 'datacenter') return MAP['loads'] || 'panel';
+    }
     return null;
   }
 
   function labelOf(o, t) {
     var name = o.label || o.name || '';
+    /* A guided-build BESS carries its configuration on the element — use it
+       so the generated sheet names the unit and its rating rather than a
+       bare "BESS Assembly". */
+    if (t === 'bess' && (o.bessModel || o.bessKwh || o.bgbKwh)) {
+      var kwh = o.bessKwh || o.bgbKwh, kw = o.bessKw || o.bgbKw;
+      var size = (kwh ? ((kwh >= 1000 ? (kwh / 1000).toFixed(2) + ' MWh' : Math.round(kwh) + ' kWh')) : '')
+               + (kw ? ((kwh ? ' / ' : '') + (kw >= 1000 ? (kw / 1000).toFixed(2) + ' MW' : Math.round(kw) + ' kW')) : '');
+      var nm = o.bessModel || name || 'BESS';
+      return size ? (nm + '\n' + size) : nm;
+    }
     if (!name) {
       try { name = (SLD_TYPES[t] && SLD_TYPES[t].label.split('\n')[0]) || t; } catch (e) { name = t; }
     }
