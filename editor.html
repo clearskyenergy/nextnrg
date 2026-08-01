@@ -45794,12 +45794,43 @@ window._crmToastModal=_crmToastModal;
   }
 
   /* Signature of the geo state, so we only rebuild when it actually changes. */
+  /* Read a lat/lng out of either a LatLng instance or a plain literal. */
+  function _ll(p){
+    if(!p) return '_';
+    var la = (typeof p.lat==='function') ? p.lat() : p.lat;
+    var ln = (typeof p.lng==='function') ? p.lng() : p.lng;
+    if(la==null || ln==null) return '_';
+    return (+la).toFixed(6)+','+(+ln).toFixed(6);
+  }
+  function _lls(pts){
+    if(!pts || !pts.length) return '';
+    var a=[]; for(var i=0;i<pts.length;i++) a.push(_ll(pts[i]));
+    return a.join(';');
+  }
+
+  /* THE SIGNATURE MUST INCLUDE POSITION.
+     ------------------------------------------------------------------
+     This used to hash only the COUNT of geo points. Moving an object
+     therefore produced an identical signature, sync() hit its early
+     return, and the native layer was never rebuilt — it kept drawing the
+     object at its old coordinates. The legacy renderer, meanwhile, redraws
+     on every move. Result: the new position and the stale native copy on
+     screen at once, which is the "ghost layer" you see while dragging.
+     Hashing the actual coordinates makes a move a real change. */
   function sig(){
     var s=S_(); if(!s) return '';
     var a=[];
-    (s.shapes||[]).forEach(function(x){ a.push('s'+x.id+(x._geoPts?x._geoPts.length:0)+(x.wf||'')+(x.lf||'')); });
-    (s.conduits||[]).forEach(function(x){ a.push('c'+x.id+(x._geoPts?x._geoPts.length:0)); });
-    (s.elements||[]).forEach(function(x){ a.push('e'+x.id+(x._geoLat||'')); });
+    (s.shapes||[]).forEach(function(x){
+      a.push('s'+x.id+_lls(x._geoPts)+'|'+(x.rot||0)+'|'+(x.wf||'')+(x.lf||''));
+    });
+    (s.conduits||[]).forEach(function(x){
+      a.push('c'+x.id+_lls(x._geoPts)+'|'+(x.color||''));
+    });
+    (s.elements||[]).forEach(function(x){
+      a.push('e'+x.id+'|'+(x._geoLat==null?'':(+x._geoLat).toFixed(6))
+                     +','+(x._geoLng==null?'':(+x._geoLng).toFixed(6))
+                     +'|'+(x.rot||0));
+    });
     return a.join('|');
   }
 
@@ -45940,6 +45971,7 @@ window._crmToastModal=_crmToastModal;
   var warned=false;
   var syncMap=null;
   var _drawn={shape:{},conduit:{}};
+  var lastComplete=false;
   function sync(force){
     if(!on) return;
     /* If the map instance changed, every existing object belongs to the
@@ -45950,7 +45982,13 @@ window._crmToastModal=_crmToastModal;
     /* Make sure everything has a lat/lng before we try to draw from it. */
     try{ if(typeof _geoStampAll==='function') _geoStampAll(); }catch(e){}
     var s=sig();
-    if(!force && s===lastSig) return;
+    if(!force && s===lastSig){
+      /* Legacy nodes are destroyed and recreated on every move, and a fresh
+         node has no inline display — so re-assert per-object visibility even
+         when nothing else changed, or the duplicate flickers back. */
+      syncLegacyPerObject(!lastComplete);
+      return;
+    }
     lastSig=s;
     var c=build();
     var drawn=c.shapes+c.conduits+c.elements;
@@ -45963,6 +46001,7 @@ window._crmToastModal=_crmToastModal;
        shapes and see none of them. Hiding is now the reward for full
        coverage, not the assumption. */
     var complete = (total===0) || (c.skipped===0 && drawn>0);
+    lastComplete = complete;
     hideLegacy(complete);
     /* When coverage is partial, #csvg stays up as the safety net — but only
        the objects the native layer could NOT draw should still be showing
