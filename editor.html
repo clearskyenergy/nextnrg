@@ -29230,10 +29230,40 @@ function _geoStampAll(){
        fills in only what is missing, so an existing project keeps its
        anchors and gains the ones it never had (boundary, tables, cx/cy). */
     (S.shapes||[]).forEach(function(sh){ _geoStampShape(sh, toGeo, false); });
+    /* A PARTIAL ANCHOR IS WORSE THAN NONE.
+       toGeo() returns null for a point this view cannot convert, and storing
+       that null straight into _geoPts is what makes a run fly apart on zoom:
+       the reprojector below moves only the points that HAVE coordinates, so
+       one end tracks the ground while the other stays pinned to a screen
+       pixel. Record an anchor only when EVERY point converted, and re-cut a
+       set that is already incomplete — that one is already broken, so there
+       is nothing to preserve. */
     (S.conduits||[]).forEach(function(c){
-      if(c._geoPts) return;
-      if(c.pts && c.pts.length){
-        c._geoPts=c.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
+      if(!c.pts || !c.pts.length) return;
+
+      var partial=false;
+      if(c._geoPts){
+        if(c._geoPts.length!==c.pts.length) partial=true;
+        else for(var pi=0;pi<c._geoPts.length;pi++){
+          var gp=c._geoPts[pi];
+          if(!gp || gp.lat==null || gp.lng==null){ partial=true; break; }
+        }
+        if(!partial) return;                       /* complete — leave alone */
+      }
+
+      var cut=c.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
+      for(var ci=0;ci<cut.length;ci++){
+        if(!cut[ci]){
+          if(partial && window.console){
+            console.warn('[omega/geo] conduit '+c.id+' has an incomplete ground anchor '
+              + 'and could not be re-cut from this view — it will not hold on zoom yet.');
+          }
+          return;                                  /* leave unanchored, retry later */
+        }
+      }
+      c._geoPts=cut;
+      if(partial && window.console){
+        console.info('[omega/geo] conduit '+c.id+' had a partial ground anchor; re-cut from the current view.');
       }
     });
     /* Patch 24: guided-build runs live in S._trenches, NOT S.conduits.
@@ -29288,6 +29318,13 @@ function _geoReprojectAll(){
     /* Conduits: reproject each routing point from its stored lat/lng. */
     (S.conduits||[]).forEach(function(c){
       if(!c._geoPts || !c.pts) return;
+      /* Advancing only the anchored points is what tears a run across the map
+         on zoom. Move all of it, or leave it where it is. */
+      if(c._geoPts.length!==c.pts.length) return;
+      for(var jc=0;jc<c._geoPts.length;jc++){
+        var gq=c._geoPts[jc];
+        if(!gq || gq.lat==null || gq.lng==null) return;
+      }
       for(var j=0;j<c.pts.length && j<c._geoPts.length;j++){
         var g2=c._geoPts[j]; if(!g2) continue;
         var px2=toPx(g2.lat,g2.lng); if(px2){ c.pts[j].x=px2.x; c.pts[j].y=px2.y; }
@@ -31189,15 +31226,47 @@ function _ppRenderE0(sizeKey, street){
      form, then the assembly. */
   function gv(id){ var e=document.getElementById(id); return e?e.value:''; }
   function pref(){ for(var i=0;i<arguments.length;i++){ if(arguments[i]) return arguments[i]; } return ''; }
-  var model=pref(gv('pp-batmodel'), gv('ol-model'), (asm&&asm.model), 'GOTION BESS');
-  var mfr=pref(gv('pp-batmfr'), gv('ol-mfr'), 'Gotion');
+  /* The dialog fields are blank for a guided build — nothing typed them.
+     Fall back to the configuration stamped on the placed BESS and to
+     S.bessList, so the schedule prints the unit that is actually on the
+     drawing instead of a hardcoded default. */
+  var _sysB = (function(){
+    try{
+      var els=(S&&S.elements)||[];
+      for(var i=0;i<els.length;i++){
+        var e=els[i];
+        if(e && (e.bgbRole==='bess' || (e.type==='evgear'&&e.evKind==='bess'))){
+          return { mfr:'', model:e.bessModel||'',
+                   kwh:e.bessKwh||e.bgbKwh||null, kw:e.bessKw||e.bgbKw||null,
+                   placeholder:!!e.bessPlaceholder };
+        }
+      }
+      var b=(S&&S.bessList&&S.bessList[0])||null;
+      if(b) return { mfr:b.mfr||'', model:b.model||'',
+                     kwh:(parseFloat(b.kwh)||null)*(+(b.qty||1)),
+                     kw:(parseFloat(b.kw)||null)*(+(b.qty||1)),
+                     dcv:b.dcv||'', cellcfg:b.cellcfg||'',
+                     placeholder:!!b.placeholder };
+    }catch(e){}
+    return null;
+  })();
+  var model=pref(gv('pp-batmodel'), gv('ol-model'), (asm&&asm.model),
+                 (_sysB&&_sysB.model), 'GOTION BESS');
+  var mfr=pref(gv('pp-batmfr'), gv('ol-mfr'), (_sysB&&_sysB.mfr), 'Gotion');
+  /* "Gotion Gotion EDGE 160" — the model string already carries the maker,
+     so printing both duplicated it. Drop the prefix when it is redundant. */
+  if(mfr && model && String(model).toLowerCase().indexOf(String(mfr).toLowerCase())===0){
+    model = String(model).slice(String(mfr).length).replace(/^[\s\u2014-]+/,'');
+  }
+  if(_sysB && _sysB.placeholder) mfr = mfr || 'TBD';
   /* For a multi-unit cluster, cover-sheet energy/power reflect the FLEET total.
      Single unit (or none) falls back to the manual field / one-line value. */
   var kwh, kw;
   if(fleet.units>1 && fleet.totalKwh>0){
     kwh=fleet.totalKwh.toLocaleString(); kw=(fleet.totalKw||'').toLocaleString();
   } else {
-    kwh=pref(gv('pp-batkwh'), gv('ol-kwh')); kw=gv('ol-kw');
+    kwh=pref(gv('pp-batkwh'), gv('ol-kwh'), (_sysB&&_sysB.kwh?String(Math.round(_sysB.kwh)):''));
+    kw =pref(gv('ol-kw'), (_sysB&&_sysB.kw?String(Math.round(_sysB.kw)):''));
   }
   var cellcfg=gv('ol-cellcfg');
   var vrange=pref(gv('pp-batv'), gv('ol-vrange')), maxa=gv('ol-maxa');
@@ -32047,6 +32116,9 @@ function _olBuildModal(){
       '<label class="ol-mode-opt" style="flex:1;min-width:100px;font-size:11px;color:var(--text);display:flex;gap:6px;align-items:center;padding:7px 9px;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600"><input type="radio" name="ol-mode" value="bess" onchange="_olSyncMode()"> BESS</label>'+
       '<label class="ol-mode-opt" style="flex:1;min-width:100px;font-size:11px;color:var(--text);display:flex;gap:6px;align-items:center;padding:7px 9px;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600"><input type="radio" name="ol-mode" value="ev" onchange="_olSyncMode()"> EV Charging</label>'+
       '<label class="ol-mode-opt" style="flex:1;min-width:100px;font-size:11px;color:var(--text);display:flex;gap:6px;align-items:center;padding:7px 9px;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600"><input type="radio" name="ol-mode" value="both" onchange="_olSyncMode()"> Both</label>'+
+      '<label class="ol-mode-opt" style="flex:1;min-width:100px;font-size:11px;color:var(--text);display:flex;gap:6px;align-items:center;padding:7px 9px;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600"><input type="radio" name="ol-mode" value="solar" onchange="_olSyncMode()"> Solar + BESS</label>'+
+      '<label class="ol-mode-opt" style="flex:1;min-width:100px;font-size:11px;color:var(--text);display:flex;gap:6px;align-items:center;padding:7px 9px;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600"><input type="radio" name="ol-mode" value="der" onchange="_olSyncMode()"> DER / Genset</label>'+
+      '<label class="ol-mode-opt" style="flex:1;min-width:100px;font-size:11px;color:var(--text);display:flex;gap:6px;align-items:center;padding:7px 9px;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600"><input type="radio" name="ol-mode" value="compute" onchange="_olSyncMode()"> Compute / Load</label>'+
     '</div>'+
     '<div id="ol-mode-note" style="font-size:9.5px;color:var(--accent);margin:-4px 0 10px;line-height:1.4"></div>'+
 
@@ -32398,6 +32470,12 @@ function _olRender(sizeKey, withSched){
      Auto/BESS/EV/Both. EV-only renders the charging one-line from the actual
      canvas topology and returns. "Both" appends the EV section beneath BESS. */
   var _olMode=(typeof _olGetMode==='function')?_olGetMode():'bess';
+  /* solar / der / compute are not separate SHEETS — they are legs on the
+     same drawing, each rendered when the inventory says it exists. Selecting
+     one forces its leg on; the BESS spine and the other legs still draw if
+     they are present, because a sheet that hides half the system is wrong
+     however it was asked for. */
+  if(_olMode==='solar'||_olMode==='der'||_olMode==='compute') _olMode='bess';
   if(_olMode==='ev'){
     s+=_olRenderEV(d, areaL, areaR, usableW, H, false);
     s+=_olTitleBlock(W,H,d);
