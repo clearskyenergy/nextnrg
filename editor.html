@@ -1365,6 +1365,8 @@ window.onerror = function(msg, src, line, col, err) {
             <button class="rb-fly-item" onclick="rbFlyDo('fly-dc',function(){derSetDc('dc_leviathan')})"><span class="fi-ico">▦</span> Leviathan Pad <span class="fi-sub">1 MW</span></button>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-dc',function(){derSetDc('dc_triton')})"><span class="fi-ico">▦</span> Triton Pad <span class="fi-sub">120 kW</span></button>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-dc',function(){derSetDc('dc_cruiser')})"><span class="fi-ico">▦</span> Cruiser Pad <span class="fi-sub">35 kW</span></button>
+            <div class="rb-fly-head">Custom</div>
+            <button class="rb-fly-item" onclick="rbFlyDo('fly-dc',openDcCustomDialog)"><span class="fi-ico">✎</span> Custom Unit… <span class="fi-sub">set kW &amp; size</span></button>
           </div>
         </div>
       </div>
@@ -23443,27 +23445,39 @@ function _geoStampAll(){
   var ms=_liveMapState(); if(!ms) return;
   var sz=_getCanvasSize();
   var toGeo=function(x,y){ return _pxToLatLng(x,y,ms,sz.w,sz.h); };
+  /* One bad object used to abort the whole pass. Every collection sat
+     inside a single try{...}catch(e){} that swallowed the error, so an
+     element with a missing DOM node or an odd shape stopped shapes and
+     conduits from ever being anchored — silently. They then sat frozen in
+     screen pixels while the map moved under them, and only looked right
+     again after a drag re-laid them. Isolate each object and report. */
+  var _fail=0;
+  function _each(list, fn){
+    (list||[]).forEach(function(o){ if(!o) return; try{ fn(o); }catch(e){ _fail++; } });
+  }
   try{
-    (S.elements||[]).forEach(function(el){
+    _each(S.elements, function(el){
       if(el._geoLat!=null) return;               /* already anchored */
       var g=toGeo(el.x+((el.w||60)/2), el.y+((el.h||el.w||60)/2));
       if(g){ el._geoLat=g.lat; el._geoLng=g.lng; }
     });
-    (S.shapes||[]).forEach(function(sh){
+    _each(S.shapes, function(sh){
       if(!sh.pts || !sh.pts.length) return;
       var sig=_geoSigOf(sh.pts);
       if(sh._geoPts && sh._geoSig===sig) return;      /* anchor still describes this geometry */
       sh._geoPts=sh.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
       sh._geoSig=sig;
     });
-    (S.conduits||[]).forEach(function(c){
+    _each(S.conduits, function(c){
       if(!c.pts || !c.pts.length) return;
       var csig=_geoSigOf(c.pts);
       if(c._geoPts && c._geoSig===csig) return;       /* ditto */
       c._geoPts=c.pts.map(function(p){ var g=toGeo(p.x,p.y); return g?{lat:g.lat,lng:g.lng}:null; });
       c._geoSig=csig;
     });
-  }catch(e){}
+  }catch(e){ try{ console.warn('[omega/geo] stamp pass aborted:', e && e.message); }catch(_){} }
+  if(_fail && window.console) console.warn('[omega/geo] '+_fail+' object(s) could not be anchored '
+    + '\u2014 they will not hold position through a zoom. OmegaLen.anchors() lists them.');
 }
 window._geoStampAll=_geoStampAll;
 
@@ -23477,17 +23491,27 @@ function _geoReprojectAll(){
   try{
     var sz=_getCanvasSize();
     var toPx=function(lat,lng){ return _latLngToPx(lat,lng,ms,sz.w,sz.h); };
-    (S.elements||[]).forEach(function(el){
+    /* Same failure mode as the stamp pass: one throwing element used to
+       abort reprojection for every shape and conduit behind it, quietly.
+       That is what leaves a run sitting still while the map zooms under
+       it, and what makes a drag appear to "put it back". */
+    var _rf=0;
+    var _each=function(list, fn){
+      (list||[]).forEach(function(o){ if(!o) return; try{ fn(o); }catch(e){ _rf++; } });
+    };
+    _each(S.elements, function(el){
       if(el._geoLat==null || el._geoLng==null) return;
       var px=toPx(el._geoLat, el._geoLng);
       if(!px) return;
       el.x=px.x-((el.w||60)/2);
       el.y=px.y-((el.h||el.w||60)/2);
-      var dom=document.querySelector('[data-elid="'+el.id+'"]');
-      if(dom){ dom.style.left=el.x+'px'; dom.style.top=el.y+'px'; }
+      try{
+        var dom=document.querySelector('[data-elid="'+el.id+'"]');
+        if(dom){ dom.style.left=el.x+'px'; dom.style.top=el.y+'px'; }
+      }catch(e){}                       /* a missing node is not a reason to stop */
     });
     /* Shapes: reproject each point from its stored lat/lng. */
-    (S.shapes||[]).forEach(function(sh){
+    _each(S.shapes, function(sh){
       if(!sh._geoPts || !sh.pts) return;
       for(var i=0;i<sh.pts.length && i<sh._geoPts.length;i++){
         var g=sh._geoPts[i]; if(!g) continue;
@@ -23498,7 +23522,7 @@ function _geoReprojectAll(){
       sh._geoSig=_geoSigOf(sh.pts);
     });
     /* Conduits: reproject each routing point from its stored lat/lng. */
-    (S.conduits||[]).forEach(function(c){
+    _each(S.conduits, function(c){
       if(!c._geoPts || !c.pts) return;
       for(var j=0;j<c.pts.length && j<c._geoPts.length;j++){
         var g2=c._geoPts[j]; if(!g2) continue;
@@ -23520,7 +23544,9 @@ function _geoReprojectAll(){
     if(typeof renderShape==='function' && S.shapes){ try{ S.shapes.forEach(function(sh){ renderShape(sh); }); }catch(e){} }
     if(typeof renderConduit==='function' && S.conduits){ try{ S.conduits.forEach(function(c){ renderConduit(c); }); }catch(e){} }
     if(typeof _refreshConduitStyle==='function'){ try{ _refreshConduitStyle(); }catch(e){} }
-  }catch(e){}
+    if(_rf && window.console) console.warn('[omega/geo] '+_rf+' object(s) failed to reproject '
+      + '\u2014 those are the ones that will not hold position on zoom.');
+  }catch(e){ try{ console.warn('[omega/geo] reproject pass aborted:', e && e.message); }catch(_){} }
   _geoReprojecting=false;
 }
 window._geoReprojectAll=_geoReprojectAll;
@@ -34672,8 +34698,114 @@ function p0OrdScreenCA(){
 var DERC_DC = {
   dc_cruiser:   { label:'Galleon Cruiser (20ft)', kw:35,   lf:20, wf:8  },
   dc_triton:    { label:'Galleon Triton',         kw:120,  lf:30, wf:10 },
-  dc_leviathan: { label:'Leviathan 1MW MDC',      kw:1000, lf:40, wf:10 }
+  dc_leviathan: { label:'Leviathan 1MW MDC',      kw:1000, lf:40, wf:10 },
+  /* Operator-defined block. The three above are specific products; every
+     other compute deployment has its own rating and footprint, and it
+     should not have to be forced into the nearest catalogue entry just to
+     get onto the drawing and into the energy balance. */
+  dc_custom:    { label:'Custom Compute Block',   kw:500,  lf:30, wf:10, custom:true }
 };
+
+/* The custom block belongs to the project, so it survives a reload. */
+function _dcCustomLoad(){
+  try{
+    var raw=(typeof S!=='undefined' && S && S.dcCustom) ? S.dcCustom : null;
+    if(raw && +raw.kw>0){
+      DERC_DC.dc_custom.kw    = +raw.kw;
+      DERC_DC.dc_custom.lf    = +raw.lf || 30;
+      DERC_DC.dc_custom.wf    = +raw.wf || 10;
+      DERC_DC.dc_custom.label = raw.label || 'Custom Compute Block';
+    }
+  }catch(e){}
+  return DERC_DC.dc_custom;
+}
+function _dcCustomSave(){
+  try{
+    if(typeof S==='undefined' || !S) return;
+    var d=DERC_DC.dc_custom;
+    S.dcCustom={ kw:d.kw, lf:d.lf, wf:d.wf, label:d.label };
+    if(typeof pushHist==='function') pushHist();
+  }catch(e){}
+}
+
+/* Define it, then arm the placer. */
+function openDcCustomDialog(){
+  _dcCustomLoad();
+  var d=DERC_DC.dc_custom;
+  var host=document.createElement('div');
+  host.id='dccustom-modal';
+  host.setAttribute('style','position:fixed;inset:0;background:rgba(6,12,22,.8);z-index:10000;'
+    +'display:flex;align-items:center;justify-content:center;padding:20px');
+  host.onclick=function(e){ if(e.target===host) host.remove(); };
+  function fld(id,lbl,val,step,unit){
+    return '<div style="flex:1"><label style="display:block;font-size:9px;color:#64748B;'
+      +'text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">'+lbl+'</label>'
+      +'<div style="display:flex;align-items:center;gap:5px">'
+      +'<input id="'+id+'" type="number" step="'+step+'" value="'+val+'" '
+      +'style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;'
+      +'border-radius:5px;padding:6px 8px;font-size:12px;box-sizing:border-box">'
+      +(unit?'<span style="font-size:10px;color:#64748B">'+unit+'</span>':'')+'</div></div>';
+  }
+  host.innerHTML='<div style="background:#0F1D30;border:1px solid #1E3A5F;border-radius:12px;'
+    +'width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.6)">'
+    +'<div style="padding:14px 18px;border-bottom:1px solid #1E3A5F;display:flex;'
+    +'align-items:center;justify-content:space-between">'
+      +'<div><div style="font-size:15px;font-weight:800;color:#E2EEF9">\u25a6 Custom Compute Block</div>'
+      +'<div style="font-size:10px;color:#64748B">Rating and footprint for this project</div></div>'
+      +'<button onclick="document.getElementById(\'dccustom-modal\').remove()" '
+      +'style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button></div>'
+    +'<div style="padding:16px 18px">'
+      +'<div style="margin-bottom:11px"><label style="display:block;font-size:9px;color:#64748B;'
+      +'text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Name</label>'
+      +'<input id="dcc-label" type="text" value="'+_ppEsc(d.label)+'" '
+      +'style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;'
+      +'border-radius:5px;padding:6px 8px;font-size:12px;box-sizing:border-box"></div>'
+      +'<div style="display:flex;gap:10px;margin-bottom:11px">'
+        +fld('dcc-kw','IT load','' +d.kw,'1','kW')
+      +'</div>'
+      +'<div style="display:flex;gap:10px;margin-bottom:6px">'
+        +fld('dcc-lf','Length',''+d.lf,'0.5','ft')
+        +fld('dcc-wf','Width', ''+d.wf,'0.5','ft')
+      +'</div>'
+      +'<div id="dcc-note" style="margin-top:10px;padding:8px 10px;background:rgba(251,191,36,.09);'
+      +'border-left:2px solid #FBBF24;font-size:10.5px;color:#94A3B8;line-height:1.5"></div>'
+      +'<button onclick="_dcCustomGo()" style="margin-top:12px;width:100%;background:#FBBF24;'
+      +'border:none;color:#0B1E35;border-radius:6px;padding:8px 0;font-size:12px;'
+      +'font-weight:800;cursor:pointer">Save &amp; place on map</button>'
+    +'</div></div>';
+  document.body.appendChild(host);
+  var upd=function(){
+    var kw=parseFloat((document.getElementById('dcc-kw')||{}).value)||0;
+    var lf=parseFloat((document.getElementById('dcc-lf')||{}).value)||0;
+    var wf=parseFloat((document.getElementById('dcc-wf')||{}).value)||0;
+    var n=document.getElementById('dcc-note'); if(!n) return;
+    var sq=lf*wf;
+    n.innerHTML = (kw>0?('<b>'+kw.toLocaleString()+' kW</b> on '+sq.toLocaleString()+' sq ft'
+      +(sq>0?(' \u00b7 '+Math.round(kw/sq*1000)/1000+' kW/sq ft'):'')
+      +'<br>Counts as site load in the energy balance and in the estimate.')
+      : 'Enter an IT load in kW.');
+  };
+  ['dcc-kw','dcc-lf','dcc-wf'].forEach(function(id){
+    var e=document.getElementById(id); if(e) e.oninput=upd;
+  });
+  upd();
+}
+function _dcCustomGo(){
+  function v(id){ var e=document.getElementById(id); return e?e.value:''; }
+  var kw=parseFloat(v('dcc-kw'))||0;
+  if(!(kw>0)){ var n=document.getElementById('dcc-note'); if(n) n.innerHTML='Enter an IT load in kW first.'; return; }
+  var d=DERC_DC.dc_custom;
+  d.kw=kw;
+  d.lf=parseFloat(v('dcc-lf'))||30;
+  d.wf=parseFloat(v('dcc-wf'))||10;
+  d.label=(v('dcc-label')||'').trim() || 'Custom Compute Block';
+  _dcCustomSave();
+  var h=document.getElementById('dccustom-modal'); if(h) h.remove();
+  if(typeof derSetDc==='function') derSetDc('dc_custom');
+}
+window.openDcCustomDialog=openDcCustomDialog;
+window._dcCustomGo=_dcCustomGo;
+window._dcCustomLoad=_dcCustomLoad;
 /* Wind turbines (kW nameplate each). Small/medium distributed class. */
 var DERC_WIND = {
   wind_10:  { label:'Distributed Wind 10 kW',  kw:10,   lf:6,  wf:6,  rotorFt:23 },
@@ -34793,7 +34925,8 @@ var _derWindId = 'wind_100';
 var _derAltId  = 'gen_ng';
 var _derSolarMount = 'ground';    /* 'ground' | 'roof' */
 
-function derSetDc(id){   if(DERC_DC[id]) _derDcId=id;   if(typeof rbMode==='function') rbMode('dcpad');
+function derSetDc(id){   if(id==='dc_custom' && typeof _dcCustomLoad==='function') _dcCustomLoad();
+  if(DERC_DC[id]) _derDcId=id;   if(typeof rbMode==='function') rbMode('dcpad');
   _derBanner('Click on the map to place '+DERC_DC[_derDcId].label); }
 function derSetWind(id){ if(DERC_WIND[id]) _derWindId=id; if(typeof rbMode==='function') rbMode('windpad');
   _derBanner('Click to place '+DERC_WIND[_derWindId].label+' (place several for an array)'); }
@@ -37204,38 +37337,156 @@ function sebCollect(){
   };
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   HOURLY SHAPES
+
+   An annual average cannot answer the only question that matters in an
+   energy balance: was the generation there at the hour the load wanted
+   it? Comparing two annual totals says a 10 MW array fully supplies a
+   1 MW round-the-clock load with 0% grid reliance, and says exactly the
+   same thing whether the site has 20 MWh of storage or none at all. The
+   real answers for that site are 0% and 53%.
+
+   So the balance is dispatched hour by hour over a year instead.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+var _SEB_SHAPES = {};
+
+/* Clear-sky solar geometry for the site's own latitude. Normalised so the
+   unclipped annual total still equals nameplate x CF x 8760 — the same
+   number the annual model produced — so only the TIMING is new. */
+function _sebSolarShape(lat){
+  var key=Math.round((+lat||35)*2)/2;
+  if(_SEB_SHAPES[key]) return _SEB_SHAPES[key];
+  var la=key*Math.PI/180, raw=new Array(8760), sum=0, i=0;
+  for(var d=0; d<365; d++){
+    var dec=23.45*Math.PI/180*Math.sin(2*Math.PI*(284+d)/365);
+    var sd=Math.sin(dec), cd=Math.cos(dec), sl=Math.sin(la), cl=Math.cos(la);
+    for(var h=0; h<24; h++){
+      var H=(h+0.5-12)*15*Math.PI/180;
+      var z=sl*sd+cl*cd*Math.cos(H);
+      if(z<0) z=0;
+      raw[i++]=z; sum+=z;
+    }
+  }
+  _SEB_SHAPES[key]={ raw:raw, sum:sum };
+  return _SEB_SHAPES[key];
+}
+
+/* EV charging leans to daylight and the working day; mean is 1.0 so the
+   utilisation factor still sets the annual energy. */
+function _sebChargerShape(){
+  if(_SEB_SHAPES.__chg) return _SEB_SHAPES.__chg;
+  var day=[0.30,0.25,0.22,0.20,0.22,0.35,0.70,1.20,1.55,1.60,1.50,1.45,
+           1.50,1.55,1.60,1.60,1.55,1.45,1.25,1.00,0.80,0.60,0.45,0.36];
+  var m=day.reduce(function(a,b){return a+b;},0)/24;
+  var norm=day.map(function(v){ return v/m; });
+  _SEB_SHAPES.__chg=norm;
+  return norm;
+}
+
+/* Site latitude: the live map first, then the project sheet, then a
+   temperate default. */
+function _sebLat(){
+  try{ var ms=_liveMapState(); if(ms && ms.lat!=null) return ms.lat; }catch(e){}
+  try{ var v=parseFloat((document.getElementById('ps-lat')||{}).value); if(isFinite(v)) return v; }catch(e){}
+  return 35;
+}
+
 /* Compute the annual energy balance from collected systems + editable factors. */
+/* Every knob in this panel is a physical quantity with real bounds. A
+   capacity factor cannot be negative and a round trip cannot be free;
+   typed straight through, a stray minus sign produced 655% grid reliance. */
+function _sebClamp(v, lo, hi){
+  v=+v; if(!isFinite(v)) v=lo;
+  return v<lo ? lo : (v>hi ? hi : v);
+}
+
 function sebCompute(){
   var s=sebCollect();
-  /* capacity factors (editable) */
-  var cfSolar=_sebNum('cfSolar', (typeof DER_SOLAR_CF!=='undefined'?DER_SOLAR_CF:0.18));
-  var cfWind =_sebNum('cfWind',  (typeof DER_WIND_CF!=='undefined'?DER_WIND_CF:0.30));
-  var cfGas  =_sebNum('cfGas',   (typeof DER_GEN_CF!=='undefined'?DER_GEN_CF:0.35));
+  /* capacity factors (editable, 0..1) */
+  var cfSolar=_sebClamp(_sebNum('cfSolar', (typeof DER_SOLAR_CF!=='undefined'?DER_SOLAR_CF:0.18)), 0, 1);
+  var cfWind =_sebClamp(_sebNum('cfWind',  (typeof DER_WIND_CF!=='undefined'?DER_WIND_CF:0.30)), 0, 1);
+  var cfGas  =_sebClamp(_sebNum('cfGas',   (typeof DER_GEN_CF!=='undefined'?DER_GEN_CF:0.35)), 0, 1);
   /* generation kWh/yr */
-  var genSolar=s.solarKw*8760*cfSolar;
+  var genSolar=s.solarKw*8760*cfSolar;   /* restated after dispatch */
   var genWind =s.windKw *8760*cfWind;
   var genGas  =s.gasKw  *8760*cfGas;
   var genTotal=genSolar+genWind+genGas;
   /* consumption kWh/yr */
-  var dcDuty=_sebNum('dcDuty',0.90);                 /* data-center duty factor */
+  var dcDuty=_sebClamp(_sebNum('dcDuty',0.90), 0, 1);          /* data-center duty factor */
   var dcKwh=s.dcKw*8760*dcDuty;
-  var chgDuty=_sebNum('chgDuty',0.20);               /* charger utilization */
+  var chgDuty=_sebClamp(_sebNum('chgDuty',0.20), 0, 1);        /* charger utilization */
   var chgKwh=s.chgKw*8760*chgDuty;
-  /* BESS charging load: round-trip losses on cycled energy */
-  var cyclesYr=_sebNum('bessCycles',365);            /* cycles/yr */
-  var rte=_sebNum('bessRte',0.88);                   /* round-trip efficiency */
-  var bessThroughput=s.bessKwh*cyclesYr;             /* kWh discharged/yr */
-  var bessLossKwh=bessThroughput*(1/rte - 1);        /* charging losses = extra load */
-  var siteExtra=_sebNum('siteExtraKwh',0);
-  var consumeTotal=dcKwh+chgKwh+bessLossKwh+siteExtra;
-  /* balance */
-  var selfSupply=Math.min(genTotal, consumeTotal);
-  var gridImport=Math.max(0, consumeTotal-genTotal);
-  var surplus=Math.max(0, genTotal-consumeTotal);
+  var rte=_sebClamp(_sebNum('bessRte',0.88), 0.10, 1);         /* round-trip efficiency */
+  var siteExtra=Math.max(0, _sebNum('siteExtraKwh',0));
+
+  /* ── 8760-hour dispatch ────────────────────────────────────────────
+     Generation and load are laid on the clock, storage is charged from
+     surplus and discharged into deficit inside its real power and energy
+     limits, and dispatchable gas fills what is left until its annual fuel
+     budget runs out. Grid import is then what genuinely could not be
+     served on site at the hour it was needed, rather than the difference
+     between two annual totals. */
+  var sun=_sebSolarShape(_sebLat());
+  var chgShape=_sebChargerShape();
+  var dcac=_sebClamp(_sebNum('dcac', 1.25), 1, 2.5);           /* PV DC:AC, sets the clip */
+  var acCap=s.solarKw>0 ? (s.solarKw/Math.max(1,dcac)) : 0;
+  var kSun=sun.sum>0 ? (cfSolar*8760/sun.sum) : 0;
+
+  var gasBudget=s.gasKw*8760*cfGas;                  /* dispatchable fuel budget */
+  var windKwH=s.windKw*cfWind;                       /* flat: no wind timeseries */
+  var dcKwH=s.dcKw*dcDuty;
+  var extraKwH=siteExtra/8760;
+
+  var soc=0, gridImport=0, surplus=0, discharged=0, charged=0,
+      clipped=0, gasUsed=0, peakImportKw=0, servedOnSite=0, loadTotal=0;
+
+  for(var t=0;t<8760;t++){
+    var pv=s.solarKw*sun.raw[t]*kSun;
+    if(acCap>0 && pv>acCap){ clipped+=pv-acCap; pv=acCap; }
+    var gen=pv+windKwH;
+    var load=dcKwH + s.chgKw*chgDuty*chgShape[t%24] + extraKwH;
+    loadTotal+=load;
+
+    var net=gen-load;
+    if(net>0){
+      /* surplus: charge what the battery can physically take */
+      var room=Math.min(s.bessKwh-soc, s.bessKw>0?s.bessKw:0, net);
+      if(room>0){ soc+=room; charged+=room; net-=room; }
+      surplus+=net;                                   /* export or curtail */
+      servedOnSite+=load;
+    } else {
+      var need=-net;
+      var out=Math.min(soc, s.bessKw>0?s.bessKw:0, need);
+      if(out>0){ soc-=out; discharged+=out; need-=out; }
+      if(need>0 && gasBudget>0){                      /* dispatch gas into the gap */
+        var g=Math.min(need, s.gasKw, gasBudget);
+        if(g>0){ gasUsed+=g; gasBudget-=g; need-=g; }
+      }
+      gridImport+=need;
+      if(need>peakImportKw) peakImportKw=need;
+      servedOnSite+=load-need;
+    }
+  }
+
+  /* Storage loses its round trip on the way in; that is real extra load. */
+  var bessLossKwh=charged*(1-rte);
+  var cyclesYr=s.bessKwh>0 ? (discharged/s.bessKwh) : 0;
+  gridImport+=bessLossKwh;                            /* the losses are imported too */
+
+  /* Restate generation as what actually reached the meter. */
+  genSolar=s.solarKw*cfSolar*8760-clipped;
+  genGas=gasUsed;
+  genTotal=genSolar+genWind+genGas;
+
+  var consumeTotal=loadTotal+bessLossKwh;
+  var selfSupply=Math.max(0, consumeTotal-gridImport);
   var reliancePct=consumeTotal>0 ? (gridImport/consumeTotal*100) : 0;
   var selfPct=consumeTotal>0 ? (selfSupply/consumeTotal*100) : 0;
+  dcKwh=dcKwH*8760; chgKwh=s.chgKw*chgDuty*8760;
   /* $ */
-  var gridCost=_sebNum('gridCost',(typeof DER_GRID_COST!=='undefined'?DER_GRID_COST:0.11));
+  var gridCost=Math.max(0, _sebNum('gridCost',(typeof DER_GRID_COST!=='undefined'?DER_GRID_COST:0.11)));
   var importBill=gridImport*gridCost;
   return {
     sys:s,
@@ -37245,7 +37496,10 @@ function sebCompute(){
     selfSupply:selfSupply, gridImport:gridImport, surplus:surplus,
     reliancePct:reliancePct, selfPct:selfPct,
     gridCost:gridCost, importBill:importBill,
-    dcDuty:dcDuty, chgDuty:chgDuty, cyclesYr:cyclesYr, rte:rte
+    dcDuty:dcDuty, chgDuty:chgDuty, cyclesYr:cyclesYr, rte:rte,
+    /* what only an hourly run can tell you */
+    clipped:clipped, peakImportKw:peakImportKw, dcac:dcac,
+    bessCharged:charged, bessDischarged:discharged, lat:_sebLat(), hourly:true
   };
 }
 
@@ -37308,7 +37562,8 @@ function _sebInner(){
   +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">'
     +'<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#4ADE80;margin-bottom:6px">Generation (kWh/yr)</div>'
       +'<div style="font-size:12px">'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">Solar (CF '+edit('cfSolar',r.cf.solar,'0.01')+')</span><strong>'+_f(r.gen.solar)+'</strong></div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">Solar (CF '+edit('cfSolar',r.cf.solar,'0.01')+' \u00b7 DC:AC '+edit('dcac',r.dcac,'0.05')+')</span><strong>'+_f(r.gen.solar)+'</strong></div>'
+      +(r.clipped>1?'<div style="display:flex;justify-content:space-between;padding:3px 0 5px;border-bottom:1px solid #14243a"><span style="color:#64748B;font-size:11px;padding-left:10px">\u21b3 lost to inverter clipping</span><span style="color:#FBBF24;font-size:11px">\u2212'+_f(r.clipped)+'</span></div>':'')
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">Wind (CF '+edit('cfWind',r.cf.wind,'0.01')+')</span><strong>'+_f(r.gen.wind)+'</strong></div>'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">Gas (CF '+edit('cfGas',r.cf.gas,'0.01')+')</span><strong>'+_f(r.gen.gas)+'</strong></div>'
       +row('Total generation', _f(r.gen.total),'#4ADE80')
@@ -37318,6 +37573,7 @@ function _sebInner(){
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">Data center (duty '+edit('dcDuty',r.dcDuty,'0.05')+')</span><strong>'+_f(r.con.dc)+'</strong></div>'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">EV chargers (util '+edit('chgDuty',r.chgDuty,'0.05')+')</span><strong>'+_f(r.con.chg)+'</strong></div>'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">BESS charge loss (RTE '+edit('bessRte',r.rte,'0.01')+')</span><strong>'+_f(r.con.bessLoss)+'</strong></div>'
+      +'<div style="display:flex;justify-content:space-between;padding:3px 0 5px;border-bottom:1px solid #14243a"><span style="color:#64748B;font-size:11px;padding-left:10px">\u21b3 '+r.cyclesYr.toFixed(0)+' full cycles/yr, from the dispatch</span><span style="color:#64748B;font-size:11px">'+_f(r.bessDischarged)+' kWh out</span></div>'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">Extra site load</span><strong>'+edit('siteExtraKwh',r.con.extra,'1000')+'</strong></div>'
       +row('Total consumption', _f(r.con.total),'#F87171')
       +'</div></div>'
@@ -37326,9 +37582,10 @@ function _sebInner(){
   +'<div style="margin-top:16px;background:#0B1626;border:1px solid #1E3A5F;border-radius:8px;padding:14px;font-size:12px">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0"><span style="color:#94A3B8">Grid energy cost ($/kWh)</span>'+edit('gridCost',r.gridCost,'0.01')+'</div>'
     +'<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#94A3B8">Annual grid import bill</span><strong style="color:#F87171">$'+_f(r.importBill)+'</strong></div>'
-    +'<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#94A3B8">Surplus (exportable to value stack)</span><strong style="color:#4ADE80">'+_f(r.surplus)+' kWh/yr</strong></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#94A3B8">Surplus (export or curtail)</span><strong style="color:#4ADE80">'+_f(r.surplus)+' kWh/yr</strong></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#94A3B8">Peak grid import (sets the service size)</span><strong style="color:#FBBF24">'+_f(r.peakImportKw)+' kW</strong></div>'
   +'</div>'
-  +'<div style="margin-top:12px;font-size:9.5px;color:#64748B;line-height:1.5">Planning-grade energy balance from placed systems. Capacity factors, duty, RTE, and grid cost are editable above for site-specific accuracy. Grid reliance = grid import \u00f7 total consumption. '+brandName()+' \u2022 '+poweredByLine()+'.</div>'
+  +'<div style="margin-top:12px;font-size:9.5px;color:#64748B;line-height:1.5">Dispatched hour by hour across a year (8,760 h) at latitude '+r.lat.toFixed(2)+'\u00b0: solar follows clear-sky geometry for this site, storage charges from surplus and discharges into deficit inside its real power and energy limits, and dispatchable generation fills what is left until its fuel budget runs out. Grid import is what could not be served on site at the hour it was needed \u2014 not the difference between two annual totals. Capacity factors, DC:AC, duty, RTE and grid cost are editable above. '+brandName()+' \u2022 '+poweredByLine()+'.</div>'
   +'</div></div>';
 }
 
@@ -62056,9 +62313,84 @@ window._crmToastModal=_crmToastModal;
     return 'sweeping \u2014 results in about ' + ((zs.length + 1) * 0.7).toFixed(0) + 's';
   }
 
-  window.OmegaLen = { check: check, sweep: sweep };
-  if (window.console) console.info(TAG, 'armed \u2014 OmegaLen.check() / OmegaLen.sweep()');
+  /* ── Are the drawn positions and the ground anchors telling the same
+        story? Reproject each anchor at the CURRENT map state and compare
+        it to where the run is actually drawn. Any real gap means one of
+        the two is stale — which is what makes a run jump on zoom and snap
+        back when you drag it. ── */
+  function anchors() {
+    var s = S_(); if (!s) { console.warn(TAG, 'no session'); return null; }
+    var ms = null, sz = null;
+    try {
+      ms = (typeof _liveMapState === 'function') ? _liveMapState() : null;
+      sz = (typeof _getCanvasSize === 'function') ? _getCanvasSize() : null;
+    } catch (e) {}
+    if (!ms || !sz) { console.warn(TAG, 'no live map \u2014 cannot compare anchors'); return null; }
+    var ppf = (s.pxPerFt > 0) ? s.pxPerFt : 0;
+    var T = tags();
+
+    function scan(list, kind) {
+      var out = [];
+      (list || []).forEach(function (o) {
+        if (!o || !o._geoPts || !o.pts || !o.pts.length) return;
+        var worst = 0;
+        for (var i = 0; i < o.pts.length && i < o._geoPts.length; i++) {
+          var g = o._geoPts[i]; if (!g) continue;
+          var px = null;
+          try { px = _latLngToPx(g.lat, g.lng, ms, sz.w, sz.h); } catch (e) {}
+          if (!px) continue;
+          var d = Math.hypot(px.x - o.pts[i].x, px.y - o.pts[i].y);
+          if (d > worst) worst = d;
+        }
+        var stale = false;
+        try { stale = (typeof _geoSigOf === 'function') && o._geoSig !== _geoSigOf(o.pts); } catch (e) {}
+        out.push({
+          kind: kind,
+          id: T[o.id] || o.id,
+          driftPx: +worst.toFixed(1),
+          driftFt: ppf ? +(worst / ppf).toFixed(1) : null,
+          sigStale: stale ? 'YES' : 'no',
+          verdict: worst < 2 ? 'anchored' : (worst < 12 ? 'slight' : 'STALE ANCHOR')
+        });
+      });
+      return out;
+    }
+
+    var rows = scan(s.conduits, 'conduit').concat(scan(s.shapes, 'shape'));
+    if (console.table) console.table(rows); else console.log(rows);
+    var bad = rows.filter(function (r) { return r.driftPx >= 12; }).length;
+    console.info(TAG + ' ' + rows.length + ' anchored object(s), ' + bad + ' with a stale anchor.');
+    if (bad) {
+      console.warn(TAG + ' those will jump on the next zoom. OmegaLen.reanchor() '
+        + 're-stamps them from where they are drawn now \u2014 make sure the drawing '
+        + 'is correct on screen before running it.');
+    }
+    return { objects: rows.length, stale: bad, rows: rows };
+  }
+
+  /* Take the drawn geometry as truth and re-cut the ground anchors from it. */
+  function reanchor() {
+    var s = S_(); if (!s) return 0;
+    (s.conduits || []).forEach(function (c) { if (c) { delete c._geoPts; delete c._geoSig; } });
+    (s.shapes   || []).forEach(function (sh) { if (sh) { delete sh._geoPts; delete sh._geoSig; } });
+    try { if (typeof _geoStampAll === 'function') _geoStampAll(); } catch (e) {}
+    try { if (typeof pushHist === 'function') pushHist(); } catch (e) {}
+    console.info(TAG + ' re-anchored from current positions.');
+    return anchors();
+  }
+
+  window.OmegaLen = { check: check, sweep: sweep, anchors: anchors, reanchor: reanchor };
+  if (window.console) console.info(TAG, 'armed \u2014 OmegaLen.check() / .sweep() / .anchors() / .reanchor()');
 })();
+</script>
+
+<script>
+/* Build fingerprint — so it is possible to tell from the console whether the
+   deployed file carries a given fix, instead of guessing. */
+window.OMEGA_BUILD = { stamp: 'OMEGA-BUILD-STAMP 2026-07-31 geo-sig+len+solar+geo-isolate+hourly-eb+dc-custom',
+  has: { e20Template:1, bessSizing:1, emsLegs:1, condAudit:1,
+         lenZoomFix:1, corridorFt:1, solarEstimate:1, geoSigStale:1, hourlyEnergyBalance:1, customDataCentre:1 } };
+try{ console.info('[omega/build]', window.OMEGA_BUILD.stamp); }catch(e){}
 </script>
 
 </body>
