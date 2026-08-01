@@ -40718,8 +40718,18 @@ function setMapInteractive(on, intent){
     var fr   = document.getElementById('gmap-frame');
     var blk  = document.getElementById('gmap-block');
     if(gmd){ gmd.style.pointerEvents=pe; gmd.style.touchAction=ta; }
-    if(wrap) wrap.style.pointerEvents=pe;
-    if(fr)   fr.style.pointerEvents=pe;
+    /* SURFACE MODE: #_gmapDiv has been reparented to #cw (z-index 0) and #sc
+       is the overlay above it (z-index 1). #gmap-wrap is the LEGACY iframe
+       container and still lives inside #sc at inset:0 — so giving it
+       pointer-events:auto blankets the entire canvas and swallows every
+       mouse event before it can reach the map underneath. The map still
+       responds to programmatic pans (the compass), which is exactly what a
+       "frozen to the mouse but movable by button" report looks like.
+       In surface mode the wrapper and its iframe are inert by definition. */
+    var _surface = document.body.classList.contains('omega-map-surface')
+                || !!(gmd && gmd.parentElement && gmd.parentElement.id === 'cw');
+    if(wrap) wrap.style.pointerEvents = _surface ? 'none' : pe;
+    if(fr)   fr.style.pointerEvents   = _surface ? 'none' : pe;
     if(blk)  blk.style.display = on ? 'none' : 'block';
     /* CRITICAL for desktop + touch: #sc sits on TOP of the map and, by
        default, catches every mouse/touch event — so an unlocked live map
@@ -47854,6 +47864,21 @@ window._crmToastModal=_crmToastModal;
           e.style.setProperty('pointer-events','none','important');
         }
       });
+
+      /* The LEGACY iframe map container. It sits inside #sc at inset:0, so
+         with pointer-events:auto it covers the whole canvas and blocks the
+         real map beneath. Several older paths (setMapInteractive, the
+         overlay-lock fallback, the tab-switch fallback) still set it to
+         'auto' because it USED to contain the map. Neutralise it here every
+         pass so no single missed caller can freeze panning again. */
+      ['gmap-wrap','gmap-frame'].forEach(function(id){
+        var e=document.getElementById(id);
+        if(e && e.style.pointerEvents!=='none'){
+          e.style.setProperty('pointer-events','none','important');
+        }
+      });
+      var _blk=document.getElementById('gmap-block');
+      if(_blk && _blk.style.display!=='none'){ _blk.style.display='none'; }
 
       /* Re-assert interactivity for anything stacked above the drawing.
          Computed z-index is the reliable signal and CSS cannot select on
