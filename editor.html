@@ -66174,7 +66174,17 @@ window._crmToastModal=_crmToastModal;
 
     (s.elements || []).forEach(function (el) {
       if (!el) return;
-      var q = el.eqId || el.type;
+      /* GUIDED-BUILD EQUIPMENT AGAIN.
+         `el.eqId || el.type` yields 'evgear' for anything a guided build
+         placed, which matches none of the tests below — so a BESS on the
+         map was never counted, classify() saw solar with no storage, and
+         picked the "Grid tie only, line-side tap" template. That is why
+         E2.0 kept printing a PV-only chain no matter what the diagram type
+         was set to: the template had already been chosen on a census that
+         could not see the battery. Use the shared predicate. */
+      var q = (typeof _eqRole === 'function' && _eqRole(el))
+              || el.eqId
+              || (el.type === 'evgear' ? (el.evKind || el.bgbRole || el.evRole) : el.type);
       if (q === 'charger' || q === 'evse' || q === 'evdcfc' || q === 'evl2') return bump('ev');
       if (q === 'ems') return bump('ems');
       if (q === 'bess') { bump('bess'); return; }
