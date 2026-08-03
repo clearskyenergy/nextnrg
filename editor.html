@@ -3065,7 +3065,7 @@ if(document.readyState==='loading'){
       <div class="cal-box">
         <h3>▤ Parking Stall Array</h3>
         <p>Enter the grid of stalls to place.</p>
-        <div style="display:flex;gap:6px;margin-bottom:10px">
+        <div style="display:flex;gap:6px;margin-bottom:8px">
           <div style="flex:1">
             <label style="font-size:10px;color:var(--sub);display:block;margin-bottom:3px">Rows</label>
             <input type="number" id="park-rows" value="1" min="1" max="20" style="width:100%;padding:7px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;font-family:inherit">
@@ -3075,6 +3075,17 @@ if(document.readyState==='loading'){
             <input type="number" id="park-cols" value="8" min="1" max="40" style="width:100%;padding:7px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;font-family:inherit">
           </div>
         </div>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <div style="flex:1">
+            <label style="font-size:10px;color:var(--sub);display:block;margin-bottom:3px">Stall width (ft)</label>
+            <input type="number" id="park-wft" value="9" min="6" max="30" step="0.5" style="width:100%;padding:7px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;font-family:inherit">
+          </div>
+          <div style="flex:1">
+            <label style="font-size:10px;color:var(--sub);display:block;margin-bottom:3px">Stall depth (ft)</label>
+            <input type="number" id="park-lft" value="18" min="10" max="60" step="0.5" style="width:100%;padding:7px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;font-family:inherit">
+          </div>
+        </div>
+        <div id="park-scale-note" style="font-size:9px;line-height:1.5;color:var(--sub);margin-bottom:10px"></div>
         <div class="cal-btns">
           <button style="background:var(--surface);color:var(--sub)" onclick="_parkModalCancel()">Cancel</button>
           <button style="background:var(--accent);color:var(--navy)" onclick="_parkModalConfirm()">Place ✓</button>
@@ -3732,6 +3743,9 @@ if(document.readyState==='loading'){
               <option value="AWG-20AWG5MW">Aspen Woods 20AWG5MW — 2.58MW / 5MWh Grid-Forming Unit ⬢ Greenfield — Price TBD</option>
               <option value="AWG-5MW-SYSTEM">Aspen Woods 5MW / 20MWh System — 4× 20AWG5MW ⬢ Greenfield — Price TBD</option>
             </optgroup>
+            <optgroup label="FENECON (Quote Required)">
+              <option value="FENECON-IND-XXL">FENECON Industrial XXL -- 2.508 MW / 5.015 MWh 20ft (Liquid) -- Quote Req.</option>
+            </optgroup>
             <optgroup label="Gotion">
               <option value="GOTION-EDGE-760">Gotion EDGE 760 kWh C&I -- $84,740</option>
               <option value="GOTION-GRID-3421">Gotion Grid 3.42 MWh Container -- $381,486</option>
@@ -4116,7 +4130,22 @@ function _projOrgId() {
   try {
     var em = _currentUser && _currentUser.email;
     if (em && em.indexOf('@') > -1) {
-      return em.split('@')[1].toLowerCase();
+      var d = em.split('@')[1].toLowerCase();
+      /* Mirrors orgAlias() in firestore.rules and storage.rules.
+
+         Without it a FENECON user signing in on @fenecon.de writes
+         orgId 'fenecon.de'; the rules fold the CALLER to 'fenecon.com', the
+         create rule's orgId comparison fails, and every save that user makes
+         is refused. If one did land, the project would be invisible in their
+         own portal.
+
+         THIRD COPY OF THIS MAP. The two rules engines cannot share code with
+         the app, so adding a tenant alias means editing all three:
+           firestore.rules  · orgAlias()
+           storage.rules    · orgAlias()
+           editor.html      · here                                          */
+      if (d === 'fenecon.de' || d === 'fenecon.us') return 'fenecon.com';
+      return d;
     }
   } catch (e) {}
   return 'clearsky.com';
@@ -4169,8 +4198,30 @@ function _initFirebase() {
     _auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
 
     // -- Offline Firestore persistence -------------------------
-    _db.enablePersistence({ synchronizeTabs: false }).catch(err => {
-      if (err.code === 'failed-precondition') console.warn('Firestore: multiple tabs');
+    /* synchronizeTabs:true, NOT false.
+
+       Offline persistence takes an IndexedDB lease. With synchronizeTabs
+       false that lease is EXCLUSIVE, so the second tab on this origin cannot
+       get it. The failed-precondition below was caught and logged as if it
+       were harmless — it isn't. By the time it fires, the SDK's internal
+       async queue is already wedged, and from then on every write in that tab
+       throws
+
+           FIRESTORE (9.23.0) INTERNAL ASSERTION FAILED: Unexpected state
+
+       ...forever. The autosave loop then retries into the same broken queue
+       every 60s while the banner says the connection is the problem.
+
+       Staff routinely work with several editor tabs open, so this was never
+       an edge case. multi-tab persistence shares the lease properly. */
+    _db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+      if (err.code === 'failed-precondition') {
+        console.warn('Firestore: multi-tab persistence unavailable; running online-only');
+      } else if (err.code === 'unimplemented') {
+        console.warn('Firestore: this browser has no IndexedDB; running online-only');
+      } else {
+        console.warn('Firestore: persistence off —', err && err.code);
+      }
     });
 
     _auth.onAuthStateChanged(function(user) {
@@ -5747,6 +5798,7 @@ const GOTION_CATALOG_DIMS = {
   'GOTION-EDGE-760':  { l:'7\'-10.5"', w:'4\'-7.1"',  h:'8\'-2.4"',  wt:'~17,640 lbs', lf:7.875,  wf:4.59,  hf:8.20  },
   'AWG-20AWG5MW':     { l:'19\'-10.5"',w:'7\'-12.0"', h:'9\'-6.0"',  wt:'~97,000 lbs', lf:19.875, wf:8.0,   hf:9.5   },
   'AWG-5MW-SYSTEM':   { l:'19\'-10.5"',w:'7\'-12.0"', h:'9\'-6.0"',  wt:'~97,000 lbs ea', lf:19.875, wf:8.0, hf:9.5, sysQty:4 },
+  'FENECON-IND-XXL':  { l:'20\'-0.0"', w:'8\'-0.0"',  h:'9\'-6.0"',  wt:'~95,000 lbs', lf:20.0,   wf:8.0,   hf:9.5   },
   'GOTION-GRID-3421': { l:'19\'-10.5"',w:'7\'-12.0"', h:'9\'-6.0"',  wt:'~81,570 lbs', lf:19.875, wf:8.0,   hf:9.5   },
   'GOTION-GRID-4608': { l:'19\'-10.5"',w:'7\'-12.0"', h:'9\'-6.0"',  wt:'~94,800 lbs', lf:19.875, wf:8.0,   hf:9.5   },
   'GOTION-GRID-5068': { l:'19\'-10.5"',w:'7\'-12.0"', h:'9\'-6.0"',  wt:'~94,800 lbs', lf:19.875, wf:8.0,   hf:9.5   },
@@ -8433,8 +8485,44 @@ function setDrawColor(hex){
 }
 /* Resolve the ink color for a shape: its own stored color, else current. */
 function _shapeInk(sh){ return (sh && sh.color) ? sh.color : SHAPE_STROKE; }
-var PARK_STALL_W = 40;          /* px default stall footprint (approx 9ft) */
-var PARK_STALL_H = 80;          /* px default stall depth   (approx 18ft) */
+/* PARKING STALL SIZING
+   ---------------------------------------------------------------------
+   Stalls used to be stored as RAW PIXELS (sw/sh = 40/80), which is why the
+   array neither scaled nor held its ground position: the origin was
+   geo-anchored and tracked the basemap, but the grid drawn from it stayed a
+   fixed pixel size at every zoom. Zoom in and the stalls shrank relative to
+   the lot; zoom out and they swallowed it. The bottom-right of the array
+   therefore walked across the site even though the top-left was pinned.
+
+   Feet are now the invariant, exactly as bespad/assembly/solar-table already
+   do it. Pixels are derived from S.pxPerFt at render time, so the grid tracks
+   pan, zoom and calibration. */
+var PARK_STALL_WFT = 9.0;       /* stall width, ft  (typical 90-degree stall) */
+var PARK_STALL_LFT = 18.0;      /* stall depth, ft */
+var PARK_LEGACY_PPF = 40/9;     /* px-per-ft implied by the old 40x80 constants */
+var PARK_STALL_W = 40;          /* legacy px fallback -- uncalibrated preview only */
+var PARK_STALL_H = 80;
+
+/* Resolve a parking shape's stall size in FEET. Migrates a legacy
+   pixel-sized shape once, in place, so it never has to be converted twice
+   and the feet survive a save. */
+function _parkStallFt(sh){
+  if(!sh) return { wf:PARK_STALL_WFT, lf:PARK_STALL_LFT };
+  if(!(sh.stallWft>0) || !(sh.stallLft>0)){
+    sh.stallWft = (sh.sw>0) ? +(sh.sw/PARK_LEGACY_PPF).toFixed(2) : PARK_STALL_WFT;
+    sh.stallLft = (sh.sh>0) ? +(sh.sh/PARK_LEGACY_PPF).toFixed(2) : PARK_STALL_LFT;
+    /* Drop the pixel copies. Keeping both is how the two drift apart. */
+    try{ delete sh.sw; delete sh.sh; }catch(e){}
+  }
+  return { wf:sh.stallWft, lf:sh.stallLft };
+}
+/* Stall size in CURRENT pixels. Single source of truth -- bbox, render, and
+   the EV snap-to-stall search all read this so they cannot disagree. */
+function _parkStallPx(sh){
+  var ft=_parkStallFt(sh);
+  var ppf=(typeof S!=='undefined' && S.pxPerFt>0) ? S.pxPerFt : PARK_LEGACY_PPF;
+  return { sw:ft.wf*ppf, sh:ft.lf*ppf };
+}
 
 /* BESS pad models (to-scale). lf/wf = length/width in decimal feet.
    Pulled from the verified Gotion catalog where available, plus a
@@ -8539,6 +8627,14 @@ function _placeParking(p){
   _pendingParkPt={x:p.x,y:p.y};
   var m=document.getElementById('park-modal');
   if(m){ m.style.display='flex';
+    var nt=document.getElementById('park-scale-note');
+    if(nt){
+      var ppf=(S.pxPerFt && S.pxPerFt>0);
+      nt.style.color = ppf ? 'var(--sub)' : 'var(--gold)';
+      nt.textContent = ppf
+        ? 'Drawing is calibrated \u2014 stalls drop true-to-scale and stay that size through zoom.'
+        : 'Not calibrated \u2014 stalls drop at preview scale. Use Calibrate Scale for true dimensions.';
+    }
     var rr=document.getElementById('park-rows'); if(rr) rr.focus();
   } else {
     /* fallback if modal missing */
@@ -8554,16 +8650,29 @@ function _parkModalConfirm(){
   var cols=parseInt((document.getElementById('park-cols')||{}).value,10);
   if(!rows||rows<1) rows=1; if(rows>20) rows=20;
   if(!cols||cols<1) cols=1; if(cols>40) cols=40;
+  var wft=parseFloat((document.getElementById('park-wft')||{}).value);
+  var lft=parseFloat((document.getElementById('park-lft')||{}).value);
+  if(!(wft>0)||wft>30) wft=PARK_STALL_WFT;
+  if(!(lft>0)||lft>60) lft=PARK_STALL_LFT;
   var m=document.getElementById('park-modal'); if(m) m.style.display='none';
   var p=_pendingParkPt||{x:200,y:200}; _pendingParkPt=null;
-  _doPlaceParking(p,rows,cols);
+  _doPlaceParking(p,rows,cols,wft,lft);
 }
-function _doPlaceParking(p,rows,cols){
+function _doPlaceParking(p,rows,cols,wft,lft){
+  if(!(wft>0)) wft=PARK_STALL_WFT;
+  if(!(lft>0)) lft=PARK_STALL_LFT;
+  var ppf=(S.pxPerFt && S.pxPerFt>0) ? S.pxPerFt : 0;
   var sh={ id:uid(), kind:'parking', pts:[{x:p.x,y:p.y}], style:S.shapeStyle, color:SHAPE_STROKE,
-           rows:rows, cols:cols, sw:PARK_STALL_W, sh:PARK_STALL_H, rot:0 };
+           rows:rows, cols:cols, stallWft:wft, stallLft:lft, scaled:!!ppf, rot:0 };
   S.shapes.push(sh); renderShape(sh);
+  /* Anchor immediately so the array holds its ground position on the very
+     first pan/zoom rather than waiting for a drag to stamp it. */
+  try{ if(typeof _geoRestampOne==='function') _geoRestampOne(sh); }catch(e){}
   updShapeCount(); pushHist();
-  showBanner('shape',' Parking added ('+rows+' x '+cols+'). Click to place another . ESC exits');
+  var dims=wft+'\u2032 \u00d7 '+lft+'\u2032';
+  showBanner('shape', ppf
+    ? ' Parking added ('+rows+' \u00d7 '+cols+' @ '+dims+' stalls). Click to place another \u00b7 ESC exits'
+    : ' Parking added ('+rows+' \u00d7 '+cols+') at preview scale \u2014 calibrate for true '+dims+' stalls');
 }
 
 /* --- Callout: leader arrow from a target point to a text label --------
@@ -9387,8 +9496,8 @@ function _shapeBBox(sh){
     return { x:sh.pts[0].x, y:sh.pts[0].y, w:sh.lf*pf, h:sh.wf*pf };
   }
   if(sh.kind==='parking'){
-    var sw=sh.sw||PARK_STALL_W, sh2=sh.sh||PARK_STALL_H;
-    return { x:sh.pts[0].x, y:sh.pts[0].y, w:sh.cols*sw, h:sh.rows*sh2 };
+    var _pk=_parkStallPx(sh);
+    return { x:sh.pts[0].x, y:sh.pts[0].y, w:sh.cols*_pk.sw, h:sh.rows*_pk.sh };
   }
   if(sh.kind==='circle'){
     var a=sh.pts[0], b=sh.pts[1];
@@ -9457,7 +9566,9 @@ function renderShape(sh){
 /* draw a rows x cols grid of parking stalls anchored at pts[0] (top-left) */
 function _renderParking(g, sh){
   var ox=sh.pts[0].x, oy=sh.pts[0].y;
-  var sw=sh.sw||PARK_STALL_W, sh2=sh.sh||PARK_STALL_H;
+  /* Feet -> current pixels. Recomputed every render, so a zoom or a
+     recalibration resizes the array instead of leaving it frozen. */
+  var _pk=_parkStallPx(sh), sw=_pk.sw, sh2=_pk.sh;
   for(var r=0;r<sh.rows;r++){
     for(var c=0;c<sh.cols;c++){
       var x=ox + c*sw, y=oy + r*sh2;
@@ -11652,9 +11763,39 @@ function openAutoLayout(){
     + '<div style="padding:12px 18px;border-top:1px solid #26364d;display:flex;gap:8px">'
     +   '<button onclick="document.getElementById(\'autolayout-modal\').remove()" style="flex:0 0 84px;padding:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);color:#8FA3B8;border-radius:7px;cursor:pointer;font-family:inherit;font-size:11px">Cancel</button>'
     +   '<button id="al-preview-btn" onclick="alPreview()" '+(boundary?'':'disabled')+' style="flex:1;padding:10px;background:rgba(251,191,36,.2);border:1px solid rgba(251,191,36,.45);color:#FBBF24;font-weight:700;font-size:11px;border-radius:7px;cursor:pointer;font-family:inherit'+(boundary?'':';opacity:.4')+'">Preview</button>'
-    +   '<button id="al-go" onclick="alGenerate()" disabled style="flex:1;padding:10px;background:linear-gradient(135deg,#FBBF24,#22C55E);color:#0A1628;font-weight:800;font-size:11px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;opacity:.4">Generate</button>'
+    +   '<button id="al-go" onclick="alGenerate()" disabled title="Run Preview first \u2014 then Generate places the array." style="flex:1;padding:10px;background:rgba(255,255,255,.06);color:#7D95B4;font-weight:800;font-size:11px;border:1px solid rgba(255,255,255,.18);border-radius:7px;cursor:not-allowed;font-family:inherit">Generate</button>'
     + '</div></div>';
   window._alBoundary=boundary;
+  /* The Generate button used to ship as a 40%-opacity gradient on a #0F1D30
+     modal, which read as empty space -- the modal looked like it only offered
+     Cancel and Preview. It is now a legible grey in its disabled state, and
+     Preview is auto-run on open so that when a boundary is already usable the
+     button arrives LIVE (gold-green) rather than waiting on a click nobody
+     knew was required. */
+  if(boundary){ setTimeout(function(){ try{ alPreview(); }catch(e){} }, 0); }
+}
+/* Single source of truth for the Generate button's two visual states.
+   Written into the source rather than patched onto window.* so it cannot be
+   bypassed by internal lexical calls to alPreview()/openAutoLayout(). */
+function _alSetGo(enabled){
+  var go=document.getElementById('al-go'); if(!go) return;
+  go.disabled=!enabled;
+  go.style.opacity='';
+  if(enabled){
+    go.style.background='linear-gradient(135deg,#FBBF24,#22C55E)';
+    go.style.color='#0A1628';
+    go.style.border='none';
+    go.style.cursor='pointer';
+    go.style.boxShadow='0 2px 10px rgba(251,191,36,.35)';
+    go.title='Place the array on the drawing';
+  } else {
+    go.style.background='rgba(255,255,255,.06)';
+    go.style.color='#7D95B4';
+    go.style.border='1px solid rgba(255,255,255,.18)';
+    go.style.cursor='not-allowed';
+    go.style.boxShadow='none';
+    go.title='Nothing fits this boundary yet \u2014 see the note above.';
+  }
 }
 
 /* Find the largest closed shape as boundary; smaller closed shapes flagged
@@ -12158,8 +12299,7 @@ function alPreview(){
         : 'The boundary ('+acres.toFixed(2)+' acres) is smaller than the '
           +layout.setbackFt+' ft perimeter setback leaves room for. Draw a larger area.')
       +'</div>';
-    var go0=document.getElementById('al-go');
-    if(go0){ go0.disabled=true; go0.style.opacity='.4'; }
+    _alSetGo(false);
     return;
   }
 
@@ -12177,8 +12317,7 @@ function alPreview(){
           +layout.tableCount.toLocaleString()+' tables exceeds the '+GM_ROW_DRAW_CAP.toLocaleString()
           +'-table draw cap \u2014 will render as a density fill with counts, not individual tables.</div>'
         : '');
-  var go=document.getElementById('al-go');
-  if(go){ go.disabled=false; go.style.opacity=''; }
+  _alSetGo(true);
 }
 
 function alGenerate(){
@@ -16090,6 +16229,10 @@ const BESS_CATALOG = {
   'GOTION-EDGE-760': {mfr:'Gotion',model:'Gotion EDGE 760 kWh C&I BESS',chem:'LFP',kwh:760,usable:700,kw:380,dur:2,dcv:'1267.2V',eqcost:84740,inv:'Dynapower CPS-1250',ikva:802,xfmr:'1000KVA 480/480V',disco:'1200A 480V',notes:'1267.2 Vdc nominal; 480V 3-phase AC via PCS/transformer. Verify against Gotion submittal.'},
   'AWG-20AWG5MW': {mfr:'Aspen Woods Group',model:'Aspen Woods 20AWG5MW (2.58MW / 5MWh unit)',chem:'LFP',kwh:5015,usable:4750,kw:2580,maxKw:2838,dur:1.94,dcv:'1164.8-1476.8V',eqcost:null,inv:'CBAC-430-HA-M (Grid-Forming PCS)',ikva:2838,xfmr:'3150KVA 690V/MV (13.2kV/34.5kV) step-up',disco:'2500A 690V',greenfield:true,gridForming:true,gridConnectV:'690V 3W+PE',acCurrent:2158,dcStrings:12,stringModel:'LS417',cells:'3.2V/314Ah',cycleLife:'8,000 @ 70% / 0.5C 25C',dims:'6058x2438x2896mm',weight:'44t',cooling:'Liquid (battery + PCS)',bms:'SPAC BMS',controller:'GridPoint Controller (GPC)',certs:'UL9540, IEC62933, UN3536, CE',notes:'GRID-FORMING (VSG) containerized BESS UNIT for GREENFIELD/utility sites. Rated AC 2,580kW nominal / 2,838kW max; 5,015kWh @ 20ft. Interconnects 690V 3W+PE -> step-up to MV (13.2kV/34.5kV) utility. Seamless PQ<->GFM (VSG) mode switching, inertia emulation + autonomous freq/voltage regulation. PRICE TBD -- enter manually. For a full 5MW/20MWh site use the 4-unit system preset. Verify final Aspen Woods submittal + interconnection study.'},
   'AWG-5MW-SYSTEM': {mfr:'Aspen Woods Group',model:'Aspen Woods 5MW / 20MWh System (4× 20AWG5MW)',chem:'LFP',kwh:20060,usable:19000,kw:5000,maxKw:11352,dur:4.0,dcv:'1164.8-1476.8V',eqcost:null,inv:'4× CBAC-430-HA-M (Grid-Forming PCS)',ikva:11352,xfmr:'4× 3150KVA 690V/MV step-up → shared MV collector bus',disco:'MV collector + POI breaker',greenfield:true,gridForming:true,isSystem:true,unitKey:'AWG-20AWG5MW',unitQty:4,poiCapKw:5000,gridConnectV:'690V 3W+PE (per unit) → MV collector',acCurrent:'2,158A per unit',dcStrings:'12 per unit (48 total)',stringModel:'LS417',cells:'3.2V/314Ah',cycleLife:'8,000 @ 70% / 0.5C 25C',dims:'4× 6058x2438x2896mm',weight:'~176t (4× 44t)',cooling:'Liquid (battery + PCS)',bms:'SPAC BMS (per unit)',controller:'GridPoint Controller (GPC)',certs:'UL9540, IEC62933, UN3536, CE',notes:'5MW / 20MWh GREENFIELD SITE = 4× 20AWG5MW containers on a shared MV collector bus. Installed AC capacity 10.32MW nominal (4×2.58MW); POI-rated / offered at 5MW (4-hour duration @ 20MWh). Each unit: BESS→GFM PCS(690V)→step-up→shared MV collector→POI. Grid-forming VSG. PRICE TBD -- enter manually. Verify interconnection study + POI cap with utility.'},
+  'FENECON-IND-XXL': {mfr:'FENECON',model:'FENECON Industrial XXL — 2.508 MW / 5.015 MWh (20ft Liquid-Cooled)',chem:'LFP',kwh:5015,usable:4750,kw:2508,dur:2,dcv:'1331.2V (1,040–1,500V)',eqcost:null,inv:'Central Inverter, 2.5 MW class (3-ph 480V AC)',ikva:2508,xfmr:'3000KVA 480/480V',disco:'4000A 480V',
+    cells:'3.2V / 314Ah',dcStrings:12,stringModel:'8 packs per string',cooling:'Liquid heating & cooling',bms:'FENECON BMS',controller:'FEMS (open-source core)',gridConnectV:'480V 3-phase AC',
+    certs:'UL 9540, UL 9540A, UL 1973, UN 38.3, UN 3536',dims:'20 ft x 8.0 ft x 9.5 ft',weight:'~95,000 lbs',
+    notes:'FENECON Industrial XXL, 20ft container. 5,015 kWh / 2,508 kW, LFP 314Ah cell, 12P x (1P52S x 8S), 12 strings x 8 packs. 1,331.2 Vdc nominal, 1,040-1,500 Vdc range, max I/O current 2,460 A. Central PCS 2.5 MW class, 3-phase 480 V AC, IEEE 1547 / UL 1741 SA, >95% round-trip efficiency. Liquid cooled, IP55, system-level fire protection, -25C to 55C (derate >50C). LAN/RS485/RS232; FEMS open API, DERMS / VPP / SCADA ready; FEMS EMS included with free firmware + app updates. Usable kWh shown at ~95% DoD -- CONFIRM with FENECON. PRICE: quote required. FENECON USA, Greenville SC, +1 (864) 920-7758.'},
   'GOTION-GRID-3421': {mfr:'Gotion',model:'Gotion Grid 3.42 MWh Container',chem:'LFP',kwh:3421.4,usable:3150,kw:1710,dur:2,dcv:'~1267V',eqcost:381486,inv:'Dynapower MPS-1250',ikva:1710,xfmr:'2000KVA 480/480V',disco:'3200A 480V',notes:'Model ESD1267-05P3421. Medium-voltage interconnection via PCS/transformer.'},
   'GOTION-GRID-3441': {mfr:'Gotion',model:'Gotion Grid 3.44 MWh Container',chem:'LFP',kwh:3440.6,usable:3165,kw:1720,dur:2,dcv:'~1228.8V',eqcost:383627,inv:'Dynapower MPS-1250',ikva:1720,xfmr:'2000KVA 480/480V',disco:'3200A 480V',notes:'~1228.8 Vdc class. 0.5P nominal. Verify final Gotion container submittal.'},
   'GOTION-GRID-4608': {mfr:'Gotion',model:'Gotion GRID 4608 kWh Container (Liquid-Cooled)',chem:'LFP',kwh:4608,usable:4300,kw:2304,dur:2,dcv:'1280V',eqcost:null,inv:'Dynapower MPS-2500',ikva:2304,xfmr:'3000KVA 480/480V',disco:'4000A 480V',notes:'Model ESD1280-05P4608. LFP-300Ah cell, 12P400S config. Liquid-cooled 20ft container. IP54. NFPA855 compliant. Quote required.'},
@@ -19750,7 +19893,26 @@ async function saveProject(){
     console.error('Save error:',e);
     // Customer-facing: a silent failed save is a data-loss trap. Tell them.
     if(typeof showBanner==='function'){
-      showBanner('wiz','!! Couldn\u2019t save \u2014 check your connection. Your work is still here; it will retry automatically.');
+      /* One message for every failure sent people to check their wifi while
+         Firestore was refusing the write or the SDK had crashed. Name the
+         three cases that actually happen — the recovery is different for
+         each, and "it will retry automatically" is a LIE for the first. */
+      var _m;
+      if (/INTERNAL ASSERTION/i.test((e && e.message) || '')) {
+        _m = '!! The database connection has crashed \u2014 a known Firebase bug, usually '
+           + 'from having the editor open in more than one tab. Your work is safe in this '
+           + 'tab, but RELOAD THE PAGE to save it. Retrying will not fix it.';
+      } else if (e && e.code === 'permission-denied') {
+        _m = '!! Save refused by Firestore \u2014 this project\u2019s orgId doesn\u2019t match '
+           + 'your account. Your work is still here. Send this to dev@clearsky-usa.com.';
+      } else if (/exceeds the maximum|too large|invalid-argument/i.test((e && e.message) || '')) {
+        _m = '!! This project is too large for one document (1 MB limit). Your work is still '
+           + 'here \u2014 remove terrain samples or imagery, then save again.';
+      } else {
+        _m = '!! Couldn\u2019t save \u2014 check your connection. Your work is still here; it '
+           + 'will retry automatically.';
+      }
+      showBanner('wiz', _m);
     }
   }finally{
     window._saveInFlight = false;
@@ -46096,7 +46258,10 @@ function _evNearestStall(p){
     var sh=S.shapes[i];
     if(sh.kind!=='parking') continue;
     var ox=sh.pts[0].x, oy=sh.pts[0].y;
-    var sw=sh.sw||40, shh=sh.sh||80;
+    /* Same resolver the renderer uses -- a hardcoded 40x80 here meant the
+       snap targets sat off the drawn stalls at every zoom but one. */
+    var _pk=(typeof _parkStallPx==='function')?_parkStallPx(sh):{sw:40,sh:80};
+    var sw=_pk.sw, shh=_pk.sh;
     /* account for any translate applied to the parking shape */
     ox += (sh.tx||0); oy += (sh.ty||0);
     for(var r=0;r<sh.rows;r++){
@@ -60658,6 +60823,9 @@ window._crmToastModal=_crmToastModal;
   function restyleButton() {
     var go = el('al-go');
     if (!go) return;
+    /* The source now owns this styling (_alSetGo). Defer to it so the two
+       cannot drift apart; the block below is the pre-source fallback. */
+    if (typeof window._alSetGo === 'function') { window._alSetGo(!go.disabled); return; }
     go.style.opacity = '';
     if (go.disabled) {
       go.style.background = 'rgba(255,255,255,.05)';
