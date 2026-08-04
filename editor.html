@@ -1899,6 +1899,7 @@ window.onerror = function(msg, src, line, col, err) {
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',openConduitMenu)"><span class="fi-ico">⌥</span> Conduit Type &amp; Trenching…</button>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',_bessRunPanel)" title="Checklist of the standard BESS run designations (DC CABLE RUN 1, AC CABLE RUN 1-9...) — shows what's drawn vs pending and arms the tool for the next one"><span class="fi-ico">📋</span> BESS Cable Run Schedule…</button>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',_cdOpenTab)"><span class="fi-ico">Σ</span> LF Estimate</button>
+            <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',_geoRepairAndReport)" title="Re-anchors any conduit whose ground position went stale (e.g. after adding a bend point) so it tracks the map on the next pan/zoom instead of staying put"><span class="fi-ico">⚓</span> Re-anchor Conduits to Map</button>
             <div class="rb-fly-head">Auto-Route</div>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',function(){wireAllBessToHub()})" title="Home-run every BESS pad to the EMS/hub — one run per service, edge to edge"><span class="fi-ico">⇉</span> Wire All BESS &rarr; Hub</button>
             <div class="rb-fly-head">Drawing Style</div>
@@ -1970,6 +1971,7 @@ window.onerror = function(msg, src, line, col, err) {
         <button class="rbtn" onclick="openSitePreQual()" title="Site Pre-Qualification — Phase 0 property viability score (open area, parking, title, zoning) run before utility engagement. ComEd bands as a benchmark; works for any utility."><span class="rb-ico" style="color:#00D4FF">&#9672;</span><span class="rb-lbl">Site<br>Pre-Qual</span></button>
         <button class="rbtn" onclick="openScorePanel()" title="Interconnection-Ease site score — utility, capacity, permitting, queue, land"><span class="rb-ico">◎</span><span class="rb-lbl">Site<br>Score</span></button>
         <button class="rbtn" onclick="rbRun(openDerAnalysis)" title="DER generation + revenue waterfall (solar/wind/gen → data center → PJM value stack)"><span class="rb-ico">⚡</span><span class="rb-lbl">DER<br>Generation</span></button>
+        <button class="rbtn" onclick="rbRun(openNonExportCalc)" title="How much additional solar fits under a never-export ceiling for a given BESS size, simulated hour-by-hour against your 8760 load"><span class="rb-ico" style="color:#4ADE80">☀</span><span class="rb-lbl">Non-Export<br>Headroom</span></button>
         <button class="rbtn" onclick="rbRun(openEnergyBalance)" title="Site energy balance: generation vs. consumption vs. grid reliance across all placed systems"><span class="rb-ico">⚖</span><span class="rb-lbl">Energy<br>Balance</span></button>
       </div>
       <div class="rpanel-cap">Assessment</div>
@@ -5851,18 +5853,129 @@ var MV_CABLES = [
    From/To wording is the common-case topology; verify against the
    project's actual approved one-line before pulling cable -- equipment
    between BESS vendors and site configs varies. */
-const BESS_RUN_SCHEDULE=[
-  {key:'DC1', label:'DC CABLE RUN 1', from:'BESS Container',              to:'Battery Inverter',              condType:'RMC-DC'},
-  {key:'AC1', label:'AC CABLE RUN 1', from:'Battery Inverter',            to:'Isolation Transformer',         condType:'RMC-AC'},
-  {key:'AC2', label:'AC CABLE RUN 2', from:'Isolation Transformer',       to:'AC Disconnect (BESS yard)',     condType:'RMC-AC'},
-  {key:'AC3', label:'AC CABLE RUN 3', from:'AC Disconnect (BESS yard)',   to:'AC Disconnect (electrical room)',condType:'PVC-UG'},
-  {key:'AC4', label:'AC CABLE RUN 4', from:'AC Disconnect (elec. room)',  to:'Main Switchboard (MSB)',        condType:'RMC-AC'},
-  {key:'AC5', label:'AC CABLE RUN 5', from:'Aux Load Panel',              to:'UPS (feed)',                    condType:'EMT-BMS'},
-  {key:'AC6', label:'AC CABLE RUN 6', from:'UPS',                        to:'EMS / control loads',           condType:'EMT-BMS'},
-  {key:'AC7', label:'AC CABLE RUN 7', from:'Aux Load Panel',              to:'BESS Aux Loads (HVAC)',         condType:'EMT-BMS'},
-  {key:'AC8', label:'AC CABLE RUN 8', from:'Aux Load Panel',              to:'BESS Aux Loads (Fire Suppression)',condType:'EMT-BMS'},
-  {key:'AC9', label:'AC CABLE RUN 9', from:'Aux Load Panel',              to:'EMS / Site Internet',           condType:'EMT-BMS'},
-];
+/* ── BESS CABLE RUN SCHEDULE ─────────────────────────────────────────────
+   Standard numbered run designations used on BESS one-line diagrams and
+   approved plan sets (DC CABLE RUN 1, AC CABLE RUN 1-9...). Picking one of
+   these in the Conduit & Trenching dialog stamps that exact designation on
+   the drawn run, so the physical cable pull matches the approved plans by
+   name instead of the installer having to infer it from the drawing.
+
+   The schedule is BUILT, not fixed. A unit with an integrated PCS (no
+   separate inverter enclosure) skips the DC run entirely. A unit with no
+   external isolation transformer or disconnect (xfmr/disco = 'N/A' in
+   BESS_CATALOG) skips those legs too -- the AC chain just starts one node
+   further along. Run KEYS are stable node-pair ids (e.g. 'AC-xfmr-msb'),
+   not sequential numbers, so a conduit already drawn keeps matching its
+   run even if a later model swap changes what displays as "AC CABLE RUN 2".
+   The DISPLAY numbers are recomputed fresh from whatever is present.
+
+   From/To wording is the common-case topology; verify against the
+   project's actual approved one-line before pulling cable -- equipment
+   between BESS vendors and site configs varies. */
+/* Where each node gets physically placed, so the schedule can tell the
+   installer which Draw tool to use instead of just naming the equipment. */
+var BESS_RUN_UTIL = {
+  src:       { where:'besspad' },
+  inv:       { where:'utility', util:'pcs',   item:'PCS / Inverter Skid' },
+  xfmr:      { where:'utility', util:'xfmr',  item:'Utility Xfmr' },
+  discoYard: { where:'utility', util:'disco', item:'AC Disconnect' },
+  discoRoom: { where:'utility', util:'disco', item:'AC Disconnect' },
+  msb:       { where:'utility', util:'mdp',   item:'Main Switchgear / MDP' },
+  auxpanel:  { where:'utility', util:'panel', item:'Panelboard' },
+  ups:       { where:null },
+  ems:       { where:'utility', util:'ems',   item:'EMS Cabinet' },
+  hvac:      { where:null },
+  fire:      { where:null },
+  net:       { where:'utility', util:'ems',   item:'EMS Cabinet (or site telecom demarc)' }
+};
+function _bessUtilHint(node){
+  var u=BESS_RUN_UTIL[node];
+  if(!u || !u.where) return null;
+  if(u.where==='besspad') return 'Draw \u25b8 BESS Pad';
+  return 'Draw \u25b8 Utility \u25b8 '+u.item;
+}
+/* Find a placed BESS unit on the canvas and read its catalog entry, so the
+   schedule can react to what's ACTUALLY on the drawing rather than always
+   assuming a fully split (container + separate PCS + separate xfmr + separate
+   disco) system. */
+function _bessDetectModel(){
+  try{
+    var shapes=(typeof S!=='undefined' && S.shapes)||[];
+    for(var i=0;i<shapes.length;i++){
+      var sh=shapes[i];
+      if((sh.kind==='assembly'||sh.kind==='bespad') && sh.catalogKey && typeof BESS_CATALOG!=='undefined' && BESS_CATALOG[sh.catalogKey]){
+        return { key:sh.catalogKey, cat:BESS_CATALOG[sh.catalogKey] };
+      }
+    }
+  }catch(e){}
+  return null;
+}
+/* Integration read from the catalog entry's own inv/xfmr/disco text --
+   this is the same data already shown in the BESS picker preview, so a
+   unit doesn't need a second hand-maintained flag to get this right. */
+function _bessIntegration(){
+  var m=_bessDetectModel();
+  if(!m || !m.cat){
+    return { modelLabel:null, integratedPcs:false, hasXfmr:true, hasDisco:true };
+  }
+  var cat=m.cat;
+  var inv=String(cat.inv||''), xfmr=String(cat.xfmr||'').trim(), disco=String(cat.disco||'').trim();
+  var blank=function(v){ return !v || /^(n\/a|tbd|none)$/i.test(v); };
+  return {
+    modelLabel: cat.model || m.key,
+    integratedPcs: /integrat/i.test(inv) || /central inverter/i.test(inv),
+    hasXfmr: !blank(xfmr),
+    hasDisco: !blank(disco)
+  };
+}
+/* Build the run list for the currently-detected BESS model. Keys are
+   stable node-pair ids; display labels ("DC/AC CABLE RUN N") are numbered
+   fresh from whichever nodes are actually present. */
+function _bessSchedule(){
+  var integ=_bessIntegration();
+  var nodes=[
+    {id:'src',       name:'BESS Container',                  skip:false},
+    {id:'inv',       name:'Battery Inverter',                 skip:integ.integratedPcs},
+    {id:'xfmr',      name:'Isolation Transformer',             skip:!integ.hasXfmr},
+    {id:'discoYard', name:'AC Disconnect (BESS yard)',         skip:!integ.hasDisco},
+    {id:'discoRoom', name:'AC Disconnect (electrical room)',   skip:false},
+    {id:'msb',       name:'Main Switchboard (MSB)',            skip:false}
+  ];
+  var present=[], skipped=[];
+  for(var n=0;n<nodes.length;n++){ (nodes[n].skip?skipped:present).push(nodes[n]); }
+  var runs=[], acNum=0;
+  for(var i=0;i<present.length-1;i++){
+    var a=present[i], b=present[i+1];
+    if(a.id==='src' && b.id==='inv'){
+      runs.push({ key:'DC-inv', label:'DC CABLE RUN 1', from:a.name, to:b.name, condType:'RMC-DC',
+                  fromHint:_bessUtilHint(a.id), toHint:_bessUtilHint(b.id) });
+      continue;
+    }
+    acNum++;
+    var condType=(a.id==='discoYard' && b.id==='discoRoom') ? 'PVC-UG' : 'RMC-AC';
+    runs.push({ key:'AC-'+a.id+'-'+b.id, label:'AC CABLE RUN '+acNum, from:a.name, to:b.name, condType:condType,
+                fromHint:_bessUtilHint(a.id), toHint:_bessUtilHint(b.id) });
+  }
+  /* Static aux tail -- building-side branch circuits, independent of the
+     BESS unit's own PCS/xfmr/disco integration. Numbering continues from
+     wherever the power train left off, so an integrated unit's aux runs
+     shift down to fill the gap instead of leaving a numbering hole. */
+  var aux=[
+    {id:'ups',  name:'UPS (feed)',                        from:'Aux Load Panel', fromNode:'auxpanel', toNode:'ups'},
+    {id:'ems',  name:'EMS / control loads',                 from:'UPS',            fromNode:'ups',     toNode:'ems'},
+    {id:'hvac', name:'BESS Aux Loads (HVAC)',                from:'Aux Load Panel', fromNode:'auxpanel',toNode:'hvac'},
+    {id:'fire', name:'BESS Aux Loads (Fire Suppression)',    from:'Aux Load Panel', fromNode:'auxpanel',toNode:'fire'},
+    {id:'net',  name:'EMS / Site Internet',                  from:'Aux Load Panel', fromNode:'auxpanel',toNode:'net'}
+  ];
+  for(var j=0;j<aux.length;j++){
+    acNum++;
+    var ax=aux[j];
+    runs.push({ key:'AC-aux-'+ax.id, label:'AC CABLE RUN '+acNum, from:ax.from, to:ax.name, condType:'EMT-BMS',
+                fromHint:_bessUtilHint(ax.fromNode), toHint:_bessUtilHint(ax.toNode) });
+  }
+  var skipNotes=skipped.map(function(s){ return s.name+' \u2014 integrated into the BESS unit, no separate run needed'; });
+  return { runs:runs, integ:integ, skipNotes:skipNotes };
+}
 /* Scan placed conduits for which (optionally tagged) run designations are
    already on the drawing, so the picker can show what's done vs pending
    instead of the installer having to remember or re-check the canvas. */
@@ -5879,10 +5992,11 @@ function _bessRunPlaced(tag){
   return out;
 }
 /* First not-yet-placed run for a tag, so the picker defaults to "what's
-   next" instead of always resetting to DC CABLE RUN 1. */
+   next" instead of always resetting to run 1. */
 function _bessRunNext(tag){
+  var sched=_bessSchedule().runs;
   var placed=_bessRunPlaced(tag);
-  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(!placed[BESS_RUN_SCHEDULE[i].key]) return BESS_RUN_SCHEDULE[i].key; }
+  for(var i=0;i<sched.length;i++){ if(!placed[sched[i].key]) return sched[i].key; }
   return '';
 }
 
@@ -13178,7 +13292,10 @@ function analyze8760(text){
     isFullYear:(n>=8000),
     shave10:shaveAnalysis(0.9),   /* shave top 10% */
     shave20:shaveAnalysis(0.8),   /* shave top 20% */
-    shave30:shaveAnalysis(0.7)    /* shave top 30% */
+    shave30:shaveAnalysis(0.7),   /* shave top 30% */
+    hourly:vals                   /* raw kW-per-hour series -- needed for any real
+                                      hour-by-hour simulation (non-export sizing,
+                                      RTP-DA settlement), not just summary stats */
   };
 }
 
@@ -13553,6 +13670,20 @@ function insertConduitVertex(c, evt) {
   var newPt = {x: clickX, y: clickY};
   c.pts.splice(bestSeg + 1, 0, newPt);
 
+  /* BUG FIX: splicing pts changes the point count but left c._geoPts at its
+     old length. _geoReprojectAll's length-match guard then silently skips
+     this conduit on every future pan/zoom -- it stays pinned to its old
+     screen position while everything else tracks the map ("this one came
+     with me" when the person drags the view). The old code also never
+     called pushHist(), so nothing re-stamped it on the next edit either,
+     and the insert wasn't undo-able.
+     Fix: drop the now-stale anchor and restamp from the CURRENT points
+     immediately (_geoStampShape works on any object with .pts, not just
+     S.shapes members), so the conduit is correct before the next repaint
+     rather than hoping a later, unrelated edit happens to fix it. */
+  delete c._geoPts;
+  try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
+
   // Recalculate length
   var pxLen = 0;
   for(var j = 1; j < c.pts.length; j++) {
@@ -13566,6 +13697,7 @@ function insertConduitVertex(c, evt) {
   if(existingG) existingG.remove();
   renderConduit(c);
   updCondStat();
+  if(typeof pushHist==='function') try{ pushHist(); }catch(e){}
 
   // Show tooltip hint on first use
   if(!window._vertexHintShown) {
@@ -30076,6 +30208,52 @@ function _geoReprojectAll(){
 window._geoReprojectAll=_geoReprojectAll;
 
 /* Wire map-move listeners once, when a live map exists. Idempotent. */
+/* Repair pass for conduits already broken by the insertConduitVertex bug
+   above (stale/mismatched _geoPts from before this fix, or from any other
+   future path that edits .pts without keeping the anchor in step). Deletes
+   the stale anchor and restamps from the CURRENT pixel position -- the
+   best any tool can do without a valid prior anchor, but it means the
+   conduit tracks the map correctly from this point forward instead of
+   silently sitting out every future pan/zoom. Safe to call repeatedly:
+   a conduit with a complete, length-matched anchor is left untouched. */
+function _geoRepairConduits(){
+  var ms=_liveMapState(); if(!ms) return { fixed:0, ready:false };
+  var fixed=0;
+  try{
+    (S.conduits||[]).forEach(function(c){
+      if(!c.pts || !c.pts.length) return;
+      var ok = c._geoPts && c._geoPts.length===c.pts.length
+        && c._geoPts.every(function(g){ return g && g.lat!=null && g.lng!=null; });
+      if(ok) return;
+      delete c._geoPts;
+      if(typeof _geoRestampOne==='function') _geoRestampOne(c);
+      if(c._geoPts) fixed++;
+    });
+    (S._trenches||[]).forEach(function(t){
+      if(!t.pts || !t.pts.length) return;
+      var ok = t._geoPts && t._geoPts.length===t.pts.length
+        && t._geoPts.every(function(g){ return g && g.lat!=null && g.lng!=null; });
+      if(ok) return;
+      delete t._geoPts;
+      if(typeof _geoRestampOne==='function') _geoRestampOne(t);
+      if(t._geoPts) fixed++;
+    });
+  }catch(e){}
+  if(fixed && window.console) console.info('[omega/geo] re-anchored '+fixed+' conduit/trench run(s) that had drifted out of sync with the map.');
+  return { fixed:fixed, ready:true };
+}
+window._geoRepairConduits=_geoRepairConduits;
+/* Manual trigger from the Draw > Conduit flyout -- same repair, with a
+   banner so pressing the button actually confirms something happened. */
+function _geoRepairAndReport(){
+  var r=_geoRepairConduits();
+  if(!r.ready){ if(typeof showBanner==='function') showBanner('cond',' Map not ready yet \u2014 try again once the site map has loaded.'); return; }
+  if(typeof renderConduit==='function'){ (S.conduits||[]).forEach(function(c){ try{ renderConduit(c); }catch(e){} }); }
+  if(typeof showBanner==='function') showBanner('cond',
+    r.fixed ? (' Re-anchored '+r.fixed+' run'+(r.fixed>1?'s':'')+' that had drifted out of sync with the map.')
+            : ' All conduit and trench runs are already anchored to the map \u2014 nothing to fix.');
+}
+window._geoRepairAndReport=_geoRepairAndReport;
 function _geoWireMapListeners(){
   try{
     if(window._geoListenersWired) return;
@@ -30132,6 +30310,10 @@ function _geoWireMapListeners(){
     });
     if(window.console) console.info('[omega/geo] map listeners wired \u2014 '
       + 'geometry will track pan and zoom.');
+    /* One-shot repair for anything already broken by the vertex-insert bug
+       (or any pre-existing project saved before this fix). Deferred a tick
+       so the map has actually reported a settled center/zoom. */
+    setTimeout(function(){ try{ _geoRepairConduits(); }catch(e){} }, 400);
   }catch(e){}
 }
 window._geoWireMapListeners=_geoWireMapListeners;
@@ -42318,6 +42500,60 @@ var GRID_STACK = {
    same MW across the year; arbitrage uses full throughput). */
 var GRID_COOPT = { arb:1.0, fr:0.7, cap:1.0, res:0.5, btm:0.6, edr:0.8 };
 
+/* ---- UTILITY-SPECIFIC DER/DR PROGRAMS (nationwide, not just one utility) ---
+   The PJM/ComEd rows above are wholesale-market anchors -- fine for PJM
+   territory, meaningless in SPP, CAISO, ERCOT, or a vertically-integrated
+   utility like Georgia Power/Duke/Dominion. Real DER/DR programs are
+   utility-specific and their rates live in a customer's actual program
+   agreement, not a public market feed, so this is a library of REAL,
+   citable program names to quick-add as a starting row (rate left at 0,
+   editable) plus a free-form "add any program" row for anything not
+   listed. Extend PROGRAM_LIBRARY as more utilities are verified -- entries
+   here are deliberately name/structure only, no invented dollar figures. */
+var DER_PROGRAM_LIBRARY = [
+  { id:'ga-ras1', util:'Georgia Power', label:'GA Power RAS-1 (Resiliency Asset Service)',
+    note:'Fixed monthly credit, GA Power-owned resource. 2025 IRP DER Customer Program. Enter your RAS-1 agreement rate ($/kW-yr).' },
+  { id:'ga-drc1', util:'Georgia Power', label:'GA Power DRC-1 (Demand Response Credit)',
+    note:'Event-based bill credit, ~75% of value per GA Power\u2019s public program description. Enter your DRC-1 agreement rate ($/kW-yr).' },
+  { id:'coned-csrp', util:'Con Edison (NY)', label:'ConEd CSRP / DLRP (Demand Mgmt)',
+    note:'NYC/Westchester demand-reduction incentive, paid per kW enrolled in targeted network zones. Enter your program-year rate.' },
+  { id:'comed-hourly', util:'ComEd (IL)', label:'ComEd Hourly Pricing (RRTP)',
+    note:'Retail Real-Time Pricing -- day-ahead hourly rate passed to the customer. Pair with the Day-Ahead/Hourly Rate upload above rather than a flat $/kW-yr.' },
+  { id:'sce-drp', util:'SCE / CAISO (CA)', label:'SCE DR / CAISO DRAM',
+    note:'California ISO demand-response auction mechanism or utility DR tariff. Enter your cleared/contracted $/kW-yr.' },
+  { id:'duke-pdp', util:'Duke Energy', label:'Duke Power Manager / DR Credit',
+    note:'Duke\u2019s behind-the-meter demand response credit program (varies by state jurisdiction: NC, SC, FL, IN, OH). Enter your program rate.' },
+  { id:'custom',   util:'Any utility', label:'Custom program\u2026',
+    note:'Add any utility DER/DR program by name with its own rate.' }
+];
+function _derProgramAdd(libId){
+  var lib=null;
+  for(var i=0;i<DER_PROGRAM_LIBRARY.length;i++){ if(DER_PROGRAM_LIBRARY[i].id===libId){ lib=DER_PROGRAM_LIBRARY[i]; break; } }
+  if(!lib) return;
+  window._customDerPrograms = window._customDerPrograms||[];
+  var label = lib.id==='custom' ? (prompt('Program name (e.g. "XYZ Utility Peak Credit")','')||'') : lib.label;
+  if(!label) return;
+  var rowId = 'cust_'+Date.now()+'_'+Math.floor(Math.random()*1000);
+  window._customDerPrograms.push({ id:rowId, label:label, util:lib.util, perKwYr:0, on:true, note:lib.note });
+  _derRefreshAnalysis();
+}
+function _derProgramRemove(rowId){
+  window._customDerPrograms = (window._customDerPrograms||[]).filter(function(r){ return r.id!==rowId; });
+  _derRefreshAnalysis();
+}
+function _derProgramSetRate(rowId, v){
+  var row=(window._customDerPrograms||[]).find(function(r){ return r.id===rowId; });
+  if(!row) return;
+  var n=parseFloat(v); row.perKwYr = isFinite(n)&&n>=0 ? n : 0;
+  _derRefreshAnalysis();
+}
+function _derProgramToggle(rowId){
+  var row=(window._customDerPrograms||[]).find(function(r){ return r.id===rowId; });
+  if(!row) return;
+  row.on=!row.on;
+  _derRefreshAnalysis();
+}
+
 function gridBessKw(){
   if(typeof window._gridMwOverride==='number' && window._gridMwOverride>0) return window._gridMwOverride*1000;
   var f=(typeof _ppCollectFleet==='function')?_ppCollectFleet():{totalKw:0};
@@ -42335,13 +42571,35 @@ function gridStackRevenue(){
     var id=order[i], L=GRID_STACK[id];
     var useKw = kw * (GRID_COOPT[id]||1);
     var rev = L.on ? useKw * L.perKwYr : 0;
-    layers.push({ id:id, label:L.label, on:L.on, kw:useKw, rate:L.perKwYr, rev:rev, kind:L.kind });
+    layers.push({ id:id, label:L.label, on:L.on, kw:useKw, rate:L.perKwYr, rev:rev, kind:L.kind, note:L.note||null, custom:false });
     total += rev;
+  }
+  /* Utility-specific DER/DR programs the person has added (GA Power RAS-1/
+     DRC-1, ComEd Hourly Pricing, or any custom-named program) -- nationwide
+     by construction, since these are added at runtime rather than baked in
+     for one utility. Co-optimize at 0.8 like the other DR-shaped layers. */
+  var custom=window._customDerPrograms||[];
+  for(var j=0;j<custom.length;j++){
+    var C=custom[j];
+    var useKwC = kw*0.8;
+    var revC = C.on ? useKwC*C.perKwYr : 0;
+    layers.push({ id:C.id, label:C.label+(C.util?' \u2014 '+C.util:''), on:C.on, kw:useKwC, rate:C.perKwYr, rev:revC, kind:'power', note:C.note||null, custom:true });
+    total += revC;
   }
   return { bessKw:kw, bessKwh:gridBessKwh(), layers:layers, total:total };
 }
 function toggleGridLayer(id){
-  if(GRID_STACK[id]){ GRID_STACK[id].on=!GRID_STACK[id].on; _derRefreshAnalysis(); }
+  if(GRID_STACK[id]){ GRID_STACK[id].on=!GRID_STACK[id].on; _derRefreshAnalysis(); return; }
+  _derProgramToggle(id);
+}
+function _gridSetLayerRate(id,v){
+  if(GRID_STACK[id]){
+    var n=parseFloat(v);
+    GRID_STACK[id].perKwYr = isFinite(n) && n>=0 ? n : 0;
+    _derRefreshAnalysis();
+    return;
+  }
+  _derProgramSetRate(id,v);
 }
 function _gridSetOverride(v){
   var n=parseFloat(v); window._gridMwOverride=(isFinite(n)&&n>0)?n:0; _derRefreshAnalysis();
@@ -42387,7 +42645,15 @@ function derEnergyPnl(){
   var t=derTotals();
   /* Annual PRODUCTION by source (kWh) */
   var _sa = (typeof _solarAssume==='function') ? _solarAssume('ground') : {cf:DER_SOLAR_CF};
-  var solarKwh = _derAnnualKwh(t.solarKwDc*0.83, (_sa.cf||DER_SOLAR_CF));
+  var _solarActual = window._solarActual8760;
+  var solarKwh, solarSource;
+  if(_solarActual && _solarActual.annualKwh>0){
+    solarKwh = _solarActual.annualKwh;
+    solarSource = 'actual 8760 ("'+_solarActual.colName+'", '+_solarActual.rows.toLocaleString()+' rows)';
+  } else {
+    solarKwh = _derAnnualKwh(t.solarKwDc*0.83, (_sa.cf||DER_SOLAR_CF));
+    solarSource = 'modeled ('+((_sa.cf||DER_SOLAR_CF)*100).toFixed(0)+'% capacity factor)';
+  }
   var windKwh  = _derAnnualKwh(t.windKw, DER_WIND_CF);
   var genKwh   = _derAnnualKwh(t.altKw, DER_GEN_CF);
   var prodKwh  = solarKwh + windKwh + genKwh;
@@ -42434,7 +42700,7 @@ function derEnergyPnl(){
 
   return {
     totals:t,
-    production:{ solarKwh:solarKwh, windKwh:windKwh, genKwh:genKwh, totalKwh:prodKwh },
+    production:{ solarKwh:solarKwh, windKwh:windKwh, genKwh:genKwh, totalKwh:prodKwh, solarSource:solarSource },
     consumption:{ dcKwh:dcKwh, siteKwh:siteKwh, totalKwh:consumeKwh },
     derCost:derCost, derBlended:derBlended,
     gridCost:gridCost, importKwh:importKwh, importBill:importBill,
@@ -42442,6 +42708,361 @@ function derEnergyPnl(){
     surplusKwh:surplusKwh, surplusVal:surplusVal,
     stackRev:stackRev, netProfit:netProfit
   };
+}
+
+/* ── SOLAR 8760 ACTUAL PRODUCTION OVERRIDE ──────────────────────────────
+   The Energy P&L below used a pure capacity-factor model for solar
+   (kWdc * 0.83 * CF * 8760) even when a customer's actual metered
+   production was sitting in a spreadsheet. This lets a real 8760 replace
+   that estimate. CSV headers vary a lot between utility/DR exports
+   (Total kWh, CBL kWh, On Peak kWh, Peak Demand...) so rather than guess,
+   every numeric-looking column is scored and offered in a picker -- the
+   person confirms which column is actual production instead of the tool
+   silently grabbing the column next to it (e.g. a CBL or billing-demand
+   column, which would badly misstate revenue). */
+function _parse8760Candidates(text){
+  var lines=String(text||'').split(/[\r\n]+/).filter(function(l){ return l.trim(); });
+  if(lines.length<2) return { header:null, rows:0, cols:[] };
+  var delim = lines[0].indexOf(',')>=0 ? ',' : (lines[0].indexOf('\t')>=0 ? '\t' : (lines[0].indexOf(';')>=0?';':','));
+  var head = lines[0].split(delim).map(function(s){ return s.replace(/^"|"$/g,'').trim(); });
+  var hasHeader = head.some(function(h){ return /[a-zA-Z]/.test(h); });
+  var startRow = hasHeader ? 1 : 0;
+  var colVals=[];
+  for(var i=startRow;i<lines.length;i++){
+    var cells=lines[i].split(delim);
+    for(var c=0;c<cells.length;c++){
+      var raw=String(cells[c]||'').replace(/^"|"$/g,'').trim();
+      var v=parseFloat(raw.replace(/[^0-9.\-]/g,''));
+      if(!colVals[c]) colVals[c]=[];
+      colVals[c].push(isFinite(v)?v:NaN);
+    }
+  }
+  var cols=[];
+  for(var c2=0;c2<colVals.length;c2++){
+    var arr=colVals[c2];
+    var finite=arr.filter(function(x){ return isFinite(x); });
+    if(finite.length < Math.min(24, arr.length*0.5)) continue;  /* mostly text/dates -- skip */
+    var mono=0; for(var k=1;k<finite.length;k++){ if(finite[k]>=finite[k-1]) mono++; }
+    var monoFrac=finite.length>1?mono/(finite.length-1):0;
+    var distinct={}; finite.forEach(function(x){ distinct[Math.round(x*100)]=1; });
+    var variety = finite.length ? Object.keys(distinct).length/finite.length : 0;
+    var sum=finite.reduce(function(a,b){return a+b;},0);
+    var avg=finite.length?sum/finite.length:0;
+    var score=finite.length;
+    if(monoFrac>0.97) score*=0.05;   /* climbing index / running total */
+    if(variety<0.02)  score*=0.05;   /* one repeated value */
+    var hdr = head[c2] || ('Column '+(c2+1));
+    /* Headers that strongly suggest NOT a production series (baseline,
+       billing, tax, monthly totals) sort lower; still offered, not hidden --
+       misclassifying a plausible column as "wrong" silently is exactly the
+       failure mode this picker exists to avoid. */
+    if(/cbl|baseline|bill|tax|monthly|month|peak dem|account|sales/i.test(hdr)) score*=0.3;
+    if(/solar|pv|production|generation/i.test(hdr)) score*=1.6;
+    cols.push({ index:c2, header:hdr, count:finite.length, avg:avg, sum:sum, score:score, arr:arr });
+  }
+  cols.sort(function(a,b){ return b.score-a.score; });
+  return { header:hasHeader?head:null, rows:lines.length-startRow, cols:cols, delim:delim };
+}
+var DER_8760_KINDS = {
+  solar: { fileInput:'der-solar-file', title:'Which column is solar production?',
+           hint:'Utility/DR interval exports often carry a baseline (CBL), billing-demand and tax column right alongside the one you actually want \u2014 pick the actual solar output (kWh per interval).',
+           applyLabel:'actual solar production', unit:'kWh/yr' },
+  rtp:   { fileInput:'der-rtp-file', title:'Which column is the day-ahead $/kWh price?',
+           hint:'Day-ahead / real-time hourly rate exports (Georgia Power RTP-DA, ComEd Hourly Pricing, PG&E RTOD, ERCOT/CAISO/NYISO real-time settlement...) often carry CBL, increment and billing columns alongside the price \u2014 pick the hourly $/kWh price column, not the load or baseline.',
+           applyLabel:'day-ahead hourly price', unit:'$/kWh avg' }
+};
+function _der8760UploadClick(kind){
+  var cfg=DER_8760_KINDS[kind]; if(!cfg) return;
+  var inp=document.getElementById(cfg.fileInput);
+  if(inp) inp.click();
+}
+function _der8760CsvFile(file, kind){
+  if(!file || !DER_8760_KINDS[kind]) return;
+  var rd=new FileReader();
+  rd.onload=function(ev){
+    var txt=String(ev.target.result||'');
+    window._der8760CsvText=txt; window._der8760Kind=kind;
+    var parsed=_parse8760Candidates(txt);
+    if(!parsed.cols.length){
+      if(typeof showBanner==='function') showBanner('cond',' No usable numeric column found in that file.');
+      return;
+    }
+    _der8760ShowPicker(parsed, file.name, kind);
+  };
+  rd.readAsText(file);
+}
+function _der8760ShowPicker(parsed, fname, kind){
+  var cfg=DER_8760_KINDS[kind]; if(!cfg) return;
+  var old=document.getElementById('der-solar-picker'); if(old) old.remove();
+  var opts='';
+  for(var i=0;i<Math.min(parsed.cols.length,10);i++){
+    var c=parsed.cols[i];
+    opts+='<option value="'+c.index+'">'+_omEsc(c.header)+' \u2014 '+c.count.toLocaleString()+' rows, avg '+c.avg.toFixed(3)+'</option>';
+  }
+  var html=''
+    +'<div id="der-solar-picker" style="position:fixed;inset:0;background:rgba(6,12,22,.8);z-index:100002;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.remove()">'
+    +'<div style="background:#0F1D30;border:1px solid #4ADE80;border-radius:12px;max-width:440px;width:100%;padding:18px 20px">'
+    +'<div style="font-size:14px;font-weight:800;color:#4ADE80;margin-bottom:4px">'+cfg.title+'</div>'
+    +'<div style="font-size:10.5px;color:#8FA3B8;margin-bottom:12px">"'+_omEsc(fname)+'" has several numeric columns. '+cfg.hint+'</div>'
+    +'<select id="der-solar-col" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px 9px;font-size:12px;font-family:inherit;margin-bottom:14px">'+opts+'</select>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end">'
+    +'<button onclick="document.getElementById(\'der-solar-picker\').remove()" style="background:none;border:1px solid #1E3A5F;color:#94A3B8;border-radius:6px;padding:8px 14px;font-size:11px;cursor:pointer;font-family:inherit">Cancel</button>'
+    +'<button onclick="_der8760ApplyColumn()" style="background:#1DB954;border:none;color:#052e16;border-radius:6px;padding:8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Use this column</button>'
+    +'</div></div></div>';
+  var d=document.createElement('div'); d.innerHTML=html; document.body.appendChild(d.firstChild);
+}
+function _der8760ApplyColumn(){
+  var sel=document.getElementById('der-solar-col'); if(!sel) return;
+  var idx=parseInt(sel.value,10);
+  var kind=window._der8760Kind;
+  var cfg=DER_8760_KINDS[kind]; if(!cfg) return;
+  var parsed=_parse8760Candidates(window._der8760CsvText||'');
+  var col=null; for(var i=0;i<parsed.cols.length;i++){ if(parsed.cols[i].index===idx){ col=parsed.cols[i]; break; } }
+  var pk=document.getElementById('der-solar-picker'); if(pk) pk.remove();
+  if(!col) return;
+  var vals=col.arr.filter(function(x){ return isFinite(x); });
+  var sum=vals.reduce(function(a,b){ return a+b; },0);
+  var avg=vals.length?sum/vals.length:0;
+  if(kind==='solar'){
+    window._solarActual8760 = { hourly:vals, annualKwh:sum, rows:vals.length, colName:col.header, uploadedAt:Date.now() };
+    if(typeof showBanner==='function') showBanner('cond',' Using "'+col.header+'" as actual solar production \u2014 '+Math.round(sum).toLocaleString()+' kWh/yr across '+vals.length.toLocaleString()+' rows.');
+  } else if(kind==='rtp'){
+    window._rtpDa8760 = { hourly:vals, avg:avg, rows:vals.length, colName:col.header, uploadedAt:Date.now() };
+    if(typeof showBanner==='function') showBanner('cond',' Using "'+col.header+'" as day-ahead hourly price \u2014 avg $'+avg.toFixed(4)+'/kWh across '+vals.length.toLocaleString()+' hours.');
+  }
+  _derRefreshAnalysis();
+}
+function _derSolarClear(){
+  window._solarActual8760=null;
+  _derRefreshAnalysis();
+}
+function _derRtpClear(){
+  window._rtpDa8760=null;
+  _derRefreshAnalysis();
+}
+/* Approximate day-ahead/hourly settlement: total metered load x hourly
+   price, hour-for-hour against the uploaded LOAD 8760 (from the existing
+   Import Bill -> 8760 Profile feature). This is a directional comparison,
+   NOT a faithful bill for any tariff that settles on a deviation from a
+   baseline rather than total usage -- e.g. Georgia Power's RTP-DA-9/11/12
+   bills the deviation from a mutually-agreed Customer Baseline Load, not
+   total usage. ComEd's Hourly Pricing (RRTP), most CAISO/ERCOT/NYISO
+   real-time pass-through tariffs, and PG&E's RTOD generally DO bill total
+   usage at the hourly price, so this estimate is closer to exact for
+   those. Flagged as approximate in the UI either way. */
+function derRtpEstimate(){
+  var rtp=window._rtpDa8760;
+  var load=(window._bill8760 && window._bill8760.hourly) ? window._bill8760.hourly : null;
+  if(!rtp || !rtp.hourly || !rtp.hourly.length) return null;
+  if(!load || !load.length) return { ok:false, reason:'no-load', avgPrice:rtp.avg, rows:rtp.hourly.length };
+  var n=Math.min(rtp.hourly.length, load.length);
+  var cost=0, kwh=0;
+  for(var i=0;i<n;i++){ cost += load[i]*rtp.hourly[i]; kwh += load[i]; }
+  var flatCost = kwh * ((typeof window._derGridCost==='number' && window._derGridCost>0) ? window._derGridCost : DER_GRID_COST);
+  return { ok:true, hours:n, kwh:kwh, rtpCost:cost, flatCost:flatCost, delta:flatCost-cost, avgPrice:rtp.avg,
+           blendedPrice: kwh>0?cost/kwh:0 };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   NON-EXPORT SOLAR HEADROOM
+   ----------------------------------------------------------------------
+   CSE's model: size solar so the customer never exports to the grid, add
+   BESS, then see how much MORE solar fits under the same never-export
+   ceiling. "How much is that" needs a real hour-by-hour dispatch run
+   across a year, not a rule of thumb -- a bigger battery buffers more of
+   the midday surplus, so the answer depends on the actual load shape,
+   the actual (or modeled) solar shape, and the battery's power AND
+   energy limits together.
+
+   Inputs:
+     - LOAD:  the existing 8760 Profile (Import Bill -> 8760 Profile).
+       Required -- there is no safe default for a customer's load shape.
+     - SOLAR: the uploaded actual 8760 (preferred, normalized to a
+       per-kW-DC shape using the currently-placed solar kW) or, failing
+       that, a labeled synthetic diurnal/seasonal shape at an editable
+       capacity factor. Never silently presented as measured.
+     - BESS:  defaults from the placed BESS fleet, editable so "what if
+       we go to 5 MWh" can be answered directly without redrawing.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* kWh generated per kW-DC installed, per hour, for a full year. Prefers
+   the uploaded actual profile; only used if it can be aligned to a
+   reasonable installed-kW basis. */
+function _neSolarShapePerKw(){
+  var t=derTotals();
+  var actual=window._solarActual8760;
+  if(actual && actual.hourly && actual.hourly.length>=8000 && t.solarKwDc>0){
+    return { shape: actual.hourly.map(function(v){ return v/t.solarKwDc; }),
+              source:'actual 8760 ("'+actual.colName+'") \u00f7 '+Math.round(t.solarKwDc).toLocaleString()+' kW-DC placed',
+              synthetic:false, hours:actual.hourly.length };
+  }
+  return null;
+}
+/* Labeled placeholder shape when there's no actual profile to normalize.
+   Simple diurnal x seasonal bell curve, scaled to hit the given annual
+   capacity factor per kW-DC. This is NOT a weather model -- it exists so
+   the calculator still runs, and it says so everywhere it's used. */
+function _neSyntheticSolarShape(cf){
+  cf = (cf>0 && cf<0.5) ? cf : 0.18;
+  var raw=new Array(8760), sum=0;
+  for(var h=0; h<8760; h++){
+    var day=Math.floor(h/24), hod=h%24;
+    var season=0.65+0.35*Math.cos((day-172)/365*2*Math.PI);
+    var sunrise=6.5-1.2*Math.cos((day-172)/365*2*Math.PI);
+    var sunset =17.5+1.2*Math.cos((day-172)/365*2*Math.PI);
+    var v=0;
+    if(hod>sunrise && hod<sunset){ v=Math.sin(Math.PI*(hod-sunrise)/(sunset-sunrise)); }
+    raw[h]=v*season; sum+=raw[h];
+  }
+  var scale = sum>0 ? (cf*8760)/sum : 0;
+  return raw.map(function(v){ return v*scale; });
+}
+/* Hourly dispatch: solar charges the battery on surplus (up to its power
+   and remaining energy headroom), discharges it to cover deficits, and
+   whatever surplus the battery can't absorb is EXPORT -- the number this
+   whole calculator exists to drive to zero. Grid import (deficit the
+   battery can't cover) is fine and unlimited; only export is constrained.
+   Battery SOC rolls continuously across the year (starts empty; a year is
+   long enough that the boundary condition washes out). */
+function _neExportKwh(loadArr, shapePerKw, installedKw, bessKwh, bessKw, effRT){
+  var n=Math.min(loadArr.length, shapePerKw.length);
+  var soc=0, exportTotal=0, effSqrt=Math.sqrt(effRT>0&&effRT<=1?effRT:0.88);
+  for(var h=0; h<n; h++){
+    var gen = installedKw*shapePerKw[h];
+    var net = gen - loadArr[h];
+    if(net>0){
+      var headroom=Math.max(0,(bessKwh-soc)/effSqrt);
+      var chg=Math.min(net, bessKw, headroom);
+      soc += chg*effSqrt;
+      exportTotal += (net-chg);
+    } else {
+      var need=-net;
+      var avail=Math.max(0, soc*effSqrt);
+      var dis=Math.min(need, bessKw, avail);
+      soc -= dis/effSqrt;
+    }
+  }
+  return exportTotal;
+}
+/* Binary search (with exponential bracketing first) for the max additional
+   solar kW-DC that keeps annual export at/below tolerance. Export is
+   monotonically non-decreasing in installed kW for a fixed battery, so a
+   single crossing point exists. */
+function _neMaxAddKw(loadArr, shapePerKw, currentKw, bessKwh, bessKw, effRT, tolKwh){
+  tolKwh = tolKwh>=0 ? tolKwh : 1;
+  var base=_neExportKwh(loadArr, shapePerKw, currentKw, bessKwh, bessKw, effRT);
+  if(base>tolKwh) return { addKw:0, alreadyExporting:true, baseExportKwh:base };
+  var lo=0, hi=Math.max(currentKw,100), iter=0;
+  while(_neExportKwh(loadArr,shapePerKw,currentKw+hi,bessKwh,bessKw,effRT)<=tolKwh && iter<40){ hi*=2; iter++; }
+  for(var i=0;i<40;i++){
+    var mid=(lo+hi)/2;
+    if(_neExportKwh(loadArr,shapePerKw,currentKw+mid,bessKwh,bessKw,effRT)<=tolKwh) lo=mid; else hi=mid;
+  }
+  return { addKw:lo, alreadyExporting:false, baseExportKwh:base, finalInstalledKw:currentKw+lo };
+}
+
+function openNonExportCalc(){
+  var host=document.getElementById('ne-calc-modal');
+  if(host) host.remove();
+  host=document.createElement('div');
+  host.id='ne-calc-modal';
+  host.setAttribute('style','position:fixed;inset:0;background:rgba(6,12,22,.78);z-index:100001;display:flex;align-items:center;justify-content:center;padding:20px');
+  host.onclick=function(e){ if(e.target===host) host.remove(); };
+  host.innerHTML=_neCalcInner();
+  document.body.appendChild(host);
+}
+function _neRefresh(){
+  var host=document.getElementById('ne-calc-modal');
+  if(host) host.innerHTML=_neCalcInner();
+}
+function _neCalcInner(){
+  var t=derTotals();
+  var load = (window._bill8760 && window._bill8760.hourly) ? window._bill8760.hourly : null;
+  var grid = gridStackRevenue();  /* reuses the same placed-BESS fleet read as the DER modal */
+  var bessKwhVal = (window._neBessKwh!=null) ? window._neBessKwh : (grid.bessKwh || 5000);
+  var bessKwVal  = (window._neBessKw!=null)  ? window._neBessKw  : (grid.bessKw  || bessKwhVal/2);
+  var effRT      = (window._neEffRt!=null)   ? window._neEffRt   : 0.88;
+  var cf         = (window._neCf!=null)      ? window._neCf      : 0.18;
+
+  var body;
+  if(!load){
+    body = '<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:14px;font-size:12px;color:#FCD34D">'
+      + 'This needs an hourly load profile to know when the site actually needs power. Upload one via <strong>Analyze \u25b8 Import Bill \u25b8 8760 Profile</strong> (CSV or paste), then reopen this calculator.'
+      + '</div>';
+  } else {
+    var shapeInfo=_neSolarShapePerKw();
+    var shape, shapeSrc, isSynthetic;
+    if(shapeInfo){ shape=shapeInfo.shape; shapeSrc=shapeInfo.source; isSynthetic=false; }
+    else { shape=_neSyntheticSolarShape(cf); shapeSrc='modeled shape at '+(cf*100).toFixed(0)+'% capacity factor (no actual 8760 uploaded)'; isSynthetic=true; }
+
+    var result=_neMaxAddKw(load, shape, t.solarKwDc, bessKwhVal, bessKwVal, effRT, Math.max(1, (window._bill8760.annualKwh||0)*0.0005));
+
+    /* Sensitivity table across a few BESS sizes, since "how much solar for
+       a 5 MWh battery" was the actual question -- show the curve, not just
+       one point. */
+    var presets=[bessKwhVal*0.5, bessKwhVal, bessKwhVal*1.5, bessKwhVal*2].filter(function(v,i,a){ return a.indexOf(v)===i; });
+    var sensRows='';
+    presets.forEach(function(kwhP){
+      var kwP = bessKwVal * (kwhP/Math.max(bessKwhVal,1));  /* hold C-rate constant across the sweep */
+      var r=_neMaxAddKw(load, shape, t.solarKwDc, kwhP, kwP, effRT, Math.max(1,(window._bill8760.annualKwh||0)*0.0005));
+      sensRows += '<tr'+(Math.abs(kwhP-bessKwhVal)<0.01?' style="background:rgba(74,222,128,.08)"':'')+'>'
+        + '<td style="padding:5px 8px;border-bottom:1px solid #1E3A5F">'+Math.round(kwhP).toLocaleString()+' kWh / '+kwP.toFixed(2)+' kW</td>'
+        + '<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #1E3A5F;color:'+(r.alreadyExporting?'#F87171':'#4ADE80')+';font-weight:700">'
+          + (r.alreadyExporting ? 'already exporting' : ('+'+Math.round(r.addKw).toLocaleString()+' kW'))+'</td>'
+        + '<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #1E3A5F;color:#94A3B8">'
+          + (r.alreadyExporting?'\u2014':Math.round((t.solarKwDc+r.addKw)).toLocaleString()+' kW total')+'</td>'
+        + '</tr>';
+    });
+
+    body = ''
+      + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">'
+        + _derKpi('Solar installed', t.solarKwDc.toFixed(0)+' kW-DC', '')
+        + _derKpi('BESS (this run)', bessKwhVal.toFixed(0)+' kWh', bessKwVal.toFixed(2)+' kW')
+        + _derKpi('Load profile', (window._bill8760.hours||0).toLocaleString()+' hrs', (window._bill8760.peakKw||0).toLocaleString()+' kW peak')
+      + '</div>'
+      + '<div style="background:'+(result.alreadyExporting?'rgba(248,113,113,.1)':'linear-gradient(135deg,rgba(74,222,128,.1),rgba(96,165,250,.08))')+';border:1px solid '+(result.alreadyExporting?'rgba(248,113,113,.35)':'rgba(74,222,128,.3)')+';border-radius:10px;padding:16px;margin-bottom:14px">'
+        + (result.alreadyExporting
+            ? ('<div style="font-size:13px;font-weight:700;color:#F87171">Already exporting at the current install</div>'
+               + '<div style="font-size:11px;color:#FCA5A5;margin-top:4px">~'+Math.round(result.baseExportKwh).toLocaleString()+' kWh/yr spills to the grid with the currently-placed solar and this BESS size \u2014 no headroom to add more without exporting further. Reduce solar, increase the BESS, or both.</div>')
+            : ('<div style="font-size:11px;color:#94A3B8;text-transform:uppercase;letter-spacing:.5px">Additional solar with zero grid export</div>'
+               + '<div style="font-size:30px;font-weight:900;color:#4ADE80;margin-top:2px">+'+Math.round(result.addKw).toLocaleString()+' kW<span style="font-size:13px;color:#64748B">-DC</span></div>'
+               + '<div style="font-size:11px;color:#94A3B8;margin-top:4px">'+Math.round(t.solarKwDc).toLocaleString()+' kW installed \u2192 '+Math.round(result.finalInstalledKw).toLocaleString()+' kW total, still never exporting, with '+bessKwhVal.toFixed(0)+' kWh / '+bessKwVal.toFixed(2)+' kW of BESS.'))
+      + '</div>'
+      + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#94A3B8;margin-bottom:6px">Sensitivity \u2014 additional solar by BESS size</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12px;color:#CBD5E1;margin-bottom:14px">'
+        + '<thead><tr style="color:#64748B;font-size:10px;text-transform:uppercase"><th style="text-align:left;padding:4px 8px">BESS size</th><th style="text-align:right;padding:4px 8px">Additional solar</th><th style="text-align:right;padding:4px 8px">New total</th></tr></thead>'
+        + '<tbody>'+sensRows+'</tbody>'
+      + '</table>'
+      + '<div style="font-size:9.5px;color:'+(isSynthetic?'#F59E0B':'#64748B')+';line-height:1.5;margin-bottom:4px">Solar shape: '+shapeSrc+(isSynthetic?' \u2014 upload an actual 8760 for a precise number.':'')+'</div>'
+      + '<div style="font-size:9.5px;color:#64748B;line-height:1.5">Simulated hour-by-hour across the full load profile: surplus charges the battery up to its power and remaining energy, deficit discharges it; anything the battery can\'t absorb counts as export. Grid import is unconstrained \\u2014 only export is held to zero. Round-trip efficiency '+(effRT*100).toFixed(0)+'%.</div>';
+  }
+
+  var editRow = ''
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px;background:#0B1626;border:1px solid #1E3A5F;border-radius:8px">'
+      + '<div><label style="font-size:9px;color:#64748B;display:block;margin-bottom:3px">BESS kWh</label>'
+        + '<input type="number" step="10" value="'+bessKwhVal+'" onchange="_neSetVal(\'_neBessKwh\',this.value)" style="width:90px;background:#0F1D30;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:5px 7px;font-size:11px"></div>'
+      + '<div><label style="font-size:9px;color:#64748B;display:block;margin-bottom:3px">BESS kW</label>'
+        + '<input type="number" step="10" value="'+bessKwVal+'" onchange="_neSetVal(\'_neBessKw\',this.value)" style="width:80px;background:#0F1D30;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:5px 7px;font-size:11px"></div>'
+      + '<div><label style="font-size:9px;color:#64748B;display:block;margin-bottom:3px">Round-trip eff.</label>'
+        + '<input type="number" step="0.01" min="0.5" max="1" value="'+effRT+'" onchange="_neSetVal(\'_neEffRt\',this.value)" style="width:70px;background:#0F1D30;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:5px 7px;font-size:11px"></div>'
+      + (!window._solarActual8760 ? ('<div><label style="font-size:9px;color:#64748B;display:block;margin-bottom:3px">Modeled solar CF</label>'
+        + '<input type="number" step="0.01" min="0.05" max="0.4" value="'+cf+'" onchange="_neSetVal(\'_neCf\',this.value)" style="width:70px;background:#0F1D30;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:5px 7px;font-size:11px"></div>') : '')
+    + '</div>';
+
+  return ''
+    + '<div style="background:#0F1D30;border:1px solid #1E3A5F;border-radius:12px;max-width:640px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.6)">'
+    + '<div style="padding:16px 20px;border-bottom:1px solid #1E3A5F;display:flex;align-items:center;justify-content:space-between">'
+      + '<div><div style="font-size:16px;font-weight:800;color:#E2EEF9">\u2600 Non-Export Solar Headroom</div>'
+      + '<div style="font-size:10px;color:#64748B">How much more solar fits before the site ever exports to the grid</div></div>'
+      + '<button onclick="document.getElementById(\'ne-calc-modal\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button>'
+    + '</div>'
+    + '<div style="padding:18px 20px">'+editRow+body+'</div>'
+    + '</div>';
+}
+function _neSetVal(key, v){
+  var n=parseFloat(v);
+  window[key] = isFinite(n) ? n : null;
+  _neRefresh();
 }
 
 /* ---- ANALYSIS UI ---------------------------------------------------- */
@@ -42490,16 +43111,31 @@ function _derAnalysisInner(){
   var stackRows='';
   for(var i=0;i<grid.layers.length;i++){
     var L=grid.layers[i];
+    var rateCell = L.note
+      ? ('<input type="number" step="1" min="0" id="der-rate-'+L.id+'" value="'+L.rate+'" title="'+_omEsc(L.note)+'" '
+         +'oninput="_gridSetLayerRate(\''+L.id+'\',this.value)" '
+         +'style="width:56px;background:#0B1626;border:1px solid '+(L.rate>0?'#1E3A5F':'#F59E0B')+';color:#E2EEF9;border-radius:4px;padding:2px 5px;font-size:11px;text-align:right;font-family:inherit">/kW-yr')
+      : ('$'+L.rate+'/kW-yr');
     stackRows+='<tr style="'+(L.on?'':'opacity:.4')+'">'
       +'<td style="padding:6px 8px;border-bottom:1px solid #1E3A5F">'
-        +'<label style="display:flex;align-items:center;gap:8px;cursor:pointer">'
+        +'<label style="display:flex;align-items:center;gap:8px;cursor:pointer" title="'+(L.note?_omEsc(L.note):'')+'">'
         +'<input type="checkbox" '+(L.on?'checked':'')+' onchange="toggleGridLayer(\''+L.id+'\')" style="width:14px;height:14px;cursor:pointer">'
-        +'<span>'+L.label+'</span></label></td>'
+        +'<span>'+L.label+(L.note&&!L.custom?' <span style="color:#60A5FA;font-size:9px">(utility program)</span>':'')+'</span></label></td>'
       +'<td style="padding:6px 8px;text-align:right;border-bottom:1px solid #1E3A5F">'+Math.round(L.kw).toLocaleString()+' kW</td>'
-      +'<td style="padding:6px 8px;text-align:right;border-bottom:1px solid #1E3A5F;color:#94A3B8">$'+L.rate+'/kW-yr</td>'
-      +'<td style="padding:6px 8px;text-align:right;border-bottom:1px solid #1E3A5F;color:'+(L.on?'#4ADE80':'#64748B')+';font-weight:700">'+_fmtMoneyDer(L.rev)+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;border-bottom:1px solid #1E3A5F;color:#94A3B8">'+rateCell+'</td>'
+      +'<td style="padding:6px 8px;text-align:right;border-bottom:1px solid #1E3A5F;color:'+(L.on?'#4ADE80':'#64748B')+';font-weight:700">'+_fmtMoneyDer(L.rev)
+        +(L.custom?(' <button onclick="_derProgramRemove(\''+L.id+'\')" title="Remove this program" style="background:none;border:none;color:#64748B;cursor:pointer;font-size:12px;margin-left:4px;vertical-align:middle">\u2715</button>'):'')
+      +'</td>'
       +'</tr>';
   }
+  var addProgOpts='';
+  for(var pi=0;pi<DER_PROGRAM_LIBRARY.length;pi++){ var lp=DER_PROGRAM_LIBRARY[pi]; addProgOpts+='<option value="'+lp.id+'">'+_omEsc(lp.util)+' \u2014 '+_omEsc(lp.label)+'</option>'; }
+  var addProgRow = '<tr><td colspan="4" style="padding:8px;text-align:left">'
+    +'<select onchange="if(this.value){_derProgramAdd(this.value);this.value=\'\';}" style="background:#0B1626;border:1px solid #1E3A5F;color:#94A3B8;border-radius:5px;padding:5px 8px;font-size:10.5px;font-family:inherit">'
+    +'<option value="">+ Add a utility DER/DR program\u2026</option>'+addProgOpts+'</select>'
+    +'<span style="font-size:9px;color:#64748B;margin-left:8px">Nationwide library \u2014 GA Power, ConEd, ComEd, SCE/CAISO, Duke, or any custom-named program. Rate starts at $0, editable.</span>'
+    +'</td></tr>';
+  stackRows += addProgRow;
   var mwVal=(typeof window._gridMwOverride==='number'&&window._gridMwOverride>0)?window._gridMwOverride:(grid.bessKw/1000);
   var gridCard=''
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin:4px 0 6px">'
@@ -42547,7 +43183,7 @@ function _derAnalysisInner(){
       +'<div style="font-size:26px;font-weight:900;color:#4ADE80">'+_fmtMoneyDer(grandTotal)+'<span style="font-size:12px;color:#64748B">/yr</span></div>'
     +'</div>'
     +_derPnlHtml()
-    +'<div style="margin-top:14px;font-size:9.5px;color:#64748B;line-height:1.5">Illustrative planning estimate only. Compute revenue is priced off the placed Armada units (capacity vs. energy method). Grid value-stack layers are toggleable and co-optimize on the placed BESS MW. Actual revenue depends on enrolled programs, cleared market prices, dispatch performance, interconnection limits, and utilization. Rates are ComEd/PJM anchors \u2014 verify before any commitment.</div>'
+    +'<div style="margin-top:14px;font-size:9.5px;color:#64748B;line-height:1.5">Illustrative planning estimate only. Compute revenue is priced off the placed Armada units (capacity vs. energy method). Grid value-stack layers are toggleable and co-optimize on the placed BESS MW. Actual revenue depends on enrolled programs, cleared market prices, dispatch performance, interconnection limits, and utilization. The PJM/ComEd rows (arbitrage, FR, capacity, reserves, generic DR) are illustrative wholesale-market anchors \u2014 accurate for PJM territory, not applicable in vertically-integrated or non-PJM ISO territory (Georgia Power/SERC, CAISO, ERCOT, SPP, MISO, etc.). Use \u201cAdd a utility DER/DR program\u201d below the stack to add your actual utility\u2019s program (a small nationwide library is included, plus a custom option) and enter its real rate \u2014 not a market-cleared price.</div>'
     +'</div></div>';
 }
 
@@ -42562,6 +43198,35 @@ function _derPnlHtml(){
   var kwh=function(n){ return Math.round(n).toLocaleString()+' kWh'; };
   var money=_fmtMoneyDer;
   var profitColor = p.netProfit>=0 ? '#4ADE80' : '#F87171';
+  var solarActual = window._solarActual8760;
+  var rtp = window._rtpDa8760;
+  var rtpEst = derRtpEstimate();
+  var solarSrcHtml = ''
+    +'<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,.03);border:1px solid #1E3A5F;border-radius:6px;padding:6px 9px;margin-bottom:8px;font-size:9.5px">'
+      +'<span style="color:'+(solarActual?'#4ADE80':'#64748B')+'">Solar: '+(p.production.solarSource||'')+'</span>'
+      +'<span>'
+        +'<input type="file" id="der-solar-file" accept=".csv,.txt" style="display:none" onchange="_der8760CsvFile(this.files[0],\'solar\')">'
+        +'<button onclick="_der8760UploadClick(\'solar\')" style="background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.35);color:#4ADE80;border-radius:5px;padding:3px 8px;font-size:9.5px;font-weight:700;cursor:pointer;font-family:inherit">\u2b06 Upload actual 8760</button>'
+        +(solarActual?' <button onclick="_derSolarClear()" style="background:none;border:1px solid #1E3A5F;color:#94A3B8;border-radius:5px;padding:3px 7px;font-size:9.5px;cursor:pointer;font-family:inherit;margin-left:4px">Clear</button>':'')
+      +'</span>'
+    +'</div>';
+  var rtpHtml = ''
+    +'<div style="background:rgba(255,255,255,.03);border:1px solid #1E3A5F;border-radius:6px;padding:8px 9px;margin-bottom:8px;font-size:9.5px">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:'+(rtp?'6px':'0')+'">'
+        +'<span style="color:'+(rtp?'#4ADE80':'#64748B')+'">Day-ahead hourly price: '+(rtp?('"'+rtp.colName+'", avg $'+rtp.avg.toFixed(4)+'/kWh, '+rtp.rows.toLocaleString()+' hrs'):'not loaded')+'</span>'
+        +'<span>'
+          +'<input type="file" id="der-rtp-file" accept=".csv,.txt" style="display:none" onchange="_der8760CsvFile(this.files[0],\'rtp\')">'
+          +'<button onclick="_der8760UploadClick(\'rtp\')" style="background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.35);color:#60A5FA;border-radius:5px;padding:3px 8px;font-size:9.5px;font-weight:700;cursor:pointer;font-family:inherit">\u2b06 Upload day-ahead prices</button>'
+          +(rtp?' <button onclick="_derRtpClear()" style="background:none;border:1px solid #1E3A5F;color:#94A3B8;border-radius:5px;padding:3px 7px;font-size:9.5px;cursor:pointer;font-family:inherit;margin-left:4px">Clear</button>':'')
+        +'</span>'
+      +'</div>'
+      +(rtpEst && rtpEst.ok
+        ? ('<div style="display:flex;justify-content:space-between;color:#CBD5E1"><span>Load-weighted at actual day-ahead prices ('+rtpEst.hours.toLocaleString()+' hrs matched to your 8760 load)</span><strong style="color:#60A5FA">'+money(rtpEst.rtpCost)+'/yr ($'+rtpEst.blendedPrice.toFixed(4)+'/kWh blended)</strong></div>'
+           +'<div style="font-size:9px;color:#64748B;margin-top:2px">vs. flat $'+p.gridCost.toFixed(2)+'/kWh: '+money(rtpEst.flatCost)+'/yr ('+(rtpEst.delta>=0?'Day-ahead saves ':'Day-ahead costs more by ')+money(Math.abs(rtpEst.delta))+'/yr). Approximate: bills total metered usage at the hourly price. Exact for pass-through tariffs (ComEd RRTP, most ISO real-time tariffs); Georgia Power RTP-DA and similar CBL-deviation tariffs settle differently \u2014 directional only there.</div>')
+        : (rtpEst && rtpEst.reason==='no-load'
+            ? '<div style="font-size:9px;color:#F59E0B">Loaded '+rtpEst.rows.toLocaleString()+' hourly prices (avg $'+rtpEst.avgPrice.toFixed(4)+'/kWh) \u2014 upload an 8760 load profile via Import Bill to compute a settlement estimate against it.</div>'
+            : (rtp?'':'<div style="font-size:9px;color:#64748B">Upload your utility\u2019s day-ahead/hourly price series (Georgia Power RTP-DA, ComEd Hourly Pricing, PG&E RTOD, or any ISO real-time export) to see energy cost at actual hourly rates instead of a flat $/kWh.</div>')))
+    +'</div>';
   return ''
     +'<div style="margin-top:18px;border-top:1px solid #1E3A5F;padding-top:14px">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
@@ -42571,6 +43236,8 @@ function _derPnlHtml(){
         +'oninput="_derUpdateGrid(this.value)" '
         +'style="width:64px;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:3px 6px;font-size:11px;text-align:right"></div>'
     +'</div>'
+    +solarSrcHtml
+    +rtpHtml
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'
       /* left: energy balance */
       +'<div style="background:#0B1626;border:1px solid #1E3A5F;border-radius:8px;padding:11px;font-size:11px">'
@@ -46957,10 +47624,11 @@ function openConduitMenu(){
   var routeMode = S.condRoute||'surface';
   var _runTag = window._cdRunTag||'';
   var _placed = _bessRunPlaced(_runTag);
+  var _sched = _bessSchedule();
   var _runKey = (window._cdRunKey!=null) ? window._cdRunKey : _bessRunNext(_runTag);
   var runOpts='<option value="">\u2014 none / custom label \u2014</option>';
-  for(var ri=0;ri<BESS_RUN_SCHEDULE.length;ri++){
-    var rr=BESS_RUN_SCHEDULE[ri];
+  for(var ri=0;ri<_sched.runs.length;ri++){
+    var rr=_sched.runs[ri];
     var done=_placed[rr.key];
     runOpts+='<option value="'+rr.key+'"'+(rr.key===_runKey?' selected':'')+'>'
       +(done?'\u2713 ':'')+rr.label+' \u2014 '+rr.from+' \u2192 '+rr.to+(done?' (placed, '+Math.round(done.ftLen)+' ft)':'')
@@ -46979,6 +47647,11 @@ function openConduitMenu(){
       +'<button onclick="document.getElementById(\'cd-modal\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button>'
     +'</div>'
     +'<div style="padding:16px 20px;font-size:13px;color:#CBD5E1">'
+      +(_sched.integ.modelLabel
+        ? '<div style="font-size:9.5px;color:#4ADE80;background:rgba(29,185,84,.08);border:1px solid rgba(29,185,84,.25);border-radius:5px;padding:6px 8px;margin-bottom:10px;line-height:1.5">Detected: '+_sched.integ.modelLabel
+          +(_sched.skipNotes.length?('<br>'+_sched.skipNotes.map(function(s){return '\u2713 '+s;}).join('<br>')):'<br>No integrated legs \u2014 full DC+AC power train applies.')
+          +'</div>'
+        : '<div style="font-size:9.5px;color:#94A3B8;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:5px;padding:6px 8px;margin-bottom:10px;line-height:1.5">No BESS unit placed yet \\u2014 showing the full generic schedule. Place a BESS Pad/assembly first so integrated PCS/xfmr/disconnect can be detected and skipped automatically.</div>')
       +'<label style="'+lbl+';margin-top:0">BESS cable run (optional)</label>'
       +'<select id="cd-run" onchange="_cdRunChange()" style="'+sel+'">'+runOpts+'</select>'
       +'<div id="cd-run-hint" style="font-size:9.5px;color:#64748B;margin-top:4px;line-height:1.5"></div>'
@@ -47024,16 +47697,22 @@ function openConduitMenu(){
   _cdRunChange(true);
 }
 /* Selecting a BESS run auto-picks its conduit class (user can still
-   override cd-type afterward) and shows the from->to hint. */
+   override cd-type afterward) and shows the from->to hint, plus where to
+   draw each endpoint from (BESS Pad vs Utility). */
 function _cdRunChange(initial){
   var rs=document.getElementById('cd-run'); if(!rs) return;
   var key=rs.value;
   var hint=document.getElementById('cd-run-hint');
+  var sched=_bessSchedule().runs;
   var rr=null;
-  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(BESS_RUN_SCHEDULE[i].key===key){ rr=BESS_RUN_SCHEDULE[i]; break; } }
+  for(var i=0;i<sched.length;i++){ if(sched[i].key===key){ rr=sched[i]; break; } }
   if(rr){
     if(!initial){ var ts=document.getElementById('cd-type'); if(ts){ ts.value=rr.condType; var cp=document.getElementById('cd-cable-per'); if(cp) cp.value=_cablePerFor(rr.condType); } }
-    if(hint) hint.textContent = rr.from+' \u2192 '+rr.to+' \u2014 stamps "'+rr.label+'" on the run and its label.';
+    var placeBits=[];
+    if(rr.fromHint) placeBits.push(rr.from+': '+rr.fromHint);
+    if(rr.toHint) placeBits.push(rr.to+': '+rr.toHint);
+    if(hint) hint.innerHTML = rr.from+' \u2192 '+rr.to+' \u2014 stamps "'+rr.label+'" on the run.'
+      + (placeBits.length ? '<br>'+placeBits.join(' \u00b7 ') : '');
   } else if(hint){
     hint.textContent = 'No run selected \u2014 the conduit gets the default type label only.';
   }
@@ -47044,9 +47723,10 @@ function _cdRunTagChange(){
   var rs=document.getElementById('cd-run'); var cur=rs?rs.value:'';
   if(!rs) return;
   var _placed=_bessRunPlaced(window._cdRunTag);
+  var sched=_bessSchedule().runs;
   var html='<option value="">\u2014 none / custom label \u2014</option>';
-  for(var ri=0;ri<BESS_RUN_SCHEDULE.length;ri++){
-    var rr=BESS_RUN_SCHEDULE[ri]; var done=_placed[rr.key];
+  for(var ri=0;ri<sched.length;ri++){
+    var rr=sched[ri]; var done=_placed[rr.key];
     html+='<option value="'+rr.key+'"'+(rr.key===cur?' selected':'')+'>'
       +(done?'\u2713 ':'')+rr.label+' \u2014 '+rr.from+' \u2192 '+rr.to+(done?' (placed, '+Math.round(done.ftLen)+' ft)':'')
       +'</option>';
@@ -47074,7 +47754,8 @@ function _cdArm(){
   if(typeof setMode==='function') setMode('conduit'); else S.mode='conduit';
   var em = _cdElevFt? ('+'+_cdElevFt+' ft elev') : (_cdElevPct? ('+'+_cdElevPct+'% elev') : 'no elev adder');
   var _rr=null;
-  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(BESS_RUN_SCHEDULE[i].key===window._cdRunKey){ _rr=BESS_RUN_SCHEDULE[i]; break; } }
+  var _schedArm=_bessSchedule().runs;
+  for(var i=0;i<_schedArm.length;i++){ if(_schedArm[i].key===window._cdRunKey){ _rr=_schedArm[i]; break; } }
   var _runTxt = _rr ? (' \u00b7 '+(window._cdRunTag?window._cdRunTag+' ':'')+_rr.label) : '';
   if(typeof showBanner==='function') showBanner('cond',' '+_ctLabel(S.condType)+_runTxt+' \u00b7 '+_cdCondCount+' conduit \u00d7 '+_cdCablePer+' cable \u00b7 '+em+' \u2014 click to draw');
 }
@@ -47105,7 +47786,8 @@ function _cdStamp(c){
      edit already set. */
   if(!c.runKey && window._cdRunKey){
     var _rr=null;
-    for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(BESS_RUN_SCHEDULE[i].key===window._cdRunKey){ _rr=BESS_RUN_SCHEDULE[i]; break; } }
+    var _schedStamp=_bessSchedule().runs;
+    for(var i=0;i<_schedStamp.length;i++){ if(_schedStamp[i].key===window._cdRunKey){ _rr=_schedStamp[i]; break; } }
     if(_rr){
       c.runKey=_rr.key; c.runTag=window._cdRunTag||''; c.runLabel=_rr.label; c.runFrom=_rr.from; c.runTo=_rr.to;
       if(!c.label) c.label=(c.runTag?c.runTag+' ':'')+_rr.label;
@@ -47217,19 +47899,31 @@ function _bessRunPanel(){
   _bessRunPanelClose();
   var tag=window._cdRunTag||'';
   var placed=_bessRunPlaced(tag);
+  var sched=_bessSchedule();
   var rows='';
-  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){
-    var rr=BESS_RUN_SCHEDULE[i], done=placed[rr.key];
+  for(var i=0;i<sched.runs.length;i++){
+    var rr=sched.runs[i], done=placed[rr.key];
+    var placeBits=[];
+    if(!done){
+      if(rr.fromHint) placeBits.push(rr.from+' \u2192 '+rr.fromHint);
+      if(rr.toHint) placeBits.push(rr.to+' \u2192 '+rr.toHint);
+    }
     rows+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06)">'
       +'<div style="flex:1;min-width:0">'
         +'<div style="font-size:11.5px;font-weight:700;color:'+(done?'#4ADE80':'#E2EEF9')+'">'+(done?'\u2713 ':'')+rr.label+'</div>'
         +'<div style="font-size:9.5px;color:#8FA3B8;line-height:1.4">'+rr.from+' \u2192 '+rr.to+'</div>'
         +(done?'<div style="font-size:9px;color:#4ADE80;margin-top:2px">'+done.count+' segment'+(done.count>1?'s':'')+' \u00b7 '+Math.round(done.ftLen)+' ft drawn</div>'
               :'<div style="font-size:9px;color:#F59E0B;margin-top:2px">Not drawn yet \u00b7 '+_ctLabel(rr.condType)+'</div>')
+        +(placeBits.length?'<div style="font-size:8.5px;color:#64748B;margin-top:3px;line-height:1.4">'+placeBits.join('<br>')+'</div>':'')
       +'</div>'
       +'<button onclick="_bessRunArm(\''+rr.key+'\')" style="flex:0 0 auto;background:'+(done?'rgba(255,255,255,.06)':'rgba(29,185,84,.15)')+';border:1px solid '+(done?'rgba(255,255,255,.16)':'rgba(29,185,84,.4)')+';color:'+(done?'#94A3B8':'#4ADE80')+';border-radius:6px;padding:6px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">'+(done?'Draw more':'Draw \u2192')+'</button>'
     +'</div>';
   }
+  var statusHtml = sched.integ.modelLabel
+    ? ('<div style="font-size:9.5px;color:#4ADE80;background:rgba(29,185,84,.08);border:1px solid rgba(29,185,84,.25);border-radius:5px;padding:6px 8px;margin-top:8px;line-height:1.5">Detected: '+sched.integ.modelLabel
+        +(sched.skipNotes.length?('<br>'+sched.skipNotes.map(function(s){return '\u2713 '+s;}).join('<br>')):'<br>No integrated legs \u2014 full DC+AC power train applies.')
+        +'</div>')
+    : ('<div style="font-size:9.5px;color:#94A3B8;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:5px;padding:6px 8px;margin-top:8px;line-height:1.5">No BESS unit placed yet \u2014 showing the full generic schedule. Place a BESS Pad/assembly first so integrated PCS/xfmr/disconnect can be detected and skipped automatically.</div>');
   var wrap=document.createElement('div');
   wrap.id='bess-run-panel';
   wrap.style.cssText='position:fixed;right:18px;top:110px;z-index:9998;background:#0F1D30;border:1px solid #1DB954;border-radius:10px;padding:0;width:320px;max-height:76vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.55);font-family:inherit';
@@ -47240,6 +47934,7 @@ function _bessRunPanel(){
         +'<button onclick="_bessRunPanelClose()" style="background:none;border:none;color:#64748B;font-size:18px;cursor:pointer;line-height:1">\u00d7</button>'
       +'</div>'
       +'<input id="bess-run-panel-tag" type="text" placeholder="System tag (e.g. BESS-01) \u2014 optional" value="'+tag.replace(/"/g,'&quot;')+'" onchange="_bessRunPanelTagChange()" style="width:100%;margin-top:8px;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:6px 8px;font-size:11px;font-family:inherit">'
+      +statusHtml
     +'</div>'
     +'<div style="padding:4px 16px 6px">'+rows+'</div>'
     +'<div style="padding:8px 16px 14px;font-size:9px;color:#64748B;line-height:1.5">Click Draw to arm the conduit tool with that run pre-selected \u2014 type, label, and from/to are stamped automatically. From/To reflects common BESS topology; verify against the approved one-line before pulling cable.</div>';
@@ -47255,7 +47950,8 @@ function _bessRunPanelTagChange(){
    run + its default conduit class, and drop straight into draw mode. */
 function _bessRunArm(key){
   var rr=null;
-  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(BESS_RUN_SCHEDULE[i].key===key){ rr=BESS_RUN_SCHEDULE[i]; break; } }
+  var sched=_bessSchedule().runs;
+  for(var i=0;i<sched.length;i++){ if(sched[i].key===key){ rr=sched[i]; break; } }
   if(!rr) return;
   window._cdRunKey=rr.key;
   S.condType=rr.condType;
@@ -47263,7 +47959,8 @@ function _bessRunArm(key){
   _cdCablePer=_cablePerFor(rr.condType);
   if(typeof setMode==='function') setMode('conduit'); else S.mode='conduit';
   var tagTxt=window._cdRunTag?window._cdRunTag+' ':'';
-  if(typeof showBanner==='function') showBanner('cond',' '+tagTxt+rr.label+' \u00b7 '+rr.from+' \u2192 '+rr.to+' \u2014 click to draw, ESC to exit');
+  var placeTxt = rr.toHint ? (' \u2014 place '+rr.to+' via '+rr.toHint) : '';
+  if(typeof showBanner==='function') showBanner('cond',' '+tagTxt+rr.label+' \u00b7 '+rr.from+' \u2192 '+rr.to+placeTxt+' \u2014 click to draw, ESC to exit');
   _bessRunPanel();  /* refresh so the row reflects the armed state on next open */
 }
 function _cdExportTab(){
