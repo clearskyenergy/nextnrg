@@ -1897,6 +1897,7 @@ window.onerror = function(msg, src, line, col, err) {
             <div class="rb-fly-head">Conduit &amp; Trenching</div>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',function(){rbMode('conduit')})"><span class="fi-ico">⌁</span> Draw Conduit Run</button>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',openConduitMenu)"><span class="fi-ico">⌥</span> Conduit Type &amp; Trenching…</button>
+            <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',_bessRunPanel)" title="Checklist of the standard BESS run designations (DC CABLE RUN 1, AC CABLE RUN 1-9...) — shows what's drawn vs pending and arms the tool for the next one"><span class="fi-ico">📋</span> BESS Cable Run Schedule…</button>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',_cdOpenTab)"><span class="fi-ico">Σ</span> LF Estimate</button>
             <div class="rb-fly-head">Auto-Route</div>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',function(){wireAllBessToHub()})" title="Home-run every BESS pad to the EMS/hub — one run per service, edge to edge"><span class="fi-ico">⇉</span> Wire All BESS &rarr; Hub</button>
@@ -5840,6 +5841,50 @@ var MV_CABLES = [
   { kv:'34.5kV', cable:'500 kcmil Cu 35kV', conduit:'6" PVC', maxMw:60 },
   { kv:'69kV',   cable:'750 kcmil Cu 69kV', conduit:'8" PVC', maxMw:100 }
 ];
+
+/* ── BESS CABLE RUN SCHEDULE ─────────────────────────────────────────────
+   Standard numbered run designations used on BESS one-line diagrams and
+   approved plan sets (DC CABLE RUN 1, AC CABLE RUN 1-9...). Picking one of
+   these in the Conduit & Trenching dialog stamps that exact designation on
+   the drawn run, so the physical cable pull matches the approved plans by
+   name instead of the installer having to infer it from the drawing.
+   From/To wording is the common-case topology; verify against the
+   project's actual approved one-line before pulling cable -- equipment
+   between BESS vendors and site configs varies. */
+const BESS_RUN_SCHEDULE=[
+  {key:'DC1', label:'DC CABLE RUN 1', from:'BESS Container',              to:'Battery Inverter',              condType:'RMC-DC'},
+  {key:'AC1', label:'AC CABLE RUN 1', from:'Battery Inverter',            to:'Isolation Transformer',         condType:'RMC-AC'},
+  {key:'AC2', label:'AC CABLE RUN 2', from:'Isolation Transformer',       to:'AC Disconnect (BESS yard)',     condType:'RMC-AC'},
+  {key:'AC3', label:'AC CABLE RUN 3', from:'AC Disconnect (BESS yard)',   to:'AC Disconnect (electrical room)',condType:'PVC-UG'},
+  {key:'AC4', label:'AC CABLE RUN 4', from:'AC Disconnect (elec. room)',  to:'Main Switchboard (MSB)',        condType:'RMC-AC'},
+  {key:'AC5', label:'AC CABLE RUN 5', from:'Aux Load Panel',              to:'UPS (feed)',                    condType:'EMT-BMS'},
+  {key:'AC6', label:'AC CABLE RUN 6', from:'UPS',                        to:'EMS / control loads',           condType:'EMT-BMS'},
+  {key:'AC7', label:'AC CABLE RUN 7', from:'Aux Load Panel',              to:'BESS Aux Loads (HVAC)',         condType:'EMT-BMS'},
+  {key:'AC8', label:'AC CABLE RUN 8', from:'Aux Load Panel',              to:'BESS Aux Loads (Fire Suppression)',condType:'EMT-BMS'},
+  {key:'AC9', label:'AC CABLE RUN 9', from:'Aux Load Panel',              to:'EMS / Site Internet',           condType:'EMT-BMS'},
+];
+/* Scan placed conduits for which (optionally tagged) run designations are
+   already on the drawing, so the picker can show what's done vs pending
+   instead of the installer having to remember or re-check the canvas. */
+function _bessRunPlaced(tag){
+  var out={};
+  try{
+    (S.conduits||[]).forEach(function(c){
+      if(!c.runKey) return;
+      if((c.runTag||'')!==(tag||'')) return;
+      if(!out[c.runKey]) out[c.runKey]={ count:0, ftLen:0 };
+      out[c.runKey].count++; out[c.runKey].ftLen+=(c.ftLen||0);
+    });
+  }catch(e){}
+  return out;
+}
+/* First not-yet-placed run for a tag, so the picker defaults to "what's
+   next" instead of always resetting to DC CABLE RUN 1. */
+function _bessRunNext(tag){
+  var placed=_bessRunPlaced(tag);
+  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(!placed[BESS_RUN_SCHEDULE[i].key]) return BESS_RUN_SCHEDULE[i].key; }
+  return '';
+}
 
 // == WIZARD STEPS ===========================================
 const WIZARD_STEPS=[
@@ -13242,9 +13287,17 @@ function renderConduit(c){
   // the sheet readable when many runs converge on a BESS pad.
   const _tag = _eng ? _engTagFor(c.id) : null;
   const lbl = _eng ? (_tag + '  ' + distTxt) : _fullLbl;
+  /* Second line: FROM -> TO, for runs stamped from the BESS Cable Run
+     picker. This is the direct answer to "which conduit goes from what to
+     what" -- it is on the drawing itself, not just in a side panel.
+     ENG mode skips it: that mode's per-run tag + legend table is the
+     documented spot for it, and a second line on every dense-pad callout
+     would stack unreadably. */
+  const _runFT = (!_eng && c.runFrom && c.runTo) ? (c.runFrom + ' \u2192 ' + c.runTo) : null;
   const charW = 5.8;
-  const tw = _eng ? Math.max(46, lbl.length*charW + 14) : (lbl.length * charW + 18);
-  const th = _eng ? 16 : 18;
+  const tw = _eng ? Math.max(46, lbl.length*charW + 14)
+                  : Math.max(lbl.length*charW + 18, _runFT ? (_runFT.length*4.9 + 18) : 0);
+  const th = _eng ? 16 : (_runFT ? 30 : 18);
   const boxX = lx - tw / 2;
   const boxY = ly - th / 2;
 
@@ -13304,6 +13357,28 @@ function renderConduit(c){
   lg.appendChild(bg);
 
   //   Text
+  if(_runFT){
+    const tx1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    tx1.setAttribute('x', lx); tx1.setAttribute('y', ly - 6);
+    tx1.setAttribute('text-anchor', 'middle');
+    tx1.setAttribute('dominant-baseline', 'middle');
+    tx1.setAttribute('font-size', '9');
+    tx1.setAttribute('font-weight', '700');
+    tx1.setAttribute('font-family', "'IBM Plex Mono',monospace");
+    tx1.setAttribute('fill', ct.color);
+    tx1.textContent = lbl;
+    lg.appendChild(tx1);
+    const tx2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    tx2.setAttribute('x', lx); tx2.setAttribute('y', ly + 8);
+    tx2.setAttribute('text-anchor', 'middle');
+    tx2.setAttribute('dominant-baseline', 'middle');
+    tx2.setAttribute('font-size', '7.5');
+    tx2.setAttribute('font-weight', '500');
+    tx2.setAttribute('font-family', "'IBM Plex Mono',monospace");
+    tx2.setAttribute('fill', 'rgba(226,238,249,.75)');
+    tx2.textContent = _runFT;
+    lg.appendChild(tx2);
+  } else {
   const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
   tx.setAttribute('x', lx); tx.setAttribute('y', ly);
   tx.setAttribute('text-anchor', 'middle');
@@ -13315,6 +13390,7 @@ function renderConduit(c){
   tx.setAttribute('fill', _eng ? '#111111' : ct.color);
   tx.textContent = lbl;
   lg.appendChild(tx);
+  }
 
   // -- Drag handler --
   lg.addEventListener('mousedown', e => {
@@ -46879,6 +46955,17 @@ function openConduitMenu(){
     }
   }
   var routeMode = S.condRoute||'surface';
+  var _runTag = window._cdRunTag||'';
+  var _placed = _bessRunPlaced(_runTag);
+  var _runKey = (window._cdRunKey!=null) ? window._cdRunKey : _bessRunNext(_runTag);
+  var runOpts='<option value="">\u2014 none / custom label \u2014</option>';
+  for(var ri=0;ri<BESS_RUN_SCHEDULE.length;ri++){
+    var rr=BESS_RUN_SCHEDULE[ri];
+    var done=_placed[rr.key];
+    runOpts+='<option value="'+rr.key+'"'+(rr.key===_runKey?' selected':'')+'>'
+      +(done?'\u2713 ':'')+rr.label+' \u2014 '+rr.from+' \u2192 '+rr.to+(done?' (placed, '+Math.round(done.ftLen)+' ft)':'')
+      +'</option>';
+  }
   var sel='width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:7px 9px;font-size:12px;font-family:inherit;margin-top:4px';
   var lbl='font-size:10px;color:#94A3B8;display:block;margin-top:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:700';
   var num='width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:7px 9px;font-size:12px;font-family:inherit;margin-top:4px';
@@ -46892,7 +46979,12 @@ function openConduitMenu(){
       +'<button onclick="document.getElementById(\'cd-modal\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button>'
     +'</div>'
     +'<div style="padding:16px 20px;font-size:13px;color:#CBD5E1">'
-      +'<label style="'+lbl+';margin-top:0">Conduit class</label>'
+      +'<label style="'+lbl+';margin-top:0">BESS cable run (optional)</label>'
+      +'<select id="cd-run" onchange="_cdRunChange()" style="'+sel+'">'+runOpts+'</select>'
+      +'<div id="cd-run-hint" style="font-size:9.5px;color:#64748B;margin-top:4px;line-height:1.5"></div>'
+      +'<label style="'+lbl+'">System tag (optional \u2014 for multi-BESS sites)</label>'
+      +'<input id="cd-run-tag" type="text" placeholder="e.g. BESS-01" value="'+_runTag.replace(/"/g,'&quot;')+'" onchange="_cdRunTagChange()" style="'+num+'">'
+      +'<label style="'+lbl+'">Conduit class</label>'
       +'<select id="cd-type" style="'+sel+'">'+opts+'</select>'
       +'<label style="'+lbl+'">Trenching method</label>'
       +'<select id="cd-route" style="'+sel+'">'
@@ -46929,6 +47021,38 @@ function openConduitMenu(){
   /* keep cables/conduit in sync with the chosen class default */
   var ts=document.getElementById('cd-type');
   if(ts){ ts.onchange=function(){ var cp=document.getElementById('cd-cable-per'); if(cp) cp.value=_cablePerFor(ts.value); }; }
+  _cdRunChange(true);
+}
+/* Selecting a BESS run auto-picks its conduit class (user can still
+   override cd-type afterward) and shows the from->to hint. */
+function _cdRunChange(initial){
+  var rs=document.getElementById('cd-run'); if(!rs) return;
+  var key=rs.value;
+  var hint=document.getElementById('cd-run-hint');
+  var rr=null;
+  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(BESS_RUN_SCHEDULE[i].key===key){ rr=BESS_RUN_SCHEDULE[i]; break; } }
+  if(rr){
+    if(!initial){ var ts=document.getElementById('cd-type'); if(ts){ ts.value=rr.condType; var cp=document.getElementById('cd-cable-per'); if(cp) cp.value=_cablePerFor(rr.condType); } }
+    if(hint) hint.textContent = rr.from+' \u2192 '+rr.to+' \u2014 stamps "'+rr.label+'" on the run and its label.';
+  } else if(hint){
+    hint.textContent = 'No run selected \u2014 the conduit gets the default type label only.';
+  }
+}
+function _cdRunTagChange(){
+  var t=document.getElementById('cd-run-tag'); window._cdRunTag=t?t.value.trim():'';
+  /* Re-render the run list so placed/pending checkmarks reflect the new tag. */
+  var rs=document.getElementById('cd-run'); var cur=rs?rs.value:'';
+  if(!rs) return;
+  var _placed=_bessRunPlaced(window._cdRunTag);
+  var html='<option value="">\u2014 none / custom label \u2014</option>';
+  for(var ri=0;ri<BESS_RUN_SCHEDULE.length;ri++){
+    var rr=BESS_RUN_SCHEDULE[ri]; var done=_placed[rr.key];
+    html+='<option value="'+rr.key+'"'+(rr.key===cur?' selected':'')+'>'
+      +(done?'\u2713 ':'')+rr.label+' \u2014 '+rr.from+' \u2192 '+rr.to+(done?' (placed, '+Math.round(done.ftLen)+' ft)':'')
+      +'</option>';
+  }
+  rs.innerHTML=html;
+  _cdRunChange(true);
 }
 function _cdElevModeChange(m){
   _cdElevMode=(m==='pct')?'pct':'ft';
@@ -46939,6 +47063,8 @@ function _cdElevModeChange(m){
 function _cdArm(){
   var t=document.getElementById('cd-type'); if(t) S.condType=t.value;
   var r=document.getElementById('cd-route'); if(r) S.condRoute=r.value;
+  var rn=document.getElementById('cd-run'); window._cdRunKey = rn ? (rn.value||null) : null;
+  var rt=document.getElementById('cd-run-tag'); window._cdRunTag = rt ? rt.value.trim() : '';
   var ev=document.getElementById('cd-elev-val');
   var val=ev?parseFloat(ev.value)||0:0;
   if(_cdElevMode==='ft'){ _cdElevFt=val; _cdElevPct=0; } else { _cdElevPct=val; _cdElevFt=0; }
@@ -46947,7 +47073,10 @@ function _cdArm(){
   var m=document.getElementById('cd-modal'); if(m) m.remove();
   if(typeof setMode==='function') setMode('conduit'); else S.mode='conduit';
   var em = _cdElevFt? ('+'+_cdElevFt+' ft elev') : (_cdElevPct? ('+'+_cdElevPct+'% elev') : 'no elev adder');
-  if(typeof showBanner==='function') showBanner('cond',' '+_ctLabel(S.condType)+' \u00b7 '+_cdCondCount+' conduit \u00d7 '+_cdCablePer+' cable \u00b7 '+em+' \u2014 click to draw');
+  var _rr=null;
+  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(BESS_RUN_SCHEDULE[i].key===window._cdRunKey){ _rr=BESS_RUN_SCHEDULE[i]; break; } }
+  var _runTxt = _rr ? (' \u00b7 '+(window._cdRunTag?window._cdRunTag+' ':'')+_rr.label) : '';
+  if(typeof showBanner==='function') showBanner('cond',' '+_ctLabel(S.condType)+_runTxt+' \u00b7 '+_cdCondCount+' conduit \u00d7 '+_cdCablePer+' cable \u00b7 '+em+' \u2014 click to draw');
 }
 
 /* ---- STAMP NEW RUNS ---------------------------------------------------
@@ -46971,6 +47100,17 @@ function _cdStamp(c){
   if(c.elevPct==null)  c.elevPct  = _cdElevPct||0;
   if(c.cablePer==null) c.cablePer = (_cdCablePer!=null?_cdCablePer:_cablePerFor(c.condType));
   if(c.condCount==null)c.condCount= _cdCondCount||1;
+  /* Stamp the picked BESS run designation (DC CABLE RUN 1, AC CABLE RUN 3...)
+     once, at creation -- never overwrite a run a prior stamp or a manual
+     edit already set. */
+  if(!c.runKey && window._cdRunKey){
+    var _rr=null;
+    for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(BESS_RUN_SCHEDULE[i].key===window._cdRunKey){ _rr=BESS_RUN_SCHEDULE[i]; break; } }
+    if(_rr){
+      c.runKey=_rr.key; c.runTag=window._cdRunTag||''; c.runLabel=_rr.label; c.runFrom=_rr.from; c.runTo=_rr.to;
+      if(!c.label) c.label=(c.runTag?c.runTag+' ':'')+_rr.label;
+    }
+  }
 }
 
 /* Estimated LF for a run = drawn LF + elevation adder (flat ft or %). */
@@ -47067,6 +47207,65 @@ function _cdQrow(k,v){
     +'<span style="font-size:12px;font-weight:700;color:#E2EEF9">'+v+'</span></div>';
 }
 function _cdCloseTab(){ var p=document.getElementById('cd-tab-panel'); if(p) p.parentNode.removeChild(p); }
+/* ---- BESS CABLE RUN SCHEDULE PANEL --------------------------------------
+   The checklist version of the picker: every standard run designation,
+   whether it is already on the drawing (with measured length) or still
+   pending, and a one-click "Draw" that arms the conduit tool with that
+   exact run pre-selected -- so building the system means working down
+   this list rather than reverse-engineering the drawing after the fact. */
+function _bessRunPanel(){
+  _bessRunPanelClose();
+  var tag=window._cdRunTag||'';
+  var placed=_bessRunPlaced(tag);
+  var rows='';
+  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){
+    var rr=BESS_RUN_SCHEDULE[i], done=placed[rr.key];
+    rows+='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06)">'
+      +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:11.5px;font-weight:700;color:'+(done?'#4ADE80':'#E2EEF9')+'">'+(done?'\u2713 ':'')+rr.label+'</div>'
+        +'<div style="font-size:9.5px;color:#8FA3B8;line-height:1.4">'+rr.from+' \u2192 '+rr.to+'</div>'
+        +(done?'<div style="font-size:9px;color:#4ADE80;margin-top:2px">'+done.count+' segment'+(done.count>1?'s':'')+' \u00b7 '+Math.round(done.ftLen)+' ft drawn</div>'
+              :'<div style="font-size:9px;color:#F59E0B;margin-top:2px">Not drawn yet \u00b7 '+_ctLabel(rr.condType)+'</div>')
+      +'</div>'
+      +'<button onclick="_bessRunArm(\''+rr.key+'\')" style="flex:0 0 auto;background:'+(done?'rgba(255,255,255,.06)':'rgba(29,185,84,.15)')+';border:1px solid '+(done?'rgba(255,255,255,.16)':'rgba(29,185,84,.4)')+';color:'+(done?'#94A3B8':'#4ADE80')+';border-radius:6px;padding:6px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">'+(done?'Draw more':'Draw \u2192')+'</button>'
+    +'</div>';
+  }
+  var wrap=document.createElement('div');
+  wrap.id='bess-run-panel';
+  wrap.style.cssText='position:fixed;right:18px;top:110px;z-index:9998;background:#0F1D30;border:1px solid #1DB954;border-radius:10px;padding:0;width:320px;max-height:76vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.55);font-family:inherit';
+  wrap.innerHTML=''
+    +'<div style="position:sticky;top:0;background:#0F1D30;padding:12px 16px;border-bottom:1px solid rgba(29,185,84,.3)">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center">'
+        +'<span style="font-size:13px;font-weight:800;color:#4ADE80">BESS Cable Run Schedule</span>'
+        +'<button onclick="_bessRunPanelClose()" style="background:none;border:none;color:#64748B;font-size:18px;cursor:pointer;line-height:1">\u00d7</button>'
+      +'</div>'
+      +'<input id="bess-run-panel-tag" type="text" placeholder="System tag (e.g. BESS-01) \u2014 optional" value="'+tag.replace(/"/g,'&quot;')+'" onchange="_bessRunPanelTagChange()" style="width:100%;margin-top:8px;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:6px 8px;font-size:11px;font-family:inherit">'
+    +'</div>'
+    +'<div style="padding:4px 16px 6px">'+rows+'</div>'
+    +'<div style="padding:8px 16px 14px;font-size:9px;color:#64748B;line-height:1.5">Click Draw to arm the conduit tool with that run pre-selected \u2014 type, label, and from/to are stamped automatically. From/To reflects common BESS topology; verify against the approved one-line before pulling cable.</div>';
+  document.body.appendChild(wrap);
+}
+function _bessRunPanelClose(){ var p=document.getElementById('bess-run-panel'); if(p) p.parentNode.removeChild(p); }
+function _bessRunPanelTagChange(){
+  var t=document.getElementById('bess-run-panel-tag');
+  window._cdRunTag = t ? t.value.trim() : '';
+  _bessRunPanel();
+}
+/* Quick-arm straight from the checklist: skip the full dialog, set the
+   run + its default conduit class, and drop straight into draw mode. */
+function _bessRunArm(key){
+  var rr=null;
+  for(var i=0;i<BESS_RUN_SCHEDULE.length;i++){ if(BESS_RUN_SCHEDULE[i].key===key){ rr=BESS_RUN_SCHEDULE[i]; break; } }
+  if(!rr) return;
+  window._cdRunKey=rr.key;
+  S.condType=rr.condType;
+  if(!S.condRoute) S.condRoute='surface';
+  _cdCablePer=_cablePerFor(rr.condType);
+  if(typeof setMode==='function') setMode('conduit'); else S.mode='conduit';
+  var tagTxt=window._cdRunTag?window._cdRunTag+' ':'';
+  if(typeof showBanner==='function') showBanner('cond',' '+tagTxt+rr.label+' \u00b7 '+rr.from+' \u2192 '+rr.to+' \u2014 click to draw, ESC to exit');
+  _bessRunPanel();  /* refresh so the row reflects the armed state on next open */
+}
 function _cdExportTab(){
   var est=conduitEstimate();
   var lines=['Class,Size,Runs,Drawn LF,Est LF (w/ elev),Conduits,Cable LF,Trench Paved LF,Trench Non-Paved LF,Surface LF'];
@@ -47087,7 +47286,10 @@ function _cdExportTab(){
 window.openConduitMenu=openConduitMenu;
 window._cdElevModeChange=_cdElevModeChange;
 window._cdArm=_cdArm;
+window._cdRunChange=_cdRunChange; window._cdRunTagChange=_cdRunTagChange;
 window._cdOpenTab=_cdOpenTab; window._cdCloseTab=_cdCloseTab; window._cdExportTab=_cdExportTab;
+window._bessRunPanel=_bessRunPanel; window._bessRunPanelClose=_bessRunPanelClose;
+window._bessRunPanelTagChange=_bessRunPanelTagChange; window._bessRunArm=_bessRunArm;
 window.conduitEstimate=conduitEstimate;
 
 })();
@@ -55228,16 +55430,46 @@ window._crmToastModal=_crmToastModal;
   function size(){ try{ return _getCanvasSize(); }catch(e){ return {w:1200,h:800}; } }
 
   /* ---- the one place that decides where a thing "is" ---- */
+  /* AN ELEMENT'S GROUND ANCHOR IS ITS CENTRE, NOT ITS TOP-LEFT.
+
+     Every other stamper in this file records a DOM element at
+     (x + w/2, y + h/2) -- _geoStampElement, _geoStampAll, the native-place
+     layer, patch 7's drag pump -- and _geoReprojectAll reverses exactly
+     that. This engine alone read the anchor as the top-left, then adopted
+     those centre-stamped lat/lngs verbatim in stampOne:
+
+         if(o._geoLat!=null){ o._geoAnchor={lat:o._geoLat,...}; return true; }
+
+     applyOne then measured the gap between a CENTRE target and a TOP-LEFT
+     anchor and "corrected" it:
+
+         dx = t.x - a.x  ->  +w/2      o.x += dx
+         dy = t.y - a.y  ->  +h/2      o.y += dy
+
+     so every pass shifted every element down and right by half its own
+     size. run() fires on a 500 ms timer and on four map events, and patch
+     7 re-stamps _geoLat/_geoLng from the new centre on every animation
+     frame while the mouse is down -- which regenerates the offset as fast
+     as it is applied. That is the insert-then-jump, and the walk down the
+     screen for as long as the button is held.
+
+     Use the same centre convention as everyone else and the delta is zero
+     when nothing has moved, which is what it was always supposed to be. */
+  function _elAnchorPt(o){
+    return { x:o.x + ((o.w||60)/2), y:o.y + ((o.h||o.w||60)/2), __xy:true };
+  }
   function anchorOf(o){
     if(o.pts && o.pts.length && o.pts[0]) return o.pts[0];
     if(o.cx!=null && o.cy!=null)           return {x:o.cx, y:o.cy, __cxcy:true};
-    if(typeof o.x==='number' && typeof o.y==='number') return {x:o.x, y:o.y, __xy:true};
+    if(typeof o.x==='number' && typeof o.y==='number') return _elAnchorPt(o);
     return null;
   }
   function setAnchor(o, x, y){
     if(o.pts && o.pts.length && o.pts[0]){ /* pts move with the bulk shift */ }
     if(o.cx!=null && o.cy!=null){ o.cx=x; o.cy=y; return; }
-    if(typeof o.x==='number' && typeof o.y==='number' && !(o.pts&&o.pts.length)){ o.x=x; o.y=y; }
+    if(typeof o.x==='number' && typeof o.y==='number' && !(o.pts&&o.pts.length)){
+      o.x=x-((o.w||60)/2); o.y=y-((o.h||o.w||60)/2);
+    }
   }
 
   /* Fields holding ABSOLUTE pixel coordinates. Only these may be shifted.
