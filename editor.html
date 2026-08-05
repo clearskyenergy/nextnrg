@@ -10155,6 +10155,16 @@ function _shapeResizeStart(e, id, corner){
   S.shBox={ w:b.w, h:b.h };
   S.shStartScale=sh.scale||1;
   S.shResX=xy.x; S.shResY=xy.y;
+  /* Two-corner shapes (zonebox / substation) resize by moving the dragged
+     corner in model space, not by a scale multiplier -- their geometry is
+     defined by pts[0]/pts[1], which the scale path never touched (why they
+     could not be sized). Snapshot the current corners + bbox origin. */
+  S.shTwoCorner = (sh.kind==='zonebox'||sh.kind==='substation') && sh.pts && sh.pts.length>=2;
+  if(S.shTwoCorner){
+    S.shBoxX=b.x; S.shBoxY=b.y;
+    S.shP0={x:sh.pts[0].x,y:sh.pts[0].y};
+    S.shP1={x:sh.pts[1].x,y:sh.pts[1].y};
+  }
 }
 
 /* ---- ROTATE ---- */
@@ -10194,6 +10204,27 @@ function _shapeInteractMove(e){
   if(S.shapeResize){
     var sh2=S.shapes.find(function(s){return s.id===S.shapeResize;}); if(!sh2) return true;
     var xy2=_evtXY(e);
+    /* Two-corner shapes: move the dragged corner directly, hold the opposite
+       corner fixed. This actually resizes zoneboxes and substations (the
+       scale path below does nothing for them). */
+    if(S.shTwoCorner && sh2.pts && sh2.pts.length>=2){
+      var dxr=xy2.x-S.shResX, dyr=xy2.y-S.shResY;
+      /* normalize the stored corners to a true min/max box */
+      var x0=Math.min(S.shP0.x,S.shP1.x), y0=Math.min(S.shP0.y,S.shP1.y);
+      var x1=Math.max(S.shP0.x,S.shP1.x), y1=Math.max(S.shP0.y,S.shP1.y);
+      var c=(S.shResizeCorner||'se');
+      /* which edges move with this corner */
+      if(c.indexOf('w')>=0) x0+=dxr; else x1+=dxr;
+      if(c.indexOf('n')>=0) y0+=dyr; else y1+=dyr;
+      /* keep a minimum size and correct order */
+      if(x1-x0<10){ if(c.indexOf('w')>=0) x0=x1-10; else x1=x0+10; }
+      if(y1-y0<10){ if(c.indexOf('n')>=0) y0=y1-10; else y1=y0+10; }
+      sh2.pts[0]={x:Math.min(x0,x1), y:Math.min(y0,y1)};
+      sh2.pts[1]={x:Math.max(x0,x1), y:Math.max(y0,y1)};
+      renderShape(sh2);
+      if(typeof _drawShapeHandles==='function') _drawShapeHandles(sh2);
+      return true;
+    }
     var dx=xy2.x-S.shResX, dy=xy2.y-S.shResY;
     /* scale factor from diagonal drag relative to box size */
     var diag=Math.max(20,Math.hypot(S.shBox.w,S.shBox.h));
@@ -10220,6 +10251,7 @@ function _shapeInteractEnd(){
        re-anchor just that one. Mirrors what element drag-end already did. */
     var _movedId = S.shapeDrag || S.shapeResize || S.shapeRotate;
     S.shapeDrag=null; S.shapeResize=null; S.shapeRotate=null; S.groupDrag=null;
+    S.shTwoCorner=false;   /* clear the two-corner resize flag */
     try{
       if(_movedId && typeof _geoRestampOne==='function'){
         var _sh=(S.shapes||[]).filter(function(x){ return x.id===_movedId; })[0];
@@ -15141,6 +15173,103 @@ const FACILITY_PROFILES = {
   healthcare:   { peakMultiplier: 1.40, demandBillPct: 0.44, loadFactor: 0.68, label: 'Healthcare/Hospital' },
 };
 
+/* State's primary investor-owned utility with representative C&I demand +
+   energy rates, so a ZIP outside the detailed IL/CT/MA/IN tables above still
+   resolves to the CORRECT serving utility instead of silently defaulting to
+   ComEd. Rates are planning-grade directional figures (blended large-C&I),
+   editable in the panel; the point is the right NAME and a sane starting rate.
+   Keyed by USPS state. */
+const STATE_PRIMARY_UTILITY = {
+  AL:{name:'Alabama Power',demandRate:16.5,energyRate:0.070,demandPct:0.34,tou:false,ratchet:0.60},
+  AK:{name:'Chugach Electric',demandRate:15.0,energyRate:0.150,demandPct:0.30,tou:false,ratchet:0.0},
+  AZ:{name:'Arizona Public Service (APS)',demandRate:17.8,energyRate:0.075,demandPct:0.36,tou:true,ratchet:0.50},
+  AR:{name:'Entergy Arkansas',demandRate:13.9,energyRate:0.062,demandPct:0.32,tou:false,ratchet:0.60},
+  CA:{name:'Pacific Gas & Electric (PG&E)',demandRate:24.0,energyRate:0.180,demandPct:0.35,tou:true,ratchet:0.50},
+  CO:{name:'Xcel Energy (Public Service Co. of Colorado)',demandRate:16.2,energyRate:0.078,demandPct:0.34,tou:true,ratchet:0.60},
+  CT:{name:'Eversource Energy (Connecticut)',demandRate:25.49,energyRate:0.110,demandPct:0.35,tou:false,ratchet:0.0},
+  DE:{name:'Delmarva Power (Exelon)',demandRate:14.5,energyRate:0.085,demandPct:0.33,tou:true,ratchet:0.60},
+  DC:{name:'Pepco (Exelon)',demandRate:15.8,energyRate:0.090,demandPct:0.34,tou:true,ratchet:0.60},
+  FL:{name:'Florida Power & Light (FPL)',demandRate:12.8,energyRate:0.078,demandPct:0.32,tou:false,ratchet:0.60},
+  GA:{name:'Georgia Power',demandRate:15.9,energyRate:0.070,demandPct:0.34,tou:true,ratchet:0.60},
+  HI:{name:'Hawaiian Electric (HECO)',demandRate:20.0,energyRate:0.330,demandPct:0.32,tou:true,ratchet:0.0},
+  IA:{name:'MidAmerican Energy',demandRate:12.50,energyRate:0.051,demandPct:0.30,tou:false,ratchet:0.60},
+  ID:{name:'Idaho Power',demandRate:11.5,energyRate:0.062,demandPct:0.32,tou:true,ratchet:0.50},
+  IL:{name:'ComEd (Northern Illinois)',demandRate:19.85,energyRate:0.0681,demandPct:0.38,tou:true,ratchet:0.70},
+  IN:{name:'Duke Energy Indiana',demandRate:14.9,energyRate:0.069,demandPct:0.34,tou:true,ratchet:0.60},
+  KS:{name:'Evergy (Kansas)',demandRate:14.2,energyRate:0.070,demandPct:0.33,tou:true,ratchet:0.60},
+  KY:{name:'LG&E / KU',demandRate:13.5,energyRate:0.065,demandPct:0.33,tou:false,ratchet:0.60},
+  LA:{name:'Entergy Louisiana',demandRate:13.2,energyRate:0.058,demandPct:0.32,tou:false,ratchet:0.60},
+  ME:{name:'Central Maine Power (CMP)',demandRate:16.0,energyRate:0.100,demandPct:0.33,tou:false,ratchet:0.0},
+  MD:{name:'Baltimore Gas & Electric (BGE)',demandRate:15.5,energyRate:0.088,demandPct:0.34,tou:true,ratchet:0.60},
+  MA:{name:'Eversource Energy (Massachusetts)',demandRate:18.74,energyRate:0.0921,demandPct:0.32,tou:true,ratchet:0.0},
+  MI:{name:'DTE Energy',demandRate:15.6,energyRate:0.082,demandPct:0.34,tou:true,ratchet:0.60},
+  MN:{name:'Xcel Energy (Northern States Power)',demandRate:15.0,energyRate:0.075,demandPct:0.34,tou:true,ratchet:0.60},
+  MS:{name:'Entergy Mississippi',demandRate:13.4,energyRate:0.060,demandPct:0.32,tou:false,ratchet:0.60},
+  MO:{name:'Ameren Missouri',demandRate:13.8,energyRate:0.065,demandPct:0.33,tou:true,ratchet:0.60},
+  MT:{name:'NorthWestern Energy',demandRate:12.8,energyRate:0.070,demandPct:0.32,tou:false,ratchet:0.50},
+  NE:{name:'Nebraska Public Power District (NPPD)',demandRate:11.9,energyRate:0.058,demandPct:0.31,tou:false,ratchet:0.60},
+  NV:{name:'NV Energy',demandRate:14.5,energyRate:0.078,demandPct:0.34,tou:true,ratchet:0.50},
+  NH:{name:'Eversource Energy (New Hampshire)',demandRate:17.5,energyRate:0.105,demandPct:0.33,tou:false,ratchet:0.0},
+  NJ:{name:'PSE&G',demandRate:15.2,energyRate:0.095,demandPct:0.34,tou:true,ratchet:0.60},
+  NM:{name:'PNM (Public Service Co. of New Mexico)',demandRate:13.6,energyRate:0.068,demandPct:0.33,tou:true,ratchet:0.50},
+  NY:{name:'Consolidated Edison (Con Edison)',demandRate:22.0,energyRate:0.130,demandPct:0.35,tou:true,ratchet:0.60},
+  NC:{name:'Duke Energy Carolinas',demandRate:14.6,energyRate:0.068,demandPct:0.34,tou:true,ratchet:0.60},
+  ND:{name:'Xcel Energy (Northern States Power)',demandRate:12.2,energyRate:0.060,demandPct:0.31,tou:false,ratchet:0.60},
+  OH:{name:'AEP Ohio',demandRate:14.8,energyRate:0.072,demandPct:0.34,tou:true,ratchet:0.60},
+  OK:{name:'Oklahoma Gas & Electric (OG&E)',demandRate:13.5,energyRate:0.062,demandPct:0.33,tou:true,ratchet:0.60},
+  OR:{name:'Portland General Electric (PGE)',demandRate:12.9,energyRate:0.078,demandPct:0.33,tou:true,ratchet:0.50},
+  PA:{name:'PECO (Exelon)',demandRate:14.9,energyRate:0.085,demandPct:0.34,tou:true,ratchet:0.60},
+  RI:{name:'Rhode Island Energy',demandRate:17.8,energyRate:0.105,demandPct:0.33,tou:false,ratchet:0.0},
+  SC:{name:'Dominion Energy South Carolina',demandRate:14.2,energyRate:0.066,demandPct:0.34,tou:true,ratchet:0.60},
+  SD:{name:'MidAmerican Energy',demandRate:12.2,energyRate:0.055,demandPct:0.31,tou:false,ratchet:0.60},
+  TN:{name:'Tennessee Valley Authority (TVA) LPC',demandRate:13.0,energyRate:0.062,demandPct:0.33,tou:false,ratchet:0.60},
+  TX:{name:'Oncor (delivery) / retail choice',demandRate:11.5,energyRate:0.085,demandPct:0.35,tou:true,ratchet:0.60},
+  UT:{name:'Rocky Mountain Power (PacifiCorp)',demandRate:12.6,energyRate:0.068,demandPct:0.33,tou:true,ratchet:0.50},
+  VT:{name:'Green Mountain Power',demandRate:16.5,energyRate:0.100,demandPct:0.33,tou:false,ratchet:0.0},
+  VA:{name:'Dominion Energy Virginia',demandRate:14.6,energyRate:0.075,demandPct:0.34,tou:true,ratchet:0.60},
+  WA:{name:'Puget Sound Energy',demandRate:12.4,energyRate:0.075,demandPct:0.33,tou:true,ratchet:0.50},
+  WV:{name:'Appalachian Power (AEP)',demandRate:13.8,energyRate:0.070,demandPct:0.33,tou:false,ratchet:0.60},
+  WI:{name:'We Energies (WEC)',demandRate:15.4,energyRate:0.080,demandPct:0.34,tou:true,ratchet:0.60},
+  WY:{name:'Rocky Mountain Power (PacifiCorp)',demandRate:11.8,energyRate:0.062,demandPct:0.32,tou:false,ratchet:0.50}
+};
+/* Self-contained ZIP->state (3-digit prefix ranges) so utility resolution
+   never depends on an IIFE-local helper defined later in the file. */
+const _FOM_ZIP3_STATE = [
+  [995,999,'AK'],[350,369,'AL'],[716,729,'AR'],[850,865,'AZ'],[900,961,'CA'],
+  [800,816,'CO'],[60,69,'CT'],[200,205,'DC'],[197,199,'DE'],[320,349,'FL'],
+  [300,319,'GA'],[967,968,'HI'],[500,528,'IA'],[832,838,'ID'],[600,629,'IL'],
+  [460,479,'IN'],[660,679,'KS'],[400,427,'KY'],[700,714,'LA'],[10,27,'MA'],
+  [206,219,'MD'],[39,49,'ME'],[480,499,'MI'],[550,567,'MN'],[630,658,'MO'],
+  [386,397,'MS'],[590,599,'MT'],[270,289,'NC'],[580,588,'ND'],[680,693,'NE'],
+  [30,38,'NH'],[70,89,'NJ'],[870,884,'NM'],[889,898,'NV'],[100,149,'NY'],
+  [430,459,'OH'],[730,749,'OK'],[970,979,'OR'],[150,196,'PA'],[28,29,'RI'],
+  [290,299,'SC'],[570,577,'SD'],[370,385,'TN'],[750,799,'TX'],[840,847,'UT'],
+  [220,246,'VA'],[50,59,'VT'],[980,994,'WA'],[530,549,'WI'],[247,268,'WV'],
+  [820,831,'WY']
+];
+function _fomStateForZip(zip){
+  var p=parseInt(String(zip||'').replace(/\D/g,'').slice(0,3),10);
+  if(!isFinite(p)) return null;
+  for(var i=0;i<_FOM_ZIP3_STATE.length;i++){
+    if(p>=_FOM_ZIP3_STATE[i][0] && p<=_FOM_ZIP3_STATE[i][1]) return _FOM_ZIP3_STATE[i][2];
+  }
+  return null;
+}
+/* Build a utility record (same shape as IL_UTILITY_RATES entries) from the
+   state table, so downstream code that reads .name/.demandRate/.energyRate/
+   etc. works unchanged. */
+function _fomUtilityFromState(state, zip){
+  var u=STATE_PRIMARY_UTILITY[state];
+  if(!u) return null;
+  return {
+    name:u.name, demandRate:u.demandRate, energyRate:u.energyRate,
+    demandPct:u.demandPct, tou:!!u.tou,
+    peakWindow:u.tou?'Seasonal on-peak (afternoons)':'Non-TOU / flat demand',
+    ratchet:(u.ratchet!=null?u.ratchet:0.60),
+    zips:[], _state:state, _stateResolved:true
+  };
+}
+
 function _fomGetUtility(zip) {
   if (!zip || zip.length < 3) return IL_UTILITY_RATES.comed;
   const p3 = zip.slice(0,3);
@@ -15148,9 +15277,14 @@ function _fomGetUtility(zip) {
   for (const [, r] of Object.entries(IL_UTILITY_RATES)) {
     if (r.zips.some(z => p3.startsWith(z) || p2 === z)) return r;
   }
-  // No exact match: return ComEd values but flag it so the UI can warn the user
-  // rather than silently presenting Chicago rates for an out-of-territory address.
-  return Object.assign({}, IL_UTILITY_RATES.comed, { _fallback: true, _fallbackNote: 'No utility rate on file for ZIP ' + zip + ' -- showing ComEd defaults. For the live ISO/RTO revenue model use the ZIP-code Grid Revenue analyzer, which maps all 50 states to their ISO.' });
+  /* Not in the detailed rate tables: resolve the ACTUAL serving utility from
+     the ZIP's state instead of silently returning ComEd. E.g. a Sioux City,
+     Iowa ZIP (510xx/511xx) now returns MidAmerican Energy, not ComEd. */
+  var st = _fomStateForZip(zip);
+  var byState = st ? _fomUtilityFromState(st, zip) : null;
+  if (byState) return byState;
+  // Truly unknown ZIP: ComEd values, flagged so the UI can warn the user.
+  return Object.assign({}, IL_UTILITY_RATES.comed, { _fallback: true, _fallbackNote: 'No utility on file for ZIP ' + zip + ' -- showing ComEd defaults. Verify the serving utility for this address.' });
 }
 
 function fomRunDemandAnalysis() {
@@ -17988,8 +18122,8 @@ document.addEventListener('keydown',e=>{
 });
 document.getElementById('sc').addEventListener('mousedown',e=>{
   if(S.mode==='select'&&!e.target.closest('.cel')){
-    // Clicks inside the assembly properties panel must not deselect
-    if(e.target.closest && e.target.closest('#asm-panel')) return;
+    // Clicks inside a floating properties panel must not deselect / close it.
+    if(e.target.closest && (e.target.closest('#asm-panel')||e.target.closest('#ev-zone-props')||e.target.closest('#sub-props'))) return;
     selEl(null);
     if(typeof _clearShapeSel==='function' && !e.target.closest('[data-shid]') && e.target.id!=='shape-handles' && !(e.target.closest && e.target.closest('#shape-handles'))) _clearShapeSel();
   }
@@ -49761,6 +49895,8 @@ function _subShowProps(id){
       +'<button onclick="_subDelete(\''+sh.id+'\')" style="background:none;border:1px solid #4A3410;color:#94A3B8;border-radius:6px;padding:8px 10px;font-size:12px;cursor:pointer">Delete</button>'
     +'</div>';
   document.body.appendChild(wrap);
+  wrap.dataset.shid=id;
+  if(typeof nnMakeFloatable==='function'){ try{ nnMakeFloatable(wrap); }catch(e){} }
 }
 function _subApply(id){
   var sh=null; for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===id){ sh=S.shapes[i]; break; } }
@@ -51210,16 +51346,34 @@ function _nnObserve(){
    it), while a double-click on a zonebox opens/re-opens the editor. --------- */
 var _znDismissed = {};   /* id -> true if user X'd the panel */
 function _nnZoneWrap(){
-  /* wrap selectShape so it does NOT auto-open the zone panel */
+  /* wrap selectShape: single-click selecting a zonebox/substation opens its
+     editor panel (users expect one click, not a double-click), and switching
+     to a different shape closes a panel that belonged to the previous one. */
   if(typeof selectShape==='function'){
     var _sel=selectShape;
     window.selectShape=function(id){
       _sel(id);
-      /* do not auto-open here; only close a panel that belongs to a different shape */
-      var p=document.getElementById('ev-zone-props');
-      if(p && p.dataset && p.dataset.shid && p.dataset.shid!==id){
+      /* close a panel that belongs to a DIFFERENT shape */
+      var pz=document.getElementById('ev-zone-props');
+      if(pz && pz.dataset && pz.dataset.shid && pz.dataset.shid!==id){
         if(typeof _evZoneClose==='function') _evZoneClose();
       }
+      var ps=document.getElementById('sub-props');
+      if(ps && ps.dataset && ps.dataset.shid && ps.dataset.shid!==id){
+        if(typeof _subClose==='function') _subClose();
+      }
+      /* open the right panel for the newly selected shape (unless the user
+         X'd it during THIS selection) */
+      try{
+        var sh=null; if(typeof S!=='undefined' && S.shapes){ for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===id){ sh=S.shapes[i]; break; } } }
+        if(sh){
+          if(sh.kind==='zonebox' && !_znDismissed[id] && typeof _evZoneShowProps==='function'){
+            if(!document.getElementById('ev-zone-props')) _evZoneShowProps(id);
+          } else if(sh.kind==='substation' && typeof _subShowProps==='function'){
+            if(!document.getElementById('sub-props')) _subShowProps(id);
+          }
+        }
+      }catch(e){}
     };
   }
   /* wrap the zone close so we remember the dismissal */
