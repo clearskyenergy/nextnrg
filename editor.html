@@ -8057,11 +8057,36 @@ function clearAll(){
   S.elements=[];S.conduits=[];S.shapes=[];S.sel=null;S.condDrawing=false;S.condPts=[];
   S.shapeDrawing=false;S.shapePts=[];S.shapeStart=null;
   if(typeof _selShapeId!=='undefined') _selShapeId=null;
+
+  /* ── CLEAR THE FALLBACK / PREVIEW STATE TOO ───────────────────────────
+     Emptying the drawing arrays is not enough: the results readouts fall
+     back to preview/config globals when nothing is placed, so after a
+     Clear All the panel kept showing the PREVIOUS solar size and BESS
+     config ("the data doesn't clear"). omegaSolarKwDc()->window._alLayout,
+     omegaBessFleet()->S.bessList, plus the guided/DER build markers. Reset
+     them all so a cleared drawing reads as empty. */
+  try{ window._alLayout=null; window._alBoundary=null; }catch(e){}
+  try{ window._BM_SOLAR_SIZE=null; }catch(e){}
+  try{ S.bessList=[]; }catch(e){}
+  try{
+    S._derPoiId=null; S._derBuildMw=0;
+    S._sourceElId=null; S._sourceType=null;
+    S._topoDone=[];
+    window._mvTrenchId=null;
+  }catch(e){}
+  /* stand the guided build down if one was mid-flight */
+  try{ if(typeof BGB!=='undefined' && BGB){ BGB.active=false; BGB.placed={}; BGB._activeRun=null; } }catch(e){}
+  /* drop any dormant DER-wizard chain flags */
+  try{ window.__dergChain=null; window.__dergDerNext=false; window.__dergSnappedTo=null; }catch(e){}
+
   try{ showProps(null); }catch(e){}
   try{ updCount(); }catch(e){}
   try{ renderLegend(); }catch(e){}
   try{ updCondStat(); }catch(e){}
   try{ if(typeof updShapeCount==='function') updShapeCount(); }catch(e){}
+  /* recompute the results/summary now so the panel reflects the empty drawing
+     immediately, rather than showing stale numbers until the next Run. */
+  try{ if(typeof updateSummaryPanel==='function') updateSummaryPanel(); }catch(e){}
   try{ pushHist(); }catch(e){}
 }
 
@@ -45552,6 +45577,8 @@ function placeClusterAt(p){
   if(typeof updateSummaryPanel==='function') updateSummaryPanel();
   if(typeof renderLegend==='function') renderLegend();
   if(typeof showBanner==='function') showBanner('ok',' Cluster of '+cfg.qty+' placed and trenched to EMS. Drag the EMS node or any junction to adjust.');
+  /* Source-literal post-hook so a guided flow can finalise (close its HUD). */
+  try{ if(typeof window.__onClusterPlaced==='function') window.__onClusterPlaced(p); }catch(e){}
 }
 
 /* Build 3 color-coded conduits (DC, AC, BMS) from a BESS unit to the EMS. */
@@ -45963,6 +45990,16 @@ function _sourceArm(){
 }
 function _srcLabel(t){ return t==='utility_der'?'Utility + DER':(t==='offgrid'?'Off-grid':'Utility POI'); }
 function placeSourceAt(p){
+  /* Pre-hook: a guided flow can snap the placement point onto an existing
+     target (drawn solar array, etc.) before the anchor is created. Returning
+     a {x,y} relocates the anchor. Source-literal hook, not a window wrapper,
+     because covClick calls this by its bare lexical name. */
+  try{
+    if(typeof window.__onSourcePlacing==='function'){
+      var _np=window.__onSourcePlacing(p);
+      if(_np && typeof _np.x==='number') p=_np;
+    }
+  }catch(e){}
   var t=_sourceCfg.type;
   var eqId = (t==='offgrid') ? 'der_poi' : 'util_poi';
   var label = _srcLabel(t);
@@ -45974,6 +46011,12 @@ function placeSourceAt(p){
   if(t!=='offgrid'){ _trenchUtilityToBess(el); }
   if(typeof updateSummaryPanel==='function') updateSummaryPanel();
   if(typeof showBanner==='function') showBanner('ok',' '+label+' set. '+(t==='offgrid'?'Islanded system \u2014 no utility.':'MV trench run to the BESS \u2014 adjust cable size via the conduit.'));
+  /* Post-hook so guided flows can chain off a real placement. Wrapping
+     window.placeSourceAt does NOT work: covClick calls the bare lexical
+     name, which ignores window reassignment (the classic injected-wrapper
+     trap). Calling a registered hook from inside the source literal is the
+     path that actually fires. */
+  try{ if(typeof window.__onSourcePlaced==='function') window.__onSourcePlaced(el, p); }catch(e){}
 }
 
 /* Size the MV cable from total system MW. */
@@ -46516,10 +46559,37 @@ function placeDerBuildAt(p){
   for(var r=0;r<rows;r++){ for(var c=0;c<cols && n<cfg.blocks;c++){
     var cx=p.x+c*cellW, cy=p.y+r*cellH;
     _derBuildBlock(cfg, spec, cx, cy, blkW, blkH, n+1);
-    /* per-block XFMR just below the block */
+    /* PV needs a string/central inverter (DC->AC) before the step-up XFMR.
+       Place a PV inverter just below the array block, then the XFMR below
+       that, and record a DC run block->inverter and an AC run inverter->xfmr
+       so the generation is electrically complete, not just panels + a can. */
+    var invEl=null, invCx=cx+blkW/2, invCy=cy+blkH+6+10;
+    if(cfg.src==='pv'){
+      invEl=addEl({ type:'eq', eqId:'pcs', label:'PV Inverter '+(n+1),
+                    x:invCx-16, y:invCy-16, w:32, rot:0,
+                    spec:'String/central inverter \\u00b7 '+spec.blockKw+' kW DC\\u2192AC' });
+    }
+    /* per-block XFMR just below the block (or below the inverter for PV) */
     if(cfg.xfmr){
-      var xel=addEl({ type:'eq', eqId:'xfmr', label:'XFMR '+(n+1), x:cx+blkW/2-18, y:cy+blkH+6, w:32, rot:0 });
-      xfmrEls.push({el:xel, cx:cx+blkW/2, cy:cy+blkH+6+16});
+      var xfmrY = cfg.src==='pv' ? (invCy+16+6) : (cy+blkH+6);
+      var xel=addEl({ type:'eq', eqId:'xfmr', label:'XFMR '+(n+1), x:cx+blkW/2-18, y:xfmrY, w:32, rot:0 });
+      var xfmrCy=xfmrY+16;
+      xfmrEls.push({el:xel, cx:cx+blkW/2, cy:xfmrCy});
+      /* PV: DC run array->inverter, then AC run inverter->xfmr */
+      if(cfg.src==='pv' && invEl){
+        var dcPts=[{x:cx+blkW/2,y:cy+blkH,elId:null},{x:invCx,y:invCy-16,elId:invEl.id}];
+        var dc={ id:uid(), condType:'RMC-DC', pts:dcPts, pxLen:_polyLen(dcPts),
+                 ftLen:+(_polyLen(dcPts)/(S.pxPerFt||6)).toFixed(1),
+                 fromElId:invEl.id, toElId:invEl.id, derCollector:true,
+                 labelHidden:(n!==0), runLabel:'PV DC', labelDx:24, labelDy:-16 };
+        S.conduits.push(dc); if(typeof renderConduit==='function') renderConduit(dc);
+        var acPts=[{x:invCx,y:invCy+16,elId:invEl.id},{x:cx+blkW/2,y:xfmrY,elId:xel.id}];
+        var ac={ id:uid(), condType:'RMC-AC', pts:acPts, pxLen:_polyLen(acPts),
+                 ftLen:+(_polyLen(acPts)/(S.pxPerFt||6)).toFixed(1),
+                 fromElId:invEl.id, toElId:xel.id, derCollector:true,
+                 labelHidden:true, runLabel:'PV AC' };
+        S.conduits.push(ac); if(typeof renderConduit==='function') renderConduit(ac);
+      }
     }
     n++;
   } }
@@ -46545,6 +46615,10 @@ function placeDerBuildAt(p){
   if(typeof updateSummaryPanel==='function') updateSummaryPanel();
   if(typeof renderLegend==='function') renderLegend();
   if(typeof showBanner==='function') showBanner('ok',' DER site placed: '+cfg.blocks+' \u00d7 '+spec.label+' = '+S._derBuildMw.toFixed(2)+' MW. The DER POI feeds Deluxe step 1.');
+  /* Source-literal post-hook (see placeSourceAt) so the guided flow can
+     chain to the BESS cluster step -- window wrappers are bypassed by
+     covClick's bare-name call. */
+  try{ if(typeof window.__onDerBuildPlaced==='function') window.__onDerBuildPlaced(p); }catch(e){}
 }
 
 /* Draw one generation block as a shape (uses existing DER renderers). */
@@ -46758,6 +46832,7 @@ window.derBuildToDeluxe=derBuildToDeluxe;
        the POI is a true util_poi element and its MV trench logic applies. */
     if (typeof _sourceCfg!=='undefined') _sourceCfg.type='utility_der';
     installChain('guided');
+    hudStep('guided', 1);
     if (has('setMode')) setMode('sourceplace'); else { var s=S_(); if(s) s.mode='sourceplace'; }
     if (has('showBanner')) showBanner('shape',' Step 1 of 3 \u2014 click to place the Utility + DER anchor');
   }
@@ -46770,72 +46845,196 @@ window.derBuildToDeluxe=derBuildToDeluxe;
     }
     if (typeof _sourceCfg!=='undefined') _sourceCfg.type='utility_der';
     installChain('snap');
+    hudStep('snap', 1);
     if (has('setMode')) setMode('sourceplace'); else { var s=S_(); if(s) s.mode='sourceplace'; }
-    if (has('showBanner')) showBanner('shape',' Click near your equipment \u2014 the Utility + DER anchor snaps onto the nearest element');
+    if (has('showBanner')) showBanner('shape',' Step 1 of 2 \u2014 click on (or next to) your drawn solar array to snap the Utility + DER anchor onto it');
   }
 
-  /* ---- shared: wrap placeSourceAt so a click routes through our chain ---- */
+  /* Nearest connectable target to a click, in MODEL space. Unlike nearestEl
+     (elements only), this also finds a drawn solar array SHAPE -- which is
+     what "snap to my existing solar array" actually needs, since a drawn
+     array is a shape, not an element. Returns {x,y,kind,id} or null. */
+  function nearestTarget(p){
+    var best=null, bd=Infinity;
+    var s=S_(); if(!s) return null;
+    /* elements (via nearestEl if present) */
+    try{
+      if(has('nearestEl')){
+        var he=nearestEl(p.x,p.y);
+        if(he && he.cx!=null){ var d=(he.cx-p.x)*(he.cx-p.x)+(he.cy-p.y)*(he.cy-p.y); if(d<bd){ bd=d; best={x:he.cx,y:he.cy,kind:'el',id:he.el?he.el.id:null}; } }
+      }
+    }catch(e){}
+    /* solar array shapes */
+    try{
+      (s.shapes||[]).forEach(function(sh){
+        if(!sh || (sh.kind!=='solar' && sh.kind!=='dersolar')) return;
+        var cx=null,cy=null;
+        if(typeof sh.cx==='number'){ cx=sh.cx; cy=sh.cy; }
+        else if(sh.pts&&sh.pts.length){ var sx=0,sy=0,k=0; sh.pts.forEach(function(q){ if(q){sx+=q.x;sy+=q.y;k++;} }); if(k){cx=sx/k;cy=sy/k;} }
+        else if(sh.boundary&&sh.boundary.length){ var bx=0,by=0,kb=0; sh.boundary.forEach(function(q){ if(q){bx+=q.x;by+=q.y;kb++;} }); if(kb){cx=bx/kb;cy=by/kb;} }
+        if(cx==null) return;
+        var d=(cx-p.x)*(cx-p.x)+(cy-p.y)*(cy-p.y);
+        if(d<bd){ bd=d; best={x:cx,y:cy,kind:'shape',id:sh.id,shape:sh}; }
+      });
+    }catch(e){}
+    return best;
+  }
+
+  /* Flash a ring at a model-space point so the user SEES what it snapped to. */
+  function snapPing(x,y){
+    try{
+      var svg=document.getElementById('csvg'); if(!svg) return;
+      var NS='http://www.w3.org/2000/svg';
+      var g=document.createElementNS(NS,'circle');
+      g.setAttribute('cx',x); g.setAttribute('cy',y); g.setAttribute('r',6);
+      g.setAttribute('fill','none'); g.setAttribute('stroke','#22C55E');
+      g.setAttribute('stroke-width','2'); g.setAttribute('opacity','0.95');
+      svg.appendChild(g);
+      var r=6;
+      var iv=setInterval(function(){ r+=4; g.setAttribute('r',r); g.setAttribute('opacity',String(Math.max(0,0.95-(r-6)/40)));
+        if(r>44){ clearInterval(iv); if(g.parentNode) g.parentNode.removeChild(g); } }, 24);
+    }catch(e){}
+  }
+
+  /* ---- shared: register source-literal hooks so a click routes through
+     our chain. We do NOT wrap window.placeSourceAt -- covClick calls the
+     bare lexical name, so a window reassignment is silently ignored (the
+     exact trap that left the anchor stuck on the crosshair). Instead the
+     source functions call __onSourcePlacing / __onSourcePlaced, which we
+     register here. ---- */
   function installChain(mode){
-    if (!window.placeSourceAt) return;
-    if (!window.placeSourceAt.__dergWrapped) {
-      var orig = window.placeSourceAt;
-      window.placeSourceAt = function (p) {
-        var chain = window.__dergChain;
-        if (chain) {
-          /* SNAP: if the click is near an existing element, move the anchor
-             onto it so the POI reads as connected to the drawn system. */
-          if (chain.mode==='snap' && has('nearestEl')) {
-            try {
-              var hit = nearestEl(p.x, p.y);
-              if (hit && hit.cx!=null) { p = { x: hit.cx, y: hit.cy }; window.__dergSnappedTo = hit.el ? hit.el.id : null; }
-            } catch(e){}
-          }
-        }
-        var r = orig.apply(this, [p]);
-        if (chain) {
-          window.__dergChain = null;
-          try { afterAnchor(chain); } catch (e) { console.warn(TAG, e && e.message); }
-        }
-        return r;
-      };
-      window.placeSourceAt.__dergWrapped = true;
-      window.placeSourceAt.__orig = orig;
-    }
     window.__dergChain = { mode: mode };
+
+    /* PRE: for snap, relocate the anchor onto the nearest target before it
+       is created. Returns a new {x,y} or nothing. */
+    window.__onSourcePlacing = function(p){
+      var chain = window.__dergChain;
+      if (!chain || chain.mode!=='snap') return null;
+      try {
+        var hit = nearestTarget(p);
+        if (hit) { window.__dergSnapPending = hit; window.__dergSnappedTo = hit.id||null; return { x:hit.x, y:hit.y }; }
+      } catch(e){}
+      return null;
+    };
+
+    /* POST: after the anchor is placed, advance the flow. */
+    window.__onSourcePlaced = function(el, p){
+      var chain = window.__dergChain;
+      if (!chain) return;
+      window.__dergChain = null;
+      var snapped = window.__dergSnapPending || null; window.__dergSnapPending = null;
+      try { if (has('setMode')) setMode('select'); } catch(e){}
+      if (snapped) snapPing(snapped.x, snapped.y);
+      try { afterAnchor(chain, snapped); } catch (e) { console.warn(TAG, e && e.message); }
+    };
   }
 
   /* ---- after the anchor is set: guided continues to DER; snap finishes ---- */
-  function afterAnchor(chain){
+  function afterAnchor(chain, snapped){
     var s = S_(); if (!s) return;
     if (chain.mode==='snap') {
-      if (has('showBanner')) showBanner('ok',' Utility + DER anchor snapped in as the point of connection. It will trench to your BESS.');
+      var what = snapped ? (snapped.kind==='shape' ? 'your solar array' : 'the nearest equipment') : 'the drawing';
+      hudStep('snap', 2, snapped);
+      if (has('showBanner')) showBanner('ok',' Utility + DER anchor connected to '+what+'. Now drop the BESS cluster.');
+      /* snap flow now CONTINUES to a BESS cluster step, so the user can pick
+         a config and get the cluster -- previously it dead-ended here. */
+      toCluster('snap');
       return;
     }
-    /* guided: place the DER generation next, then chain to the cluster */
-    if (!placeDerBuildAt.__dergWrapped) {
-      var orig = window.placeDerBuildAt;
-      window.placeDerBuildAt = function (p) {
-        var r = orig.apply(this, arguments);
-        if (window.__dergDerNext) { window.__dergDerNext = false; try { toCluster(); } catch (e) { console.warn(TAG, e && e.message); } }
-        return r;
-      };
-      window.placeDerBuildAt.__dergWrapped = true;
-    }
+    /* guided: place the DER generation next, then chain to the cluster.
+       Register the source-literal post-hook (window wrap would be bypassed
+       by covClick's bare-name call). */
     window.__dergDerNext = true;
+    window.__onDerBuildPlaced = function(p){
+      try { if (has('setMode')) setMode('select'); } catch(e){}
+      if (window.__dergDerNext) { window.__dergDerNext = false; try { toCluster('guided'); } catch (e) { console.warn(TAG, e && e.message); } }
+    };
+    hudStep('guided', 2);
     if (has('setMode')) setMode('derbuildplace'); else s.mode='derbuildplace';
     if (has('showBanner')) showBanner('shape',' Step 2 of 3 \u2014 click to place the '
       + ((window._derBuildCfg&&window._derBuildCfg.spec&&window._derBuildCfg.spec.label)||'DER') + ' generation');
   }
 
-  /* ---- guided stage 3: drop the BESS cluster ---- */
-  function toCluster(){
+  /* ---- final stage: drop the BESS cluster ---- */
+  function toCluster(flow){
     var s = S_(); if (!s) return;
-    /* the DER POI (or the anchor) is already the source; make sure a fresh
-       MV trench will be laid to the cluster */
+    /* make sure a cluster config exists (snap flow may not have opened the
+       config modal) so this step can always complete with a real cluster. */
+    if (!window._clusterConfig || !window._clusterConfig.model) {
+      var models = has('_clusterModels') ? _clusterModels() : [];
+      window._clusterConfig = {
+        qty:3, cols:3,
+        model: models[0] || {label:'BESS Pad (generic 19.9x8 ft)',lf:19.875,wf:8,model:'BESS Pad',kwh:0},
+        autoTrench:true, placeEms:true
+      };
+    }
     try { window._mvTrenchId = null; } catch (e) {}
+    hudStep(flow||'guided', 3);
     if (has('setMode')) setMode('clusterplace'); else s.mode='clusterplace';
-    if (has('showBanner')) showBanner('shape',' Step 3 of 3 \u2014 click to drop the BESS cluster (it trenches back to the anchor)');
+    if (has('showBanner')) showBanner('shape',' Final step \u2014 click to drop the BESS cluster (it trenches back to the anchor)');
   }
+
+  /* ═══ STEP HUD ════════════════════════════════════════════════════════
+     A small persistent panel (like the other guided builds) that lists the
+     steps and highlights the current one, instead of relying on a one-shot
+     banner. Steps differ by flow: guided places generation itself; snap
+     uses your drawn array as the generation. */
+  var HUD_ID='omega-derg-hud';
+  var HUD_STEPS={
+    guided:['Place Utility + DER anchor','Place generation array','Drop BESS cluster'],
+    snap:['Snap anchor to your array','Drop BESS cluster']
+  };
+  function hudClose(){ var h=document.getElementById(HUD_ID); if(h&&h.parentNode) h.parentNode.removeChild(h); }
+  function hudStep(flow, stepNum, snapped){
+    var steps=HUD_STEPS[flow]||HUD_STEPS.guided;
+    var h=document.getElementById(HUD_ID);
+    if(!h){
+      h=document.createElement('div'); h.id=HUD_ID;
+      h.style.cssText='position:fixed;left:24px;bottom:120px;z-index:99991;width:250px;'
+        +'background:#0B1E35;border:1px solid rgba(34,197,94,.4);border-radius:10px;'
+        +'box-shadow:0 14px 40px rgba(0,0,0,.55);font-family:"IBM Plex Sans",sans-serif;color:#E8F0FE;padding:12px 14px';
+      document.body.appendChild(h);
+    }
+    var title = flow==='snap' ? 'Utility + DER \u00b7 Snap' : 'Utility + DER \u00b7 Guided';
+    var rows='';
+    for(var i=0;i<steps.length;i++){
+      var n=i+1, done=n<stepNum, cur=n===stepNum;
+      var dot = done ? '\u2713' : (cur ? '\u25b6' : (n));
+      var col = done ? '#4ADE80' : (cur ? '#FBBF24' : '#5B7089');
+      var wt  = cur ? '700' : '500';
+      rows+='<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 0">'
+        +'<span style="flex:0 0 16px;text-align:center;color:'+col+';font-weight:800;font-size:11px">'+dot+'</span>'
+        +'<span style="font-size:11px;font-weight:'+wt+';color:'+(cur?'#E8F0FE':(done?'#8FB7A0':'#8296AE'))+';line-height:1.4">'+steps[i]+'</span>'
+        +'</div>';
+    }
+    h.innerHTML=''
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
+        +'<div style="font-size:12px;font-weight:800;color:#4ADE80">\u26a1 '+title+'</div>'
+        +'<button id="derg-hud-x" style="background:none;border:none;color:#8BA3C4;font-size:16px;cursor:pointer;line-height:1">\u00d7</button>'
+      +'</div>'
+      +rows
+      +'<div style="font-size:9px;color:#5B7089;margin-top:8px;line-height:1.5">Follow the banner prompts. ESC cancels the current placement.</div>';
+    var x=document.getElementById('derg-hud-x'); if(x) x.onclick=function(){ hudClose(); };
+  }
+
+  /* Close the HUD once the cluster (final step) is placed -- via the
+     source-literal post-hook, since covClick calls placeClusterAt by its
+     bare name and would bypass a window wrapper. */
+  window.__onClusterPlaced = function(p){
+    if(document.getElementById(HUD_ID)){
+      try{ if(has('setMode')) setMode('select'); }catch(e){}
+      hudClose();
+      if(has('showBanner')) showBanner('ok',' Utility + DER build complete \u2014 anchor, generation and BESS cluster placed and trenched.');
+    }
+  };
+
+  /* ESC anywhere during the flow closes the HUD and drops the chain. */
+  document.addEventListener('keydown', function(e){
+    if(e.key==='Escape' && document.getElementById(HUD_ID)){
+      window.__dergChain=null; window.__dergDerNext=false;
+      hudClose();
+    }
+  }, true);
 
   /* ---- entry points ---- */
   window.openGuidedDerBuild = open;
@@ -48647,7 +48846,13 @@ function _bgbPrompt(){
     _evBanner('\u2b1c Click the map to place the '+lbl+'.');
   }
   else if(BGB.phase==='drawtrench'){ _evBanner('\u270f\ufe0f Draw the trench to the '+(BGB_NODES[kind]?BGB_NODES[kind].label:'next node')+': click points, then Enter.'); }
-  else if(BGB.phase==='placeon'){ _evBanner('\u2b1c Click on the trench to place '+(BGB_NODES[kind]?BGB_NODES[kind].label:kind)+' \u2014 snaps to the line. F=flip, R=rotate.'); }
+  else if(BGB.phase==='placeon'){
+    if(kind==='pv' && typeof _bgbFindDrawnArray==='function' && _bgbFindDrawnArray(BGB._lastEnd||null)){
+      _evBanner('\u2b1c Click on the trench near your PV array \u2014 it will connect to the array you drew (no duplicate placed).');
+    } else {
+      _evBanner('\u2b1c Click on the trench to place '+(BGB_NODES[kind]?BGB_NODES[kind].label:kind)+' \u2014 snaps to the line. F=flip, R=rotate.');
+    }
+  }
 }
 
 /* ---- start / draw / place ---- */
@@ -48703,6 +48908,37 @@ function _bgbFlipLast(){ if(BGB.lastEl){ BGB.lastEl.flip=!BGB.lastEl.flip; if(ty
 window._bgbFlipLast=_bgbFlipLast;
 function _bgbRotateLast(){ if(BGB.lastEl){ BGB.lastEl.rot=((BGB.lastEl.rot||0)+90)%360; if(typeof _reRenderEl==='function')_reRenderEl(BGB.lastEl.id); } }
 window._bgbRotateLast=_bgbRotateLast;
+
+/* Find a solar array the user has already drawn (Draw > Solar, or any
+   kind:'solar'/'dersolar' shape), so the guided build's PV step can attach
+   to it instead of stamping a second, redundant array. Returns the shape
+   and a connection point (its centre in model space) nearest to `near`. */
+function _bgbFindDrawnArray(near){
+  var shapes=(typeof S!=='undefined' && S.shapes)?S.shapes:[];
+  var best=null, bd=Infinity;
+  for(var i=0;i<shapes.length;i++){
+    var sh=shapes[i]; if(!sh) continue;
+    if(sh.kind!=='solar' && sh.kind!=='dersolar') continue;
+    if(sh._bgbUsedAsPv) continue;                 /* already claimed by a build */
+    /* connection point: shape centre, from cx/cy, pts, or boundary */
+    var cx=null, cy=null;
+    if(typeof sh.cx==='number' && typeof sh.cy==='number'){ cx=sh.cx; cy=sh.cy; }
+    else if(sh.pts && sh.pts.length){
+      var sx=0, sy=0, k=0;
+      for(var j=0;j<sh.pts.length;j++){ if(sh.pts[j]){ sx+=sh.pts[j].x; sy+=sh.pts[j].y; k++; } }
+      if(k){ cx=sx/k; cy=sy/k; }
+    } else if(sh.boundary && sh.boundary.length){
+      var bx=0, by=0, kb=0;
+      for(var b=0;b<sh.boundary.length;b++){ if(sh.boundary[b]){ bx+=sh.boundary[b].x; by+=sh.boundary[b].y; kb++; } }
+      if(kb){ cx=bx/kb; cy=by/kb; }
+    }
+    if(cx==null) continue;
+    var d = near ? ((cx-near.x)*(cx-near.x)+(cy-near.y)*(cy-near.y)) : 0;
+    if(d<bd){ bd=d; best={ shape:sh, x:cx, y:cy }; }
+  }
+  return best;
+}
+window._bgbFindDrawnArray=_bgbFindDrawnArray;
 
 function placeBgbAt(p){
   if(!BGB.active){ S.mode='select'; return; }
@@ -48788,6 +49024,51 @@ function placeBgbAt(p){
       }
       var _h=_bgbLoadHours();
       if(_h) spec += ' \u00b7 '+_h+' hr from storage';
+    }
+    /* PV STEP — SNAP TO A DRAWN ARRAY.
+       If the user already drew a solar array, the guided build should use
+       THAT as the PV node rather than dropping a second array on top of the
+       trench. Connect the run to the array's centre, mark the shape as the
+       build's PV, and skip creating a duplicate element. This is the
+       "1 array, not 2" and "snap to my system" behaviour. */
+    if(kind==='pv'){
+      var _arr=_bgbFindDrawnArray({x:snap.x,y:snap.y});
+      if(_arr && _arr.shape){
+        var _sh=_arr.shape;
+        _sh._bgbUsedAsPv=true; _sh.bgbRole='pv';
+        BGB.placed[kind]=_sh; BGB.lastEl=_sh;
+        /* run the conduit from the trench to the array's connection point */
+        try{ _dcfcConduitAlongRun(_sh, run, snap, _bgbLegCond(kind), (BGB_LEGNAME[kind]||n.label)); }catch(e){}
+        /* mark the connection visibly + tell the user it snapped */
+        try{ if(typeof renderShape==='function') renderShape(_sh); }catch(e){}
+        if(typeof _evBanner==='function') _evBanner('\u2713 Connected to your drawn PV array \u2014 no duplicate placed.');
+        if(typeof _reRenderEl==='function' && _sh.id) { try{ _reRenderEl(_sh.id); }catch(e){} }
+        BGB.stepIx++;
+        if(BGB.stepIx>=sq.length){ _bgbFinish(); if(typeof updateSummaryPanel==='function') updateSummaryPanel(); return; }
+        BGB.phase='drawtrench'; BGB._activeRun=null;
+        /* next run starts from this PV node's parent, like the normal path */
+        var _pkPv=(function(){
+          try{
+            var pre=BGB_PRESETS[BGB.mode];
+            if(!pre||!pre.parents) return null;
+            var pkey=pre.parents[_bgbCurKind()];
+            if(!pkey) return null;
+            var pe=BGB.placed && BGB.placed[pkey];
+            if(!pe) return null;
+            if(typeof pe.cx==='number') return {x:pe.cx,y:pe.cy};
+            var id=pe.id||pe;
+            var obj=(S.elements||[]).filter(function(e){return e.id===id;})[0];
+            if(obj) return {x:obj.x+((obj.w||60)/2),y:obj.y+((obj.h||obj.w||60)/2)};
+            return null;
+          }catch(e){ return null; }
+        })();
+        if(_pkPv){ _dcfcDraw={ pts:[{x:_pkPv.x,y:_pkPv.y}], preview:null, leg:_bgbLegColor(_bgbCurKind()) }; }
+        else { _dcfcDraw=null; }
+        _dcfcRenderTrenches(); _bgbGuideRender(); _bgbPrompt();
+        if(typeof updateSummaryPanel==='function') updateSummaryPanel();
+        return;
+      }
+      /* no drawn array found -> fall through and place one as before */
     }
     var el=_evAdd(n.evKind||kind, snap.x, snap.y, n.label, spec);
     el.bgbRole=kind; el.evRole=kind;
