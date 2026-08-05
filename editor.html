@@ -1899,7 +1899,7 @@ window.onerror = function(msg, src, line, col, err) {
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',openConduitMenu)"><span class="fi-ico">⌥</span> Conduit Type &amp; Trenching…</button>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',_bessRunPanel)" title="Checklist of the standard BESS run designations (DC CABLE RUN 1, AC CABLE RUN 1-9...) — shows what's drawn vs pending and arms the tool for the next one"><span class="fi-ico">📋</span> BESS Cable Run Schedule…</button>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',_cdOpenTab)"><span class="fi-ico">Σ</span> LF Estimate</button>
-            <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',_geoRepairAndReport)" title="Re-anchors any conduit whose ground position went stale (e.g. after adding a bend point) so it tracks the map on the next pan/zoom instead of staying put"><span class="fi-ico">⚓</span> Re-anchor Conduits to Map</button>
+            <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',_geoRepairAndReport)" title="Checks every conduit, trench, shape and equipment item against the map and re-anchors any whose stored ground position no longer matches where it is drawn — so nothing drifts or snaps back on the next pan or zoom"><span class="fi-ico">⚓</span> Re-anchor Drawing to Map</button>
             <div class="rb-fly-head">Auto-Route</div>
             <button class="rb-fly-item" onclick="rbFlyDo('fly-cond',function(){wireAllBessToHub()})" title="Home-run every BESS pad to the EMS/hub — one run per service, edge to edge"><span class="fi-ico">⇉</span> Wire All BESS &rarr; Hub</button>
             <div class="rb-fly-head">Drawing Style</div>
@@ -3068,6 +3068,13 @@ if(document.readyState==='loading'){
       <div class="cal-box">
         <h3>▤ Parking Stall Array</h3>
         <p>Enter the grid of stalls to place.</p>
+        <label style="font-size:10px;color:var(--sub);display:block;margin-bottom:3px">Stall type</label>
+        <select id="park-type" onchange="_parkTypeChange()" style="width:100%;padding:7px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;font-family:inherit;margin-bottom:8px">
+          <option value="standard">Standard parking</option>
+          <option value="ev">EV charging — stamps the EV stencil in every stall</option>
+          <option value="ada">ADA accessible — stamps the wheelchair symbol</option>
+          <option value="adaev">ADA + EV — accessible EV charging stall</option>
+        </select>
         <div style="display:flex;gap:6px;margin-bottom:8px">
           <div style="flex:1">
             <label style="font-size:10px;color:var(--sub);display:block;margin-bottom:3px">Rows</label>
@@ -3088,6 +3095,7 @@ if(document.readyState==='loading'){
             <input type="number" id="park-lft" value="18" min="10" max="60" step="0.5" style="width:100%;padding:7px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;font-family:inherit">
           </div>
         </div>
+        <div id="park-type-note" style="font-size:9px;line-height:1.5;color:var(--gold);margin-bottom:6px"></div>
         <div id="park-scale-note" style="font-size:9px;line-height:1.5;color:var(--sub);margin-bottom:10px"></div>
         <div class="cal-btns">
           <button style="background:var(--surface);color:var(--sub)" onclick="_parkModalCancel()">Cancel</button>
@@ -8201,6 +8209,9 @@ function globalMM(e){
           let px=0;
           for(let i=1;i<c.pts.length;i++) px+=Math.hypot(c.pts[i].x-c.pts[i-1].x,c.pts[i].y-c.pts[i-1].y);
           c.pxLen=px; c.ftLen=S.pxPerFt?+(px/S.pxPerFt).toFixed(1):px;
+          /* Same stale-anchor problem as updateAttached: endpoints were
+             re-snapped to the group's new centres without re-anchoring. */
+          try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
           document.querySelector('[data-cid="'+c.id+'"]')?.remove();
           renderConduit(c);
         }
@@ -8334,6 +8345,9 @@ function globalMM(e){
           let px=0;
           for(let i=1;i<c.pts.length;i++) px+=Math.hypot(c.pts[i].x-c.pts[i-1].x,c.pts[i].y-c.pts[i-1].y);
           c.pxLen=px; c.ftLen=S.pxPerFt?+(px/S.pxPerFt).toFixed(1):px;
+          /* Same stale-anchor problem as updateAttached: endpoints were
+             re-snapped to the group's new centres without re-anchoring. */
+          try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
           document.querySelector('[data-cid="'+c.id+'"]')?.remove();
           renderConduit(c);
         }
@@ -8656,6 +8670,28 @@ function _shapeInk(sh){ return (sh && sh.color) ? sh.color : SHAPE_STROKE; }
    Feet are now the invariant, exactly as bespad/assembly/solar-table already
    do it. Pixels are derived from S.pxPerFt at render time, so the grid tracks
    pan, zoom and calibration. */
+/* STALL TYPES.
+   A parking array is rarely all one thing: an EV bank needs the EV
+   stencil painted in each stall, an accessible stall needs the wheelchair
+   symbol and a wider footprint, and an accessible EV stall needs both.
+   Drawing them as plain rectangles meant the ADA/EV stalls on a site plan
+   were indistinguishable from ordinary parking -- which is exactly the
+   distinction a plan reviewer is checking for.
+
+   Default widths follow the usual practice: 9 ft standard; 11 ft for
+   accessible (ADA 502.2 requires a 96 in / 8 ft car space plus a 60 in
+   access aisle, or 132 in van space -- 11 ft is a common single-stall
+   figure and the aisle is drawn separately with Draw > ADA Aisle).
+   All of them stay editable, because the governing figure is the local
+   code, not this default. */
+var PARK_TYPES = {
+  standard: { label:'Standard',        wft:9.0,  lft:18, ink:null,      fill:'none' },
+  ev:       { label:'EV Charging',     wft:9.0,  lft:18, ink:'#2FB54A', fill:'rgba(120,200,140,0.10)' },
+  ada:      { label:'ADA Accessible',  wft:11.0, lft:18, ink:'#2E6FE6', fill:'rgba(46,111,230,0.12)' },
+  adaev:    { label:'ADA + EV',        wft:11.0, lft:18, ink:'#2E6FE6', fill:'rgba(46,111,230,0.12)' }
+};
+function _parkType(sh){ return (sh && PARK_TYPES[sh.stallType]) ? sh.stallType : 'standard'; }
+
 var PARK_STALL_WFT = 9.0;       /* stall width, ft  (typical 90-degree stall) */
 var PARK_STALL_LFT = 18.0;      /* stall depth, ft */
 var PARK_LEGACY_PPF = 40/9;     /* px-per-ft implied by the old 40x80 constants */
@@ -8797,7 +8833,7 @@ function _placeParking(p){
     var rr=document.getElementById('park-rows'); if(rr) rr.focus();
   } else {
     /* fallback if modal missing */
-    _doPlaceParking(p,1,8);
+    _doPlaceParking(p,1,8,PARK_STALL_WFT,PARK_STALL_LFT,'standard');
   }
 }
 function _parkModalCancel(){
@@ -8813,25 +8849,45 @@ function _parkModalConfirm(){
   var lft=parseFloat((document.getElementById('park-lft')||{}).value);
   if(!(wft>0)||wft>30) wft=PARK_STALL_WFT;
   if(!(lft>0)||lft>60) lft=PARK_STALL_LFT;
+  var stype=(document.getElementById('park-type')||{}).value||'standard';
   var m=document.getElementById('park-modal'); if(m) m.style.display='none';
   var p=_pendingParkPt||{x:200,y:200}; _pendingParkPt=null;
-  _doPlaceParking(p,rows,cols,wft,lft);
+  _doPlaceParking(p,rows,cols,wft,lft,stype);
 }
-function _doPlaceParking(p,rows,cols,wft,lft){
+/* Changing the type refreshes the default footprint, but never overwrites
+   a width the person deliberately typed for that same type. */
+function _parkTypeChange(){
+  var t=(document.getElementById('park-type')||{}).value||'standard';
+  var T=PARK_TYPES[t]||PARK_TYPES.standard;
+  var w=document.getElementById('park-wft'), l=document.getElementById('park-lft');
+  if(w) w.value=T.wft;
+  if(l) l.value=T.lft;
+  var n=document.getElementById('park-type-note');
+  if(n){
+    n.textContent = (t==='ada'||t==='adaev')
+      ? 'Accessible stalls also need an adjacent access aisle — draw it with Draw ▸ ADA Aisle. Verify stall and aisle width against the local code.'
+      : (t==='ev' ? 'The EV stencil is painted in every stall in this array.' : '');
+  }
+}
+
+function _doPlaceParking(p,rows,cols,wft,lft,stype){
   if(!(wft>0)) wft=PARK_STALL_WFT;
   if(!(lft>0)) lft=PARK_STALL_LFT;
   var ppf=(S.pxPerFt && S.pxPerFt>0) ? S.pxPerFt : 0;
+  if(!PARK_TYPES[stype]) stype='standard';
   var sh={ id:uid(), kind:'parking', pts:[{x:p.x,y:p.y}], style:S.shapeStyle, color:SHAPE_STROKE,
-           rows:rows, cols:cols, stallWft:wft, stallLft:lft, scaled:!!ppf, rot:0 };
+           rows:rows, cols:cols, stallWft:wft, stallLft:lft, scaled:!!ppf, rot:0,
+           stallType:stype };
   S.shapes.push(sh); renderShape(sh);
   /* Anchor immediately so the array holds its ground position on the very
      first pan/zoom rather than waiting for a drag to stamp it. */
   try{ if(typeof _geoRestampOne==='function') _geoRestampOne(sh); }catch(e){}
   updShapeCount(); pushHist();
   var dims=wft+'\u2032 \u00d7 '+lft+'\u2032';
+  var tl=(PARK_TYPES[stype]||PARK_TYPES.standard).label;
   showBanner('shape', ppf
-    ? ' Parking added ('+rows+' \u00d7 '+cols+' @ '+dims+' stalls). Click to place another \u00b7 ESC exits'
-    : ' Parking added ('+rows+' \u00d7 '+cols+') at preview scale \u2014 calibrate for true '+dims+' stalls');
+    ? ' '+tl+' added ('+rows+' \u00d7 '+cols+' @ '+dims+' stalls). Click to place another \u00b7 ESC exits'
+    : ' '+tl+' added ('+rows+' \u00d7 '+cols+') at preview scale \u2014 calibrate for true '+dims+' stalls');
 }
 
 /* --- Callout: leader arrow from a target point to a text label --------
@@ -9728,22 +9784,61 @@ function _renderParking(g, sh){
   /* Feet -> current pixels. Recomputed every render, so a zoom or a
      recalibration resizes the array instead of leaving it frozen. */
   var _pk=_parkStallPx(sh), sw=_pk.sw, sh2=_pk.sh;
+  /* An EV or accessible stall is a different thing from ordinary parking
+     and has to READ as different on the plan -- fill, stroke colour and
+     the painted symbol all follow the stall type. */
+  var tKey=_parkType(sh), T=PARK_TYPES[tKey];
+  var ink=T.ink || _shapeInk(sh);
   for(var r=0;r<sh.rows;r++){
     for(var c=0;c<sh.cols;c++){
       var x=ox + c*sw, y=oy + r*sh2;
       var st=_mkNS('rect');
       st.setAttribute('x',x); st.setAttribute('y',y);
       st.setAttribute('width',sw); st.setAttribute('height',sh2);
-      st.setAttribute('fill','none'); st.setAttribute('stroke',_shapeInk(sh)); st.setAttribute('stroke-width','1.5');
+      st.setAttribute('fill',T.fill); st.setAttribute('stroke',ink); st.setAttribute('stroke-width','1.5');
       g.appendChild(st);
+      /* Painted symbol, sized to the stall. Below ~18 px a glyph is an
+         unreadable smudge, so it is dropped rather than drawn as noise --
+         the fill and stroke still carry the stall type at that zoom. */
+      var gs=Math.min(sw,sh2);
+      if(gs>=18) _parkStallGlyph(g, tKey, x, y, sw, sh2, ink);
     }
   }
   /* outer boundary emphasised */
   var b=_mkNS('rect');
   b.setAttribute('x',ox); b.setAttribute('y',oy);
   b.setAttribute('width',sh.cols*sw); b.setAttribute('height',sh.rows*sh2);
-  b.setAttribute('fill','none'); b.setAttribute('stroke',_shapeInk(sh)); b.setAttribute('stroke-width','2.5');
+  b.setAttribute('fill','none'); b.setAttribute('stroke',ink); b.setAttribute('stroke-width','2.5');
   g.appendChild(b);
+}
+/* Paint the stall symbol. Reuses the same icon assets as the standalone
+   Draw > EV Stencil / ADA Symbol tools, so an array stall and a hand
+   stamped stall are the same mark. ADA+EV stacks both, small. */
+function _parkStallGlyph(g, tKey, x, y, w, h, ink){
+  var cx=x+w/2;
+  function icon(uri, ccy, size){
+    try{ if(typeof _drawIconImg==='function'){ _drawIconImg(g, uri, cx, ccy, size); return true; } }catch(e){}
+    return false;
+  }
+  function label(txt, ly, fs){
+    var t=_mkNS('text');
+    t.setAttribute('x',cx); t.setAttribute('y',ly);
+    t.setAttribute('text-anchor','middle'); t.setAttribute('fill',ink);
+    t.setAttribute('font-size',fs); t.setAttribute('font-weight','700');
+    t.setAttribute('font-family','Arial,Helvetica,sans-serif');
+    t.textContent=txt; g.appendChild(t);
+  }
+  var s=Math.min(w,h);
+  if(tKey==='ev'){
+    icon(typeof EV_ICON_URI!=='undefined'?EV_ICON_URI:'', y+h*0.42, s*0.38);
+    if(h>=44) label('EV', y+h*0.80, Math.max(6, w*0.16));
+  } else if(tKey==='ada'){
+    icon(typeof ADA_ICON_URI!=='undefined'?ADA_ICON_URI:'', y+h*0.48, s*0.44);
+  } else if(tKey==='adaev'){
+    /* both marks, stacked -- accessible symbol above, EV below */
+    icon(typeof ADA_ICON_URI!=='undefined'?ADA_ICON_URI:'', y+h*0.34, s*0.30);
+    icon(typeof EV_ICON_URI!=='undefined'?EV_ICON_URI:'',  y+h*0.68, s*0.26);
+  }
 }
 
 /* ---- Callout: leader arrow + text label ------------------------- */
@@ -10079,6 +10174,9 @@ function _rerouteShapeConduits(sh){
       c.pts=[ {x:edgeX,y:by+d},{x:edgeX,y:laneY2+d},{x:ex+d,y:laneY2+d},{x:ex+d,y:ey+d} ];
     }
     c.pxLen=_polyLen(c.pts); c.ftLen=+(c.pxLen/(S.pxPerFt||6)).toFixed(1);
+    /* Rebuilt pts need a rebuilt anchor, or the next map idle drags this
+       run back to the route it had before the BESS moved. */
+    try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
     var g2=document.querySelector('[data-cid="'+c.id+'"]'); if(g2&&g2.parentNode)g2.parentNode.removeChild(g2);
     if(typeof renderConduit==='function') renderConduit(c);
   }
@@ -11719,7 +11817,7 @@ function computeGroundLayout(opts){
   var boundary=opts.boundary;
   if(!boundary || boundary.length<3) return null;
   var ppf=(typeof _derScale==='function')?_derScale():6;
-  var A=(typeof _solarAssume==='function')?_solarAssume('ground'):{gcr:0.4,wpsf:15,setbackFt:10,presetKey:'fixed-ground'};
+  var A=(typeof _solarAssume==='function')?_solarAssume('ground'):{gcr:0.4,wpsf:DER_PV_WPSF,setbackFt:10,presetKey:'fixed-ground'};
   var tbl=_gmTable(A.presetKey);
 
   var setbackPx=(A.setbackFt||10)*ppf;
@@ -11759,7 +11857,7 @@ function computeGroundLayout(opts){
   var tableSqft=tbl.tableW*tbl.tableH;
   var moduleFill=0.92;                       /* modules within the frame */
   var totalModuleSqft=tables.length*tableSqft*moduleFill;
-  var kw=Math.round(totalModuleSqft*(A.wpsf||15)/1000*10)/10;
+  var kw=Math.round(totalModuleSqft*(A.wpsf||DER_PV_WPSF)/1000*10)/10;
 
   var bbAcres=((bb.w/ppf)*(bb.h/ppf))/43560;
   /* INVERTER BLOCKS: group tables into electrical blocks sized to a target
@@ -13840,6 +13938,15 @@ function updateAttached(elId){
     if(ch){
       let px=0;for(let i=1;i<c.pts.length;i++)px+=Math.hypot(c.pts[i].x-c.pts[i-1].x,c.pts[i].y-c.pts[i-1].y);
       c.pxLen=px;c.ftLen=S.pxPerFt?+(px/S.pxPerFt).toFixed(1):px;
+      /* The endpoint just moved to follow its equipment, but the run's
+         GROUND anchor still pointed at where the endpoint used to be. The
+         next map idle then reprojected the conduit back to that stale
+         anchor -- the run visibly detached from the equipment it is
+         drawn to and snapped back to open ground. Re-anchor from the
+         pixels we just wrote so the drawing and the anchor agree.
+         _geoRestampOne no-ops during a reproject, so this is safe to
+         call on every drag frame. */
+      try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
       document.querySelector(`[data-cid="${c.id}"]`)?.remove();renderConduit(c);updCondStat();
     }
   });
@@ -17715,11 +17822,33 @@ document.addEventListener('keydown',e=>{
       } else if(typeof showBanner==='function'){ showBanner('wiz','Placement cancelled. Click the step button again to retry.'); }
       return;
     }
-    if(typeof clearConduitSel==='function' && _selCondId){ clearConduitSel(); }
-    if(S.condDrawing)cancelConduit();
-    else if(_shapeMode && S.shapeDrawing) cancelShape();
-    else if(typeof _selShapeId!=='undefined' && _selShapeId) _clearShapeSel();
-    else setMode('select');
+    /* ESC used to clear only ONE thing per press, and never touched
+       element selection at all -- S.sel was missing from the chain
+       entirely, so pressing Escape with an element selected did nothing
+       visible. An in-progress DRAW is cancelled on its own (that is a
+       distinct action), but once nothing is being drawn, Escape clears
+       every kind of selection in one press. */
+    if(S.condDrawing){ cancelConduit(); return; }
+    if(_shapeMode && S.shapeDrawing){ cancelShape(); return; }
+
+    var cleared=false;
+    /* conduit */
+    try{ if(typeof _selCondId!=='undefined' && _selCondId && typeof clearConduitSel==='function'){ clearConduitSel(); cleared=true; } }catch(e){}
+    /* shape */
+    try{ if(typeof _selShapeId!=='undefined' && _selShapeId && typeof _clearShapeSel==='function'){ _clearShapeSel(); cleared=true; } }catch(e){}
+    /* element -- the one that was missing */
+    try{ if(S.sel && typeof selEl==='function'){ selEl(null); cleared=true; } }catch(e){}
+    /* assembly sub-part */
+    try{ if(S.asmPartId){ S.asmPartId=null; if(typeof renderAll==='function') renderAll(); cleared=true; } }catch(e){}
+    /* multi-select / group drag */
+    try{ if(S.selIds && S.selIds.length){ S.selIds=[]; cleared=true; } }catch(e){}
+    try{ if(S.o2Multi){ S.o2Multi=false; if(typeof o2MultiClear==='function') o2MultiClear(); cleared=true; } }catch(e){}
+    /* close the zone-box editor along with its shape */
+    try{ if(document.getElementById('ev-zone-props') && typeof _evZoneClose==='function'){ _evZoneClose(); cleared=true; } }catch(e){}
+
+    /* Nothing was selected, so Escape means "leave whatever tool I am in". */
+    if(!cleared) setMode('select');
+    try{ if(typeof updSelUI==='function') updSelUI(); }catch(e){}
   }
   if(e.key==='Delete'||e.key==='Backspace'){
     if(typeof _selCondId!=='undefined' && _selCondId){ deleteSelectedConduit(); }
@@ -25485,6 +25614,9 @@ var D4_SHEETS = [
   { no:'E5.0', name:'Equipment & Conduit Schedule', fn:'_ppRenderCondSchedule' },
   { no:'S1.1', name:'BESS Pad Detail',      fn:'_ppRenderBessPad' },
   { no:'S1.2', name:'Gear Pad Details',     fn:'_ppRenderGearPad' },
+  { no:'S1.3', name:'Rooftop Ballasted Array Detail', fn:'_ppRenderSolarRoof' },
+  { no:'S1.4', name:'Ground-Mount Array Detail',      fn:'_ppRenderSolarGround' },
+  { no:'S1.5', name:'Solar Canopy / Carport Detail',  fn:'_ppRenderSolarCanopy' },
   { no:'S2.0', name:'Grounding Detail',     fn:'_ppRenderGrounding' },
   { no:'S3.0', name:'Fencing Detail',       fn:'_ppRenderFencing' }
 ];
@@ -30388,42 +30520,145 @@ window._geoReprojectAll=_geoReprojectAll;
    conduit tracks the map correctly from this point forward instead of
    silently sitting out every future pan/zoom. Safe to call repeatedly:
    a conduit with a complete, length-matched anchor is left untouched. */
+/* ── RE-ANCHOR TO MAP ────────────────────────────────────────────────────
+   Repairs any object whose stored ground anchor no longer agrees with
+   where it is actually drawn. Two distinct faults, and the first version
+   of this only caught one of them:
+
+     BROKEN  - anchor missing, wrong length, or containing null vertices.
+               The reprojector's guards then SKIP the object entirely, so
+               it silently stops tracking the map (the vertex-insert bug).
+
+     STALE   - anchor is perfectly well-formed but points at the object's
+               PREVIOUS position, because something moved the pixels
+               without re-anchoring (the equipment-drag / reroute bugs).
+               Structurally valid, so a structure-only check passes it and
+               reports "nothing to fix" on a drawing that is visibly wrong.
+               This is the worse failure of the two: it tells you it is
+               fine when it is not.
+
+   Staleness is detected by projecting the stored anchor back to pixels at
+   the CURRENT map state and comparing against where the object is drawn.
+   Reprojection is lossless (round-trips to 0.00000 px), so any meaningful
+   disagreement means the anchor contradicts the drawing.
+
+   When they disagree, the DRAWING wins: the person put the equipment and
+   the run where they wanted them, so the anchor is what gets rewritten. */
+var _GEO_STALE_PX = 0.5;   /* below this is float noise, not drift */
+
+/* Does this object's anchor still describe where it is drawn? */
+function _geoAnchorState(o, toPx){
+  if(!o) return 'skip';
+  var pts=o.pts;
+  if(pts && pts.length){
+    if(!o._geoPts || o._geoPts.length!==pts.length) return 'broken';
+    for(var i=0;i<o._geoPts.length;i++){
+      var g=o._geoPts[i];
+      if(!g || g.lat==null || g.lng==null) return 'broken';
+    }
+    for(var j=0;j<pts.length;j++){
+      var q=toPx(o._geoPts[j].lat, o._geoPts[j].lng);
+      if(!q) continue;
+      if(Math.abs(q.x-pts[j].x)>_GEO_STALE_PX || Math.abs(q.y-pts[j].y)>_GEO_STALE_PX) return 'stale';
+    }
+    return 'ok';
+  }
+  /* centre-anchored objects (utility footprints, assemblies) */
+  if(typeof o.cx==='number' && typeof o.cy==='number'){
+    if(!o._geoC || o._geoC.lat==null) return 'broken';
+    var pc=toPx(o._geoC.lat, o._geoC.lng);
+    if(pc && (Math.abs(pc.x-o.cx)>_GEO_STALE_PX || Math.abs(pc.y-o.cy)>_GEO_STALE_PX)) return 'stale';
+    return 'ok';
+  }
+  /* element-style objects (x/y + _geoLat/_geoLng) */
+  if(typeof o.x==='number' && typeof o.y==='number'){
+    if(o._geoLat==null || o._geoLng==null) return 'broken';
+    var pe=toPx(o._geoLat, o._geoLng);
+    if(pe){
+      var cxE=o.x+((o.w||60)/2), cyE=o.y+((o.h||o.w||60)/2);
+      if(Math.abs(pe.x-cxE)>_GEO_STALE_PX || Math.abs(pe.y-cyE)>_GEO_STALE_PX) return 'stale';
+    }
+    return 'ok';
+  }
+  return 'skip';
+}
+
+/* Re-anchor everything whose anchor disagrees with the drawing.
+   Safe to call repeatedly: an object already in agreement is untouched. */
 function _geoRepairConduits(){
-  var ms=_liveMapState(); if(!ms) return { fixed:0, ready:false };
-  var fixed=0;
+  var ms=(typeof _liveMapState==='function')?_liveMapState():null;
+  if(!ms) return { fixed:0, broken:0, stale:0, checked:0, ready:false };
+  var sz=_getCanvasSize();
+  var toPx=function(lat,lng){ return _latLngToPx(lat,lng,ms,sz.w,sz.h); };
+  var out={ fixed:0, broken:0, stale:0, checked:0, ready:true, byKind:{} };
+
+  function repair(o, kind){
+    if(!o) return;
+    out.checked++;
+    var st=_geoAnchorState(o, toPx);
+    if(st==='ok' || st==='skip') return;
+    /* Drop the disputed anchor outright so the restamp cannot merge with
+       a partial one, then re-derive from the current pixels. */
+    try{ delete o._geoPts; delete o._geoC; }catch(e){}
+    if(kind==='element'){ try{ delete o._geoLat; delete o._geoLng; }catch(e){} }
+    if(typeof _geoRestampOne==='function') _geoRestampOne(o);
+    var after=_geoAnchorState(o, toPx);
+    if(after==='ok'){
+      out.fixed++;
+      if(st==='broken') out.broken++; else out.stale++;
+      out.byKind[kind]=(out.byKind[kind]||0)+1;
+    }
+  }
+
   try{
-    (S.conduits||[]).forEach(function(c){
-      if(!c.pts || !c.pts.length) return;
-      var ok = c._geoPts && c._geoPts.length===c.pts.length
-        && c._geoPts.every(function(g){ return g && g.lat!=null && g.lng!=null; });
-      if(ok) return;
-      delete c._geoPts;
-      if(typeof _geoRestampOne==='function') _geoRestampOne(c);
-      if(c._geoPts) fixed++;
-    });
-    (S._trenches||[]).forEach(function(t){
-      if(!t.pts || !t.pts.length) return;
-      var ok = t._geoPts && t._geoPts.length===t.pts.length
-        && t._geoPts.every(function(g){ return g && g.lat!=null && g.lng!=null; });
-      if(ok) return;
-      delete t._geoPts;
-      if(typeof _geoRestampOne==='function') _geoRestampOne(t);
-      if(t._geoPts) fixed++;
-    });
-  }catch(e){}
-  if(fixed && window.console) console.info('[omega/geo] re-anchored '+fixed+' conduit/trench run(s) that had drifted out of sync with the map.');
-  return { fixed:fixed, ready:true };
+    (S.conduits||[]).forEach(function(c){ repair(c,'conduit'); });
+    (S._trenches||[]).forEach(function(t){ repair(t,'trench'); });
+    (S.shapes||[]).forEach(function(sh){ repair(sh,'shape'); });
+    (S.elements||[]).forEach(function(el){ repair(el,'element'); });
+  }catch(e){ if(window.console) console.warn('[omega/geo] repair pass error:', e && e.message); }
+
+  if(out.fixed && window.console){
+    console.info('[omega/geo] re-anchored '+out.fixed+' object(s) \u2014 '
+      +out.broken+' broken, '+out.stale+' stale \u2014 out of '+out.checked+' checked.');
+  }
+  return out;
 }
 window._geoRepairConduits=_geoRepairConduits;
-/* Manual trigger from the Draw > Conduit flyout -- same repair, with a
-   banner so pressing the button actually confirms something happened. */
+
+/* Manual trigger from the Draw > Conduit flyout. Repaints whatever it
+   touched and reports specifically what it did, so pressing the button
+   confirms something real rather than flashing a generic OK. */
 function _geoRepairAndReport(){
   var r=_geoRepairConduits();
-  if(!r.ready){ if(typeof showBanner==='function') showBanner('cond',' Map not ready yet \u2014 try again once the site map has loaded.'); return; }
-  if(typeof renderConduit==='function'){ (S.conduits||[]).forEach(function(c){ try{ renderConduit(c); }catch(e){} }); }
-  if(typeof showBanner==='function') showBanner('cond',
-    r.fixed ? (' Re-anchored '+r.fixed+' run'+(r.fixed>1?'s':'')+' that had drifted out of sync with the map.')
-            : ' All conduit and trench runs are already anchored to the map \u2014 nothing to fix.');
+  if(!r.ready){
+    if(typeof showBanner==='function') showBanner('cond',' Map not ready yet \u2014 open the site map and try again.');
+    return r;
+  }
+  /* Repaint. Anchors changed rather than pixels, so nothing should visibly
+     move -- but a redraw guarantees labels and callouts match the model. */
+  try{
+    if(typeof renderConduit==='function') (S.conduits||[]).forEach(function(c){ try{ renderConduit(c); }catch(e){} });
+    if(typeof renderShape==='function') (S.shapes||[]).forEach(function(sh){ try{ renderShape(sh); }catch(e){} });
+    if(typeof _dcfcRenderTrenches==='function') _dcfcRenderTrenches();
+    if(typeof updCondStat==='function') updCondStat();
+  }catch(e){}
+  /* Persist, or the repair is lost on reload and the same drift returns. */
+  try{ if(typeof pushHist==='function') pushHist(); }catch(e){}
+
+  if(typeof showBanner==='function'){
+    if(!r.fixed){
+      showBanner('cond',' All '+r.checked+' object'+(r.checked===1?'':'s')+' already anchored to the map \u2014 nothing to fix.');
+    } else {
+      var bits=[];
+      if(r.byKind.conduit) bits.push(r.byKind.conduit+' conduit');
+      if(r.byKind.trench)  bits.push(r.byKind.trench+' trench');
+      if(r.byKind.shape)   bits.push(r.byKind.shape+' shape');
+      if(r.byKind.element) bits.push(r.byKind.element+' equipment');
+      showBanner('cond',' Re-anchored '+r.fixed+' of '+r.checked+' \u2014 '+bits.join(', ')
+        +' ('+r.broken+' broken, '+r.stale+' stale). They will now hold position through pan and zoom.');
+    }
+  }
+  return r;
 }
 window._geoRepairAndReport=_geoRepairAndReport;
 function _geoWireMapListeners(){
@@ -30485,7 +30720,17 @@ function _geoWireMapListeners(){
     /* One-shot repair for anything already broken by the vertex-insert bug
        (or any pre-existing project saved before this fix). Deferred a tick
        so the map has actually reported a settled center/zoom. */
-    setTimeout(function(){ try{ _geoRepairConduits(); }catch(e){} }, 400);
+    /* One shot at 400ms silently did nothing if the map had not settled
+       yet -- the pass returns ready:false and there was no retry, so a
+       slow tile load meant a project loaded with its drift intact.
+       Retry until the map answers, then run once. */
+    (function _repairWhenReady(tries){
+      setTimeout(function(){
+        var r=null;
+        try{ r=_geoRepairConduits(); }catch(e){}
+        if((!r || !r.ready) && tries<20) _repairWhenReady(tries+1);
+      }, tries===0 ? 400 : 500);
+    })(0);
   }catch(e){}
 }
 window._geoWireMapListeners=_geoWireMapListeners;
@@ -30739,6 +30984,7 @@ function _ppBuildModal(){
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-e50"> E5.0 \u2014 Equipment &amp; Conduit Schedule</label>'+
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-s11"> S1.1 \u2014 BESS Pad Detail (structural)</label>'+
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-s12"> S1.2 \u2014 Gear Pad Details (structural)</label>'+
+    '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-s1x" checked> S1.3\u2013S1.5 \u2014 Solar Racking Details (auto: roof / ground / canopy)</label>'+
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-s20"> S2.0 \u2014 Grounding Detail</label>'+
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text)"><input type="checkbox" id="pp-s30"> S3.0 \u2014 Fencing Detail</label></div>'+
     '<div style="margin-bottom:10px"><label style="font-size:10px;color:var(--sub);display:block;margin-bottom:4px">SHEET SIZE</label>'+
@@ -31891,6 +32137,45 @@ function _ppRenderCondScheduleCont(sizeKey, street){
    Matches the permit "POI1 SIGNAGE" sheet: two "YOU ARE HERE" directory
    placards over a mini site map (with disconnect callouts + CAUTION header),
    plus sign-detail cards each with LOCATION / QUANTITY / TEXT-SIZE. */
+/* What power sources and service equipment are actually on this drawing?
+   Drives the E4.0 placard set so the POI directory matches the system
+   rather than a hardcoded BESS list. Counts arrays individually, because
+   a site with three roofs has three arrays to declare. */
+function _ppPoiCensus(){
+  var o = { solar:0, solarKw:0, bess:0, pcs:0, ev:0, gen:0, xfmr:0, disco:0, meter:0, sources:0 };
+  try{
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh) return;
+      if(sh.kind==='dersolar'){ o.solar++; o.solarKw += (+sh.kw||0); return; }
+      if(sh.kind==='assembly' || sh.type==='bess-asm'){ o.bess++; return; }
+      if(sh.kind!=='utility') return;
+      var u=sh.utype;
+      if(u==='bessctr') o.bess++;
+      else if(u==='pcs'||u==='inverter'||u==='strinv') o.pcs++;
+      else if(u==='xfmr'||u==='padxfmr') o.xfmr++;
+      else if(u==='disco'||u==='acdisco') o.disco++;
+      else if(u==='meter'||u==='prodmeter') o.meter++;
+      else if(u==='genset') o.gen++;
+    });
+    (S.elements||[]).forEach(function(el){
+      if(!el) return;
+      var q=(typeof _eqRole==='function' && _eqRole(el)) || el.eqId
+            || (el.type==='evgear' ? (el.evKind||el.bgbRole||el.evRole) : el.type);
+      if(q==='charger'||q==='evse'||q==='evdcfc'||q==='evl2') o.ev++;
+      else if(q==='bess') o.bess++;
+      else if(q==='solar') o.solar++;
+      else if(q==='pcs') o.pcs++;
+      else if(q==='xfmr') o.xfmr++;
+      else if(q==='genset') o.gen++;
+      else if(q==='meter') o.meter++;
+    });
+  }catch(e){}
+  o.solarKw = o.solarKw ? Math.round(o.solarKw).toLocaleString() : '';
+  /* Utility service is always one source; every DER on site is another. */
+  o.sources = 1 + (o.solar?1:0) + (o.bess?1:0) + (o.gen?1:0);
+  return o;
+}
+
 function _ppRenderPOISignage(sizeKey, street){
   var sheet=PP_SHEETS[sizeKey]||PP_SHEETS.B;
   var W=sheet.w*PP_DPI, H=sheet.h*PP_DPI;
@@ -31947,14 +32232,61 @@ function _ppRenderPOISignage(sizeKey, street){
   }
 
   /* ---- sign-detail cards (grid below) ---- */
-  var cards=[
-    { loc:'BESS ENCLOSURE (mfr)', qty:'1', tsize:'36pt (0.359\")', lines:['ENERGY STORAGE','SYSTEM','DISCONNECT'], w:5, h:3 },
-    { loc:'BESS ENCLOSURE', qty:'1', tsize:'36pt (0.359\")', lines:['ENERGY STORAGE','SYSTEM'], w:5, h:2 },
-    { loc:'BOLTSWITCH CABINET', qty:'2', tsize:'20pt (0.203\")', lines:['AC DISCONNECT','BOLTSWITCH CABINET','OPERATING CURRENT: '+acDiscA,'OPERATING VOLTAGE: '+ (sysv.match(/\d+/)?sysv.match(/\d+/)[0]+'V':'480V')], w:5, h:2 },
-    { loc:'BESS ENCLOSURE (PCS)', qty:'1', tsize:'36pt (0.359\")', lines:['ENERGY STORAGE','SYSTEM','INVERTER'], w:5, h:3 },
-    { loc:'BESS ENCLOSURE', qty:'1', tsize:'28pt (0.281\")', lines:['LITHIUM IRON','PHOSPHATE','TECHNOLOGY'], w:5, h:2 },
-    { loc:'XFMR', qty:'1', tsize:'20pt (0.203\")', lines:['ISOLATION XFMR','XFMR SIZE: '+(xfmrkva?xfmrkva+'KVA':'____ KVA'),'OPERATING VOLTAGE: 480/480V'], w:5, h:2 }
-  ];
+  /* POI PLACARDS ARE BUILT FROM WHAT IS ACTUALLY ON THE SITE MAP.
+     This was a fixed six-card BESS list, so a solar+storage site got no PV
+     placards at all, an EV site got battery placards it does not need, and
+     an added generator or second array never appeared. NEC 705.10 requires
+     the POI directory to list EVERY power source on the premises -- a
+     directory that omits one is the specific thing a first responder
+     relies on. Cards are emitted per system present, with real counts. */
+  var _poi = _ppPoiCensus();
+  var TS36 = '36pt (0.359")', TS28 = '28pt (0.281")', TS20 = '20pt (0.203")';
+  var voltTxt = (sysv.match(/\d+/) ? sysv.match(/\d+/)[0] + 'V' : '480V');
+  var cards = [];
+
+  if (_poi.bess) {
+    var qb = String(_poi.bess);
+    cards.push({ loc:'BESS ENCLOSURE (mfr)', qty:qb, tsize:TS36, lines:['ENERGY STORAGE','SYSTEM','DISCONNECT'], w:5, h:3 });
+    cards.push({ loc:'BESS ENCLOSURE', qty:qb, tsize:TS36, lines:['ENERGY STORAGE','SYSTEM'], w:5, h:2 });
+    if (_poi.pcs) cards.push({ loc:'BESS ENCLOSURE (PCS)', qty:String(_poi.pcs), tsize:TS36, lines:['ENERGY STORAGE','SYSTEM','INVERTER'], w:5, h:3 });
+    cards.push({ loc:'BESS ENCLOSURE', qty:qb, tsize:TS28, lines:['LITHIUM IRON','PHOSPHATE','TECHNOLOGY'], w:5, h:2 });
+  }
+  if (_poi.solar) {
+    var qa = String(_poi.solar);
+    cards.push({ loc:'PV AC DISCONNECT', qty:qa, tsize:TS36, lines:['PHOTOVOLTAIC','SYSTEM','AC DISCONNECT'], w:5, h:3 });
+    cards.push({ loc:'PV DISCONNECT / INVERTER', qty:qa, tsize:TS20, lines:['SOLAR PV SYSTEM EQUIPPED','WITH RAPID SHUTDOWN','NEC 690.56(C)'], w:5, h:2 });
+    cards.push({ loc:'PV ARRAY / COMBINER', qty:qa, tsize:TS20, lines:['PV ARRAY DC','MAX VOLTAGE (Voc): ____ V','MAX CIRCUIT CURRENT: ____ A'], w:5, h:2 });
+    if (_poi.solarKw) {
+      cards.push({ loc:'MAIN SERVICE / POI', qty:'1', tsize:TS20,
+        lines:['PV SYSTEM RATING', _poi.solarKw + ' kW-DC TOTAL', (_poi.solar > 1 ? (_poi.solar + ' ARRAYS') : '1 ARRAY')], w:5, h:2 });
+    }
+  }
+  if (_poi.ev) {
+    cards.push({ loc:'EVSE / CHARGER', qty:String(_poi.ev), tsize:TS20, lines:['ELECTRIC VEHICLE','SUPPLY EQUIPMENT','DISCONNECT'], w:5, h:2 });
+  }
+  if (_poi.gen) {
+    cards.push({ loc:'GENERATOR / ATS', qty:String(_poi.gen), tsize:TS20, lines:['STANDBY GENERATOR','DISCONNECT','OPERATING VOLTAGE: ' + voltTxt], w:5, h:2 });
+  }
+  cards.push({ loc:'BOLTSWITCH CABINET', qty:String(_poi.disco || 2), tsize:TS20,
+    lines:['AC DISCONNECT','BOLTSWITCH CABINET','OPERATING CURRENT: ' + acDiscA,'OPERATING VOLTAGE: ' + voltTxt], w:5, h:2 });
+  if (_poi.xfmr) {
+    cards.push({ loc:'XFMR', qty:String(_poi.xfmr), tsize:TS20,
+      lines:['ISOLATION XFMR','XFMR SIZE: ' + (xfmrkva ? xfmrkva + 'KVA' : '____ KVA'),'OPERATING VOLTAGE: 480/480V'], w:5, h:2 });
+  }
+  /* NEC 705.10 plant directory: mandatory once more than one source feeds
+     the premises, which is exactly the solar+storage case. */
+  if (_poi.sources > 1) {
+    var srcLines = ['POWER SOURCE DIRECTORY'];
+    if (_poi.solar) srcLines.push('SOLAR PV \u00b7 ' + _poi.solar + ' ARRAY' + (_poi.solar > 1 ? 'S' : ''));
+    if (_poi.bess) srcLines.push('ENERGY STORAGE \u00b7 ' + _poi.bess + ' UNIT' + (_poi.bess > 1 ? 'S' : ''));
+    if (_poi.gen) srcLines.push('GENERATOR \u00b7 ' + _poi.gen);
+    srcLines.push('UTILITY SERVICE');
+    cards.push({ loc:'SERVICE EQUIPMENT (NEC 705.10)', qty:'1', tsize:TS20, lines:srcLines, w:5, h:3 });
+  }
+  if (!cards.length) {
+    cards.push({ loc:'\u2014', qty:'\u2014', tsize:TS20, lines:['NO POWER SOURCES PLACED','ON THE SITE MAP YET'], w:5, h:2 });
+  }
+
   var gridTop=py+ph+50, cols=3, cardW=(W-tbW-pad-70)/cols-24, cardH=150, gy=36;
   for(var i=0;i<cards.length;i++){
     var col=i%cols, row=Math.floor(i/cols);
@@ -32165,6 +32497,344 @@ function _ppRenderBessPad(sizeKey, street){
   s+=_ppTitleBlock(W, H, tbW, tbH, 'S1.1', _v.padTitle, street||pname, 0);
   s+='</svg>';
   return s;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   S1.3+ SOLAR RACKING / FOUNDATION DETAILS
+   ----------------------------------------------------------------------
+   S1.1 covers the equipment pad. Nothing in the set covered how the
+   ARRAY itself is supported, which is the part a structural reviewer
+   actually looks for on a PV permit -- and the three common mounting
+   systems need genuinely different sheets, not one generic page:
+
+     ROOF (ballasted)  - no roof penetration; ballast blocks resist wind
+                         uplift. Reviewer wants ballast layout, uplift
+                         zones (ASCE 7 Fig. 29.4-7), membrane protection,
+                         and the roof's added dead load.
+     GROUND (fixed-tilt / tracker)
+                       - driven pier or ground screw; reviewer wants
+                         embedment vs frost depth, tilt, row pitch, and
+                         the pile schedule.
+     CANOPY (carport)  - elevated steel over parking; reviewer wants
+                         column footing, clear height, drainage, and
+                         vehicle-impact protection.
+
+   Which sheets get generated comes from what is DRAWN: each dersolar
+   shape carries sh.mount ('roof' | 'adjacent' | 'ground'), so a site
+   with a rooftop array and a parking canopy produces both sheets and a
+   ground-only site produces neither of the other two. Arrays of the same
+   mount type are summarised together on one sheet.
+
+   Dimensions shown are the design basis for a 30% set -- ballast counts,
+   pier depth and footing size are all EOR/geotech-confirmed, and every
+   sheet says so rather than implying the numbers are final.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Group the drawn arrays by mounting system. */
+function _ppSolarMounts(){
+  var out = { roof:[], canopy:[], ground:[] };
+  try{
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh || sh.kind!=='dersolar') return;
+      var m = sh.mount;
+      var key = (m==='roof') ? 'roof' : ((m==='adjacent' || sh.canopy) ? 'canopy' : 'ground');
+      out[key].push(sh);
+    });
+  }catch(e){}
+  return out;
+}
+/* Racking preset actually in force, for tilt / GCR / setback text. */
+function _ppSolarAssume(mountKey){
+  var a=null;
+  try{
+    if(typeof _solarAssume==='function'){
+      a=_solarAssume(mountKey==='roof' ? 'roof' : (mountKey==='canopy' ? 'adjacent' : 'ground'));
+    }
+  }catch(e){}
+  return a || { gcr:(mountKey==='roof'?0.70:(mountKey==='canopy'?0.85:0.40)),
+                wpsf:(typeof DER_PV_WPSF!=='undefined'?DER_PV_WPSF:20),
+                setbackFt:(mountKey==='roof'?3:(mountKey==='canopy'?5:10)) };
+}
+/* Totals for a group of arrays. */
+function _ppSolarTotals(list){
+  var kw=0, sqft=0;
+  list.forEach(function(sh){
+    kw += (+sh.kw||0);
+    var a=0;
+    try{
+      if(sh.sqft) a=+sh.sqft;
+      else if(sh.wPx && sh.hPx && S.pxPerFt>0) a=(sh.wPx/S.pxPerFt)*(sh.hPx/S.pxPerFt);
+    }catch(e){}
+    sqft += a;
+  });
+  return { kw:kw, sqft:sqft, n:list.length };
+}
+function _ppSolarHead(s, W, lx, ly, title, sub){
+  s.v += '<text x="'+lx+'" y="'+ly+'" font-size="18" font-weight="800" fill="#1a1a1a">'+title+'</text>';
+  s.v += '<text x="'+lx+'" y="'+(ly+15)+'" font-size="10" fill="#555">'+_ppEsc(sub)+'</text>';
+  return ly+38;
+}
+/* Array schedule shared by all three sheets: one row per drawn array, so
+   a three-roof job shows three rows rather than a single lumped figure. */
+function _ppSolarSchedule(s, list, lx, ly, availW, mountLabel){
+  var rows=[['MARK','ARRAY','MOUNTING','DC kW','APPROX AREA']];
+  list.forEach(function(sh,i){
+    var a='\u2014';
+    try{
+      if(sh.sqft) a=Math.round(sh.sqft).toLocaleString()+' sf';
+      else if(sh.wPx && sh.hPx && S.pxPerFt>0)
+        a=Math.round((sh.wPx/S.pxPerFt)*(sh.hPx/S.pxPerFt)).toLocaleString()+' sf';
+    }catch(e){}
+    rows.push([ 'PV-'+(i+1), _ppClip(sh.label||('ARRAY '+(i+1)),26), mountLabel,
+                sh.kw?(Math.round(sh.kw).toLocaleString()+' kW'):'\u2014', a ]);
+  });
+  var t=_ppSolarTotals(list);
+  rows.push(['','TOTAL \u2014 '+t.n+' array'+(t.n===1?'':'s'),'',
+             t.kw?(Math.round(t.kw).toLocaleString()+' kW'):'\u2014',
+             t.sqft?(Math.round(t.sqft).toLocaleString()+' sf'):'\u2014']);
+  var cw=[availW*0.12, availW*0.36, availW*0.22, availW*0.15, availW*0.15];
+  return _ppMiniTable(function(seg){ s.v+=seg; }, rows, lx, ly, availW, cw, 17);
+}
+
+/* ---- ROOF: BALLASTED (non-penetrating) ------------------------------- */
+function _ppRenderSolarRoof(sizeKey, street){
+  var list=_ppSolarMounts().roof; if(!list.length) return null;
+  var sheet=PP_SHEETS[sizeKey]||PP_SHEETS.B;
+  var W=sheet.w*PP_DPI, H=sheet.h*PP_DPI, tbW=250, tbH=140;
+  var A=_ppSolarAssume('roof'), T=_ppSolarTotals(list);
+  var pname=(document.getElementById('pname')||{}).value||'Solar Project';
+  var s={v:''};
+  s.v='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="Arial, sans-serif">';
+  s.v+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#ffffff"/>';
+  s.v+='<rect x="14" y="14" width="'+(W-28)+'" height="'+(H-28)+'" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>';
+  var lx=54, ly=80, availW=W-tbW-lx-70;
+  ly=_ppSolarHead(s, W, lx, ly, 'ROOFTOP BALLASTED ARRAY DETAILS',
+    'Non-penetrating ballasted racking. Ballast quantities and layout are EOR/manufacturer confirmed against a site-specific wind analysis.');
+
+  /* Detail 1 - module + ballast tray section */
+  var d1x=lx, d1y=ly+16, deckY=d1y+150;
+  s.v+='<text x="'+d1x+'" y="'+(d1y-6)+'" font-size="10" font-weight="700" fill="#1a1a1a">1  BALLASTED MODULE SECTION   (NTS)</text>';
+  /* roof build-up */
+  s.v+='<rect x="'+d1x+'" y="'+deckY+'" width="380" height="14" fill="#eee" stroke="#1a1a1a" stroke-width="1.2"/>';
+  s.v+=_sHatch(d1x, deckY+14, 380, 22);
+  s.v+='<line x1="'+d1x+'" y1="'+(deckY-3)+'" x2="'+(d1x+380)+'" y2="'+(deckY-3)+'" stroke="#1a1a1a" stroke-width="2"/>';
+  s.v+=_sLeader(d1x+392, deckY-6, d1x+380, deckY-3, 'SINGLE-PLY ROOF MEMBRANE \u2014 DO NOT PENETRATE','start');
+  s.v+=_sLeader(d1x+392, deckY+22, d1x+380, deckY+22, 'STRUCTURAL ROOF DECK \u2014 VERIFY CAPACITY (EOR)','start');
+  /* protection pad + ballast tray */
+  var tray=d1x+70;
+  s.v+='<rect x="'+tray+'" y="'+(deckY-10)+'" width="150" height="7" fill="#ddd" stroke="#1a1a1a" stroke-width="0.9"/>';
+  s.v+=_sLeader(tray-8, deckY-26, tray+10, deckY-8, 'SLIP SHEET / PROTECTION PAD','end');
+  s.v+='<rect x="'+(tray+16)+'" y="'+(deckY-30)+'" width="52" height="20" fill="#ccc" stroke="#1a1a1a" stroke-width="1"/>';
+  s.v+='<text x="'+(tray+42)+'" y="'+(deckY-17)+'" font-size="6.5" fill="#1a1a1a" text-anchor="middle">BALLAST</text>';
+  /* tilted module */
+  s.v+='<line x1="'+(tray+8)+'" y1="'+(deckY-34)+'" x2="'+(tray+142)+'" y2="'+(deckY-74)+'" stroke="#1a1a1a" stroke-width="2.4"/>';
+  s.v+='<line x1="'+(tray+142)+'" y1="'+(deckY-74)+'" x2="'+(tray+142)+'" y2="'+(deckY-12)+'" stroke="#1a1a1a" stroke-width="1"/>';
+  s.v+=_sLeader(tray+160, deckY-78, tray+142, deckY-74, 'PV MODULE \u2014 5\u00b0 TO 10\u00b0 TILT, TYP.','start');
+  s.v+=_sLeader(tray+160, deckY-34, tray+68, deckY-22, 'BALLAST BLOCK \u2014 QTY PER WIND CALC','start');
+  s.v+='<text x="'+d1x+'" y="'+(deckY+58)+'" font-size="7.5" fill="#1a1a1a">NO ROOF PENETRATIONS. SYSTEM RESISTS UPLIFT AND SLIDING BY BALLAST + FRICTION ONLY.</text>';
+
+  /* Detail 2 - uplift zones plan */
+  var d2x=lx+470, d2y=ly+16;
+  s.v+='<text x="'+d2x+'" y="'+(d2y-6)+'" font-size="10" font-weight="700" fill="#1a1a1a">2  WIND UPLIFT ZONES \u2014 BALLAST DENSITY   (NTS)</text>';
+  var rw=300, rh=190;
+  s.v+='<rect x="'+d2x+'" y="'+d2y+'" width="'+rw+'" height="'+rh+'" fill="#fff" stroke="#1a1a1a" stroke-width="1.4"/>';
+  var inset=32;
+  s.v+='<rect x="'+(d2x+inset)+'" y="'+(d2y+inset)+'" width="'+(rw-2*inset)+'" height="'+(rh-2*inset)+'" fill="none" stroke="#1a1a1a" stroke-width="0.8" stroke-dasharray="5,3"/>';
+  /* corner zones */
+  [[0,0],[rw-inset,0],[0,rh-inset],[rw-inset,rh-inset]].forEach(function(c){
+    s.v+='<rect x="'+(d2x+c[0])+'" y="'+(d2y+c[1])+'" width="'+inset+'" height="'+inset+'" fill="#bbb" stroke="#1a1a1a" stroke-width="0.6"/>';
+  });
+  s.v+='<text x="'+(d2x+rw/2)+'" y="'+(d2y+rh/2)+'" font-size="8" fill="#1a1a1a" text-anchor="middle">ZONE 1 \u2014 FIELD</text>';
+  s.v+='<text x="'+(d2x+rw/2)+'" y="'+(d2y+rh/2+13)+'" font-size="6.5" fill="#555" text-anchor="middle">BASE BALLAST</text>';
+  s.v+='<text x="'+(d2x+16)+'" y="'+(d2y+18)+'" font-size="6.5" fill="#1a1a1a" text-anchor="middle">Z3</text>';
+  s.v+=_sLeader(d2x+rw+12, d2y+inset/2, d2x+rw, d2y+inset/2, 'ZONE 3 CORNER \u2014 HIGHEST BALLAST','start');
+  s.v+=_sLeader(d2x+rw+12, d2y+rh-10, d2x+rw-inset, d2y+rh-inset, 'ZONE 2 PERIMETER','start');
+  s.v+='<text x="'+d2x+'" y="'+(d2y+rh+20)+'" font-size="7.5" fill="#1a1a1a">ZONES PER ASCE 7 FIG. 29.4-7. ARRAY SETBACK '+A.setbackFt+' FT MIN FROM ROOF EDGE (FIRE ACCESS + UPLIFT).</text>';
+
+  /* Detail 3 - row pitch */
+  var d3y=deckY+110;
+  s.v+='<text x="'+lx+'" y="'+(d3y-6)+'" font-size="10" font-weight="700" fill="#1a1a1a">3  ROW PITCH \u2014 COPLANAR LAYOUT   (NTS)</text>';
+  var by=d3y+70;
+  for(var r=0;r<4;r++){
+    var rx0=lx+r*95;
+    s.v+='<line x1="'+rx0+'" y1="'+by+'" x2="'+(rx0+58)+'" y2="'+(by-22)+'" stroke="#1a1a1a" stroke-width="2"/>';
+    s.v+='<rect x="'+(rx0+58)+'" y="'+(by-22)+'" width="10" height="22" fill="#ddd" stroke="#1a1a1a" stroke-width="0.7"/>';
+  }
+  s.v+='<line x1="'+lx+'" y1="'+by+'" x2="'+(lx+390)+'" y2="'+by+'" stroke="#1a1a1a" stroke-width="1.4"/>';
+  s.v+=_sDimH(lx, lx+95, by+24, 'ROW PITCH');
+  s.v+='<text x="'+lx+'" y="'+(by+52)+'" font-size="7.5" fill="#1a1a1a">GROUND COVERAGE RATIO '+(A.gcr||0.7).toFixed(2)+' \u2014 PITCH SET BY RACKING SUPPLIER FOR THE SELECTED TILT.</text>';
+
+  /* array schedule + notes */
+  var sy=Math.max(d3y+130, d2y+230);
+  s.v+='<text x="'+lx+'" y="'+sy+'" font-size="11" font-weight="700" fill="#1a1a1a">ARRAY SCHEDULE</text>';
+  sy=_ppSolarSchedule(s, list, lx, sy+8, availW, 'ROOF / BALLASTED')+16;
+  s.v+='<text x="'+lx+'" y="'+sy+'" font-size="10" font-weight="700" fill="#1a1a1a">STRUCTURAL NOTES</text>';
+  /* Dead load is POUNDS per square foot. An earlier draft of this note
+     divided kW by array area and printed the result as a dead load -- that
+     is a power density, not a load, and putting a number like that on a
+     structural sheet is worse than leaving it blank. Ballasted arrays
+     typically land in a 3-6 psf range; the real figure comes from the
+     supplier's ballast layout, so state the range and say where the number
+     comes from rather than computing a fake one. */
+  _ppWrapList(function(seg){s.v+=seg;}, [
+    '1. Ballasted, non-penetrating racking. No roof penetrations permitted without written approval of the roofing manufacturer and the EOR.',
+    '2. Existing roof structure to be verified by the EOR for the added dead load of the array plus ballast '
+      + '(ballasted rooftop systems are typically 3-6 psf; final value per the racking supplier\u2019s stamped ballast layout) '
+      + 'plus code-required live, snow and wind loads prior to installation.',
+    '3. Ballast quantity and distribution per a site-specific wind analysis to ASCE 7 for the project risk category, exposure and roof height. Quantities shown are indicative only.',
+    '4. Slip sheets / protection pads under all bearing points; compatible with the existing membrane. Confirm roof warranty is maintained.',
+    '5. Maintain '+A.setbackFt+' ft minimum setback at roof edges and clear access pathways per IFC 1204 and the local fire code.',
+    '6. Array bonded and grounded per NEC 690.43 / 250. Rapid shutdown per NEC 690.12.',
+    '7. Verify roof drainage is not impeded; do not block scuppers or drains.'
+  ], lx, sy+14, availW, 9, 12);
+
+  s.v+=_ppTitleBlock(W, H, tbW, tbH, 'S1.3', 'ROOFTOP BALLASTED ARRAY DETAIL', street||pname, 0);
+  s.v+='</svg>';
+  return s.v;
+}
+
+/* ---- GROUND MOUNT: driven pier / ground screw ------------------------ */
+function _ppRenderSolarGround(sizeKey, street){
+  var list=_ppSolarMounts().ground; if(!list.length) return null;
+  var sheet=PP_SHEETS[sizeKey]||PP_SHEETS.B;
+  var W=sheet.w*PP_DPI, H=sheet.h*PP_DPI, tbW=250, tbH=140;
+  var A=_ppSolarAssume('ground');
+  var pname=(document.getElementById('pname')||{}).value||'Solar Project';
+  var s={v:''};
+  s.v='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="Arial, sans-serif">';
+  s.v+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#ffffff"/>';
+  s.v+='<rect x="14" y="14" width="'+(W-28)+'" height="'+(H-28)+'" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>';
+  var lx=54, ly=80, availW=W-tbW-lx-70;
+  ly=_ppSolarHead(s, W, lx, ly, 'GROUND-MOUNT ARRAY DETAILS',
+    'Fixed-tilt driven-pier racking. Embedment and pile capacity confirmed by geotechnical report and pull test.');
+
+  /* Detail 1 - pier elevation with tilted module */
+  var d1x=lx+40, d1y=ly+20, gradeY=d1y+150;
+  s.v+='<text x="'+lx+'" y="'+(d1y-6)+'" font-size="10" font-weight="700" fill="#1a1a1a">1  TYPICAL PIER + MODULE ELEVATION   (NTS)</text>';
+  s.v+='<line x1="'+(d1x-60)+'" y1="'+gradeY+'" x2="'+(d1x+330)+'" y2="'+gradeY+'" stroke="#1a1a1a" stroke-width="1.4"/>';
+  s.v+=_sHatch(d1x-60, gradeY, 390, 16);
+  s.v+='<text x="'+(d1x-64)+'" y="'+(gradeY-4)+'" font-size="7.5" fill="#1a1a1a" text-anchor="end">GRADE</text>';
+  /* two piers of differing height (tilt) */
+  var pN=d1x+40, pS=d1x+230, embed=86;
+  s.v+='<rect x="'+pN+'" y="'+(gradeY-118)+'" width="11" height="'+(118+embed)+'" fill="#ddd" stroke="#1a1a1a" stroke-width="1.2"/>';
+  s.v+='<rect x="'+pS+'" y="'+(gradeY-46)+'" width="11" height="'+(46+embed)+'" fill="#ddd" stroke="#1a1a1a" stroke-width="1.2"/>';
+  /* module plane */
+  s.v+='<line x1="'+(pN+5)+'" y1="'+(gradeY-122)+'" x2="'+(pS+6)+'" y2="'+(gradeY-50)+'" stroke="#1a1a1a" stroke-width="2.6"/>';
+  s.v+=_sLeader(pN-14, gradeY-140, pN+5, gradeY-124, 'PV MODULES ON TORQUE TUBE / RAIL','end');
+  s.v+=_sLeader(pS+30, gradeY-30, pS+11, gradeY-30, 'W6 DRIVEN PIER, TYP.','start');
+  s.v+=_sDimV(pS+60, gradeY, gradeY+embed, 'EMBEDMENT');
+  s.v+=_sDimV(d1x-30, gradeY-46, gradeY, 'LOW EDGE');
+  s.v+=_sLeader(pN+80, gradeY-96, pN+40, gradeY-86, 'TILT PER RACKING SUPPLIER','start');
+  s.v+='<text x="'+lx+'" y="'+(gradeY+embed+34)+'" font-size="7.5" fill="#1a1a1a">EMBEDMENT DEPTH SET BY GEOTECH \u2014 EXCEED FROST DEPTH; CONFIRM BY PULL TEST BEFORE PRODUCTION DRIVING.</text>';
+
+  /* Detail 2 - row pitch / GCR */
+  var d2x=lx+470, d2y=ly+20, g2=d2y+150;
+  s.v+='<text x="'+d2x+'" y="'+(d2y-6)+'" font-size="10" font-weight="700" fill="#1a1a1a">2  ROW PITCH / GCR   (NTS)</text>';
+  s.v+='<line x1="'+d2x+'" y1="'+g2+'" x2="'+(d2x+320)+'" y2="'+g2+'" stroke="#1a1a1a" stroke-width="1.4"/>';
+  for(var r2=0;r2<3;r2++){
+    var rx=d2x+20+r2*100;
+    s.v+='<line x1="'+rx+'" y1="'+(g2-56)+'" x2="'+(rx+62)+'" y2="'+(g2-20)+'" stroke="#1a1a1a" stroke-width="2.2"/>';
+    s.v+='<line x1="'+rx+'" y1="'+(g2-56)+'" x2="'+rx+'" y2="'+g2+'" stroke="#1a1a1a" stroke-width="1"/>';
+    s.v+='<line x1="'+(rx+62)+'" y1="'+(g2-20)+'" x2="'+(rx+62)+'" y2="'+g2+'" stroke="#1a1a1a" stroke-width="1"/>';
+  }
+  s.v+=_sDimH(d2x+20, d2x+120, g2+22, 'ROW PITCH');
+  s.v+='<text x="'+d2x+'" y="'+(g2+50)+'" font-size="7.5" fill="#1a1a1a">GCR '+(A.gcr||0.4).toFixed(2)+' \u00b7 PITCH SET FOR WINTER-SOLSTICE SHADING AND O&amp;M ACCESS.</text>';
+  s.v+='<text x="'+d2x+'" y="'+(g2+64)+'" font-size="7.5" fill="#1a1a1a">PERIMETER SETBACK '+A.setbackFt+' FT MIN.</text>';
+
+  var sy=gradeY+embed+60;
+  s.v+='<text x="'+lx+'" y="'+sy+'" font-size="11" font-weight="700" fill="#1a1a1a">ARRAY SCHEDULE</text>';
+  sy=_ppSolarSchedule(s, list, lx, sy+8, availW, 'GROUND / FIXED-TILT')+16;
+  s.v+='<text x="'+lx+'" y="'+sy+'" font-size="10" font-weight="700" fill="#1a1a1a">STRUCTURAL NOTES</text>';
+  _ppWrapList(function(seg){s.v+=seg;}, [
+    '1. Foundation type, embedment depth and pile capacity per the project geotechnical report. Depths shown are indicative until that report is issued.',
+    '2. Embedment shall exceed the local frost depth. Confirm allowable lateral and uplift capacity by pull test on production piles before full installation.',
+    '3. Racking, tilt angle and row pitch per the selected supplier engineering package, stamped for the project jurisdiction.',
+    '4. Design wind and snow loads per ASCE 7 for the project risk category and exposure; verify with the EOR.',
+    '5. Maintain '+A.setbackFt+' ft minimum perimeter setback and O&M access lanes between rows.',
+    '6. Array bonded and grounded per NEC 690.43 / 250; equipment grounding conductor continuous through all racking.',
+    '7. Restore grading and erosion control after pile installation; maintain positive drainage away from equipment pads.'
+  ], lx, sy+14, availW, 9, 12);
+
+  s.v+=_ppTitleBlock(W, H, tbW, tbH, 'S1.4', 'GROUND-MOUNT ARRAY DETAIL', street||pname, 0);
+  s.v+='</svg>';
+  return s.v;
+}
+
+/* ---- CANOPY / CARPORT ------------------------------------------------ */
+function _ppRenderSolarCanopy(sizeKey, street){
+  var list=_ppSolarMounts().canopy; if(!list.length) return null;
+  var sheet=PP_SHEETS[sizeKey]||PP_SHEETS.B;
+  var W=sheet.w*PP_DPI, H=sheet.h*PP_DPI, tbW=250, tbH=140;
+  var A=_ppSolarAssume('canopy');
+  var pname=(document.getElementById('pname')||{}).value||'Solar Project';
+  var s={v:''};
+  s.v='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="Arial, sans-serif">';
+  s.v+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#ffffff"/>';
+  s.v+='<rect x="14" y="14" width="'+(W-28)+'" height="'+(H-28)+'" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>';
+  var lx=54, ly=80, availW=W-tbW-lx-70;
+  ly=_ppSolarHead(s, W, lx, ly, 'SOLAR CANOPY / CARPORT DETAILS',
+    'Elevated steel canopy over parking. Column, footing and clear height confirmed by the EOR and the canopy supplier package.');
+
+  /* Detail 1 - canopy section */
+  var d1x=lx+60, d1y=ly+20, gradeY=d1y+215;
+  s.v+='<text x="'+lx+'" y="'+(d1y-6)+'" font-size="10" font-weight="700" fill="#1a1a1a">1  CANOPY SECTION   (NTS)</text>';
+  s.v+='<line x1="'+(d1x-70)+'" y1="'+gradeY+'" x2="'+(d1x+340)+'" y2="'+gradeY+'" stroke="#1a1a1a" stroke-width="1.4"/>';
+  s.v+=_sHatch(d1x-70, gradeY, 410, 16);
+  s.v+='<text x="'+(d1x-74)+'" y="'+(gradeY-4)+'" font-size="7.5" fill="#1a1a1a" text-anchor="end">PAVEMENT</text>';
+  /* column */
+  var colX=d1x+120, colTop=gradeY-160;
+  s.v+='<rect x="'+colX+'" y="'+colTop+'" width="18" height="'+(gradeY-colTop)+'" fill="#ddd" stroke="#1a1a1a" stroke-width="1.4"/>';
+  /* footing */
+  s.v+='<rect x="'+(colX-34)+'" y="'+gradeY+'" width="86" height="62" fill="#f2f2f2" stroke="#1a1a1a" stroke-width="1.3"/>';
+  s.v+=_sRebar(colX-28, gradeY+52, 74, 8);
+  s.v+=_sLeader(colX+70, gradeY+34, colX+52, gradeY+34, 'DRILLED PIER / SPREAD FOOTING PER GEOTECH','start');
+  /* cantilever beam + deck */
+  s.v+='<line x1="'+(colX-100)+'" y1="'+(colTop+8)+'" x2="'+(colX+230)+'" y2="'+(colTop-26)+'" stroke="#1a1a1a" stroke-width="3"/>';
+  s.v+='<line x1="'+(colX-100)+'" y1="'+(colTop+16)+'" x2="'+(colX+230)+'" y2="'+(colTop-18)+'" stroke="#1a1a1a" stroke-width="1.6"/>';
+  s.v+=_sLeader(colX+244, colTop-30, colX+230, colTop-26, 'PV MODULES ON PURLINS \u2014 SLOPE FOR DRAINAGE','start');
+  s.v+=_sLeader(colX-112, colTop+42, colX-90, colTop+14, 'STEEL BEAM / CANTILEVER','end');
+  s.v+=_sDimV(colX-56, colTop+30, gradeY, 'CLEAR HT');
+  s.v+='<text x="'+(colX-52)+'" y="'+(colTop+24)+'" font-size="7" fill="#1a1a1a">14\'-0" MIN CLEAR (VERIFY AHJ / FIRE ACCESS)</text>';
+  /* bollards */
+  [colX-26, colX+30].forEach(function(bx){
+    s.v+='<rect x="'+bx+'" y="'+(gradeY-34)+'" width="9" height="34" fill="#ccc" stroke="#1a1a1a" stroke-width="0.9"/>';
+  });
+  s.v+=_sLeader(colX+52, gradeY-30, colX+39, gradeY-24, 'BOLLARDS \u2014 VEHICLE IMPACT PROTECTION','start');
+
+  /* Detail 2 - bay plan */
+  var d2x=lx+470, d2y=ly+20;
+  s.v+='<text x="'+d2x+'" y="'+(d2y-6)+'" font-size="10" font-weight="700" fill="#1a1a1a">2  TYPICAL BAY PLAN   (NTS)</text>';
+  var bw=320, bh=180;
+  s.v+='<rect x="'+d2x+'" y="'+d2y+'" width="'+bw+'" height="'+bh+'" fill="none" stroke="#1a1a1a" stroke-width="1.3" stroke-dasharray="6,3"/>';
+  for(var c2=0;c2<4;c2++){
+    for(var r3=0;r3<2;r3++){
+      s.v+='<rect x="'+(d2x+18+c2*76)+'" y="'+(d2y+22+r3*70)+'" width="62" height="56" fill="none" stroke="#1a1a1a" stroke-width="0.7"/>';
+    }
+  }
+  [[d2x+8,d2y+bh/2-6],[d2x+bw-20,d2y+bh/2-6]].forEach(function(cc){
+    s.v+='<rect x="'+cc[0]+'" y="'+cc[1]+'" width="12" height="12" fill="#999" stroke="#1a1a1a" stroke-width="0.9"/>';
+  });
+  s.v+=_sLeader(d2x+bw+12, d2y+bh/2, d2x+bw-8, d2y+bh/2, 'COLUMN LOCATIONS \u2014 COORDINATE WITH PARKING LAYOUT','start');
+  s.v+='<text x="'+d2x+'" y="'+(d2y+bh+20)+'" font-size="7.5" fill="#1a1a1a">MODULE DECK GCR '+(A.gcr||0.85).toFixed(2)+' \u2014 NEAR-CONTINUOUS. COLUMNS PLACED ON PARKING STRIPES, NOT IN DRIVE AISLES.</text>';
+
+  var sy=gradeY+96;
+  s.v+='<text x="'+lx+'" y="'+sy+'" font-size="11" font-weight="700" fill="#1a1a1a">ARRAY SCHEDULE</text>';
+  sy=_ppSolarSchedule(s, list, lx, sy+8, availW, 'CANOPY / CARPORT')+16;
+  s.v+='<text x="'+lx+'" y="'+sy+'" font-size="10" font-weight="700" fill="#1a1a1a">STRUCTURAL NOTES</text>';
+  _ppWrapList(function(seg){s.v+=seg;}, [
+    '1. Canopy structure, connections and foundations per the supplier engineering package, stamped by an engineer licensed in the project jurisdiction.',
+    '2. Footing size and depth per the project geotechnical report. Verify bearing capacity and lateral resistance before fabrication.',
+    '3. Maintain 14 ft minimum vertical clear height unless a greater height is required by the AHJ for fire apparatus access; verify against the approved site circulation plan.',
+    '4. Design wind, snow and seismic loads per ASCE 7 for the project risk category and exposure. Canopies are open structures \u2014 confirm uplift on the deck underside.',
+    '5. Provide bollards or wheel stops at all columns exposed to vehicle traffic per the AHJ.',
+    '6. Slope deck for positive drainage; coordinate downspouts / gutters so discharge does not cross pedestrian paths or drive aisles.',
+    '7. Array bonded and grounded per NEC 690.43 / 250. Conduit concealed within the structure where practical; rapid shutdown per NEC 690.12.',
+    '8. Confirm ADA-accessible parking and access aisles are not obstructed by columns or footings.'
+  ], lx, sy+14, availW, 9, 12);
+
+  s.v+=_ppTitleBlock(W, H, tbW, tbH, 'S1.5', 'SOLAR CANOPY / CARPORT DETAIL', street||pname, 0);
+  s.v+='</svg>';
+  return s.v;
 }
 
 /* ---- S1.2 GEAR PAD DETAILS -------------------------------------------
@@ -32747,9 +33417,20 @@ function _ppRenderE0(sizeKey, street){
        return /^(BESS|PV|DER|EV|EVSE|DCFC|MDP|PCS|AC|DC|UPS|EMS)$/.test(w)
          ? w : (w.charAt(0)+w.slice(1).toLowerCase()); })],
     ['S1.2','Gear Pad Details'],
+  ];
+  /* Only list the solar detail sheets that will actually be generated --
+     an index promising a canopy sheet on a ground-only job sends the
+     reviewer looking for a page that is not in the set. */
+  try{
+    var _sm=_ppSolarMounts();
+    if(_sm.roof.length)   idxRows.push(['S1.3','Rooftop Ballasted Array Detail']);
+    if(_sm.ground.length) idxRows.push(['S1.4','Ground-Mount Array Detail']);
+    if(_sm.canopy.length) idxRows.push(['S1.5','Solar Canopy / Carport Detail']);
+  }catch(e){}
+  idxRows = idxRows.concat([
     ['S2.0','Grounding Detail'],
     ['S3.0','Fencing Detail']
-  ];
+  ]);
   myy=_ppMiniTable(function(seg){s+=seg;}, idxRows, mx, myy, mw*0.66, [mw*0.66*0.28, mw*0.66*0.72], 18);
 
   /* BESS FLEET SUMMARY -- per-model breakdown + totals (multi-unit land sites) */
@@ -32936,7 +33617,7 @@ async function _ppExport(){
   _setBtn('Generating sheets\u2026');
   var wantE12=_cbChecked('pp-e12'), wantE20=_cbChecked('pp-e20'), wantE30=_cbChecked('pp-e30'), wantE40=_cbChecked('pp-e40');
   var wantS11=_cbChecked('pp-s11'), wantS12=_cbChecked('pp-s12'), wantS20=_cbChecked('pp-s20'), wantS30=_cbChecked('pp-s30');
-  var wantE50=_cbChecked('pp-e50');
+  var wantE50=_cbChecked('pp-e50'), wantS1x=_cbChecked('pp-s1x');
   var fmt='pdf'; var radios=document.getElementsByName('pp-fmt');
   for(var i=0;i<radios.length;i++){ if(radios[i].checked) fmt=radios[i].value; }
   var pname=((document.getElementById('pname')||{}).value||'BESS_Project').replace(/[^a-z0-9]+/gi,'_');
@@ -32962,6 +33643,15 @@ async function _ppExport(){
     }
     if(wantS11) sheets.push({ no:'S1.1', svg:_ppRenderBessPad(sizeKey, street) });
     if(wantS12) sheets.push({ no:'S1.2', svg:_ppRenderGearPad(sizeKey, street) });
+    if(wantS1x){
+      /* One sheet per mounting system actually drawn. A rooftop + canopy
+         job gets both; a ground-only job gets neither of the other two.
+         Each renderer returns null when no array of that type exists, so
+         nothing blank is ever added to the set. */
+      var _sr=_ppRenderSolarRoof(sizeKey, street);   if(_sr) sheets.push({ no:'S1.3', svg:_sr });
+      var _sg=_ppRenderSolarGround(sizeKey, street); if(_sg) sheets.push({ no:'S1.4', svg:_sg });
+      var _sc2=_ppRenderSolarCanopy(sizeKey, street);if(_sc2) sheets.push({ no:'S1.5', svg:_sc2 });
+    }
     if(wantS20) sheets.push({ no:'S2.0', svg:_ppRenderGrounding(sizeKey, street) });
     if(wantS30) sheets.push({ no:'S3.0', svg:_ppRenderFencing(sizeKey, street) });
   } catch(e){
@@ -33181,7 +33871,16 @@ function _olGatherNodes(){
   });
   // BESS assembly (composite shape) counts as a bess node too
   (S.shapes||[]).forEach(function(sh){
-    if(sh.kind==='assembly'){ nodes.push({id:sh.id, role:'bess', label:sh.model||'BESS', kw:sh.unitKw||null, kwh:sh.unitKwh||null, obj:sh, src:'assembly'}); }
+    if(sh.kind==='assembly'){
+      /* unitKw/unitKwh is the PER-CONTAINER figure. A 2-container assembly
+         reported one container's rating, so the inventory undercounted a
+         multi-unit BESS by whatever the extra units held. Prefer the
+         assembly total when it is stamped; fall back to unit x qty. */
+      var _q=+(sh.qty||sh.units||sh.count||1)||1;
+      var _kw =(+sh.kw  || (+sh.unitKw ||0)*_q) || null;
+      var _kwh=(+sh.kwh || (+sh.unitKwh||0)*_q) || null;
+      nodes.push({id:sh.id, role:'bess', label:sh.model||'BESS', kw:_kw, kwh:_kwh, qty:_q, obj:sh, src:'assembly'});
+    }
   });
   return nodes;
 }
@@ -33209,14 +33908,39 @@ function _olInventory(){
   };
 
   nodes.forEach(function(n){
-    if(n.role==='bess'||n.role==='pcs') inv.bess=true;
+    if(n.role==='bess'||n.role==='pcs'){
+      inv.bess=true;
+      /* This only ever set the FLAG. A BESS placed as an assembly or a
+         BESS-Pad container carries its rating on the node, and none of it
+         was added -- which is why the detection line read "BESS 0 kW"
+         with two Gotion EDGE 760 containers sitting on the map and the
+         strings block correctly showing 2. */
+      inv.bessKw  += (+n.kw||0);
+      inv.bessKwh += (+n.kwh||0);
+    }
     else if(n.role==='charger'){ inv.ev=true; inv.evCount++; inv.evKw+=(+n.kw||0); }
     else if(n.role==='der'){
+      /* SOLAR IS NOT A GENSET. _olClassifyType folds dersolar into the
+         generic 'der' role, and nothing here separated it out again -- so
+         a 152 kW-DC array was counted BOTH as solar (correctly, below)
+         and as a 152 kW generator, and the note read
+         "Solar 152 kW-DC - DER genset 152 kW" for one array. Solar and
+         wind have their own buckets; only true dispatchable generation
+         belongs in derKw. */
+      var _kind=((n.obj&&n.obj.kind)||'')+'';
+      var _lk=((n.label||'')+' '+_kind).toLowerCase();
+      if(_kind==='dersolar' || /\bsolar\b|photovoltaic|\bpv\b/.test(_lk)){
+        inv.solar=true;                       /* kW added in the solar pass */
+        return;
+      }
+      if(_kind==='derwind' || /wind|turbine/.test(_lk)){
+        inv.der=true; inv.derKw+=(+n.kw||0);
+        inv.derKind = inv.derKind && inv.derKind!=='wind' ? 'mixed' : 'wind';
+        inv.derLabel = n.label || inv.derLabel || null;
+        return;
+      }
       inv.der=true; inv.derKw+=(+n.kw||0);
-      /* Kind decides how it connects — see the DER leg in _olRender. */
-      var _lk=((n.label||'')+' '+((n.obj&&n.obj.kind)||'')).toLowerCase();
       var _k = /fuel\s*cell|sofc|pem/.test(_lk) ? 'fuelcell'
-             : /wind|turbine/.test(_lk)          ? 'wind'
              : /gen\s*set|genset|generator|diesel|gas/.test(_lk) ? 'genset'
              : (inv.derKind||'genset');
       inv.derKind = inv.derKind && inv.derKind!==_k ? 'mixed' : _k;
@@ -33224,6 +33948,17 @@ function _olInventory(){
     }
     else if(n.role==='service'||n.role==='meter') inv.utility=true;
   });
+
+  /* BESS drawn from Draw > BESS Pad lands as a utility shape and is not a
+     node at all, so its rating has to be read directly. */
+  try{
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh || sh.kind!=='utility' || sh.utype!=='bessctr') return;
+      inv.bess=true;
+      inv.bessKw  += (+sh.kw||0);
+      inv.bessKwh += (+sh.kwh||0);
+    });
+  }catch(e){}
 
   /* A placed BESS counts as storage even when nothing was saved into
      bessList — the guided build stamps kW/kWh straight onto the element. */
@@ -33301,6 +34036,15 @@ function _olDetectMode(){
   var i=_olInventory();
   if(i.bess && i.ev) return 'both';
   if(i.ev && !i.bess) return 'ev';
+  /* Solar was invisible to detection: an array-only site reported "BESS".
+     The built-in template still draws the BESS chain for these (the PV is
+     added by the synthesis pass in the solar patch), but the mode the
+     dialog reports should match what is actually on the drawing rather
+     than naming equipment that is not there. */
+  if(i.solar && i.bess) return 'solarbess';
+  if(i.solar && !i.bess) return 'solar';
+  if(i.der && !i.bess) return 'der';
+  if(i.load && !i.bess && !i.solar) return 'compute';
   return 'bess';
 }
 
@@ -33846,7 +34590,10 @@ function _olRender(sizeKey, withSched){
      one forces its leg on; the BESS spine and the other legs still draw if
      they are present, because a sheet that hides half the system is wrong
      however it was asked for. */
-  if(_olMode==='solar'||_olMode==='der'||_olMode==='compute') _olMode='bess';
+  /* The built-in template draws BESS / EV / both. Solar, DER and compute
+     all render on the BESS chain here; the PV branch is added by the
+     synthesis pass (OmegaSLD) before this runs. */
+  if(_olMode==='solar'||_olMode==='der'||_olMode==='compute'||_olMode==='solarbess') _olMode='bess';
   if(_olMode==='ev'){
     s+=_olRenderEV(d, areaL, areaR, usableW, H, false);
     s+=_olTitleBlock(W,H,d);
@@ -34905,19 +35652,20 @@ Respond with ONLY the JSON, no other text.`
 </body>
 </html>`;
 
-    // Open as blob
-    const blob = new Blob([html], {type:'text/html'});
-    const url = URL.createObjectURL(blob);
-    const win = window.open(url, '_blank');
-    if(!win) {
-      const a = document.createElement('a');
-      a.href = url; a.download = (project||'Blueprint').replace(/[^a-z0-9]/gi,'-')+'-Blueprint.html';
-      a.click();
-    }
-    setTimeout(()=>URL.revokeObjectURL(url), 30000);
+    /* The ribbon button says "Blueprint / PDF" and this only ever emitted
+       an HTML blob -- so the deliverable a permit office receives was a
+       web page, not a drawing. Render the sheet to a real 17x11 landscape
+       PDF, and fall back to the HTML only if the PDF libraries are not
+       loaded (which is a genuine capability gap, not a silent downgrade:
+       the status line says which one you got). */
+    btn.textContent = '  Rendering PDF...';
+    status.textContent = 'Rendering to PDF...';
+    const madePdf = await _bpDeliverPDF(html, project);
 
     document.getElementById('blueprint-modal').style.display = 'none';
-    status.textContent = 'OK Blueprint generated!';
+    status.textContent = madePdf
+      ? 'OK Blueprint PDF generated!'
+      : 'OK Blueprint generated (HTML \u2014 PDF libraries unavailable; print to PDF from the tab)';
 
   } catch(err) {
     console.error('Blueprint error:', err);
@@ -34927,6 +35675,78 @@ Respond with ONLY the JSON, no other text.`
     btn.disabled = false;
     btn.textContent = 'Generate Blueprint ->';
   }
+}
+
+/* Render the blueprint sheet to a 17x11 in landscape PDF.
+   The sheet is laid out in inches for print, so it is staged in an
+   offscreen iframe at exactly 17x11 in (1632x1056 px at 96dpi), captured,
+   and placed on a page of the same size -- no scaling guesswork, and what
+   the reviewer prints matches what the sheet was designed as.
+   Returns true if a PDF was produced, false if it fell back to HTML. */
+async function _bpDeliverPDF(html, project){
+  const name = (project||'Blueprint').replace(/[^a-z0-9]/gi,'-')+'-Blueprint';
+  const haveLibs = !!(window.jspdf && window.jspdf.jsPDF) && (typeof html2canvas !== 'undefined');
+
+  if(haveLibs){
+    let frame = null;
+    try{
+      const W = 1632, H = 1056;              /* 17 x 11 in @ 96dpi */
+      frame = document.createElement('iframe');
+      frame.setAttribute('aria-hidden','true');
+      /* Offscreen, but NOT display:none -- a hidden iframe lays out at zero
+         size and html2canvas would capture nothing. */
+      frame.style.cssText = 'position:fixed;left:-20000px;top:0;border:0;'
+        + 'width:'+W+'px;height:'+H+'px;background:#fff';
+      document.body.appendChild(frame);
+
+      const doc = frame.contentDocument || frame.contentWindow.document;
+      doc.open(); doc.write(html); doc.close();
+
+      /* Wait for layout and for the embedded site-map image to decode --
+         capturing early yields a sheet with an empty drawing window. */
+      await new Promise(res => {
+        let done = false;
+        const finish = () => { if(!done){ done = true; res(); } };
+        const imgs = Array.from(doc.images || []);
+        let pending = imgs.filter(im => !im.complete).length;
+        if(!pending) setTimeout(finish, 120);
+        else imgs.forEach(im => {
+          if(im.complete) return;
+          im.addEventListener('load', () => { if(--pending <= 0) setTimeout(finish, 80); });
+          im.addEventListener('error', () => { if(--pending <= 0) setTimeout(finish, 80); });
+        });
+        setTimeout(finish, 6000);            /* never hang on a stalled image */
+      });
+
+      const cvs = await html2canvas(doc.body, {
+        useCORS:true, allowTaint:true, scale:2, logging:false,
+        backgroundColor:null, width:W, height:H, windowWidth:W, windowHeight:H
+      });
+
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation:'landscape', unit:'in', format:[17,11] });
+      pdf.addImage(cvs.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 17, 11, undefined, 'FAST');
+      pdf.save(name + '.pdf');
+      return true;
+    }catch(e){
+      console.warn('Blueprint PDF render failed, falling back to HTML:', e && e.message);
+    }finally{
+      if(frame && frame.parentNode) frame.parentNode.removeChild(frame);
+    }
+  }
+
+  /* Fallback: the original HTML blob. Opened in a tab so it can be printed
+     to PDF from the browser. */
+  const blob = new Blob([html], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  if(!win){
+    const a = document.createElement('a');
+    a.href = url; a.download = name + '.html';
+    a.click();
+  }
+  setTimeout(()=>URL.revokeObjectURL(url), 30000);
+  return false;
 }
 
 function _buildScaleBarSVG(pxPerFt, dark) {
@@ -38787,7 +39607,7 @@ async function exportPermitPDF() {
 
     <!-- Footer note -->
     <div style="padding:10px 22px;border-top:1px solid rgba(255,255,255,.06);font-size:9px;color:var(--sub);flex-shrink:0;line-height:1.5">
-      ⚠ This analysis is AI-generated based on typical ComEd Northern Illinois service territory patterns. Always confirm with ComEd DER team before project commitment. Requires an AI token (Settings &rarr; AI Keys) for full analysis -- runs heuristic estimate without a token.
+      ⚠ This analysis is AI-generated. The serving utility and interconnection rule are inferred from the site's state — service territory does not follow state lines, and municipal/co-op carve-outs are common — so always confirm the actual serving utility and its published hosting-capacity data before project commitment. Screening parameters follow IEEE 1547; incentive and tariff details are jurisdiction-specific. Requires an AI token (Settings &rarr; AI Keys) for full analysis — runs heuristic estimate without a token.
     </div>
   </div>
 </div>
@@ -38870,7 +39690,143 @@ function downloadLaborProposalHTML() {
   URL.revokeObjectURL(url);
 }
 
-// -- COMED PRE-QUAL -----------------------------------------------
+/* ══════════════════════════════════════════════════════════════════════
+   WHICH UTILITY AND WHICH INTERCONNECTION RULES APPLY HERE
+   ----------------------------------------------------------------------
+   The whole pre-qual was written as a ComEd tool: the AI prompt opened
+   "You are a ComEd (Northern Illinois) DER interconnection engineer", the
+   screening cited ComEd tariffs, and the footer said the result was based
+   on ComEd territory patterns. Run it on a California address and it
+   confidently produced ComEd Part 466 filing steps, ComEd BESH rebate
+   figures and a comed.com hosting-capacity link -- for a site in SDG&E
+   territory. The AI itself flagged the mismatch in the output, which is
+   the tell that the framing was wrong before the model ever saw it.
+
+   Resolve the serving utility and the governing interconnection rule from
+   the site's STATE first, then let the AI reason inside the right
+   framework. This is a first-pass territory guess from state (and, where
+   a state is genuinely split, the AI is told to confirm which IOU) --
+   service territory does not follow state lines exactly and municipal /
+   co-op territories are carved out everywhere, so the output always says
+   to confirm the actual serving utility.
+   ══════════════════════════════════════════════════════════════════════ */
+var PQ_UTILITY_BY_STATE = {
+  CA:{ utils:['PG&E','SCE','SDG&E'], rule:'California Rule 21 (Fast Track / Supplemental Review / Independent Study)', reg:'CPUC', incentive:'SGIP (Self-Generation Incentive Program)', ica:'IOU Integration Capacity Analysis (ICA) maps' },
+  IL:{ utils:['ComEd','Ameren Illinois'], rule:'IL Admin Code Title 83 Part 466 (Level 1-4)', reg:'Illinois Commerce Commission', incentive:'Illinois Shines / ILSFA; DG rebate riders', ica:'ComEd / Ameren hosting capacity maps' },
+  NY:{ utils:['Con Edison','National Grid','NYSEG','Central Hudson','O&R','RG&E'], rule:'NY Standardized Interconnection Requirements (SIR)', reg:'NYS PSC', incentive:'NY-Sun; VDER Value Stack; NYSERDA storage incentives', ica:'NY Hosting Capacity maps (utility-published)' },
+  TX:{ utils:['Oncor','CenterPoint','AEP Texas','TNMP'], rule:'ERCOT / PUCT distributed generation interconnection (Substantive Rule 25.211/25.212)', reg:'PUCT / ERCOT', incentive:'utility-specific; no statewide storage rebate', ica:'utility DG maps where published' },
+  MA:{ utils:['Eversource','National Grid','Unitil'], rule:'MA DPU Model Interconnection Tariff (Simplified / Expedited / Standard)', reg:'MA DPU', incentive:'SMART program; ConnectedSolutions for storage', ica:'MA system data portal / hosting capacity maps' },
+  NJ:{ utils:['PSE&G','JCP&L','Atlantic City Electric','Rockland Electric'], rule:'NJ Interconnection Rules N.J.A.C. 14:8-5', reg:'NJ BPU', incentive:'SuSI / SREC-II', ica:'utility hosting capacity maps' },
+  FL:{ utils:['FPL','Duke Energy Florida','TECO','FPU'], rule:'FL net metering / interconnection Rule 25-6.065', reg:'Florida PSC', incentive:'utility-specific; no statewide storage rebate', ica:'limited public hosting capacity data' },
+  GA:{ utils:['Georgia Power','EMCs','Municipals'], rule:'Georgia Power interconnection guidelines / GA PSC rules', reg:'Georgia PSC', incentive:'DER Customer Program (RAS-1 / DRC-1)', ica:'limited public hosting capacity data' },
+  AZ:{ utils:['APS','TEP','SRP'], rule:'ACC interconnection rules (SRP separately governed)', reg:'Arizona Corporation Commission', incentive:'utility storage / demand programs', ica:'limited public hosting capacity data' },
+  CO:{ utils:['Xcel Energy','Black Hills'], rule:'Colorado PUC Rule 3667 interconnection', reg:'Colorado PUC', incentive:'Xcel Solar*Rewards; storage pilots', ica:'Xcel hosting capacity map' },
+  NV:{ utils:['NV Energy'], rule:'PUCN interconnection Rule 15', reg:'PUCN', incentive:'NV Energy storage incentives', ica:'NV Energy hosting capacity map' },
+  HI:{ utils:['Hawaiian Electric'], rule:'HECO Rule 14H interconnection', reg:'Hawaii PUC', incentive:'Battery Bonus / CBRE', ica:'HECO locational value maps' },
+  MD:{ utils:['BGE','Pepco','Delmarva','Potomac Edison'], rule:'MD COMAR 20.50.09 small generator interconnection', reg:'Maryland PSC', incentive:'MD Energy Storage Tax Credit; SREC', ica:'utility hosting capacity maps' },
+  PA:{ utils:['PECO','PPL','Duquesne Light','Met-Ed','PENELEC','West Penn Power'], rule:'PA Act 129 / 52 Pa. Code Ch. 75 interconnection', reg:'PA PUC', incentive:'AEPS SREC', ica:'limited public hosting capacity data' },
+  OH:{ utils:['AEP Ohio','FirstEnergy','Duke Energy Ohio','AES Ohio'], rule:'Ohio Admin Code 4901:1-22 interconnection', reg:'PUCO', incentive:'limited', ica:'limited public hosting capacity data' },
+  MI:{ utils:['DTE Energy','Consumers Energy'], rule:'Michigan PSC interconnection standards (MI Rule 460.601)', reg:'Michigan PSC', incentive:'utility DR programs', ica:'utility hosting capacity maps' },
+  NC:{ utils:['Duke Energy Carolinas','Duke Energy Progress','Dominion NC'], rule:'NC Interconnection Standard (NCIP)', reg:'NC Utilities Commission', incentive:'Duke storage / DR programs', ica:'Duke hosting capacity maps' },
+  VA:{ utils:['Dominion Energy Virginia','Appalachian Power'], rule:'Virginia SCC interconnection (20 VAC 5-314)', reg:'Virginia SCC', incentive:'VCEA programs', ica:'Dominion hosting capacity map' },
+  WA:{ utils:['Puget Sound Energy','Avista','Seattle City Light','Snohomish PUD'], rule:'WAC 480-108 interconnection', reg:'WA UTC', incentive:'utility-specific', ica:'limited public hosting capacity data' },
+  OR:{ utils:['Portland General Electric','PacifiCorp','Idaho Power'], rule:'OAR 860-082 small generator interconnection', reg:'Oregon PUC', incentive:'Oregon Solar + Storage Rebate', ica:'PGE hosting capacity map' },
+  CT:{ utils:['Eversource CT','United Illuminating'], rule:'CT PURA interconnection guidelines', reg:'CT PURA', incentive:'Energy Storage Solutions', ica:'utility hosting capacity maps' },
+  MN:{ utils:['Xcel Energy','Minnesota Power','Otter Tail'], rule:'Minnesota Distributed Energy Resources Interconnection Process (MN DIP)', reg:'Minnesota PUC', incentive:'Solar*Rewards', ica:'Xcel hosting capacity map' }
+};
+/* Two-letter state from whatever the geocoder returned. */
+function _pqStateCode(geo, addr){
+  var st=(geo && (geo.state_code || geo.stateCode)) || '';
+  if(/^[A-Za-z]{2}$/.test(st)) return st.toUpperCase();
+  var NAMES={ 'california':'CA','illinois':'IL','new york':'NY','texas':'TX','massachusetts':'MA',
+    'new jersey':'NJ','florida':'FL','georgia':'GA','arizona':'AZ','colorado':'CO','nevada':'NV',
+    'hawaii':'HI','maryland':'MD','pennsylvania':'PA','ohio':'OH','michigan':'MI','north carolina':'NC',
+    'virginia':'VA','washington':'WA','oregon':'OR','connecticut':'CT','minnesota':'MN' };
+  var full=String((geo&&geo.state)||'').toLowerCase().trim();
+  if(NAMES[full]) return NAMES[full];
+  var m=String(addr||'').match(/,\s*([A-Za-z]{2})\s*\d{5}(-\d{4})?\s*$/);
+  if(m) return m[1].toUpperCase();
+  m=String(addr||'').match(/\b([A-Za-z]{2})\s+\d{5}(-\d{4})?\b/);
+  if(m) return m[1].toUpperCase();
+  for(var k in NAMES){ if(full && full.indexOf(k)>=0) return NAMES[k]; }
+  return '';
+}
+function _pqJurisdiction(geo, addr){
+  var st=_pqStateCode(geo, addr);
+  var J=PQ_UTILITY_BY_STATE[st];
+  if(!J){
+    return { state:st||'(unknown)', known:false,
+      utils:['(confirm serving utility)'],
+      rule:'IEEE 1547-2018 + the state commission\u2019s small-generator interconnection procedure (FERC SGIP where FERC-jurisdictional)',
+      reg:'state public utility commission', incentive:'(confirm state / utility incentives)',
+      ica:'utility hosting capacity or ICA map where published' };
+  }
+  return { state:st, known:true, utils:J.utils, rule:J.rule, reg:J.reg, incentive:J.incentive, ica:J.ica };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   WHAT IS ACTUALLY ON THIS SITE MAP
+   ----------------------------------------------------------------------
+   The pre-qual read S.bessList only -- the Config dialog. A BESS drawn
+   from Draw > BESS Pad, or placed by a guided build, lives in S.shapes /
+   S.elements and never reached S.bessList, so the tool reported "No BESS
+   configured yet" while a battery was sitting on the map and then screened
+   the site against 0 kW. Solar was never counted at all, even though an
+   interconnection screen cares about total exportable capacity.
+
+   This reads the drawing itself, counts every unit, and keeps them
+   itemised so a multi-BESS or multi-array site is reported as what it is.
+   ══════════════════════════════════════════════════════════════════════ */
+function _pqSiteCensus(){
+  var out={ bess:[], solar:[], bessKW:0, bessKWh:0, solarKwDc:0, sources:[] };
+  try{
+    /* 1. Config-dialog list (still valid -- someone may size before drawing) */
+    (S.bessList||[]).forEach(function(b){
+      var q=+(b.qty||1), kw=(+(b.kw||0))*q, kwh=(+(b.kwh||0))*q;
+      if(!(kw||kwh)) return;
+      out.bess.push({ src:'config', name:b.name||b.model||'BESS', qty:q, kw:kw, kwh:kwh });
+      out.bessKW+=kw; out.bessKWh+=kwh;
+    });
+    /* 2. Anything actually drawn on the map */
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh) return;
+      if(sh.kind==='dersolar'){
+        var skw=+(sh.kw||0);
+        out.solar.push({ name:sh.label||('Array '+(out.solar.length+1)), kwDc:skw, mount:sh.mount||'ground' });
+        out.solarKwDc+=skw; return;
+      }
+      var isBess = (sh.kind==='assembly'&&(sh.kwh||sh.kw)) || sh.type==='bess-asm'
+                   || (sh.kind==='utility'&&sh.utype==='bessctr');
+      if(isBess){
+        var kw2=+(sh.kw||0), kwh2=+(sh.kwh||0);
+        out.bess.push({ src:'map', name:sh.label||sh.model||'BESS (drawn)', qty:1, kw:kw2, kwh:kwh2 });
+        out.bessKW+=kw2; out.bessKWh+=kwh2;
+      }
+    });
+    (S.elements||[]).forEach(function(el){
+      if(!el) return;
+      var q=(typeof _eqRole==='function' && _eqRole(el)) || el.eqId
+            || (el.type==='evgear' ? (el.evKind||el.bgbRole||el.evRole) : el.type);
+      if(q!=='bess') return;
+      var kw3=+(el.bessKw||el.bgbKw||0), kwh3=+(el.bessKwh||el.bgbKwh||0);
+      out.bess.push({ src:'map', name:el.bessModel||el.label||'BESS (placed)', qty:1, kw:kw3, kwh:kwh3 });
+      out.bessKW+=kw3; out.bessKWh+=kwh3;
+    });
+  }catch(e){}
+  /* De-duplicate the common case where the same battery is both configured
+     and drawn: if the map already has units, the map is the truth. */
+  var fromMap=out.bess.filter(function(b){ return b.src==='map'; });
+  if(fromMap.length && fromMap.some(function(b){ return b.kw||b.kwh; })){
+    out.bess=fromMap;
+    out.bessKW=fromMap.reduce(function(t,b){ return t+b.kw; },0);
+    out.bessKWh=fromMap.reduce(function(t,b){ return t+b.kwh; },0);
+  }
+  if(out.bessKW||out.bessKWh) out.sources.push('storage');
+  if(out.solarKwDc) out.sources.push('solar');
+  return out;
+}
+
+// -- GRID PRE-QUAL ------------------------------------------------
 function openComedPreQual() {
   // Sync address from quick box or map field
   const addr = document.getElementById('pq-addr-quick')?.value?.trim()
@@ -38880,16 +39836,18 @@ function openComedPreQual() {
   document.getElementById('pq-status').textContent = '';
   // Show current BESS config summary
   const summaryEl = document.getElementById('pq-bess-summary');
-  if (summaryEl && typeof S !== 'undefined' && S.bessList && S.bessList.length > 0) {
-    const totalKW  = S.bessList.reduce((s,b)=>s+(+(b.kw||0))*(+(b.qty||1)),0);
-    const totalKWh = S.bessList.reduce((s,b)=>s+(+(b.kwh||0))*(+(b.qty||1)),0);
-    summaryEl.innerHTML = S.bessList.map(b =>
-      `<span style="background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);border-radius:4px;padding:2px 8px;color:var(--accent)">
-          ${b.name}: ${b.kwh}kWh / ${b.kw}kW
-      </span>`
-    ).join('') + `<span style="color:var(--sub)">Total: ${totalKW}kW / ${totalKWh}kWh</span>`;
+  const C = _pqSiteCensus();
+  if (summaryEl && (C.bess.length || C.solar.length)) {
+    const chip = (t) => `<span style="background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);border-radius:4px;padding:2px 8px;color:var(--accent);margin-right:6px">${t}</span>`;
+    let html = C.bess.map(b => chip(`${b.name}: ${Math.round(b.kwh).toLocaleString()}kWh / ${Math.round(b.kw).toLocaleString()}kW`)).join('');
+    html += C.solar.map(a => chip(`${a.name}: ${Math.round(a.kwDc).toLocaleString()}kW-DC ${a.mount}`)).join('');
+    const bits=[];
+    if (C.bessKW||C.bessKWh) bits.push(`BESS ${Math.round(C.bessKW).toLocaleString()}kW / ${Math.round(C.bessKWh).toLocaleString()}kWh`);
+    if (C.solarKwDc) bits.push(`Solar ${Math.round(C.solarKwDc).toLocaleString()}kW-DC`);
+    html += `<span style="color:var(--sub)">Total: ${bits.join(' + ')}</span>`;
+    summaryEl.innerHTML = html;
   } else if (summaryEl) {
-    summaryEl.innerHTML = '<span style="color:var(--sub)">No BESS configured yet -- results will show max site capacity without a specific system to evaluate.</span>';
+    summaryEl.innerHTML = '<span style="color:var(--sub)">Nothing placed on the site map yet -- results will show max site capacity without a specific system to evaluate.</span>';
   }
   document.getElementById('prequal-modal').style.display = 'flex';
 }
@@ -38967,8 +39925,10 @@ async function runComedPreQual() {
   }
   resultsEl.innerHTML = '';
 
-  const totalKW  = (typeof S !== 'undefined') ? S.bessList.reduce((s,b)=>s+(+(b.kw||0))*(+(b.qty||1)),0) : 0;
-  const totalKWh = (typeof S !== 'undefined') ? S.bessList.reduce((s,b)=>s+(+(b.kwh||0))*(+(b.qty||1)),0) : 0;
+  /* Read the DRAWING, not just the Config dialog. */
+  const _pqC = (typeof _pqSiteCensus === 'function') ? _pqSiteCensus() : { bessKW:0, bessKWh:0, solarKwDc:0, bess:[], solar:[] };
+  const totalKW  = _pqC.bessKW;
+  const totalKWh = _pqC.bessKWh;
 
   // Step 1: Geocode to get lat/lng and classify the area
   let geoData = null;
@@ -39003,7 +39963,7 @@ async function runComedPreQual() {
 
   // Step 3: If we have a Claude key, enhance with AI reasoning about site-specific factors
   if (!apiKey) {
-    statusEl.textContent = '!! AI token not set -- showing screening based on published IEEE/ComEd parameters';
+    statusEl.textContent = '!! AI token not set -- showing screening based on published IEEE 1547 parameters only (no jurisdiction-specific reasoning)';
     _renderPreQualResults(screening, totalKW, totalKWh, resultsEl, true);
     return;
   }
@@ -39015,8 +39975,16 @@ async function runComedPreQual() {
       ? `Location confirmed: ${geoData.city||''} ${geoData.county||''}, ${geoData.state||''}. Lat/Lng: ${geoData.lat?.toFixed(4)}, ${geoData.lng?.toFixed(4)}. OSM type: ${geoData.osm_class}/${geoData.osm_type}.`
       : 'Geocoding unavailable -- analyzing from address text only.';
 
+    const J = _pqJurisdiction(geoData, addr);
+    const _sysLines = []
+      .concat(_pqC.bess.map(b => `  BESS: ${b.name} \u2014 ${Math.round(b.kw).toLocaleString()} kW / ${Math.round(b.kwh).toLocaleString()} kWh`))
+      .concat(_pqC.solar.map(a => `  PV: ${a.name} \u2014 ${Math.round(a.kwDc).toLocaleString()} kW-DC, ${a.mount} mount`));
+    const systemContext = _sysLines.length
+      ? `SYSTEM PLACED ON THE SITE MAP (${_pqC.bess.length} storage unit(s), ${_pqC.solar.length} array(s)):\n${_sysLines.join('\n')}\n  TOTALS: ${Math.round(_pqC.bessKW).toLocaleString()} kW / ${Math.round(_pqC.bessKWh).toLocaleString()} kWh storage; ${Math.round(_pqC.solarKwDc).toLocaleString()} kW-DC solar.`
+      : 'NOTHING PLACED ON THE SITE MAP YET \u2014 evaluate maximum site capacity rather than a specific system.';
+
     const screeningContext = `
-IEEE/ComEd parameter screening already computed:
+IEEE parameter screening already computed:
 - Identified area type: ${screening.area_type}
 - Voltage class: ${screening.voltage_level}
 - Typical feeder capacity range: ${screening.feeder_range_mw[0]}-${screening.feeder_range_mw[1]} MW
@@ -39024,30 +39992,51 @@ IEEE/ComEd parameter screening already computed:
 - 15% screen result: ${screening.screening_result}
 - Proposed BESS: ${totalKW} kW / ${totalKWh} kWh`;
 
-    const prompt = `You are a ComEd (Northern Illinois) DER interconnection engineer reviewing a BESS pre-qualification request.
+    const prompt = `You are a DER interconnection engineer reviewing a pre-qualification request. Work ONLY within the jurisdiction identified below. Do not apply another state's rules, tariffs, or incentive programs.
 
 SITE ADDRESS: ${addr}
 ${geoContext}
 
+JURISDICTION RESOLVED FROM THE SITE LOCATION:
+  State: ${J.state}
+  Likely serving utility (confirm): ${J.utils.join(' / ')}
+  Governing interconnection rule: ${J.rule}
+  Regulator: ${J.reg}
+  Storage/DER incentive framework: ${J.incentive}
+  Hosting capacity data source: ${J.ica}
+
+${systemContext}
+
 ${screeningContext}
 
-Your job is to ADD site-specific reasoning that the pure parameter screening cannot capture:
-- What does this specific address/area tell you about likely grid infrastructure?
-- Any known substation areas, industrial districts, or grid constraints in this part of Illinois?
-- What ComEd interconnection study level will most likely apply and why?
-- What site-specific risks or advantages exist?
-- Realistic timeline and process guidance.
+REFERENCE FRAMEWORKS to reason from (cite only what genuinely applies here):
+- IEEE 1547-2018 and IEEE 1547.1 \u2014 interconnection and interoperability of DER, voltage/frequency ride-through, and the basis for most state screens.
+- FERC Small Generator Interconnection Procedures (SGIP) and Order 2222 \u2014 where the interconnection is FERC-jurisdictional or DER aggregation into wholesale markets is contemplated.
+- EPRI DER integration research \u2014 hosting capacity methodology, feeder screening practice, and how utilities derive published hosting-capacity/ICA maps.
+- UL 9540 / UL 9540A and NFPA 855 \u2014 energy storage listing and fire-code siting, which drive permitting alongside interconnection.
+- The state rule named above, and the serving utility's own tariff and hosting-capacity map.
 
-IMPORTANT -- BE HONEST about uncertainty. Do NOT make up specific feeder IDs, substation names, or capacity numbers. Use ranges. Clearly distinguish between what is known from published data vs. what requires ComEd confirmation.
+Your job is to ADD site-specific reasoning that the pure parameter screening cannot capture:
+- Which utility most likely serves this exact address, and how to confirm it (territory does not follow state lines; municipal and co-op carve-outs are common).
+- Which study level / review track under the governing rule will most likely apply, and why, given the system size above.
+- What this address and area type imply about the likely distribution infrastructure.
+- Site-specific risks and advantages, including any non-export path that avoids a full impact study.
+- Realistic timeline, fees and process for THIS jurisdiction.
+- Which incentive or storage program actually applies here \u2014 name it correctly, or say none is established.
+
+BE HONEST about uncertainty. Do NOT invent feeder IDs, substation names, hosting-capacity numbers, tariff section numbers, fee amounts, or program names. If you are not confident a program or rule exists in this jurisdiction, say so rather than substituting one you know from elsewhere. Use ranges. Distinguish what is published from what needs utility confirmation.
 
 Respond ONLY with valid JSON (no markdown):
 {
-  "substation_area_context": "What you know about this area's grid infrastructure based on address",
+  "serving_utility": "Most likely serving utility for this address, with how to confirm",
+  "governing_rule": "The interconnection rule/tariff that actually governs here",
+  "substation_area_context": "What the address implies about local grid infrastructure",
   "additional_risks": ["site-specific risk not captured by screening"],
   "additional_recommendations": ["site-specific recommendation"],
-  "process_guidance": "Step-by-step what NextNRG should do next to get actual ComEd hosting capacity data",
-  "study_level_rationale": "Why this system will likely need Level X study",
-  "site_advantages": ["any factors that improve feasibility"],
+  "process_guidance": "Step-by-step next actions to obtain real hosting capacity data from the correct utility",
+  "study_level_rationale": "Why this system will likely need this study level under the governing rule",
+  "incentive_path": "The storage/DER incentive or program that applies in this jurisdiction, or 'none established'",
+  "site_advantages": ["factors that improve feasibility"],
   "confidence_note": "honest statement about what is confirmed vs estimated"
 }`;
 
@@ -39076,6 +40065,10 @@ Respond ONLY with valid JSON (no markdown):
       process_guidance: aiContext.process_guidance,
       study_level_rationale: aiContext.study_level_rationale,
       site_advantages: aiContext.site_advantages||[],
+      serving_utility: aiContext.serving_utility||'',
+      governing_rule: aiContext.governing_rule||'',
+      incentive_path: aiContext.incentive_path||'',
+      jurisdiction: J,
       confidence_note: aiContext.confidence_note,
       ai_enhanced: true,
     });
@@ -42395,23 +43388,52 @@ var DERC_ALT = {
      cf    0.18       — generic annual capacity factor; replace with PVWatts
    Every one of these should be replaced with measured data when available. */
 
+/* MODULE POWER DENSITY -- the single number that scales every array's kW.
+
+   This shipped at 15 W/sqft, which corresponds to roughly a 16%-efficient
+   module: accurate around 2012, and about 33% low for anything shipping
+   now. Every array drawn on the map came out a third smaller than the
+   same roof would actually support.
+
+   Real modules, W per square foot of MODULE area:
+     450 W residential   1.90 x 1.13 m   -> 19.5
+     550 W C&I           2.28 x 1.13 m   -> 19.8
+     600 W utility       2.38 x 1.13 m   -> 20.7
+     700 W utility       2.38 x 1.30 m   -> 21.0
+   20 W/sqft is a ~21.5%-efficient module -- the middle of what is being
+   installed today, and still conservative against the top of the market.
+
+   This is a DEFAULT, not a constant: it is editable per array in the
+   Solar Assumptions panel, and _pvWpsf() below derives the exact figure
+   when a specific module is known. Anyone with a real module spec should
+   enter it. */
+var DER_PV_WPSF = 20;      /* W per sqft of module area (DC, STC) */
+
+/* Exact power density from a module's nameplate and physical size --
+   use this instead of the default whenever the module is actually known. */
+function _pvWpsf(watts, widthM, heightM){
+  var w=+watts, a=(+widthM)*(+heightM);
+  if(!(w>0) || !(a>0)) return DER_PV_WPSF;
+  return w / (a*10.7639);          /* m2 -> sqft */
+}
+
 /* Racking presets. gcr/wpsf differ by mount + tracking geometry. */
 var DER_SOLAR_PRESETS = {
-  'fixed-ground': { label:'Fixed-tilt ground mount', gcr:0.40, wpsf:15, setbackFt:10, cf:0.18,
+  'fixed-ground': { label:'Fixed-tilt ground mount', gcr:0.40, wpsf:DER_PV_WPSF, setbackFt:10, cf:0.18,
                     note:'Typical fixed-tilt row pitch. Most common utility ground-mount.' },
-  'tracker-1ax':  { label:'Single-axis tracker',     gcr:0.33, wpsf:15, setbackFt:15, cf:0.22,
+  'tracker-1ax':  { label:'Single-axis tracker',     gcr:0.33, wpsf:DER_PV_WPSF, setbackFt:15, cf:0.22,
                     note:'Trackers need wider pitch (lower GCR) but gain ~20% capacity factor.' },
-  'rooftop':      { label:'Rooftop (coplanar)',      gcr:0.70, wpsf:15, setbackFt:3,  cf:0.16,
+  'rooftop':      { label:'Rooftop (coplanar)',      gcr:0.70, wpsf:DER_PV_WPSF, setbackFt:3,  cf:0.16,
                     note:'Dense coplanar layout; setback is fire-access driven.' },
-  'carport':      { label:'Carport / canopy',        gcr:0.85, wpsf:15, setbackFt:5,  cf:0.17,
+  'carport':      { label:'Carport / canopy',        gcr:0.85, wpsf:DER_PV_WPSF, setbackFt:5,  cf:0.17,
                     note:'Near-continuous deck over parking; little inter-row loss.' },
-  'custom':       { label:'Custom (enter your own)', gcr:0.40, wpsf:15, setbackFt:10, cf:0.18,
+  'custom':       { label:'Custom (enter your own)', gcr:0.40, wpsf:DER_PV_WPSF, setbackFt:10, cf:0.18,
                     note:'Set from your own built-project data.' }
 };
 
 /* Legacy constants kept as the fallback layer so nothing breaks if the
    store is absent. Do not read these directly — use _solarAssume(). */
-var DER_SOLAR_WPSF = 15;   /* watts per sq ft of MODULE area (DC) */
+var DER_SOLAR_WPSF = DER_PV_WPSF;   /* watts per sq ft of MODULE area (DC) */
 var DER_SOLAR_CF   = 0.18; /* capacity factor (annual avg) */
 var DER_WIND_CF    = 0.30; /* capacity factor for distributed wind */
 
@@ -42763,7 +43785,7 @@ function _derRenderDc(g, sh){
     var sx=x + (i+0.15)*(w/slats);
     _derRect(g, sx, y+h*0.18, (w/slats)*0.7, h*0.64, '#2B2050', '#8B6FE0', 0.8);
   }
-  _derText(g, x+w/2, y+h+padM+11, (sh.model||'DATA CENTER')+' \u2022 '+(sh.kw||0)+' kW', Math.max(7,ppf*0.8), '#6D28D9', 'middle', '700');
+  _derText(g, x+w/2, y+h+padM+11, (sh.model||'DATA CENTER')+' \u2022 '+(sh.kw||0)+' kW', Math.max(7,Math.min(12,ppf*0.8)), '#6D28D9', 'middle', '700');
 }
 
 function _derRenderWind(g, sh){
@@ -42788,7 +43810,7 @@ function _derRenderWind(g, sh){
   /* hub */
   var hub=_mkNS('circle'); hub.setAttribute('cx',cx); hub.setAttribute('cy',cy);
   hub.setAttribute('r',Math.max(2,ppf*0.5)); hub.setAttribute('fill','#0369A1'); g.appendChild(hub);
-  _derText(g, cx, cy+rotorR+11, (sh.kw||0)+' kW', Math.max(7,ppf*0.8), '#0369A1', 'middle', '700');
+  _derText(g, cx, cy+rotorR+11, (sh.kw||0)+' kW', Math.max(7,Math.min(12,ppf*0.8)), '#0369A1', 'middle', '700');
 }
 
 function _derRenderAlt(g, sh){
@@ -42801,7 +43823,7 @@ function _derRenderAlt(g, sh){
     _derRect(g, sx, y+h*0.2, (w/Math.max(2,Math.round((sh.lf||10)/2)))*0.6, h*0.6, '#1F2937', '#6B7280', 0.7);
   }
   _derText(g, x+w/2, y+h*0.6, sh.abbr||'GEN', Math.max(6,ppf*0.7), '#F3F4F6', 'middle', '800');
-  _derText(g, x+w/2, y+h+11, (sh.model||'GENERATOR')+' \u2022 '+(sh.kw||0)+' kW', Math.max(7,ppf*0.8), '#374151', 'middle', '700');
+  _derText(g, x+w/2, y+h+11, (sh.model||'GENERATOR')+' \u2022 '+(sh.kw||0)+' kW', Math.max(7,Math.min(12,ppf*0.8)), '#374151', 'middle', '700');
 }
 
 function _derRenderSolar(g, sh){
@@ -44444,7 +45466,9 @@ function _trenchClusterSpine(placed, ems, rows, cols, cellW, cellH, ppf, spec){
                ftLen:+(_polyLen(spinePts)/(S.pxPerFt||6)).toFixed(1),
                cluster:true, spine:true, toId:ems.id, emsEdgeOff:o2.d,
                laneY:laneY, spineMinX:minX, labelDx:70+idx*4, labelDy:-28 };
-      S.conduits.push(sc); if(typeof renderConduit==='function') renderConduit(sc);
+      S.conduits.push(sc);
+      try{ if(typeof _geoRestampOne==='function') _geoRestampOne(sc); }catch(e){}
+      if(typeof renderConduit==='function') renderConduit(sc);
     }
     idx++;
   }
@@ -44469,6 +45493,9 @@ function _rerouteEmsConduits(ems){
         c.pts=[{x:start.x,y:start.y},{x:ex+d,y:start.y},{x:ex+d,y:ey+d}];
       }
       c.pxLen=_polyLen(c.pts); c.ftLen=+(c.pxLen/(S.pxPerFt||6)).toFixed(1);
+      /* Rebuilt pts need a rebuilt anchor -- otherwise the spine snaps
+         back to the EMS node's previous position at the next map idle. */
+      try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
       var g=document.querySelector('[data-cid="'+c.id+'"]'); if(g&&g.parentNode)g.parentNode.removeChild(g); renderConduit(c);
     }
   }
@@ -44590,6 +45617,9 @@ function trenchWire(fromEl, toEl, condType, label){
           onSpine:true, spineOff:_trenchOff(condType),
           label:label||'', labelDx:60, labelDy:-30 };
   S.conduits.push(c);
+  /* Anchor at creation rather than waiting for a later pushHist to sweep
+     it up -- a newly wired run should hold ground from its first frame. */
+  try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
   if(typeof renderConduit==='function') renderConduit(c);
   if(typeof updCondStat==='function') updCondStat();
   return c;
@@ -44607,6 +45637,9 @@ function rerouteTrenchConduits(){
     if(!fromEl) continue;
     var pts=routeToTrench(fromEl, toEl, c.condType); if(!pts) continue;
     c.pts=pts; c.pxLen=_polyLen(pts); c.ftLen=+(c.pxLen/(S.pxPerFt||6)).toFixed(1);
+    /* Re-anchor the rebuilt spine route. Without this the run reprojects
+       to its pre-move path on the next pan or zoom. */
+    try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
     var g=document.querySelector('[data-cid="'+c.id+'"]'); if(g&&g.parentNode)g.parentNode.removeChild(g);
     if(typeof renderConduit==='function') renderConduit(c);
   }
@@ -47706,7 +48739,7 @@ function _evRenderPost(g, sh){
   /* label */
   var lab=(sh.model||'DCFC POST');
   if(!sh.noLabel){
-    _evText(g, x+w/2, y+h+11, (sh.mfr==='Tesla'?'Tesla V4':lab)+' \u2022 '+(sh.kw||0)+' kW', Math.max(7,ppf*0.8), accent, 'middle', '700');
+    _evText(g, x+w/2, y+h+11, (sh.mfr==='Tesla'?'Tesla V4':lab)+' \u2022 '+(sh.kw||0)+' kW', Math.max(7,Math.min(12,ppf*0.8)), accent, 'middle', '700');
     if(sh.combined){ _evText(g, x+w/2, y+h+21, '(combined w/ cabinet)', Math.max(6,ppf*0.7), '#64748B', 'middle', '500'); }
   }
 }
@@ -47728,7 +48761,7 @@ function _evRenderCab(g, sh){
     g.appendChild(l);
   }
   _evText(g, x+w/2, y+h/2+3, 'POWER CAB', Math.max(6,ppf*0.7), '#334155', 'middle', '800');
-  if(!sh.noLabel){ _evText(g, x+w/2, y+h+11, (sh.model||'CABINET')+' \u2022 '+(sh.kw||0)+' kW', Math.max(7,ppf*0.8), accent, 'middle', '700'); }
+  if(!sh.noLabel){ _evText(g, x+w/2, y+h+11, (sh.model||'CABINET')+' \u2022 '+(sh.kw||0)+' kW', Math.max(7,Math.min(12,ppf*0.8)), accent, 'middle', '700'); }
 }
 function _evRenderUnit(g, sh){
   if(sh.img){ _evRenderImg(g, sh, sh.img); return; }
@@ -47739,12 +48772,20 @@ function _evRenderUnit(g, sh){
   _evRect(g, x, y, w, h, '#F1F5F9', accent, 1.6);
   /* large display */
   _evRect(g, x+w*0.14, y+h*0.10, w*0.72, h*0.34, '#0B1220', accent, 0.8);
-  _evText(g, x+w/2, y+h*0.32, '\u26a1', Math.max(9,ppf*1.2), accent, 'middle', '700');
+  _evText(g, x+w/2, y+h*0.32, '\u26a1', Math.max(9,Math.min(16,ppf*1.2)), accent, 'middle', '700');
   /* twin holsters */
   _evRect(g, x+w*0.16, y+h*0.55, w*0.22, h*0.22, '#DDE5EE', accent, 0.8);
   _evRect(g, x+w*0.62, y+h*0.55, w*0.22, h*0.22, '#DDE5EE', accent, 0.8);
   _evPorts(g, x+w/2, y+h*0.90, sh.ports||2, accent);
-  if(!sh.noLabel){ _evText(g, x+w/2, y+h+11, (sh.model||'DCFC UNIT')+' \u2022 '+(sh.kw||0)+' kW', Math.max(7,ppf*0.8), accent, 'middle', '700'); }
+  /* Clamp the label. ppf*0.8 with no ceiling means the caption grows without
+     limit as the drawing scale rises -- at a well-calibrated parking-lot
+     zoom it rendered many times the size of the charger it names and
+     covered the unit entirely. The photo renderer already clamped to 12;
+     these did not. */
+  if(!sh.noLabel){
+    var _fs=Math.max(7, Math.min(12, ppf*0.8));
+    _evText(g, x+w/2, y+h+_fs+3, (sh.model||'DCFC UNIT')+' \u2022 '+(sh.kw||0)+' kW', _fs, accent, 'middle', '700');
+  }
 }
 function _evRenderL2(g, sh){
   if(sh.img){ _evRenderImg(g, sh, sh.img); return; }
@@ -47762,7 +48803,11 @@ function _evRenderL2(g, sh){
   c.setAttribute('fill','none'); c.setAttribute('stroke',accent); c.setAttribute('stroke-width',1); c.setAttribute('opacity',0.7);
   g.appendChild(c);
   _evPorts(g, x+w/2, y+h*0.55, sh.ports||1, accent);
-  if(!sh.noLabel){ _evText(g, x+w/2, y+h+10, (sh.mfr==='Autel'?sh.model.replace('Autel MaxiCharger ',''):sh.model)+' \u2022 '+(sh.kw||0)+'kW', Math.max(6,ppf*0.75), accent, 'middle', '700'); }
+  if(!sh.noLabel){
+    var _fs2=Math.max(6, Math.min(11, ppf*0.75));
+    var _nm=(sh.mfr==='Autel' && sh.model) ? sh.model.replace('Autel MaxiCharger ','') : (sh.model||'L2 CHARGER');
+    _evText(g, x+w/2, y+h+_fs2+3, _nm+' \u2022 '+(sh.kw||0)+'kW', _fs2, accent, 'middle', '700');
+  }
 }
 function _evRenderZone(g, sh){
   var a=sh.pts[0], b=sh.pts[1];
@@ -53433,14 +54478,45 @@ window._crmToastModal=_crmToastModal;
     }
   };
 
-  /* Seed the field from the project's saved address so it reads as state,
-     not an empty box. */
+  /* Seed the field from the project's saved SITE ADDRESS so it reads as
+     state, not an empty box.
+
+     This used to try #addr then #site-address then #pn-title. Neither of
+     the first two ids exists anywhere in this document, so the chain
+     always fell through to #pn-title -- the project NAME in the header.
+     The box therefore showed "North Bay Produce - Doral" and pressing
+     Load geocoded the project name instead of the site.
+
+     Order below is real fields only, most authoritative first:
+       #addr-in       the satellite address bar, which _loadProject fills
+                      from d.address || d.mapState.address on open
+       #prop-address  proposal site address
+       #bp-address    blueprint / plan-set site address
+       #ps-site-addr  permit-set site address
+       #pp-street     plot-plan street label
+       #np-addr       new-project dialog address
+     A value is only accepted if it looks like an address rather than a
+     project title, so a stray field holding a name cannot reintroduce
+     the same bug. */
+  function looksLikeAddress(v){
+    if(!v) return false;
+    var t=String(v).trim();
+    if(t.length<4) return false;
+    if(/^new project$/i.test(t)) return false;
+    /* a street address starts with a number, or carries a street type,
+       a state+ZIP, or a comma-separated locality */
+    return /^\s*\d/.test(t)
+      || /\b(st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|way|ct|court|pkwy|parkway|hwy|highway|ter|terrace|pl|place|cir|circle|suite|ste|unit)\b/i.test(t)
+      || /\b[A-Z]{2}\s*\d{5}(-\d{4})?\b/.test(t)
+      || /,\s*[A-Za-z .]+,\s*[A-Z]{2}\b/.test(t);
+  }
   function seed(){
     var input=el('omega-addr-in'); if(!input || input.value) return;
-    var src=el('addr') || el('site-address') || el('pn-title');
-    if(src){
+    var ids=['addr-in','prop-address','bp-address','ps-site-addr','pp-street','np-addr'];
+    for(var i=0;i<ids.length;i++){
+      var src=el(ids[i]); if(!src) continue;
       var v=(src.value||src.textContent||'').trim();
-      if(v && v.toLowerCase()!=='new project') input.value=v;
+      if(looksLikeAddress(v)){ input.value=v; return; }
     }
   }
   var tries=0;
@@ -60516,7 +61592,7 @@ window._crmToastModal=_crmToastModal;
 
     var P = ppf();
     var A = (typeof _solarAssume === 'function') ? _solarAssume(opts.mount || 'ground')
-      : { gcr: 0.4, wpsf: 15, setbackFt: 10, presetKey: 'fixed-ground' };
+      : { gcr: 0.4, wpsf: DER_PV_WPSF, setbackFt: 10, presetKey: 'fixed-ground' };
 
     /* An explicit preset on the call wins over the project-wide default,
        so one array can be a canopy while another stays a field. */
@@ -60575,7 +61651,7 @@ window._crmToastModal=_crmToastModal;
 
     var tableSqft = tableWft * tableHft;
     var moduleFill = 0.92;
-    var kw = Math.round(best.tables.length * tableSqft * moduleFill * (A.wpsf || 15) / 1000 * 10) / 10;
+    var kw = Math.round(best.tables.length * tableSqft * moduleFill * (A.wpsf || DER_PV_WPSF) / 1000 * 10) / 10;
 
     var landSqft = areaPx(bnd) / (P * P);
     var polyAcres = landSqft / 43560;
@@ -64099,6 +65175,9 @@ window._crmToastModal=_crmToastModal;
                  label: e.label, style: 'solid', _omegaGen: true };
       }).filter(function (w) { return w.fromId && w.toId; });
       _sld.nextId = _sld.nodes.length + _sld.wires.length + 1;
+      /* Record what the site map looked like when this diagram was built,
+         so the exporter can tell later whether it has gone stale. */
+      try { if (typeof window._olSiteFingerprint === 'function') _sld._srcFp = window._olSiteFingerprint(); } catch (e) {}
       _sld.sel = null;
     } catch (e) {
       console.warn(TAG, 'could not write the one-line:', e && e.message);
@@ -64464,22 +65543,57 @@ window._crmToastModal=_crmToastModal;
      topology was built (synthesised runs carry none at all). */
   function runInfo(w, byId) {
     var a = byId[w.fromId], b = byId[w.toId];
-    var out = { service: '', ft: '', cond: '' };
+    var out = { service: '', ft: '', cond: '', measured: false };
     var parts = String(w.label || '').split('  ');
     out.service = parts[0] || '';
-    if (parts[1]) out.ft = String(parts[1]).replace(/\s*ft\s*$/i, '').trim();
+    if (parts[1]) { out.ft = String(parts[1]).replace(/\s*ft\s*$/i, '').trim(); out.measured = !!out.ft; }
     try {
       var S2 = (typeof S !== 'undefined' && S) ? S : null;
-      if (S2 && S2.conduits && a && b && a._srcId != null && b._srcId != null) {
-        for (var i = 0; i < S2.conduits.length; i++) {
-          var c = S2.conduits[i]; if (!c) continue;
-          var f = (c.fromId != null) ? c.fromId : c.fromElId;
-          var t = (c.toId != null) ? c.toId : c.toElId;
-          if (!((f === a._srcId && t === b._srcId) || (f === b._srcId && t === a._srcId))) continue;
-          if (c.condType) out.service = c.condType;
-          if (c.ftLen) out.ft = String(Math.round(c.ftLen * 10) / 10);
-          if (c.conduit) out.cond = c.conduit;
-          break;
+      if (!S2 || !S2.conduits || !a || !b) return out;
+
+      /* Resolve the drawn conduit for this edge. Matching on _srcId alone
+         only worked for the topology-derived one-line; the archetype
+         generator builds canonical nodes that may carry a source id for
+         some devices and none for others, so fall back to matching the
+         equipment LABEL against the conduit's recorded endpoints. Without
+         a fallback, every row on an archetype sheet came out blank. */
+      function idsOf(node){
+        var out2 = [];
+        if (node._srcId != null) out2.push(node._srcId);
+        return out2;
+      }
+      function nameOf(node){ return String(node.label || '').split('\n')[0].trim().toUpperCase(); }
+      var aIds = idsOf(a), bIds = idsOf(b);
+      var aName = nameOf(a), bName = nameOf(b);
+
+      function endName(c, which){
+        var v = which === 'from' ? (c.runFrom || '') : (c.runTo || '');
+        return String(v).trim().toUpperCase();
+      }
+
+      var best = null;
+      for (var i = 0; i < S2.conduits.length; i++) {
+        var c = S2.conduits[i]; if (!c) continue;
+        var f = (c.fromId != null) ? c.fromId : c.fromElId;
+        var t = (c.toId != null) ? c.toId : c.toElId;
+        var byId2 = (aIds.length && bIds.length) &&
+          ((aIds.indexOf(f) >= 0 && bIds.indexOf(t) >= 0) || (aIds.indexOf(t) >= 0 && bIds.indexOf(f) >= 0));
+        var cf = endName(c, 'from'), ct2 = endName(c, 'to');
+        var byName = cf && ct2 &&
+          ((cf === aName && ct2 === bName) || (cf === bName && ct2 === aName));
+        if (byId2 || byName) { best = c; if (byId2) break; }
+      }
+      if (best) {
+        if (best.condType) out.service = best.condType;
+        if (best.ftLen) { out.ft = String(Math.round(best.ftLen * 10) / 10); out.measured = true; }
+        if (best.conduit) out.cond = best.conduit;
+        else {
+          /* trade size lives on the conduit TYPE, not the run */
+          try {
+            for (var k = 0; k < CTYPES.length; k++) {
+              if (CTYPES[k].id === best.condType) { out.cond = CTYPES[k].size || ''; break; }
+            }
+          } catch (e2) {}
         }
       }
     } catch (e) {}
@@ -64611,7 +65725,7 @@ window._crmToastModal=_crmToastModal;
       '5. Rapid shutdown / disconnect labeling per NEC 706.15 / 690.12.',
       '6. Conductors per schedule; verify AHJ / utility requirements.',
       '7. UL 9540 / NFPA 855 listed energy storage equipment.',
-      '8. Diagram generated from the site plan; lengths are measured routes.'
+      '8. Diagram generated from the site plan; RUN LEN values are measured conduit routes where drawn.'
     ];
 
     var schedRight = 44 + 650, ny = H - 430;
@@ -64620,25 +65734,31 @@ window._crmToastModal=_crmToastModal;
       var heads = ['CABLE RUN', 'FROM', 'TO', 'SERVICE', 'L-L VOLTAGE', 'PH', 'MATERIAL',
         'CONDUCTOR', 'CONDUIT', 'RUN LEN [ft]', 'OCP RATING', '# RUNS',
         'VD LIMIT', 'VD [%]', 'GROUND'];
-      var runs = [];
+      var runs = [], unmeasured = 0;
       wires.forEach(function (w, i) {
         var a = byId[w.fromId], b = byId[w.toId]; if (!a || !b) return;
         var info = runInfo(w, byId);
         var svc = String(info.service || '');
         var dc = /dc|batt/i.test(svc);
+        /* A blank cell on a permit sheet reads as "nothing required here".
+           Anything not derivable from the drawing is marked for field
+           verification instead, so it is visibly outstanding. */
+        var TBD = '\u2014';
         runs.push([
           'C' + (i + 1),
           String(a.label || '').split('\n')[0],
           String(b.label || '').split('\n')[0],
-          svc.toUpperCase(),
-          dc ? '' : (d.sysv || ''),
-          dc ? '' : '3',
+          svc.toUpperCase() || TBD,
+          dc ? TBD : (d.sysv || TBD),
+          dc ? TBD : '3',
           'Cu',
-          dc ? (d.dcsize || '') : (d.acsize || ''),
-          info.cond || '',
-          info.ft || '',
-          '', '1', '2%', '', d.ground || ''
+          (dc ? (d.dcsize || '') : (d.acsize || '')) || 'PER EOR',
+          info.cond || 'PER EOR',
+          info.ft || 'FIELD VERIFY',
+          d.aic || 'PER EOR',
+          '1', '2%', TBD, d.ground || 'PER EOR'
         ]);
+        if (!info.measured) unmeasured++;
       });
       if (!runs.length) runs.push(['\u2014', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
 
@@ -64672,7 +65792,16 @@ window._crmToastModal=_crmToastModal;
           rx += cw[c3];
         }
       }
-      ny = ty2 - 8 - 24 - (notes.length * 19) - 24;
+      /* Say plainly when lengths are not measured routes, so an estimator
+         does not read "FIELD VERIFY" as an oversight -- or worse, read a
+         populated column as surveyed when it was not. */
+      if (unmeasured) {
+        s += T(tx, ty2 + headH + runs.length * rowH + 11,
+          unmeasured + ' of ' + runs.length + ' run(s) have no measured route on the site plan '
+          + '\u2014 draw the conduit to populate RUN LEN. Cells marked PER EOR are engineer-of-record '
+          + 'selections, not omissions.', 7, 0, 'start');
+      }
+      ny = ty2 - 8 - 24 - (notes.length * 19) - 24 - (unmeasured ? 14 : 0);
     }
 
     s += T(44, ny, 'GENERAL NOTES', 15, 700, 'start');
@@ -68341,7 +69470,8 @@ window._crmToastModal=_crmToastModal;
   /* ── what is on the map ─────────────────────────────────────────── */
   function census() {
     var s = S_(); if (!s) return null;
-    var c = { solar: 0, solarKw: 0, bess: 0, bessKwh: 0, ev: 0, evPanel: 0,
+    var c = { solar: 0, solarKw: 0, solarArrays: [], bessBlocks: [],
+              bess: 0, bessKwh: 0, ev: 0, evPanel: 0,
               inverter: 0, hybrid: 0, pcs: 0, microinv: 0, combiner: 0,
               xfmr: 0, mvGear: 0, poi: 0, meter: 0, prodMeter: 0,
               msp: 0, subPanel: 0, critPanel: 0, gen: 0, ats: 0, ems: 0, gutter: 0 };
@@ -68350,8 +69480,26 @@ window._crmToastModal=_crmToastModal;
 
     (s.shapes || []).forEach(function (sh) {
       if (!sh) return;
-      if (sh.kind === 'dersolar') { bump('solar'); c.solarKw += (sh.kw || 0); return; }
-      if (sh.kind === 'assembly' || sh.type === 'bess-asm') { bump('bess'); c.bessKwh += (sh.kwh || 0); return; }
+      if (sh.kind === 'dersolar') {
+        bump('solar'); c.solarKw += (sh.kw || 0);
+        /* A site can have several roofs / several arrays. Collapsing them
+           into one count threw away which array was which and how big each
+           one was, so the one-line could only ever draw a single generic
+           "PV ARRAY" node no matter how many were drawn. Keep the source
+           id, the kW and a usable name for each one. */
+        c.solarArrays.push({
+          srcId: sh.id,
+          kw: +(sh.kw || 0),
+          label: sh.label || sh.name || ''
+        });
+        return;
+      }
+      if (sh.kind === 'assembly' || sh.type === 'bess-asm') {
+        bump('bess'); c.bessKwh += (sh.kwh || 0);
+        c.bessBlocks.push({ srcId: sh.id, kwh: +(sh.kwh || 0), kw: +(sh.kw || 0),
+                            label: sh.label || sh.model || '' });
+        return;
+      }
       if (sh.kind !== 'utility') return;
       var u = sh.utype;
       if (u === 'bessctr') { bump('bess'); return; }
@@ -68439,6 +69587,27 @@ window._crmToastModal=_crmToastModal;
     var links = [];
     function wire(a, b, lbl) { if (a != null && b != null) links.push({ a: a, b: b, label: lbl || '' }); }
 
+    /* ONE NODE PER PHYSICAL ARRAY.
+       A site with three roofs is three arrays with three feeders and three
+       rows in the conductor schedule -- not one node labelled "PV ARRAY".
+       Each node carries the source shape id so the schedule can find the
+       conduit that was actually drawn to it and read its measured length.
+       Falls back to a single node when no per-array detail was captured
+       (older sessions), so nothing regresses. */
+    function addPvNodes(){
+      var arrays = (c.solarArrays && c.solarArrays.length) ? c.solarArrays : null;
+      if(!arrays){
+        if(!c.solar) return [];
+        return [ add('dersolar', 'PV ARRAY', c.solarKw ? (_pvKw(c.solarKw) + ' kW-DC') : '') ];
+      }
+      var multi = arrays.length > 1;
+      return arrays.map(function(a, i){
+        var nm = a.label || (multi ? ('PV ARRAY #' + (i + 1)) : 'PV ARRAY');
+        return add('dersolar', nm, a.kw ? (_pvKw(a.kw) + ' kW-DC') : '', { srcId: a.srcId });
+      });
+    }
+    function _pvKw(v){ return (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10).toLocaleString(); }
+
     var pv = null, bat = [], inv = null, bus = null, poi = null;
 
     if (sc.id === 'GT_MSP' || sc.id === 'GT_TAP') {
@@ -68514,7 +69683,7 @@ window._crmToastModal=_crmToastModal;
       bat.forEach(function (b, i) { wire(b, pcsN[Math.min(i, pcsN.length - 1)], 'battery DC'); });
       var coll = add('panel', 'COLLECTOR BUS', '480V');
       pcsN.forEach(function (p) { wire(p, coll, 'AC'); });
-      if (c.solar) { var s2 = add('dersolar', 'PV ARRAY', c.solarKw ? c.solarKw + ' kW-DC' : ''); wire(s2, coll, 'PV AC'); }
+      if (c.solar) { addPvNodes().forEach(function(pn){ wire(pn, coll, 'PV AC'); }); }
       var su = add('xfmr', 'STEP-UP XFMR', '480V \u2192 MV');
       wire(coll, su, '');
       var mvg = add('panel', 'MV SWITCHGEAR'); wire(su, mvg, 'MV');
@@ -68596,7 +69765,11 @@ window._crmToastModal=_crmToastModal;
           x: X0 + (+d) * COLW, y: Y0 + row * ROWH,
           label: built.nodes[ix].label,
           w: (meta && meta.w) || 150, h: (meta && meta.h) || 58,
-          _omegaGen: true, _synth: true
+          _omegaGen: true, _synth: true,
+          /* Carry the originating shape id. Without it the conductor
+             schedule had no way to find the conduit drawn to this device,
+             which is why RUN LEN came out blank on every row. */
+          _srcId: (built.nodes[ix].srcId != null) ? built.nodes[ix].srcId : undefined
         };
       });
     });
@@ -68609,6 +69782,9 @@ window._crmToastModal=_crmToastModal;
                  style: 'solid', _omegaGen: true, _synth: true };
       }).filter(function (w) { return w.fromId && w.toId; });
       _sld.nextId = _sld.nodes.length + _sld.wires.length + 1;
+      /* Record what the site map looked like when this diagram was built,
+         so the exporter can tell later whether it has gone stale. */
+      try { if (typeof window._olSiteFingerprint === 'function') _sld._srcFp = window._olSiteFingerprint(); } catch (e) {}
       _sld.sel = null;
     } catch (e) { console.warn(TAG, 'could not write the one-line:', e && e.message); return null; }
 
@@ -68767,21 +69943,79 @@ window._crmToastModal=_crmToastModal;
     } catch (e) { return false; }
   }
 
-  /* ── 2. synthesise for the sheet when the template would miss PV ── */
+  /* A fingerprint of everything on the site map that belongs on a
+     one-line. If this changes, the diagram is out of date.
+
+     THE BUG THIS FIXES: the wrapper below used to regenerate only when NO
+     generated one-line existed yet. Once one had been made, it was reused
+     forever. Delete the BESS from the map, press Run (results correctly
+     drop to zero), export E2.0 with Auto-detect -- and the sheet still
+     showed the battery, because a stale generated diagram was sitting in
+     _sld and the "already generated" test passed. The diagram has to
+     follow the drawing, not the other way round. */
+  function siteFingerprint() {
+    var s = S_(); if (!s) return '';
+    var bits = [];
+    try {
+      (s.shapes || []).forEach(function (sh) {
+        if (!sh) return;
+        if (sh.kind === 'dersolar') bits.push('pv:' + Math.round(sh.kw || 0) + ':' + (sh.mount || ''));
+        else if (sh.kind === 'assembly' || sh.type === 'bess-asm') bits.push('bess:' + Math.round(sh.kwh || 0) + ':' + Math.round(sh.kw || 0));
+        else if (sh.kind === 'utility') bits.push('u:' + sh.utype + ':' + Math.round(sh.kw || 0) + ':' + Math.round(sh.kwh || 0));
+        else if (sh.kind === 'derwind') bits.push('wind:' + Math.round(sh.kw || 0));
+      });
+      (s.elements || []).forEach(function (el) {
+        if (!el) return;
+        var q = (typeof _eqRole === 'function' && _eqRole(el)) || el.eqId
+              || (el.type === 'evgear' ? (el.evKind || el.bgbRole || el.evRole) : el.type);
+        if (!q) return;
+        bits.push('e:' + q + ':' + Math.round(el.bessKw || el.bgbKw || el.kw || 0));
+      });
+      /* topology matters too -- rewiring changes the diagram even if the
+         equipment list is identical */
+      (s.conduits || []).forEach(function (c) {
+        if (!c) return;
+        bits.push('c:' + (c.condType || '') + ':' + ((c.fromId != null ? c.fromId : c.fromElId) || '')
+          + '>' + ((c.toId != null ? c.toId : c.toElId) || ''));
+      });
+    } catch (e) {}
+    bits.sort();
+    return bits.join('|');
+  }
+  window._olSiteFingerprint = siteFingerprint;
+
+  /* ── 2. keep the sheet's diagram in step with the site map ── */
   function hookSheet() {
     var orig = window._olRender;
     if (typeof orig !== 'function' || orig.__omegaOlSolar) return false;
     var wrapped = function (sizeKey, withSched) {
       try {
-        var sc = solarCensus();
-        var haveGenerated = false;
-        try { haveGenerated = (_sld.nodes || []).some(function (n) { return n && n._omegaGen; }); } catch (e) {}
-        if (sc.arrays && !haveGenerated && window.OmegaSLD && OmegaSLD.auto) {
+        var fp = siteFingerprint();
+        var nodes = [];
+        try { nodes = _sld.nodes || []; } catch (e) {}
+        var genNodes = nodes.filter(function (n) { return n && n._omegaGen; });
+        var handNodes = nodes.filter(function (n) { return n && !n._omegaGen; });
+        var haveGenerated = genNodes.length > 0;
+        var stale = haveGenerated && (_sld._srcFp !== fp);
+        var hasContent = !!fp;
+
+        /* Never silently discard a one-line someone drew by hand -- warn
+           instead, so the choice stays theirs. */
+        if (handNodes.length && stale) {
+          console.warn(TAG + ' the site map changed but this one-line has '
+            + handNodes.length + ' hand-placed node(s); leaving it alone. '
+            + 'Use OmegaSLD.auto({force:true}) to rebuild from the drawing.');
+        } else if (hasContent && (!haveGenerated || stale) && window.OmegaSLD && OmegaSLD.auto) {
           var r = OmegaSLD.auto({ force: true });
           if (r) {
-            console.info(TAG + ' PV is on the map and the template cannot draw it \u2014 '
-              + 'synthesised a ' + r.label + ' one-line for E2.0.');
+            try { _sld._srcFp = fp; } catch (e) {}
+            console.info(TAG + (stale
+              ? ' the site map changed since this one-line was generated \u2014 rebuilt it from the current drawing.'
+              : ' generated a one-line from the current drawing.')
+              + ' (' + r.label + ')');
           }
+        } else if (haveGenerated && !stale) {
+          console.info(TAG + ' one-line is already in step with the site map.');
         }
       } catch (e) {}
       return orig.apply(this, arguments);   /* patch 22 renders the generated one */
