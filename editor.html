@@ -8506,6 +8506,22 @@ function _elBox(el){
     var _z=(window._plotView&&window._plotView.z)?window._plotView.z:1;
     return { cx:(r.left-sr.left)/_z+(r.width/_z)/2, cy:(r.top-sr.top)/_z+(r.height/_z)/2, hw:(r.width/_z)/2, hh:(r.height/_z)/2 };
   }
+  /* SHAPES, not just elements. Anything drawn from the Draw ribbon is a
+     shape: a utility EMS cabinet, a BESS pad, an assembly. They carry
+     cx/cy or pts[0]+lf/wf rather than x/y/w/h, so the element fallback
+     below returned a 60x60 box at (0,0) for them -- or the caller never
+     got this far because it filtered them out entirely. */
+  var _ppf=(typeof S!=='undefined' && S.pxPerFt>0) ? S.pxPerFt : 6;
+  if(typeof el.cx==='number' && typeof el.cy==='number'){
+    var cw=(+el.lf>0? el.lf*_ppf : (+el.w||60));
+    var ch=(+el.wf>0? el.wf*_ppf : (+el.h||+el.w||60));
+    return { cx:el.cx+(el.tx||0), cy:el.cy+(el.ty||0), hw:cw/2, hh:ch/2 };
+  }
+  if(el.pts && el.pts.length && typeof el.pts[0].x==='number'){
+    var pw=(+el.lf>0? el.lf*_ppf : (+el.wPx||60));
+    var ph=(+el.wf>0? el.wf*_ppf : (+el.hPx||60));
+    return { cx:el.pts[0].x+pw/2+(el.tx||0), cy:el.pts[0].y+ph/2+(el.ty||0), hw:pw/2, hh:ph/2 };
+  }
   // Fallback to model geometry.
   var w=(el.w||60), h=(el.h||el.w||60);
   return { cx:(el.x||0)+w/2, cy:(el.y||0)+h/2, hw:w/2, hh:h/2 };
@@ -9250,11 +9266,34 @@ function _asmElecFromSpec(spec){
   try{
     if(typeof BESS_CATALOG==='undefined'||!spec) return out;
     var m=spec.model||'';
-    if(BESS_CATALOG[m]){ out.key=m; }
+    /* PREFER THE EXPLICIT CATALOG KEY.
+       This matched on spec.model only. The single-unit BESS Pad tool passes
+       the raw key ('GOTION-EDGE-760') so it resolved; the CLUSTER tool
+       passes the friendly display name from the picker
+       ('Gotion EDGE 760 kWh C&I -- $84,740'), which equals no key and no
+       catalog .model, so every clustered unit resolved to null kWh/kW.
+       _ppCollectFleet still counted the units, so omegaBessFleet() returned
+       {units:2, kw:0, kwh:0} and -- because units>0 -- returned early
+       instead of falling back to the config dialog. That is why the Results
+       rail read blank for a cluster and was fine for a single pad.
+       The cluster already carries the right key in spec.catalogKey; it was
+       simply never consulted. */
+    if(spec.catalogKey && BESS_CATALOG[spec.catalogKey]) out.key=spec.catalogKey;
+    else if(BESS_CATALOG[m]){ out.key=m; }
     else {
       for(var k in BESS_CATALOG){
         if(!BESS_CATALOG.hasOwnProperty(k)) continue;
         if(k===m || (BESS_CATALOG[k].model && BESS_CATALOG[k].model===m)){ out.key=k; break; }
+      }
+      /* Last resort: the picker label is "<catalog model> -- $cost", so
+         match on the leading segment before the price/dash. */
+      if(!out.key && m){
+        var base=String(m).split('\u2014')[0].split(' -- ')[0].trim().toLowerCase();
+        for(var k2 in BESS_CATALOG){
+          if(!BESS_CATALOG.hasOwnProperty(k2)) continue;
+          var cm=String(BESS_CATALOG[k2].model||'').trim().toLowerCase();
+          if(base && cm && (cm===base || cm.indexOf(base)===0 || base.indexOf(cm)===0)){ out.key=k2; break; }
+        }
       }
     }
     if(out.key){ var c=BESS_CATALOG[out.key];
@@ -9267,6 +9306,10 @@ function _asmElecFromSpec(spec){
       }
       out.kwh=(c.kwh!=null?c.kwh:null); out.kw=(c.kw!=null?c.kw:null); out.cost=(c.eqcost!=null?c.eqcost:null);
     }
+    /* A spec built from a saved config carries its own rating; use it when
+       the catalog lookup found nothing, so a custom unit still counts. */
+    if(out.kwh==null && +spec.kwh>0) out.kwh=+spec.kwh;
+    if(out.kw==null  && +spec.kw>0)  out.kw =+spec.kw;
   }catch(e){}
   return out;
 }
@@ -16778,6 +16821,14 @@ function autoWireConduit(pts, condType, label, fromElId, toElId) {
     pts:mappedPts, pxLen, ftLen:ft,
     color:ct.color, dash:ct.dash||false,
     fromElId, toElId,
+    /* Also record the endpoints under the generic id fields. Shapes and
+       elements share one id space, and the topology reader, the E5.0
+       schedule and the conductor schedule all resolve endpoints via
+       (fromId ?? fromElId). Writing only the El- form meant a run wired to
+       a DRAWN piece of equipment carried an endpoint those readers could
+       still find, but nothing could tell it apart from an element -- set
+       both so a shape-wired run participates everywhere. */
+    fromId: fromElId || null, toId: toElId || null,
     _autoLabel: true,  // flag so we can update label when calibration changes
     _baseLabel: label || ct.label,
     _condSize: condSize,
@@ -16790,6 +16841,9 @@ function autoWireConduit(pts, condType, label, fromElId, toElId) {
     _applyRouteToConduit(cond, _isPower ? (S.condRoute||'surface') : 'surface');
   }
   S.conduits.push(cond);
+  /* Anchor at creation so an auto-wired run holds its ground position on
+     the very first pan or zoom. */
+  try{ if(typeof _geoRestampOne==='function') _geoRestampOne(cond); }catch(e){}
   /* A new run may join an existing trench, which changes everyone's bank
      slot — so a single draw repaints all runs. During a bulk operation
      that work is deferred to one flush at the end (see condBatch). */
@@ -28076,10 +28130,23 @@ function omegaBessFleet(){
   try{
     if(typeof _ppCollectFleet==='function'){
       var f=_ppCollectFleet();
-      if(f && f.units>0){
+      /* Units placed AND a real rating. Counting units alone was enough to
+         return here, so any placement path that failed to resolve a rating
+         reported {units:N, kw:0, kwh:0} and the rail went blank -- with the
+         config-dialog fallback below skipped because "something was
+         placed". A fleet with no rating is not an answer; fall through and
+         let the fallback speak, and say so in the console rather than
+         showing an empty rail with no explanation. */
+      if(f && f.units>0 && ((+f.totalKw||0)>0 || (+f.totalKwh||0)>0)){
         out.kw=+f.totalKw||0; out.kwh=+f.totalKwh||0; out.units=f.units;
         out.cost=+f.totalCost||0; out.missingCost=!!f.anyMissingCost;
         return out;
+      }
+      if(f && f.units>0 && window.console){
+        console.warn('[omega/bess] '+f.units+' unit(s) are on the drawing but none '
+          + 'resolved to a kW/kWh rating \u2014 falling back to the BESS Config dialog. '
+          + 'Check that the placed model matches a BESS_CATALOG entry.');
+        out.units=f.units;
       }
     }
   }catch(e){}
@@ -45221,10 +45288,51 @@ function placeEmsNode(p){
   if(typeof updateSummaryPanel==='function') updateSummaryPanel();
   return el;
 }
+/* Find the EMS / hub to wire into.
+   This searched S.elements for eqId==='ems' only. An EMS cabinet placed
+   from Draw > Utility is a SHAPE (kind:'utility', utype:'ems'), so drawing
+   one and then running "wire all BESS to hub" reported "No EMS / hub on
+   the canvas" with the cabinet plainly sitting on the drawing. Equipment
+   the person placed by hand has to count the same as equipment a guided
+   build placed. */
 function _findEmsNode(){
-  if(!S.elements) return null;
-  for(var i=0;i<S.elements.length;i++){ if(S.elements[i].eqId==='ems') return S.elements[i]; }
+  try{
+    var els=S.elements||[];
+    for(var i=0;i<els.length;i++){
+      var e=els[i]; if(!e) continue;
+      var q=(typeof _eqRole==='function' && _eqRole(e)) || e.eqId
+            || (e.type==='evgear' ? (e.evKind||e.bgbRole||e.evRole) : null);
+      if(q==='ems') return e;
+    }
+    var shp=S.shapes||[];
+    for(var j=0;j<shp.length;j++){
+      var sh=shp[j]; if(!sh) continue;
+      if(sh.kind==='utility' && (sh.utype==='ems'||sh.utype==='sysctrl'||sh.utype==='scada')) return sh;
+    }
+  }catch(e){}
   return null;
+}
+
+/* Every BESS on the drawing, however it got there: guided-build elements,
+   hand-drawn assemblies, and BESS pads from Draw > BESS Pad. The wiring
+   routine used to read S.elements for type==='bess-asm' alone, so a pad
+   drawn by hand was "no BESS assemblies placed yet". */
+function _findBessPads(){
+  var out=[];
+  try{
+    (S.elements||[]).forEach(function(e){
+      if(!e) return;
+      var q=(typeof _eqRole==='function' && _eqRole(e)) || e.eqId
+            || (e.type==='evgear' ? (e.evKind||e.bgbRole||e.evRole) : e.type);
+      if(e.type==='bess-asm' || q==='bess') out.push(e);
+    });
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh) return;
+      if(sh.kind==='assembly' || sh.kind==='bespad'
+         || (sh.kind==='utility' && sh.utype==='bessctr')) out.push(sh);
+    });
+  }catch(e){}
+  return out;
 }
 
 /* ---- BESS CLUSTER --------------------------------------------------- */
@@ -46042,8 +46150,9 @@ function wireAllBessToHub(hubEl, services){
     { type:'RMC-AC',  label:'AC Power (RMC)' },
     { type:'EMT-BMS', label:'BMS / Data (EMT)' }
   ];
-  var pads=[];
-  try{ pads=S.elements.filter(function(e){ return e.type==='bess-asm'; }); }catch(e){}
+  var pads=(typeof _findBessPads==='function') ? _findBessPads() : [];
+  /* Never wire the hub to itself if it happens to be in the list. */
+  pads=pads.filter(function(p){ return p && p.id!==hub.id; });
   if(!pads.length){
     if(typeof showBanner==='function') showBanner('wiz','!! No BESS assemblies placed yet');
     return 0;
@@ -46056,7 +46165,9 @@ function wireAllBessToHub(hubEl, services){
     var exists=false;
     try{
       exists=S.conduits.some(function(c){
-        return (c.fromElId===pad.id&&c.toElId===hub.id)||(c.fromElId===hub.id&&c.toElId===pad.id);
+        var f=(c.fromId!=null)?c.fromId:c.fromElId;
+        var t=(c.toId!=null)?c.toId:c.toElId;
+        return (f===pad.id&&t===hub.id)||(f===hub.id&&t===pad.id);
       });
     }catch(e){}
     if(exists) continue;
@@ -46185,7 +46296,7 @@ function openGuidedChooser(){
 function _guidedPick(which){
   var m=document.getElementById('gch-modal'); if(m) m.remove();
   if(which==='deluxe'){ openTopoWizard(); }
-  else if(which==='der'){ if(typeof openDerBuild==='function') openDerBuild(); }
+  else if(which==='der'){ if(typeof openGuidedDerBuild==='function') openGuidedDerBuild(); else if(typeof openDerBuild==='function') openDerBuild(); }
   else if(which==='ev'){ if(typeof openDcfcBuild==='function') openDcfcBuild(); else if(typeof _startEvBuild==='function') _startEvBuild(); }
   else {
     // Standard BESS guided build — now its own floating modal + guide HUD
@@ -46411,6 +46522,204 @@ function derBuildToDeluxe(){
 window.openDerBuild=openDerBuild;
 window.placeDerBuildAt=placeDerBuildAt;
 window.derBuildToDeluxe=derBuildToDeluxe;
+</script>
+
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   OMEGA — GUIDED UTILITY + DER BUILD  (ES5-safe)
+   -----------------------------------------------------------------------
+   A single guided flow that stands up a complete Utility+DER site:
+
+       DER generation site  ->  DER POI (collector)  ->  EMS + BESS cluster
+
+   in two clicks, with the MV trench from the DER POI to the BESS run
+   automatically because the POI is registered as the point of connection
+   before the cluster is dropped.
+
+   This is orchestration, not new geometry. It reuses, unchanged:
+     - _derBuildCfg / placeDerBuildAt  (the DER grid + der_poi)
+     - _clusterConfig / placeClusterAt (the BESS pads + EMS + cluster trench,
+       which already runs _trenchUtilityToBess when S._sourceElId is set)
+     - _clusterModels()                (the same model list the BESS dialog uses)
+
+   Nothing here touches the BESS-only trench router or the existing
+   standalone DER Build / BESS Cluster dialogs; those still work as before.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+  var TAG = '[omega/derguided]';
+
+  function has(fn){ return typeof window[fn] === 'function'; }
+  function S_(){ try { return (typeof S!=='undefined' && S) ? S : null; } catch(e){ return null; } }
+
+  /* ---- the config modal: DER source + BESS cluster in one place ---- */
+  function open(){
+    if (document.getElementById('derg-modal')) return;
+    var models = has('_clusterModels') ? _clusterModels()
+               : [{label:'BESS Pad (generic 19.9x8 ft)',lf:19.875,wf:8,model:'BESS Pad',kwh:0}];
+    window._dergModels = models;
+    var mopts = '';
+    for (var i=0;i<models.length;i++){
+      var lbl = models[i].label || ('BESS '+(i+1));
+      mopts += '<option value="'+i+'">'+(has('_esc')?_esc(lbl):lbl)+'</option>';
+    }
+
+    var html = ''
+      +'<div id="derg-modal" style="position:fixed;inset:0;background:rgba(6,12,22,.78);z-index:100001;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.remove()">'
+      +'<div style="background:#0F1D30;border:1px solid #22C55E;border-radius:12px;max-width:520px;width:100%;max-height:90vh;overflow:auto">'
+      +'<div style="padding:16px 20px;border-bottom:1px solid rgba(34,197,94,.3);display:flex;align-items:center;justify-content:space-between">'
+        +'<div style="font-size:16px;font-weight:800;color:#4ADE80">\u2600 Guided Utility + DER Build</div>'
+        +'<button onclick="document.getElementById(\'derg-modal\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button>'
+      +'</div>'
+      +'<div style="padding:18px 20px;font-size:13px;color:#CBD5E1">'
+        +'<p style="margin:0 0 14px;color:#94A3B8;line-height:1.5">Builds the whole site in two clicks: place the generation array, then place the BESS cluster \u2014 the DER POI is set as the point of connection first, so the MV trench from the DER site to the BESS is run for you.</p>'
+
+        /* ── DER source ── */
+        +'<div style="font:700 10px/1 sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#4ADE80;margin-bottom:8px">Generation (DER)</div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">'
+          +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">Source</label>'
+            +'<select id="derg-src" style="width:100%;background:#0B1626;border:1px solid #22C55E;color:#E2EEF9;border-radius:6px;padding:8px">'
+              +'<option value="pv">Solar PV</option>'
+              +'<option value="wind">Wind</option>'
+              +'<option value="gas">Gas / Genset</option>'
+            +'</select></div>'
+          +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">Target MW</label>'
+            +'<input id="derg-mw" type="number" step="0.5" min="0.5" value="5" style="width:100%;background:#0B1626;border:1px solid #22C55E;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
+          +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">Columns</label>'
+            +'<input id="derg-cols" type="number" min="1" max="12" value="4" style="width:100%;background:#0B1626;border:1px solid #22C55E;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
+        +'</div>'
+
+        /* ── BESS cluster ── */
+        +'<div style="font:700 10px/1 sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#4ADE80;margin-bottom:8px">Storage (EMS + BESS cluster)</div>'
+        +'<div style="margin-bottom:10px"><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">BESS model</label>'
+          +'<select id="derg-model" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px">'+mopts+'</select></div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'
+          +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">How many units</label>'
+            +'<input id="derg-qty" type="number" min="1" max="40" value="3" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
+          +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">Columns</label>'
+            +'<input id="derg-bcols" type="number" min="1" max="10" value="3" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
+        +'</div>'
+        +'<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;margin-bottom:6px">'
+          +'<input type="checkbox" id="derg-trench" checked style="width:14px;height:14px"> Auto-trench each BESS unit to EMS (AC / DC / BMS)</label>'
+        +'<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">'
+          +'<input type="checkbox" id="derg-ems" checked style="width:14px;height:14px"> Place EMS common node</label>'
+        +'<div id="derg-preview" style="margin-top:12px;font-size:11px;color:#4ADE80"></div>'
+      +'</div>'
+      +'<div style="padding:14px 20px;border-top:1px solid rgba(34,197,94,.2);display:flex;gap:8px;justify-content:flex-end">'
+        +'<button onclick="document.getElementById(\'derg-modal\').remove()" style="background:none;border:1px solid #1E3A5F;color:#94A3B8;border-radius:6px;padding:8px 16px;font-size:12px;cursor:pointer">Cancel</button>'
+        +'<button id="derg-go" style="background:#22C55E;border:none;color:#052e16;border-radius:6px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer">Start build \u2192</button>'
+      +'</div>'
+      +'</div></div>';
+    var d=document.createElement('div'); d.innerHTML=html; document.body.appendChild(d.firstChild);
+
+    var SPECS = (typeof DER_BUILD_SPECS!=='undefined') ? DER_BUILD_SPECS
+      : { pv:{label:'Solar PV',blockKw:500}, wind:{label:'Wind',blockKw:100}, gas:{label:'Gas / Genset',blockKw:750} };
+    function upd(){
+      var src=(document.getElementById('derg-src')||{}).value||'pv';
+      var mw=parseFloat((document.getElementById('derg-mw')||{}).value||'5');
+      var spec=SPECS[src]||SPECS.pv;
+      var blocks=Math.max(1,Math.ceil((mw*1000)/spec.blockKw));
+      var qty=Math.max(1,parseInt((document.getElementById('derg-qty')||{}).value||'3',10));
+      var pv=document.getElementById('derg-preview');
+      if(pv) pv.textContent='\u2192 '+blocks+' \u00d7 '+spec.label+' block(s) = '
+        +((blocks*spec.blockKw)/1000).toFixed(2)+' MW  \u00b7  '+qty+' BESS unit'+(qty===1?'':'s')
+        +'  \u00b7  MV trench DER POI \u2192 BESS auto-run';
+    }
+    ['derg-src','derg-mw','derg-qty'].forEach(function(id){
+      var e=document.getElementById(id); if(e){ e.oninput=upd; e.onchange=upd; }
+    });
+    upd();
+    document.getElementById('derg-go').onclick = arm;
+  }
+
+  /* ---- read the modal, stash both configs, arm stage 1 ---- */
+  function arm(){
+    var models = window._dergModels || (has('_clusterModels') ? _clusterModels() : []);
+    var mi = parseInt((document.getElementById('derg-model')||{}).value||'0',10);
+    var src = (document.getElementById('derg-src')||{}).value||'pv';
+    var mw  = parseFloat((document.getElementById('derg-mw')||{}).value||'5');
+    var SPECS = (typeof DER_BUILD_SPECS!=='undefined') ? DER_BUILD_SPECS : null;
+    if (!SPECS || !has('placeDerBuildAt') || !has('placeClusterAt')) {
+      if (has('showBanner')) showBanner('shape',' Guided build needs the DER and Cluster builders \u2014 open them once, then retry.');
+      return;
+    }
+    var spec = SPECS[src] || SPECS.pv;
+
+    /* stage-1 config: exactly what _derBuildArm would produce */
+    window._derBuildCfg = {
+      src: src, spec: spec, mw: mw,
+      blocks: Math.max(1, Math.ceil((mw*1000)/spec.blockKw)),
+      cols: Math.max(1, parseInt((document.getElementById('derg-cols')||{}).value||'4',10)),
+      xfmr: true
+    };
+
+    /* stage-2 config: exactly what _clusterArm would produce */
+    window._clusterConfig = {
+      qty:  Math.max(1, parseInt((document.getElementById('derg-qty')||{}).value||'3',10)),
+      cols: Math.max(1, parseInt((document.getElementById('derg-bcols')||{}).value||'3',10)),
+      model: models[mi] || models[0] || {label:'BESS Pad',lf:19.875,wf:8,model:'BESS Pad',kwh:0},
+      autoTrench: !!(document.getElementById('derg-trench')||{}).checked,
+      placeEms: !!(document.getElementById('derg-ems')||{}).checked
+    };
+
+    var m=document.getElementById('derg-modal'); if(m) m.remove();
+
+    armStageOne();
+  }
+
+  /* ---- stage 1: place the DER site, then chain to stage 2 ---- */
+  function armStageOne(){
+    /* One-shot wrap of placeDerBuildAt: run the real placer, then, once the
+       DER POI exists, register it as the source and arm the cluster drop. */
+    if (!placeDerBuildAt.__dergWrapped) {
+      var orig = window.placeDerBuildAt;
+      window.placeDerBuildAt = function (p) {
+        var r = orig.apply(this, arguments);
+        if (window.__dergChain) {
+          window.__dergChain = false;
+          try { chainToCluster(); } catch (e) { console.warn(TAG, e && e.message); }
+        }
+        return r;
+      };
+      window.placeDerBuildAt.__dergWrapped = true;
+      window.placeDerBuildAt.__orig = orig;
+    }
+    window.__dergChain = true;
+
+    if (has('setMode')) setMode('derbuildplace'); else { var s=S_(); if(s) s.mode='derbuildplace'; }
+    if (has('showBanner')) showBanner('shape',' Step 1 of 2 \u2014 click the map to place the '
+      + (window._derBuildCfg.spec.label||'DER') + ' generation site');
+  }
+
+  /* ---- stage 2: DER POI as source, then drop the BESS cluster ---- */
+  function chainToCluster(){
+    var s = S_(); if (!s) return;
+    /* Register the DER POI as the point of connection so placeClusterAt
+       runs the MV trench from it to the BESS/EMS automatically. */
+    if (s._derPoiId) {
+      s._sourceElId = s._derPoiId;
+      s._sourceType = 'utility_der';
+      if (!s._topoDone) s._topoDone = [];
+      if (s._topoDone.indexOf('src') < 0) s._topoDone.push('src');
+    }
+    /* clear any stale MV-trench marker so placeClusterAt will lay a fresh one */
+    try { window._mvTrenchId = null; } catch (e) {}
+
+    if (has('setMode')) setMode('clusterplace'); else s.mode='clusterplace';
+    if (has('showBanner')) showBanner('shape',' Step 2 of 2 \u2014 click the map to drop the BESS cluster (it will trench back to the DER POI)');
+  }
+
+  /* ---- entry points ---- */
+  window.openGuidedDerBuild = open;
+  window.OmegaDerGuided = { open: open, status: function(){
+    var s=S_()||{};
+    return { derPoi: s._derPoiId||null, sourceType: s._sourceType||null,
+             chaining: !!window.__dergChain };
+  }};
+
+  if (window.console) console.info(TAG, 'armed — openGuidedDerBuild() runs DER \u2192 POI \u2192 EMS + BESS in two clicks');
+})();
 </script>
 
 
@@ -49424,21 +49733,56 @@ function _bessRunPanel(){
         +(sched.skipNotes.length?('<br>'+sched.skipNotes.map(function(s){return '\u2713 '+s;}).join('<br>')):'<br>No integrated legs \u2014 full DC+AC power train applies.')
         +'</div>')
     : ('<div style="font-size:9.5px;color:#94A3B8;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:5px;padding:6px 8px;margin-top:8px;line-height:1.5">No BESS unit placed yet \u2014 showing the full generic schedule. Place a BESS Pad/assembly first so integrated PCS/xfmr/disconnect can be detected and skipped automatically.</div>');
+  /* Anchor below the real chrome stack (portal-nav + doc tabs + ribbon),
+     not a hardcoded 110px -- the ribbon height varies (62/68/92px across
+     builds), and a fixed 110px landed this panel's header partly under
+     the ribbon on taller layouts with no way to reach it. Clamp so it
+     never opens off-screen on short viewports either. */
+  var _chromeH = 0;
+  try {
+    ['portal-nav','doc-tabs','ribbon'].forEach(function(id){
+      var e=document.getElementById(id);
+      if(e) _chromeH += e.getBoundingClientRect().height;
+    });
+  } catch(e){}
+  var _topPx = Math.max(64, Math.min(_chromeH + 12, window.innerHeight - 200));
+
   var wrap=document.createElement('div');
   wrap.id='bess-run-panel';
-  wrap.style.cssText='position:fixed;right:18px;top:110px;z-index:9998;background:#0F1D30;border:1px solid #1DB954;border-radius:10px;padding:0;width:320px;max-height:76vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.55);font-family:inherit';
+  wrap.style.cssText='position:fixed;right:18px;top:'+_topPx+'px;z-index:9998;background:#0F1D30;border:1px solid #1DB954;border-radius:10px;padding:0;width:320px;max-height:76vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.55);font-family:inherit';
   wrap.innerHTML=''
-    +'<div style="position:sticky;top:0;background:#0F1D30;padding:12px 16px;border-bottom:1px solid rgba(29,185,84,.3)">'
+    +'<div id="bess-run-panel-head" style="position:sticky;top:0;background:#0F1D30;padding:12px 16px;border-bottom:1px solid rgba(29,185,84,.3);cursor:move;border-radius:10px 10px 0 0">'
       +'<div style="display:flex;justify-content:space-between;align-items:center">'
-        +'<span style="font-size:13px;font-weight:800;color:#4ADE80">BESS Cable Run Schedule</span>'
+        +'<span style="font-size:13px;font-weight:800;color:#4ADE80">\u2630 BESS Cable Run Schedule</span>'
         +'<button onclick="_bessRunPanelClose()" style="background:none;border:none;color:#64748B;font-size:18px;cursor:pointer;line-height:1">\u00d7</button>'
       +'</div>'
-      +'<input id="bess-run-panel-tag" type="text" placeholder="System tag (e.g. BESS-01) \u2014 optional" value="'+tag.replace(/"/g,'&quot;')+'" onchange="_bessRunPanelTagChange()" style="width:100%;margin-top:8px;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:6px 8px;font-size:11px;font-family:inherit">'
+      +'<input id="bess-run-panel-tag" type="text" placeholder="System tag (e.g. BESS-01) \u2014 optional" value="'+tag.replace(/"/g,'&quot;')+'" onchange="_bessRunPanelTagChange()" onmousedown="event.stopPropagation()" style="width:100%;margin-top:8px;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:6px 8px;font-size:11px;font-family:inherit">'
       +statusHtml
     +'</div>'
     +'<div style="padding:4px 16px 6px">'+rows+'</div>'
     +'<div style="padding:8px 16px 14px;font-size:9px;color:#64748B;line-height:1.5">Click Draw to arm the conduit tool with that run pre-selected \u2014 type, label, and from/to are stamped automatically. From/To reflects common BESS topology; verify against the approved one-line before pulling cable.</div>';
   document.body.appendChild(wrap);
+
+  /* Drag by the header, same pattern as the Cluster panel -- so if it
+     ever lands somewhere awkward on a given screen/zoom, it can be
+     pulled free by hand instead of being stuck. */
+  (function(){
+    var head = document.getElementById('bess-run-panel-head');
+    if(!head) return;
+    var dragging=null;
+    head.addEventListener('mousedown', function(e){
+      if(e.target && e.target.tagName==='BUTTON') return;
+      dragging={x:e.clientX,y:e.clientY,l:wrap.offsetLeft,t:wrap.offsetTop};
+      wrap.style.right='auto';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e){
+      if(!dragging) return;
+      wrap.style.left=(dragging.l+e.clientX-dragging.x)+'px';
+      wrap.style.top=(dragging.t+e.clientY-dragging.y)+'px';
+    });
+    document.addEventListener('mouseup', function(){ dragging=null; });
+  })();
 }
 function _bessRunPanelClose(){ var p=document.getElementById('bess-run-panel'); if(p) p.parentNode.removeChild(p); }
 function _bessRunPanelTagChange(){
@@ -65924,15 +66268,25 @@ window._crmToastModal=_crmToastModal;
 
   function S_() { try { return (typeof S !== 'undefined' && S) ? S : null; } catch (e) { return null; } }
 
+  /* DER Build (openDerBuild/placeDerBuildAt) produces its own shape/element
+     kinds -- dersolar, derwind, deralt blocks, plus xfmr + der_poi elements
+     tied together with derCollector conduits. None of that matched the
+     BESS-only filters below, so a DER site was invisible to alt-click,
+     census, and rigid-body rotate even though it is exactly the same kind
+     of "cluster of blocks + collector" arrangement as a BESS pad group. */
+  function isClusterShape(x) {
+    return !!x && (x.kind === 'assembly' || x.type === 'bess-asm'
+      || x.kind === 'dersolar' || x.kind === 'derwind' || x.kind === 'deralt');
+  }
+  function isClusterEl(x) {
+    return !!x && (x.eqId === 'ems' || x.type === 'ems'
+      || x.eqId === 'der_poi' || x.eqId === 'xfmr');
+  }
   function members() {
     var s = S_(); if (!s) return null;
-    var shapes = (s.shapes || []).filter(function (x) {
-      return x && (x.kind === 'assembly' || x.type === 'bess-asm');
-    });
-    var els = (s.elements || []).filter(function (x) {
-      return x && (x.eqId === 'ems' || x.type === 'ems');
-    });
-    var conds = (s.conduits || []).filter(function (c) { return c && c.cluster; });
+    var shapes = (s.shapes || []).filter(isClusterShape);
+    var els = (s.elements || []).filter(isClusterEl);
+    var conds = (s.conduits || []).filter(function (c) { return c && (c.cluster || c.derCollector); });
     if (!shapes.length && !els.length) return null;
     return { shapes: shapes, elements: els, conduits: conds };
   }
@@ -66033,7 +66387,7 @@ window._crmToastModal=_crmToastModal;
       var s = S_(); if (!s) return null;
       for (var i = 0; i < (s.shapes || []).length; i++) {
         var sh = s.shapes[i];
-        if (sh.id === id && (sh.kind === 'assembly' || sh.type === 'bess-asm')) return sh;
+        if (sh.id === id && isClusterShape(sh)) return sh;
       }
     } catch (e) {}
     return null;
@@ -66402,19 +66756,23 @@ window._crmToastModal=_crmToastModal;
   function S_() { try { return (typeof S !== 'undefined' && S) ? S : null; } catch (e) { return null; } }
   function ppf() { var s = S_(); return (s && s.pxPerFt > 0) ? s.pxPerFt : 0; }
 
+  /* Same DER-aware filters as the OmegaCluster core (patch 23) -- a DER
+     Build site (dersolar/derwind/deralt blocks + der_poi/xfmr elements,
+     linked by derCollector conduits) is a cluster in every way that
+     matters here, so the panel should see and report on it too. */
   function census() {
     var s = S_(); if (!s) return { pads: 0, ems: 0, runs: 0 };
     return {
-      pads: (s.shapes || []).filter(function (x) { return x && (x.kind === 'assembly' || x.type === 'bess-asm'); }).length,
-      ems: (s.elements || []).filter(function (x) { return x && (x.eqId === 'ems' || x.type === 'ems'); }).length,
-      runs: (s.conduits || []).filter(function (c) { return c && c.cluster; }).length
+      pads: (s.shapes || []).filter(function (x) { return x && (x.kind === 'assembly' || x.type === 'bess-asm' || x.kind === 'dersolar' || x.kind === 'derwind' || x.kind === 'deralt'); }).length,
+      ems: (s.elements || []).filter(function (x) { return x && (x.eqId === 'ems' || x.type === 'ems' || x.eqId === 'der_poi' || x.eqId === 'xfmr'); }).length,
+      runs: (s.conduits || []).filter(function (c) { return c && (c.cluster || c.derCollector); }).length
     };
   }
 
   /* Current heading, read the same way the trench router reads it. */
   function currentHeading() {
     var s = S_(); if (!s) return 0;
-    var pads = (s.shapes || []).filter(function (x) { return x && x.kind === 'assembly'; });
+    var pads = (s.shapes || []).filter(function (x) { return x && (x.kind === 'assembly' || x.kind === 'dersolar' || x.kind === 'derwind' || x.kind === 'deralt'); });
     var rots = pads.map(function (p) { return typeof p.rot === 'number' ? p.rot : null; })
                    .filter(function (r) { return r !== null; });
     if (rots.length) return Math.round(rots.reduce(function (a, b) { return a + b; }, 0) / rots.length);
@@ -66522,7 +66880,7 @@ window._crmToastModal=_crmToastModal;
           + c.pads + ' container' + (c.pads === 1 ? '' : 's') + ' \u00b7 ' + c.ems + ' EMS \u00b7 '
           + c.runs + ' run' + (c.runs === 1 ? '' : 's') + '</div>'
         : '<div style="font-size:10.5px;color:#FBBF24;margin-bottom:9px">'
-          + 'No BESS cluster on this drawing yet.</div>')
+          + 'No BESS or DER cluster on this drawing yet.</div>')
 
       /* ── heading ── */
       + '<div style="font:700 9px/1.4 sans-serif;letter-spacing:.08em;text-transform:uppercase;'
@@ -66583,6 +66941,20 @@ window._crmToastModal=_crmToastModal;
       };
     });
     p.querySelector('#ocp-relay').onclick = function () {
+      /* OmegaTrench's router lays lanes between BESS containers and an
+         EMS cabinet specifically -- that math does not apply to a DER
+         site's PV/wind/genset blocks and collector POI, so if the only
+         thing selected is a DER build, say so plainly instead of either
+         silently no-op'ing or mis-routing solar-array geometry through
+         BESS cabinet lane logic. Move/rotate above still work fine on
+         a DER site; only auto-relay is BESS-only for now. */
+      var s = S_();
+      var hasBessUnits = !!(s && (s.shapes || []).some(function (x) { return x && x.kind === 'assembly'; }));
+      var c = census();
+      if (!hasBessUnits && c.pads > 0) {
+        note('DER site selected \u2014 move/rotate above work, but auto trenching is BESS-only for now.');
+        return;
+      }
       try {
         var r = (window.OmegaTrench && OmegaTrench.rebuild) ? OmegaTrench.rebuild() : null;
         note(r ? ('Re-laid ' + r.created + ' run(s) at ' + r.headingDeg + '\u00b0.') : 'Nothing to re-lay.');
