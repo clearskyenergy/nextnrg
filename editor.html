@@ -30516,18 +30516,60 @@ function _geoReprojectAll(){
     (S.shapes||[]).forEach(function(sh){ _geoApplyShape(sh, toPx, _ppf); });
     /* Conduits: reproject each routing point from its stored lat/lng. */
     (S.conduits||[]).forEach(function(c){
-      if(!c._geoPts || !c.pts) return;
-      /* Advancing only the anchored points is what tears a run across the map
-         on zoom. Move all of it, or leave it where it is. */
-      if(c._geoPts.length!==c.pts.length) return;
-      for(var jc=0;jc<c._geoPts.length;jc++){
-        var gq=c._geoPts[jc];
-        if(!gq || gq.lat==null || gq.lng==null) return;
+      if(!c || !c.pts) return;
+
+      /* Reproject from the frozen ground anchor when it is present and
+         well-formed. (Endpoints bound to equipment are re-welded below,
+         so a conduit with no/partial _geoPts is no longer skipped outright
+         if at least its endpoints can follow their elements.) */
+      var anchorOk = !!(c._geoPts && c._geoPts.length===c.pts.length);
+      if(anchorOk){
+        for(var jc=0;jc<c._geoPts.length;jc++){
+          var gq=c._geoPts[jc];
+          if(!gq || gq.lat==null || gq.lng==null){ anchorOk=false; break; }
+        }
       }
-      for(var j=0;j<c.pts.length && j<c._geoPts.length;j++){
-        var g2=c._geoPts[j]; if(!g2) continue;
-        var px2=toPx(g2.lat,g2.lng); if(px2){ c.pts[j].x=px2.x; c.pts[j].y=px2.y; }
+      if(anchorOk){
+        for(var j=0;j<c.pts.length && j<c._geoPts.length;j++){
+          var g2=c._geoPts[j]; if(!g2) continue;
+          var px2=toPx(g2.lat,g2.lng); if(px2){ c.pts[j].x=px2.x; c.pts[j].y=px2.y; }
+        }
       }
+
+      /* ── ENDPOINT WELD ────────────────────────────────────────────────
+         The frozen ground anchor and the equipment's own anchor are stamped
+         at different moments and updated by different handlers, so on zoom a
+         run's end and the box it feeds drift apart. The fix: any point that
+         names an element (pts[i].elId, or the run's fromId/toId for the
+         first/last point) is snapped to that element's CURRENT model-space
+         centre, so the connection is welded by construction at every zoom
+         instead of relying on two anchors agreeing. _elCenter answers in the
+         same coordinate space as c.pts, so no screen/model mixing. */
+      if(typeof _elCenter==='function' && c.pts.length){
+        var lastI = c.pts.length-1;
+        for(var pi=0; pi<c.pts.length; pi++){
+          var pt=c.pts[pi];
+          var eid = pt && pt.elId;          /* explicit attachment: always weld */
+          var viaEnd = false;
+          if(!eid && pi===0)      { eid = c.fromId || c.fromElId || null; viaEnd = true; }
+          if(!eid && pi===lastI)  { eid = c.toId   || c.toElId   || null; viaEnd = true; }
+          if(!eid) continue;
+          var ctr=_elCenter(eid);
+          if(!ctr) continue;
+          if(viaEnd){
+            /* No elId on the point itself — this run may exit at the element's
+               EDGE (port) or carry a cluster edge-offset, so only re-weld when
+               the endpoint is already essentially on the element (a true
+               attachment that has merely drifted), not when it is a
+               deliberate edge/offset exit. Tolerance scales with zoom. */
+            var tol=(S.pxPerFt>0? S.pxPerFt:6)*30;  /* ~30 ft */
+            var dx=pt.x-ctr.x, dy=pt.y-ctr.y;
+            if((dx*dx+dy*dy) > tol*tol) continue;
+          }
+          pt.x=ctr.x; pt.y=ctr.y;
+        }
+      }
+
       /* The points just moved, so the pixel length they imply moved with
          them. pxLen is assigned only on explicit draw/edit paths — never
          on pan or zoom — so without this it stays frozen at the zoom the
@@ -45443,7 +45485,25 @@ function _catalogNames(){
 
 /* Called from the canvas click handler when mode==='clusterplace'. */
 function placeClusterAt(p){
-  var cfg=_clusterConfig; var spec=cfg.model;
+  var cfg=_clusterConfig || {};
+  /* Guard: a null/blank model silently threw on spec.lf below and placed
+     NOTHING -- the cluster tab read "BESS 0" with only stage-1 DER gear on
+     the map. Fall back to the model list, then to a generic pad, so a
+     cluster is always built. */
+  var spec=cfg.model;
+  if(!spec || typeof spec.lf!=='number' || typeof spec.wf!=='number'){
+    try {
+      var _ml=(typeof _clusterModels==='function')?_clusterModels():[];
+      spec = _ml[0] || null;
+    } catch(e){ spec=null; }
+    if(!spec || typeof spec.lf!=='number'){
+      spec={ label:'BESS Pad (generic 19.9x8 ft)', lf:19.875, wf:8, model:'BESS Pad', kwh:0 };
+    }
+    cfg.model=spec;
+    if(typeof console!=='undefined') console.warn('[cluster] model was missing — fell back to '+(spec.model||spec.label));
+  }
+  cfg.qty  = Math.max(1, parseInt(cfg.qty||2,10));
+  cfg.cols = Math.max(1, parseInt(cfg.cols||2,10));
   var ppf=(S.pxPerFt&&S.pxPerFt>0)?S.pxPerFt:6;
   /* Proper footprint: BESS + aux gear row + clearance + access gutter,
      matching _doPlaceBesPadGrid so units never overlap. */
@@ -46527,24 +46587,28 @@ window.derBuildToDeluxe=derBuildToDeluxe;
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════════
-   OMEGA — GUIDED UTILITY + DER BUILD  (ES5-safe)
+   OMEGA — SOURCE-ANCHORED UTILITY + DER GUIDED BUILD  (ES5-safe)
    -----------------------------------------------------------------------
-   A single guided flow that stands up a complete Utility+DER site:
+   Rebuilt around the Point-of-Connection anchor, the way the working
+   utility+DER jobs are drawn: the "Utility + DER" icon is the thing the
+   whole system hangs off. Two ways in:
 
-       DER generation site  ->  DER POI (collector)  ->  EMS + BESS cluster
+     A) GUIDED (place)   drop the Utility+DER anchor, then generation, then
+                         the BESS cluster -- each real, each trenched back
+                         to the anchor.
 
-   in two clicks, with the MV trench from the DER POI to the BESS run
-   automatically because the POI is registered as the point of connection
-   before the cluster is dropped.
+     B) SNAP TO MY SYSTEM  draw / place equipment by hand first, then drop
+                           the Utility+DER anchor and have it SNAP onto the
+                           nearest thing you drew, register as the point of
+                           connection, and run the MV trench to your BESS.
 
-   This is orchestration, not new geometry. It reuses, unchanged:
-     - _derBuildCfg / placeDerBuildAt  (the DER grid + der_poi)
-     - _clusterConfig / placeClusterAt (the BESS pads + EMS + cluster trench,
-       which already runs _trenchUtilityToBess when S._sourceElId is set)
-     - _clusterModels()                (the same model list the BESS dialog uses)
-
-   Nothing here touches the BESS-only trench router or the existing
-   standalone DER Build / BESS Cluster dialogs; those still work as before.
+   This reuses, unchanged:
+     - placeSourceAt / _sourceCfg  (the real Utility+DER POI anchor + its
+       auto MV trench, _trenchUtilityToBess)
+     - _derBuildCfg / placeDerBuildAt   (DER generation grid)
+     - _clusterConfig / placeClusterAt  (BESS pads + EMS + cluster trench,
+       now guarded so it always builds real pads)
+     - nearestEl                        (snap the anchor onto hand-drawn gear)
    ═══════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
@@ -46553,9 +46617,42 @@ window.derBuildToDeluxe=derBuildToDeluxe;
   function has(fn){ return typeof window[fn] === 'function'; }
   function S_(){ try { return (typeof S!=='undefined' && S) ? S : null; } catch(e){ return null; } }
 
-  /* ---- the config modal: DER source + BESS cluster in one place ---- */
+  /* ---- top-level chooser: guided vs snap ---- */
   function open(){
     if (document.getElementById('derg-modal')) return;
+    var html = ''
+      +'<div id="derg-modal" style="position:fixed;inset:0;background:rgba(6,12,22,.78);z-index:100001;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.remove()">'
+      +'<div style="background:#0F1D30;border:1px solid #22C55E;border-radius:12px;max-width:540px;width:100%;max-height:92vh;overflow:auto">'
+      +'<div style="padding:16px 20px;border-bottom:1px solid rgba(34,197,94,.3);display:flex;align-items:center;justify-content:space-between">'
+        +'<div style="font-size:16px;font-weight:800;color:#4ADE80">\u26a1 Utility + DER Build</div>'
+        +'<button onclick="document.getElementById(\'derg-modal\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button>'
+      +'</div>'
+      +'<div style="padding:18px 20px;font-size:13px;color:#CBD5E1">'
+        +'<p style="margin:0 0 14px;color:#94A3B8;line-height:1.5">The <b style="color:#E2EEF9">Utility + DER</b> anchor is the point of connection everything hangs off. Start it two ways:</p>'
+
+        +'<div id="derg-mode-guided" onclick="OmegaDerGuided._pick(\'guided\')" style="border:1px solid #22C55E;border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;background:rgba(34,197,94,.06)">'
+          +'<div style="font-weight:800;color:#4ADE80;margin-bottom:3px">Guided \u2014 place it for me</div>'
+          +'<div style="font-size:11.5px;color:#94A3B8;line-height:1.5">Drop the Utility+DER anchor, then a generation array, then the BESS cluster. Everything is trenched back to the anchor.</div>'
+        +'</div>'
+
+        +'<div id="derg-mode-snap" onclick="OmegaDerGuided._pick(\'snap\')" style="border:1px solid #1E3A5F;border-radius:10px;padding:14px;cursor:pointer">'
+          +'<div style="font-weight:800;color:#E2EEF9;margin-bottom:3px">Snap to my system</div>'
+          +'<div style="font-size:11.5px;color:#94A3B8;line-height:1.5">You\u2019ve already drawn or placed equipment. Drop the Utility+DER anchor and it snaps onto the nearest element, becomes the point of connection, and runs the MV trench to your BESS.</div>'
+        +'</div>'
+      +'</div>'
+      +'</div></div>';
+    var d=document.createElement('div'); d.innerHTML=html; document.body.appendChild(d.firstChild);
+  }
+
+  function pick(which){
+    var m=document.getElementById('derg-modal'); if(m) m.remove();
+    if (which==='snap') return armSnap();
+    return openGuidedConfig();
+  }
+
+  /* ═══ MODE A: GUIDED CONFIG (place everything) ═══ */
+  function openGuidedConfig(){
+    if (document.getElementById('dergc-modal')) return;
     var models = has('_clusterModels') ? _clusterModels()
                : [{label:'BESS Pad (generic 19.9x8 ft)',lf:19.875,wf:8,model:'BESS Pad',kwh:0}];
     window._dergModels = models;
@@ -46564,51 +46661,46 @@ window.derBuildToDeluxe=derBuildToDeluxe;
       var lbl = models[i].label || ('BESS '+(i+1));
       mopts += '<option value="'+i+'">'+(has('_esc')?_esc(lbl):lbl)+'</option>';
     }
-
     var html = ''
-      +'<div id="derg-modal" style="position:fixed;inset:0;background:rgba(6,12,22,.78);z-index:100001;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.remove()">'
-      +'<div style="background:#0F1D30;border:1px solid #22C55E;border-radius:12px;max-width:520px;width:100%;max-height:90vh;overflow:auto">'
+      +'<div id="dergc-modal" style="position:fixed;inset:0;background:rgba(6,12,22,.78);z-index:100001;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.remove()">'
+      +'<div style="background:#0F1D30;border:1px solid #22C55E;border-radius:12px;max-width:520px;width:100%;max-height:92vh;overflow:auto">'
       +'<div style="padding:16px 20px;border-bottom:1px solid rgba(34,197,94,.3);display:flex;align-items:center;justify-content:space-between">'
-        +'<div style="font-size:16px;font-weight:800;color:#4ADE80">\u2600 Guided Utility + DER Build</div>'
-        +'<button onclick="document.getElementById(\'derg-modal\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button>'
+        +'<div style="font-size:16px;font-weight:800;color:#4ADE80">\u2600 Guided Utility + DER</div>'
+        +'<button onclick="document.getElementById(\'dergc-modal\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button>'
       +'</div>'
       +'<div style="padding:18px 20px;font-size:13px;color:#CBD5E1">'
-        +'<p style="margin:0 0 14px;color:#94A3B8;line-height:1.5">Builds the whole site in two clicks: place the generation array, then place the BESS cluster \u2014 the DER POI is set as the point of connection first, so the MV trench from the DER site to the BESS is run for you.</p>'
+        +'<p style="margin:0 0 14px;color:#94A3B8;line-height:1.5">Three clicks: <b style="color:#E2EEF9">anchor \u2192 generation \u2192 BESS</b>. The MV trench from the anchor to the BESS runs automatically.</p>'
 
-        /* ── DER source ── */
         +'<div style="font:700 10px/1 sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#4ADE80;margin-bottom:8px">Generation (DER)</div>'
         +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">'
           +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">Source</label>'
-            +'<select id="derg-src" style="width:100%;background:#0B1626;border:1px solid #22C55E;color:#E2EEF9;border-radius:6px;padding:8px">'
-              +'<option value="pv">Solar PV</option>'
-              +'<option value="wind">Wind</option>'
-              +'<option value="gas">Gas / Genset</option>'
+            +'<select id="dergc-src" style="width:100%;background:#0B1626;border:1px solid #22C55E;color:#E2EEF9;border-radius:6px;padding:8px">'
+              +'<option value="pv">Solar PV</option><option value="wind">Wind</option><option value="gas">Gas / Genset</option>'
             +'</select></div>'
           +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">Target MW</label>'
-            +'<input id="derg-mw" type="number" step="0.5" min="0.5" value="5" style="width:100%;background:#0B1626;border:1px solid #22C55E;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
+            +'<input id="dergc-mw" type="number" step="0.5" min="0.5" value="5" style="width:100%;background:#0B1626;border:1px solid #22C55E;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
           +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">Columns</label>'
-            +'<input id="derg-cols" type="number" min="1" max="12" value="4" style="width:100%;background:#0B1626;border:1px solid #22C55E;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
+            +'<input id="dergc-cols" type="number" min="1" max="12" value="4" style="width:100%;background:#0B1626;border:1px solid #22C55E;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
         +'</div>'
 
-        /* ── BESS cluster ── */
         +'<div style="font:700 10px/1 sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#4ADE80;margin-bottom:8px">Storage (EMS + BESS cluster)</div>'
         +'<div style="margin-bottom:10px"><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">BESS model</label>'
-          +'<select id="derg-model" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px">'+mopts+'</select></div>'
+          +'<select id="dergc-model" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px">'+mopts+'</select></div>'
         +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'
           +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">How many units</label>'
-            +'<input id="derg-qty" type="number" min="1" max="40" value="3" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
+            +'<input id="dergc-qty" type="number" min="1" max="40" value="3" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
           +'<div><label style="font-size:11px;color:#94A3B8;display:block;margin-bottom:4px">Columns</label>'
-            +'<input id="derg-bcols" type="number" min="1" max="10" value="3" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
+            +'<input id="dergc-bcols" type="number" min="1" max="10" value="3" style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;padding:8px"></div>'
         +'</div>'
         +'<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;margin-bottom:6px">'
-          +'<input type="checkbox" id="derg-trench" checked style="width:14px;height:14px"> Auto-trench each BESS unit to EMS (AC / DC / BMS)</label>'
+          +'<input type="checkbox" id="dergc-trench" checked style="width:14px;height:14px"> Auto-trench each BESS unit to EMS (AC / DC / BMS)</label>'
         +'<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">'
-          +'<input type="checkbox" id="derg-ems" checked style="width:14px;height:14px"> Place EMS common node</label>'
-        +'<div id="derg-preview" style="margin-top:12px;font-size:11px;color:#4ADE80"></div>'
+          +'<input type="checkbox" id="dergc-ems" checked style="width:14px;height:14px"> Place EMS common node</label>'
+        +'<div id="dergc-preview" style="margin-top:12px;font-size:11px;color:#4ADE80"></div>'
       +'</div>'
       +'<div style="padding:14px 20px;border-top:1px solid rgba(34,197,94,.2);display:flex;gap:8px;justify-content:flex-end">'
-        +'<button onclick="document.getElementById(\'derg-modal\').remove()" style="background:none;border:1px solid #1E3A5F;color:#94A3B8;border-radius:6px;padding:8px 16px;font-size:12px;cursor:pointer">Cancel</button>'
-        +'<button id="derg-go" style="background:#22C55E;border:none;color:#052e16;border-radius:6px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer">Start build \u2192</button>'
+        +'<button onclick="document.getElementById(\'dergc-modal\').remove()" style="background:none;border:1px solid #1E3A5F;color:#94A3B8;border-radius:6px;padding:8px 16px;font-size:12px;cursor:pointer">Cancel</button>'
+        +'<button id="dergc-go" style="background:#22C55E;border:none;color:#052e16;border-radius:6px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer">Start \u2014 place anchor \u2192</button>'
       +'</div>'
       +'</div></div>';
     var d=document.createElement('div'); d.innerHTML=html; document.body.appendChild(d.firstChild);
@@ -46616,109 +46708,150 @@ window.derBuildToDeluxe=derBuildToDeluxe;
     var SPECS = (typeof DER_BUILD_SPECS!=='undefined') ? DER_BUILD_SPECS
       : { pv:{label:'Solar PV',blockKw:500}, wind:{label:'Wind',blockKw:100}, gas:{label:'Gas / Genset',blockKw:750} };
     function upd(){
-      var src=(document.getElementById('derg-src')||{}).value||'pv';
-      var mw=parseFloat((document.getElementById('derg-mw')||{}).value||'5');
+      var src=(document.getElementById('dergc-src')||{}).value||'pv';
+      var mw=parseFloat((document.getElementById('dergc-mw')||{}).value||'5');
       var spec=SPECS[src]||SPECS.pv;
       var blocks=Math.max(1,Math.ceil((mw*1000)/spec.blockKw));
-      var qty=Math.max(1,parseInt((document.getElementById('derg-qty')||{}).value||'3',10));
-      var pv=document.getElementById('derg-preview');
-      if(pv) pv.textContent='\u2192 '+blocks+' \u00d7 '+spec.label+' block(s) = '
-        +((blocks*spec.blockKw)/1000).toFixed(2)+' MW  \u00b7  '+qty+' BESS unit'+(qty===1?'':'s')
-        +'  \u00b7  MV trench DER POI \u2192 BESS auto-run';
+      var qty=Math.max(1,parseInt((document.getElementById('dergc-qty')||{}).value||'3',10));
+      var pv=document.getElementById('dergc-preview');
+      if(pv) pv.textContent='\u2192 '+blocks+' \u00d7 '+spec.label+' = '
+        +((blocks*spec.blockKw)/1000).toFixed(2)+' MW  \u00b7  '+qty+' BESS unit'+(qty===1?'':'s');
     }
-    ['derg-src','derg-mw','derg-qty'].forEach(function(id){
+    ['dergc-src','dergc-mw','dergc-qty'].forEach(function(id){
       var e=document.getElementById(id); if(e){ e.oninput=upd; e.onchange=upd; }
     });
     upd();
-    document.getElementById('derg-go').onclick = arm;
+    document.getElementById('dergc-go').onclick = armGuided;
   }
 
-  /* ---- read the modal, stash both configs, arm stage 1 ---- */
-  function arm(){
+  function armGuided(){
     var models = window._dergModels || (has('_clusterModels') ? _clusterModels() : []);
-    var mi = parseInt((document.getElementById('derg-model')||{}).value||'0',10);
-    var src = (document.getElementById('derg-src')||{}).value||'pv';
-    var mw  = parseFloat((document.getElementById('derg-mw')||{}).value||'5');
+    var mi = parseInt((document.getElementById('dergc-model')||{}).value||'0',10);
+    if (isNaN(mi)) mi = 0;
+    var src = (document.getElementById('dergc-src')||{}).value||'pv';
+    var mw  = parseFloat((document.getElementById('dergc-mw')||{}).value||'5');
     var SPECS = (typeof DER_BUILD_SPECS!=='undefined') ? DER_BUILD_SPECS : null;
-    if (!SPECS || !has('placeDerBuildAt') || !has('placeClusterAt')) {
-      if (has('showBanner')) showBanner('shape',' Guided build needs the DER and Cluster builders \u2014 open them once, then retry.');
+    if (!SPECS || !has('placeDerBuildAt') || !has('placeClusterAt') || !has('placeSourceAt')) {
+      if (has('showBanner')) showBanner('shape',' Guided build needs the DER, Cluster and Source builders present.');
       return;
     }
     var spec = SPECS[src] || SPECS.pv;
 
-    /* stage-1 config: exactly what _derBuildArm would produce */
     window._derBuildCfg = {
       src: src, spec: spec, mw: mw,
       blocks: Math.max(1, Math.ceil((mw*1000)/spec.blockKw)),
-      cols: Math.max(1, parseInt((document.getElementById('derg-cols')||{}).value||'4',10)),
+      cols: Math.max(1, parseInt((document.getElementById('dergc-cols')||{}).value||'4',10)),
       xfmr: true
     };
-
-    /* stage-2 config: exactly what _clusterArm would produce */
+    var fallbackModel = {label:'BESS Pad (generic 19.9x8 ft)',lf:19.875,wf:8,model:'BESS Pad',kwh:0};
     window._clusterConfig = {
-      qty:  Math.max(1, parseInt((document.getElementById('derg-qty')||{}).value||'3',10)),
-      cols: Math.max(1, parseInt((document.getElementById('derg-bcols')||{}).value||'3',10)),
-      model: models[mi] || models[0] || {label:'BESS Pad',lf:19.875,wf:8,model:'BESS Pad',kwh:0},
-      autoTrench: !!(document.getElementById('derg-trench')||{}).checked,
-      placeEms: !!(document.getElementById('derg-ems')||{}).checked
+      qty:  Math.max(1, parseInt((document.getElementById('dergc-qty')||{}).value||'3',10)),
+      cols: Math.max(1, parseInt((document.getElementById('dergc-bcols')||{}).value||'3',10)),
+      model: (models[mi] || models[0] || fallbackModel),
+      autoTrench: !!(document.getElementById('dergc-trench')||{}).checked,
+      placeEms: !!(document.getElementById('dergc-ems')||{}).checked
     };
 
-    var m=document.getElementById('derg-modal'); if(m) m.remove();
+    var m=document.getElementById('dergc-modal'); if(m) m.remove();
 
-    armStageOne();
+    /* Stage 1: place the Utility+DER anchor. Reuse the real source path so
+       the POI is a true util_poi element and its MV trench logic applies. */
+    if (typeof _sourceCfg!=='undefined') _sourceCfg.type='utility_der';
+    installChain('guided');
+    if (has('setMode')) setMode('sourceplace'); else { var s=S_(); if(s) s.mode='sourceplace'; }
+    if (has('showBanner')) showBanner('shape',' Step 1 of 3 \u2014 click to place the Utility + DER anchor');
   }
 
-  /* ---- stage 1: place the DER site, then chain to stage 2 ---- */
-  function armStageOne(){
-    /* One-shot wrap of placeDerBuildAt: run the real placer, then, once the
-       DER POI exists, register it as the source and arm the cluster drop. */
+  /* ═══ MODE B: SNAP TO EXISTING SYSTEM ═══ */
+  function armSnap(){
+    if (!has('placeSourceAt')) {
+      if (has('showBanner')) showBanner('shape',' Source builder not available.');
+      return;
+    }
+    if (typeof _sourceCfg!=='undefined') _sourceCfg.type='utility_der';
+    installChain('snap');
+    if (has('setMode')) setMode('sourceplace'); else { var s=S_(); if(s) s.mode='sourceplace'; }
+    if (has('showBanner')) showBanner('shape',' Click near your equipment \u2014 the Utility + DER anchor snaps onto the nearest element');
+  }
+
+  /* ---- shared: wrap placeSourceAt so a click routes through our chain ---- */
+  function installChain(mode){
+    if (!window.placeSourceAt) return;
+    if (!window.placeSourceAt.__dergWrapped) {
+      var orig = window.placeSourceAt;
+      window.placeSourceAt = function (p) {
+        var chain = window.__dergChain;
+        if (chain) {
+          /* SNAP: if the click is near an existing element, move the anchor
+             onto it so the POI reads as connected to the drawn system. */
+          if (chain.mode==='snap' && has('nearestEl')) {
+            try {
+              var hit = nearestEl(p.x, p.y);
+              if (hit && hit.cx!=null) { p = { x: hit.cx, y: hit.cy }; window.__dergSnappedTo = hit.el ? hit.el.id : null; }
+            } catch(e){}
+          }
+        }
+        var r = orig.apply(this, [p]);
+        if (chain) {
+          window.__dergChain = null;
+          try { afterAnchor(chain); } catch (e) { console.warn(TAG, e && e.message); }
+        }
+        return r;
+      };
+      window.placeSourceAt.__dergWrapped = true;
+      window.placeSourceAt.__orig = orig;
+    }
+    window.__dergChain = { mode: mode };
+  }
+
+  /* ---- after the anchor is set: guided continues to DER; snap finishes ---- */
+  function afterAnchor(chain){
+    var s = S_(); if (!s) return;
+    if (chain.mode==='snap') {
+      if (has('showBanner')) showBanner('ok',' Utility + DER anchor snapped in as the point of connection. It will trench to your BESS.');
+      return;
+    }
+    /* guided: place the DER generation next, then chain to the cluster */
     if (!placeDerBuildAt.__dergWrapped) {
       var orig = window.placeDerBuildAt;
       window.placeDerBuildAt = function (p) {
         var r = orig.apply(this, arguments);
-        if (window.__dergChain) {
-          window.__dergChain = false;
-          try { chainToCluster(); } catch (e) { console.warn(TAG, e && e.message); }
-        }
+        if (window.__dergDerNext) { window.__dergDerNext = false; try { toCluster(); } catch (e) { console.warn(TAG, e && e.message); } }
         return r;
       };
       window.placeDerBuildAt.__dergWrapped = true;
-      window.placeDerBuildAt.__orig = orig;
     }
-    window.__dergChain = true;
-
-    if (has('setMode')) setMode('derbuildplace'); else { var s=S_(); if(s) s.mode='derbuildplace'; }
-    if (has('showBanner')) showBanner('shape',' Step 1 of 2 \u2014 click the map to place the '
-      + (window._derBuildCfg.spec.label||'DER') + ' generation site');
+    window.__dergDerNext = true;
+    if (has('setMode')) setMode('derbuildplace'); else s.mode='derbuildplace';
+    if (has('showBanner')) showBanner('shape',' Step 2 of 3 \u2014 click to place the '
+      + ((window._derBuildCfg&&window._derBuildCfg.spec&&window._derBuildCfg.spec.label)||'DER') + ' generation');
   }
 
-  /* ---- stage 2: DER POI as source, then drop the BESS cluster ---- */
-  function chainToCluster(){
+  /* ---- guided stage 3: drop the BESS cluster ---- */
+  function toCluster(){
     var s = S_(); if (!s) return;
-    /* Register the DER POI as the point of connection so placeClusterAt
-       runs the MV trench from it to the BESS/EMS automatically. */
-    if (s._derPoiId) {
-      s._sourceElId = s._derPoiId;
-      s._sourceType = 'utility_der';
-      if (!s._topoDone) s._topoDone = [];
-      if (s._topoDone.indexOf('src') < 0) s._topoDone.push('src');
-    }
-    /* clear any stale MV-trench marker so placeClusterAt will lay a fresh one */
+    /* the DER POI (or the anchor) is already the source; make sure a fresh
+       MV trench will be laid to the cluster */
     try { window._mvTrenchId = null; } catch (e) {}
-
     if (has('setMode')) setMode('clusterplace'); else s.mode='clusterplace';
-    if (has('showBanner')) showBanner('shape',' Step 2 of 2 \u2014 click the map to drop the BESS cluster (it will trench back to the DER POI)');
+    if (has('showBanner')) showBanner('shape',' Step 3 of 3 \u2014 click to drop the BESS cluster (it trenches back to the anchor)');
   }
 
   /* ---- entry points ---- */
   window.openGuidedDerBuild = open;
-  window.OmegaDerGuided = { open: open, status: function(){
-    var s=S_()||{};
-    return { derPoi: s._derPoiId||null, sourceType: s._sourceType||null,
-             chaining: !!window.__dergChain };
-  }};
+  window.OmegaDerGuided = {
+    open: open,
+    snap: armSnap,
+    _pick: pick,
+    status: function(){
+      var s=S_()||{};
+      return { sourceType: s._sourceType||null, sourceEl: s._sourceElId||null,
+               derPoi: s._derPoiId||null, snappedTo: window.__dergSnappedTo||null,
+               chaining: !!window.__dergChain };
+    }
+  };
 
-  if (window.console) console.info(TAG, 'armed — openGuidedDerBuild() runs DER \u2192 POI \u2192 EMS + BESS in two clicks');
+  if (window.console) console.info(TAG, 'armed — Utility+DER anchor-first build; openGuidedDerBuild() or OmegaDerGuided.snap()');
 })();
 </script>
 
