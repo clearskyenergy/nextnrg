@@ -25301,6 +25301,177 @@ function _d4RowsFromCsv(csv){
   });
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   PROJECT-TYPE VOCABULARY FOR THE SHEET GENERATORS
+   ----------------------------------------------------------------------
+   The PROJECT TYPE selector (see the block near the bottom of this file)
+   already relabels the checkboxes in the export dialog and sets which
+   sheets default on. What it never did was reach the GENERATORS -- so
+   picking "EV Charging" gave you a checkbox reading "E3.0 - Signage
+   (ADA + EV)" that still printed six lithium-ion battery placards, and
+   an S1.1 titled "BESS Pad Detail" on a solar job.
+
+   This is the shared vocabulary those generators read. TYPES lives in an
+   IIFE further down and is exposed as window.OmegaProjectTypes; these
+   helpers resolve against it at call time with a BESS fallback, so the
+   generators work whether or not that block has initialised yet.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Resolve the active project type key. */
+function _ppTypeKey(){
+  try{
+    if(window.OmegaProjectTypes && typeof window.OmegaProjectTypes.get==='function'){
+      return window.OmegaProjectTypes.get() || 'bess';
+    }
+  }catch(e){}
+  try{ if(typeof S!=='undefined' && S && S.projectType) return S.projectType; }catch(e){}
+  try{ var ls=localStorage.getItem('omegaProjectType'); if(ls) return ls; }catch(e){}
+  return 'bess';
+}
+/* What the AI should be told it is describing, from the TYPES table. */
+function _ppTypeAi(){
+  try{
+    if(window.OmegaProjectTypes && typeof window.OmegaProjectTypes.aiContext==='function'){
+      var a=window.OmegaProjectTypes.aiContext(); if(a) return a;
+    }
+  }catch(e){}
+  return 'a battery energy storage system (BESS) installation';
+}
+
+/* Per-type sheet vocabulary: titles, structural-detail subject, and the
+   scope-of-work fallback used when the AI call is skipped or fails.
+   Keyed to match the TYPES table below. */
+var PP_TYPE_VOCAB = {
+  bess: {
+    noun:'BESS', system:'Battery Energy Storage System (BESS)',
+    sigTitle:'BESS SIGNAGE &amp; LABELING SCHEDULE',
+    sigCodes:'Per NEC 706.16, NEC 690.13/690.56, and IFC 1207 \u2014 verify final requirements with AHJ.',
+    padTitle:'BESS PAD DETAIL', padSubject:'BESS enclosure',
+    e0Title:'BESS PLOT PLAN', signs:'bess',
+    sigNotes:['1. All signage to be permanent, weather-resistant, and legible from the required approach distance.','2. Labels to be located at the ESS, disconnects, and points of interconnection per NEC 706.16.','3. Marking to comply with ANSI Z535 color and format standards.','4. Provide directory of ESS disconnecting means at the service equipment per NEC 706.15(D).','5. Final placard text, quantity, and locations to be verified with the AHJ and fire marshal.'],
+    scope:'installing a new Battery Energy Storage System (BESS) and associated electrical balance-of-system equipment'
+  },
+  ev: {
+    noun:'EV charging', system:'Electric Vehicle Supply Equipment (EVSE)',
+    sigTitle:'EV CHARGING SIGNAGE &amp; LABELING SCHEDULE',
+    sigCodes:'Per NEC 625, ADA Standards \u00a7502/\u00a7208, and IFC \u2014 verify final requirements with AHJ.',
+    padTitle:'CHARGER PAD DETAIL', padSubject:'charger pedestal / dispenser',
+    e0Title:'EV CHARGING PLOT PLAN', signs:'ev',
+    sigNotes:['1. All signage to be permanent, weather-resistant, and legible from the required approach distance.','2. Labels to be located at the EVSE, disconnecting means, and branch-circuit panelboard per NEC 625.15.','3. Marking to comply with ANSI Z535 color and format standards; accessible-space signage per ADA \u00a7502.6.','4. Accessible-space signs to be mounted 60 in. min above finished grade to bottom of sign per ADA \u00a7502.6.','5. Final placard text, quantity, and locations to be verified with the AHJ and accessibility reviewer.'],
+    scope:'installing new DC fast-charging electric vehicle supply equipment (EVSE), utility service and transformer, and associated electrical balance-of-system equipment'
+  },
+  evl2: {
+    noun:'Level 2 EV charging', system:'Level 2 Electric Vehicle Supply Equipment (EVSE)',
+    sigTitle:'EV CHARGING SIGNAGE &amp; LABELING SCHEDULE',
+    sigCodes:'Per NEC 625, ADA Standards \u00a7502/\u00a7208, and IFC \u2014 verify final requirements with AHJ.',
+    sigNotes:['1. All signage to be permanent, weather-resistant, and legible from the required approach distance.','2. Labels to be located at the EVSE, disconnecting means, and branch-circuit panelboard per NEC 625.15.','3. Marking to comply with ANSI Z535 color and format standards; accessible-space signage per ADA \u00a7502.6.','4. Accessible-space signs to be mounted 60 in. min above finished grade to bottom of sign per ADA \u00a7502.6.','5. Final placard text, quantity, and locations to be verified with the AHJ and accessibility reviewer.'],
+    padTitle:'CHARGER MOUNTING DETAIL', padSubject:'charger pedestal / wall mount',
+    e0Title:'EV CHARGING PLOT PLAN', signs:'ev',
+    scope:'installing new Level 2 electric vehicle supply equipment (EVSE) fed from existing building service, and associated electrical balance-of-system equipment'
+  },
+  solar: {
+    noun:'solar array', system:'Solar Photovoltaic (PV) System',
+    sigTitle:'SOLAR PV SIGNAGE &amp; LABELING SCHEDULE',
+    sigCodes:'Per NEC 690.13, 690.56, 690.12 (rapid shutdown), and 705.12 \u2014 verify final requirements with AHJ.',
+    padTitle:'ARRAY RACKING DETAIL', padSubject:'array racking / foundation',
+    e0Title:'SOLAR PV PLOT PLAN', signs:'solar',
+    sigNotes:['1. All signage to be permanent, weather-resistant, and legible from the required approach distance.','2. Labels to be located at the PV disconnects, inverters, and point of interconnection per NEC 690.13/690.56.','3. Marking to comply with ANSI Z535 color and format standards; reflective per NEC 690.56(C)(1) where required.','4. Provide permanent plaque or directory of all power sources at the service equipment per NEC 705.10.','5. Final placard text, quantity, and locations to be verified with the AHJ and fire marshal.'],
+    scope:'installing a new solar photovoltaic (PV) generating system and associated electrical balance-of-system equipment'
+  },
+  der: {
+    noun:'DER system', system:'Distributed Energy Resource (DER) System',
+    sigTitle:'DER SIGNAGE &amp; LABELING SCHEDULE',
+    sigCodes:'Per NEC 705, NEC 706, NEC 690, and IFC 1207 \u2014 verify final requirements with AHJ.',
+    padTitle:'EQUIPMENT PAD DETAIL', padSubject:'primary equipment enclosure',
+    e0Title:'DER PLOT PLAN', signs:'der',
+    sigNotes:['1. All signage to be permanent, weather-resistant, and legible from the required approach distance.','2. Labels to be located at each DER disconnecting means and the point of common coupling per NEC 705.20.','3. Marking to comply with ANSI Z535 color and format standards.','4. Provide permanent plaque or directory of all on-site power sources at the service equipment per NEC 705.10.','5. Final placard text, quantity, and locations to be verified with the AHJ and fire marshal.'],
+    scope:'installing a new distributed energy resource (DER) system and associated electrical balance-of-system equipment'
+  },
+  solarbess: {
+    noun:'solar + BESS system', system:'Solar PV + Battery Energy Storage System',
+    sigTitle:'SOLAR PV + BESS SIGNAGE &amp; LABELING SCHEDULE',
+    sigCodes:'Per NEC 690.13/690.56, 690.12 (rapid shutdown), NEC 706.16, 705.12, and IFC 1207 \u2014 verify final requirements with AHJ.',
+    padTitle:'ARRAY RACKING + BESS PAD DETAIL', padSubject:'array racking and BESS enclosure',
+    e0Title:'SOLAR + BESS PLOT PLAN', signs:'solarbess',
+    sigNotes:['1. All signage to be permanent, weather-resistant, and legible from the required approach distance.','2. Labels to be located at PV disconnects, ESS, inverters, and the point of interconnection per NEC 690.13 and 706.16.','3. Marking to comply with ANSI Z535 color and format standards; reflective per NEC 690.56(C)(1) where required.','4. Provide permanent plaque or directory of all power sources (PV + ESS) at the service equipment per NEC 705.10.','5. Final placard text, quantity, and locations to be verified with the AHJ and fire marshal.'],
+    scope:'installing a new solar photovoltaic (PV) generating system with integrated battery energy storage (BESS) and associated electrical balance-of-system equipment'
+  },
+  datacenter: {
+    noun:'compute load facility', system:'Data Center / Critical Compute Facility',
+    sigTitle:'CRITICAL FACILITY SIGNAGE &amp; LABELING SCHEDULE',
+    sigCodes:'Per NEC 110.16 (arc flash), NEC 708 (COPS), NEC 705, and IFC \u2014 verify final requirements with AHJ.',
+    padTitle:'COMPUTE POD / CONTAINER PAD DETAIL', padSubject:'compute pod / container',
+    e0Title:'DATA CENTER PLOT PLAN', signs:'datacenter',
+    sigNotes:['1. All signage to be permanent, weather-resistant, and legible from the required approach distance.','2. Arc-flash labels to be field-verified against the incident-energy study and updated per NFPA 70E 130.5(H).','3. Marking to comply with ANSI Z535 color and format standards.','4. Provide directory of all power sources (utility, DER, UPS, generator) at the service equipment per NEC 705.10 / 708.10.','5. Final placard text, quantity, and locations to be verified with the AHJ; EPO signage per NEC 645.10 where an IT equipment room disconnect is installed.'],
+    scope:'installing a new data center / critical compute load facility with supporting on-site distributed energy resources and associated electrical balance-of-system equipment'
+  }
+};
+function _ppVocab(){
+  var k=_ppTypeKey();
+  return PP_TYPE_VOCAB[k] || PP_TYPE_VOCAB.bess;
+}
+
+/* ---- PER-TYPE SIGN SCHEDULES ----------------------------------------
+   The E3.0 sheet used one fixed array of six lithium-ion placards for
+   every project. These are the placards each discipline actually needs.
+   Code references are the governing article for that placard; final
+   text/quantity/placement still gets verified with the AHJ, as the
+   sheet notes say. */
+var PP_SIGN_SETS = {
+  bess: [
+    { t:'ENERGY STORAGE SYSTEM', b:['ENERGY STORAGE SYSTEM','LITHIUM-ION BATTERY'], ref:'IFC 1207.5 / NEC 706.16', bg:'#FFD200', fg:'#1a1a1a' },
+    { t:'DISCONNECT (WARNING)', b:['WARNING','ELECTRIC SHOCK HAZARD','TERMINALS ENERGIZED IN OPEN POSITION'], ref:'NEC 690.17 / 706.16', bg:'#FF8A00', fg:'#1a1a1a' },
+    { t:'DANGER \u2013 HV', b:['DANGER','HIGH VOLTAGE','KEEP OUT'], ref:'NEC 110.27 / 706.16', bg:'#D0021B', fg:'#ffffff' },
+    { t:'RATED SYSTEM NAMEPLATE', b:['ENERGY STORAGE SYSTEM','MAX VOLTAGE / CURRENT','ENERGY (kWh) / POWER (kW)'], ref:'NEC 706.16(A)', bg:'#ffffff', fg:'#1a1a1a' },
+    { t:'EMERGENCY SHUTOFF', b:['EMERGENCY','POWER OFF','ESS RAPID SHUTDOWN'], ref:'NEC 706.15 / IFC 1207.6', bg:'#D0021B', fg:'#ffffff' },
+    { t:'NO SMOKING / IGNITION', b:['NO SMOKING','NO OPEN FLAME','NO IGNITION SOURCES'], ref:'IFC 1207.11', bg:'#FFD200', fg:'#1a1a1a' }
+  ],
+  ev: [
+    { t:'EV CHARGING ONLY', b:['EV CHARGING','STATION','ONLY'], ref:'MUTCD / local ordinance', bg:'#0B7A3B', fg:'#ffffff' },
+    { t:'ACCESSIBLE SPACE', b:['VAN ACCESSIBLE','EV CHARGING'], ref:'ADA \u00a7502 / \u00a7208', bg:'#0057B8', fg:'#ffffff' },
+    { t:'DISCONNECT (WARNING)', b:['WARNING','ELECTRIC SHOCK HAZARD','DISCONNECT BEFORE SERVICING'], ref:'NEC 625.43 / 110.27', bg:'#FF8A00', fg:'#1a1a1a' },
+    { t:'EVSE NAMEPLATE', b:['ELECTRIC VEHICLE','SUPPLY EQUIPMENT','VOLTAGE / AMPS / kW'], ref:'NEC 625.15', bg:'#ffffff', fg:'#1a1a1a' },
+    { t:'EMERGENCY SHUTOFF', b:['EMERGENCY','POWER OFF','PUSH TO STOP CHARGING'], ref:'NEC 625.42 / IFC', bg:'#D0021B', fg:'#ffffff' },
+    { t:'CABLE MANAGEMENT', b:['KEEP CABLE','OFF WALKWAY','TRIP HAZARD'], ref:'NEC 625.50 / ADA \u00a7403', bg:'#FFD200', fg:'#1a1a1a' }
+  ],
+  solar: [
+    { t:'PV SYSTEM DISCONNECT', b:['PHOTOVOLTAIC SYSTEM','AC DISCONNECT'], ref:'NEC 690.13(B)', bg:'#FFD200', fg:'#1a1a1a' },
+    { t:'RAPID SHUTDOWN', b:['SOLAR PV SYSTEM','EQUIPPED WITH','RAPID SHUTDOWN'], ref:'NEC 690.56(C)', bg:'#FFD200', fg:'#1a1a1a' },
+    { t:'DUAL POWER SOURCE', b:['WARNING','ELECTRIC SHOCK HAZARD','DUAL POWER SUPPLY'], ref:'NEC 690.13 / 705.12', bg:'#FF8A00', fg:'#1a1a1a' },
+    { t:'PV NAMEPLATE (DC)', b:['PV SYSTEM','MAX VOLTAGE (Voc)','MAX CIRCUIT CURRENT'], ref:'NEC 690.53', bg:'#ffffff', fg:'#1a1a1a' },
+    { t:'INTERCONNECTION', b:['WARNING','POWER SOURCE OUTPUT','CONNECTION \u2014 DO NOT RELOCATE'], ref:'NEC 705.12(B)(3)', bg:'#FF8A00', fg:'#1a1a1a' },
+    { t:'DANGER \u2013 HV DC', b:['DANGER','HIGH VOLTAGE DC','ENERGIZED IN SUNLIGHT'], ref:'NEC 110.27 / 690.31', bg:'#D0021B', fg:'#ffffff' }
+  ],
+  der: [
+    { t:'MULTIPLE SOURCES', b:['WARNING','MULTIPLE POWER SOURCES','ON THIS PREMISES'], ref:'NEC 705.10 / 712.10', bg:'#FF8A00', fg:'#1a1a1a' },
+    { t:'DER DISCONNECT', b:['DISTRIBUTED ENERGY','RESOURCE DISCONNECT'], ref:'NEC 705.20', bg:'#FFD200', fg:'#1a1a1a' },
+    { t:'PLANT DIRECTORY', b:['POWER SOURCE','DIRECTORY','SEE PLAQUE'], ref:'NEC 705.10', bg:'#ffffff', fg:'#1a1a1a' },
+    { t:'RATED SYSTEM NAMEPLATE', b:['DER SYSTEM','MAX VOLTAGE / CURRENT','POWER (kW) / ENERGY (kWh)'], ref:'NEC 705.10 / 706.16(A)', bg:'#ffffff', fg:'#1a1a1a' },
+    { t:'EMERGENCY SHUTOFF', b:['EMERGENCY','POWER OFF','SYSTEM SHUTDOWN'], ref:'NEC 706.15 / IFC 1207.6', bg:'#D0021B', fg:'#ffffff' },
+    { t:'DANGER \u2013 HV', b:['DANGER','HIGH VOLTAGE','KEEP OUT'], ref:'NEC 110.27', bg:'#D0021B', fg:'#ffffff' }
+  ],
+  solarbess: [
+    { t:'PV SYSTEM DISCONNECT', b:['PHOTOVOLTAIC SYSTEM','AC DISCONNECT'], ref:'NEC 690.13(B)', bg:'#FFD200', fg:'#1a1a1a' },
+    { t:'RAPID SHUTDOWN', b:['SOLAR PV SYSTEM','EQUIPPED WITH','RAPID SHUTDOWN'], ref:'NEC 690.56(C)', bg:'#FFD200', fg:'#1a1a1a' },
+    { t:'ENERGY STORAGE SYSTEM', b:['ENERGY STORAGE SYSTEM','LITHIUM-ION BATTERY'], ref:'IFC 1207.5 / NEC 706.16', bg:'#FFD200', fg:'#1a1a1a' },
+    { t:'MULTIPLE SOURCES', b:['WARNING','MULTIPLE POWER SOURCES','PV + ENERGY STORAGE'], ref:'NEC 705.10 / 690.13', bg:'#FF8A00', fg:'#1a1a1a' },
+    { t:'EMERGENCY SHUTOFF', b:['EMERGENCY','POWER OFF','PV + ESS SHUTDOWN'], ref:'NEC 706.15 / 690.12', bg:'#D0021B', fg:'#ffffff' },
+    { t:'NO SMOKING / IGNITION', b:['NO SMOKING','NO OPEN FLAME','NO IGNITION SOURCES'], ref:'IFC 1207.11', bg:'#FFD200', fg:'#1a1a1a' }
+  ],
+  datacenter: [
+    { t:'ARC FLASH HAZARD', b:['WARNING','ARC FLASH HAZARD','APPROPRIATE PPE REQUIRED'], ref:'NEC 110.16(B) / NFPA 70E', bg:'#FF8A00', fg:'#1a1a1a' },
+    { t:'MULTIPLE SOURCES', b:['WARNING','MULTIPLE POWER SOURCES','UTILITY + DER + UPS'], ref:'NEC 705.10 / 708.10', bg:'#FF8A00', fg:'#1a1a1a' },
+    { t:'CRITICAL OPERATIONS', b:['CRITICAL OPERATIONS','POWER SYSTEM (COPS)','AUTHORIZED PERSONNEL ONLY'], ref:'NEC 708.10 / 708.54', bg:'#0057B8', fg:'#ffffff' },
+    { t:'EQUIPMENT NAMEPLATE', b:['COMPUTE LOAD','MAX VOLTAGE / CURRENT','CONNECTED LOAD (kW)'], ref:'NEC 110.21(B) / 708.10', bg:'#ffffff', fg:'#1a1a1a' },
+    { t:'EMERGENCY POWER OFF', b:['EMERGENCY','POWER OFF','EPO \u2014 PUSH TO SHUT DOWN'], ref:'NEC 645.10 / 708.24', bg:'#D0021B', fg:'#ffffff' },
+    { t:'DANGER \u2013 HV', b:['DANGER','HIGH VOLTAGE','KEEP OUT'], ref:'NEC 110.27', bg:'#D0021B', fg:'#ffffff' }
+  ]
+};
+function _ppSigns(){
+  var v=_ppVocab();
+  return PP_SIGN_SETS[v.signs] || PP_SIGN_SETS.bess;
+}
+
 /* Which sheets exist, and which renderer builds each. `mode` is the second
    argument some renderers take. */
 var D4_SHEETS = [
@@ -25311,6 +25482,7 @@ var D4_SHEETS = [
   { no:'E2.0', name:'Single Line Diagram',  fn:'_olRender', ol:true },
   { no:'E3.0', name:'Signage',              fn:'_ppRenderSignage' },
   { no:'E4.0', name:'POI Signage',          fn:'_ppRenderPOISignage' },
+  { no:'E5.0', name:'Equipment & Conduit Schedule', fn:'_ppRenderCondSchedule' },
   { no:'S1.1', name:'BESS Pad Detail',      fn:'_ppRenderBessPad' },
   { no:'S1.2', name:'Gear Pad Details',     fn:'_ppRenderGearPad' },
   { no:'S2.0', name:'Grounding Detail',     fn:'_ppRenderGrounding' },
@@ -30564,6 +30736,7 @@ function _ppBuildModal(){
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-e20"> E2.0 \u2014 Single Line Diagram</label>'+
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-e30"> E3.0 \u2014 Signage</label>'+
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-e40"> E4.0 \u2014 POI Signage (placards + directory)</label>'+
+    '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-e50"> E5.0 \u2014 Equipment &amp; Conduit Schedule</label>'+
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-s11"> S1.1 \u2014 BESS Pad Detail (structural)</label>'+
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-s12"> S1.2 \u2014 Gear Pad Details (structural)</label>'+
     '<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text);margin-bottom:5px"><input type="checkbox" id="pp-s20"> S2.0 \u2014 Grounding Detail</label>'+
@@ -31407,7 +31580,8 @@ function _ppRenderDemo(sizeKey, street){
 function _ppRenderSignage(sizeKey, street){
   var sheet=PP_SHEETS[sizeKey]||PP_SHEETS.B;
   var W=sheet.w*PP_DPI, H=sheet.h*PP_DPI;
-  var pname=(document.getElementById('pname')||{}).value||'BESS Project';
+  var _v=_ppVocab();
+  var pname=(document.getElementById('pname')||{}).value||(_v.noun+' Project');
 
   var s='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="Arial, sans-serif">';
   s+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#ffffff"/>';
@@ -31415,20 +31589,16 @@ function _ppRenderSignage(sizeKey, street){
 
   var tbW=250, tbH=140;
   var lx=54, ly=80;
-  s+='<text x="'+lx+'" y="'+ly+'" font-size="18" font-weight="800" fill="#1a1a1a">BESS SIGNAGE &amp; LABELING SCHEDULE</text>';
+  /* Title and code line follow the selected PROJECT TYPE. This sheet used
+     to print "BESS SIGNAGE" with six lithium-ion placards on an EV or
+     solar job, because the generator never read the selector. */
+  s+='<text x="'+lx+'" y="'+ly+'" font-size="18" font-weight="800" fill="#1a1a1a">'+_v.sigTitle+'</text>';
   ly+=14;
-  s+='<text x="'+lx+'" y="'+ly+'" font-size="11" fill="#555">Per NEC 706.16, NEC 690.13/690.56, and IFC 1207 \u2014 verify final requirements with AHJ.</text>';
+  s+='<text x="'+lx+'" y="'+ly+'" font-size="11" fill="#555">'+_v.sigCodes+'</text>';
   ly+=30;
 
-  /* each sign: [title, body lines, code ref, color] */
-  var signs=[
-    { t:'ENERGY STORAGE SYSTEM', b:['ENERGY STORAGE SYSTEM','LITHIUM-ION BATTERY'], ref:'IFC 1207.5 / NEC 706.16', bg:'#FFD200', fg:'#1a1a1a' },
-    { t:'DISCONNECT (WARNING)', b:['WARNING','ELECTRIC SHOCK HAZARD','TERMINALS ENERGIZED IN OPEN POSITION'], ref:'NEC 690.17 / 706.16', bg:'#FF8A00', fg:'#1a1a1a' },
-    { t:'DANGER \u2013 HV', b:['DANGER','HIGH VOLTAGE','KEEP OUT'], ref:'NEC 110.27 / 706.16', bg:'#D0021B', fg:'#ffffff' },
-    { t:'RATED SYSTEM NAMEPLATE', b:['ENERGY STORAGE SYSTEM','MAX VOLTAGE / CURRENT','ENERGY (kWh) / POWER (kW)'], ref:'NEC 706.16(A)', bg:'#ffffff', fg:'#1a1a1a' },
-    { t:'EMERGENCY SHUTOFF', b:['EMERGENCY','POWER OFF','ESS RAPID SHUTDOWN'], ref:'NEC 706.15 / IFC 1207.6', bg:'#D0021B', fg:'#ffffff' },
-    { t:'NO SMOKING / IGNITION', b:['NO SMOKING','NO OPEN FLAME','NO IGNITION SOURCES'], ref:'IFC 1207.11', bg:'#FFD200', fg:'#1a1a1a' }
-  ];
+  /* each sign: [title, body lines, code ref, color] -- per project type */
+  var signs=_ppSigns();
   /* grid of sign cards */
   var cols=2, cardW=(W-tbW-lx-90)/cols, cardH=150, gapX=28, gapY=30;
   cardW=Math.min(cardW, 360);
@@ -31453,16 +31623,266 @@ function _ppRenderSignage(sizeKey, street){
   /* general signage notes */
   var ny=ly+Math.ceil(signs.length/cols)*(cardH+gapY)+10;
   s+='<text x="'+lx+'" y="'+ny+'" font-size="12" font-weight="700" fill="#1a1a1a">SIGNAGE NOTES</text>'; ny+=16;
-  var snotes=[
-    '1. All signage to be permanent, weather-resistant, and legible from the required approach distance.',
-    '2. Labels to be located at the ESS, disconnects, and points of interconnection per NEC 706.16.',
-    '3. Marking to comply with ANSI Z535 color and format standards.',
-    '4. Provide directory of ESS disconnecting means at the service equipment per NEC 706.15(D).',
-    '5. Final placard text, quantity, and locations to be verified with the AHJ and fire marshal.'
-  ];
+  var snotes=_v.sigNotes||PP_TYPE_VOCAB.bess.sigNotes;
   _ppWrapList(function(seg){s+=seg;}, snotes, lx, ny, W-tbW-lx-90, 9.5, 12);
 
   s+=_ppTitleBlock(W, H, tbW, tbH, 'E3.0', 'SIGNAGE', street||pname, 0);
+  s+='</svg>';
+  return s;
+}
+
+/* Truncate to fit a table cell, with an ellipsis so a clipped value reads
+   as clipped rather than as a shorter piece of equipment than it is. */
+function _ppClip(t, n){
+  t=String(t==null?'':t);
+  return t.length<=n ? t : (t.slice(0, Math.max(1,n-1)).replace(/[\s\u2013\u2014(]+$/,'')+'\u2026');
+}
+
+/* ---- E5.0 EQUIPMENT & CONDUIT SCHEDULE -------------------------------
+   The app already knows every placed footprint and every drawn run --
+   the conduit schedule panel and the BESS Cable Run Schedule both read
+   it live. None of it reached the plan set, so an installer got a
+   drawing with keyed callouts and no table to look the keys up in.
+
+   This is that table as a printable sheet: one row per conduit run with
+   its tag, service, type, trade size, ground length and from/to
+   equipment, then an equipment schedule underneath. Everything is read
+   from the model at render time -- no separate list to fall out of sync.
+
+   Lengths print in FEET only when the drawing is scaled. On an unscaled
+   site they print as px with a note, rather than dividing by a guessed
+   px/ft and putting fabricated dimensions on a permit sheet. */
+function _ppRenderCondSchedule(sizeKey, street){
+  var sheet=PP_SHEETS[sizeKey]||PP_SHEETS.B;
+  var W=sheet.w*PP_DPI, H=sheet.h*PP_DPI;
+  var _v=_ppVocab();
+  var pname=(document.getElementById('pname')||{}).value||(_v.noun+' Project');
+  var scaled=(typeof S!=='undefined' && S.pxPerFt>0);
+
+  var s='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="Arial, sans-serif">';
+  s+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#ffffff"/>';
+  s+='<rect x="14" y="14" width="'+(W-28)+'" height="'+(H-28)+'" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>';
+  var tbW=250, tbH=140;
+  var lx=54, ly=80, availW=W-tbW-lx-70;
+
+  s+='<text x="'+lx+'" y="'+ly+'" font-size="18" font-weight="800" fill="#1a1a1a">EQUIPMENT &amp; CONDUIT SCHEDULE</text>';
+  ly+=15;
+  s+='<text x="'+lx+'" y="'+ly+'" font-size="10" fill="#555">'
+    +'Quantities and lengths derived from the site drawing. Field-verify all routing and lengths before ordering.</text>';
+  ly+=26;
+
+  /* ---------- resolve equipment labels for from/to ---------- */
+  var eqName={};
+  try{
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh || !sh.id) return;
+      var nm=sh.label||'';
+      if(!nm && sh.utype){ try{ nm=(UTILITY_CATALOG[sh.utype]||{}).label||sh.utype; }catch(e){ nm=sh.utype; } }
+      if(!nm && sh.kind) nm=String(sh.kind).toUpperCase();
+      if(nm) eqName[sh.id]=String(nm).replace(/\s+/g,' ').trim();
+    });
+    (S.elements||[]).forEach(function(el){
+      if(!el || !el.id) return;
+      var nm=el.label||el.name||el.eqId||el.type||'';
+      if(nm) eqName[el.id]=String(nm).replace(/\s+/g,' ').trim();
+    });
+  }catch(e){}
+  function endName(c, which){
+    var id = which==='from' ? ((c.fromId!=null)?c.fromId:c.fromElId)
+                            : ((c.toId!=null)?c.toId:c.toElId);
+    if(id!=null && eqName[id]) return eqName[id];
+    /* A run drawn freehand has no linked equipment. Say so rather than
+       printing a blank cell that reads as missing data. */
+    return '\u2014';
+  }
+
+  /* ---------- conduit rows ---------- */
+  var conds=(typeof S!=='undefined' && S.conduits) ? S.conduits.slice() : [];
+  var rows=[['TAG','SERVICE / RUN','TYPE','CONDUIT','FROM','TO',(scaled?'LENGTH':'LENGTH (px)')]];
+  var totalFt=0, n=0;
+  conds.forEach(function(c){
+    if(!c) return;
+    n++;
+    var tag = c.runLabel ? ((c.runTag?c.runTag+' ':'')+c.runLabel)
+            : (c.tag || ('C'+n));
+    var ct=null;
+    try{ for(var i=0;i<CTYPES.length;i++){ if(CTYPES[i].id===c.condType){ ct=CTYPES[i]; break; } } }catch(e){}
+    /* Falling back to the conduit TYPE here just repeated the next column.
+       The equipment the run actually connects is the useful thing. */
+    var svc = c.runFrom && c.runTo ? (c.runFrom+' \u2192 '+c.runTo)
+            : (c.label ? c.label
+            : ((endName(c,'from')!=='\u2014' || endName(c,'to')!=='\u2014')
+                ? (endName(c,'from')+' \u2192 '+endName(c,'to'))
+                : (ct?ct.label:(c.condType||'Conduit run'))));
+    var len = scaled ? ((c.ftLen!=null?c.ftLen:0).toFixed(1)+' ft')
+                     : (Math.round(c.pxLen||0)+' px');
+    if(scaled) totalFt += (+c.ftLen||0);
+    rows.push([
+      _ppClip(tag,22), _ppClip(svc,44), _ppClip(ct?ct.label:(c.condType||'\u2014'),20),
+      _ppClip(ct&&ct.size?ct.size:'\u2014',24),
+      _ppClip(endName(c,'from'),22), _ppClip(endName(c,'to'),22), len
+    ]);
+  });
+  if(rows.length===1){
+    rows.push(['\u2014','No conduit runs drawn on this site map','\u2014','\u2014','\u2014','\u2014','\u2014']);
+  } else {
+    rows.push(['','TOTAL \u2014 '+n+' run'+(n===1?'':'s'),'','','','',
+               scaled ? (totalFt.toFixed(1)+' ft') : '\u2014']);
+  }
+  s+='<text x="'+lx+'" y="'+ly+'" font-size="11" font-weight="700" fill="#1a1a1a">CONDUIT SCHEDULE</text>';
+  ly+=8;
+  var cw=[availW*0.14, availW*0.22, availW*0.13, availW*0.16, availW*0.14, availW*0.13, availW*0.08];
+  /* A busy site can have more runs than fit the sheet. Drawing them anyway
+     ran the table off the bottom edge and off the printed page -- rows that
+     silently vanish are worse on a permit sheet than rows that are visibly
+     accounted for. Shrink the row height to fit first; only if that is not
+     enough, carry the remainder to a continuation sheet so every run is
+     still printed somewhere. */
+  var _footRoom = 210;                 /* equipment table + notes + margin */
+  var _avail = (H - tbH - 40) - ly - _footRoom;
+  var _rowH = 17;
+  if(rows.length*_rowH > _avail) _rowH = Math.max(11, Math.floor(_avail/rows.length));
+  var _maxRows = Math.max(6, Math.floor(_avail/_rowH));
+  var _overflow = [];
+  if(rows.length > _maxRows){
+    /* keep the header, keep the TOTAL row, carry the middle */
+    var _hdr=rows[0], _tot=rows[rows.length-1];
+    var _body=rows.slice(1, rows.length-1);
+    var _keep=_body.slice(0, _maxRows-3);
+    _overflow=_body.slice(_maxRows-3);
+    rows=[_hdr].concat(_keep, [['','→ '+_overflow.length+' more run'+(_overflow.length===1?'':'s')+' on sheet E5.1','','','','','']], [_tot]);
+  }
+  ly=_ppMiniTable(function(seg){s+=seg;}, rows, lx, ly, availW, cw, _rowH);
+  window._ppCondOverflow = _overflow.length ? { rows:_overflow, cw:cw, scaled:scaled } : null;
+  ly+=8;
+  if(!scaled){
+    s+='<text x="'+lx+'" y="'+ly+'" font-size="9" font-weight="700" fill="#B45309">'
+      +'Drawing is not scaled \u2014 lengths shown in pixels. Set a drawing scale for true footages.</text>';
+    ly+=14;
+  }
+
+  /* ---------- trench totals: shared corridors counted once ---------- */
+  var trFt=0, trN=0;
+  try{
+    (S._trenches||[]).forEach(function(t){
+      if(!t) return; trN++;
+      if(scaled) trFt += (t.ftLen!=null?+t.ftLen:((t.pxLen||0)/S.pxPerFt));
+    });
+  }catch(e){}
+  if(trN){
+    ly+=8;
+    s+='<text x="'+lx+'" y="'+ly+'" font-size="10" fill="#1a1a1a">'
+      +'TRENCH: '+trN+' corridor'+(trN===1?'':'s')
+      +(scaled?(' \u00b7 '+trFt.toFixed(1)+' ft total'):'')
+      +' \u2014 shared corridors counted once; trench length is not the sum of conduit lengths.</text>';
+    ly+=18;
+  }
+
+  /* ---------- equipment schedule ---------- */
+  ly+=14;
+  s+='<text x="'+lx+'" y="'+ly+'" font-size="11" font-weight="700" fill="#1a1a1a">EQUIPMENT SCHEDULE</text>';
+  ly+=8;
+  var eqRows=[['MARK','EQUIPMENT','SIZE (L \u00d7 W)','RATING','RUNS']];
+  /* how many runs touch each piece -- a zero here means the item is on the
+     drawing but connects to nothing, which is worth seeing on the sheet */
+  var touch={};
+  conds.forEach(function(c){
+    if(!c) return;
+    var a=(c.fromId!=null)?c.fromId:c.fromElId, b=(c.toId!=null)?c.toId:c.toElId;
+    if(a!=null) touch[a]=(touch[a]||0)+1;
+    if(b!=null) touch[b]=(touch[b]||0)+1;
+  });
+  var mark=0, eqCount=0;
+  try{
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh || sh.kind!=='utility') return;
+      var def=null; try{ def=UTILITY_CATALOG[sh.utype]; }catch(e){}
+      var nm=sh.label||(def?def.label:sh.utype)||'EQUIPMENT';
+      var size=(def && def.lf && def.wf) ? (def.lf+'\u2032 \u00d7 '+def.wf+'\u2032') : '\u2014';
+      var rating='\u2014';
+      if(sh.kwh) rating=Math.round(sh.kwh).toLocaleString()+' kWh'+(sh.kw?(' / '+Math.round(sh.kw).toLocaleString()+' kW'):'');
+      else if(sh.kw) rating=Math.round(sh.kw).toLocaleString()+' kW';
+      mark++; eqCount++;
+      eqRows.push([ (def&&def.abbr?def.abbr:'EQ')+'-'+mark,
+                    _ppClip(nm,36), size, rating,
+                    String(touch[sh.id]||0) ]);
+    });
+  }catch(e){}
+  if(eqRows.length===1) eqRows.push(['\u2014','No to-scale equipment footprints placed','\u2014','\u2014','\u2014']);
+  var ew=[availW*0.10, availW*0.40, availW*0.18, availW*0.22, availW*0.10];
+  ly=_ppMiniTable(function(seg){s+=seg;}, eqRows, lx, ly, availW, ew, 17);
+  ly+=12;
+
+  /* An item with zero runs never reaches the one-line and has nothing in
+     the conduit schedule. Absent reads the same as finished, so flag it. */
+  var stranded=[];
+  try{
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh || sh.kind!=='utility') return;
+      if(!touch[sh.id]){
+        var d=null; try{ d=UTILITY_CATALOG[sh.utype]; }catch(e){}
+        stranded.push(sh.label||(d?d.label:sh.utype)||'equipment');
+      }
+    });
+  }catch(e){}
+  if(stranded.length){
+    s+='<text x="'+lx+'" y="'+ly+'" font-size="9" font-weight="700" fill="#B45309">'
+      +_ppEsc(stranded.length+' item'+(stranded.length===1?'':'s')+' with no conduit run: '
+      +stranded.join(', ').slice(0,110))+'</text>';
+    ly+=14;
+  }
+
+  /* ---------- notes ---------- */
+  ly+=6;
+  s+='<text x="'+lx+'" y="'+ly+'" font-size="10" font-weight="700" fill="#1a1a1a">SCHEDULE NOTES</text>';
+  ly+=14;
+  var notes=[
+    '1. Conduit lengths are horizontal routing distances measured from the site drawing. Add vertical risers, ' +
+      'equipment stub-ups, pull-box slack and terminations before ordering.',
+    '2. Conduit and conductor sizes shown are the design basis; final sizing to be confirmed by the EOR against ' +
+      'ampacity, voltage drop, and fill per NEC Chapter 9 Tables.',
+    '3. Trench corridors shared by multiple services are counted once. Trench footage is not the sum of the ' +
+      'conduit lengths it carries.',
+    '4. Underground routing is diagrammatic. Locate existing utilities and confirm final routing in the field ' +
+      'prior to excavation.',
+    '5. All runs to be installed per NEC Article 300 and the conduit type schedule above.'
+  ];
+  _ppWrapList(function(seg){s+=seg;}, notes, lx, ly, availW, 9, 12);
+
+  s+=_ppTitleBlock(W, H, tbW, tbH, 'E5.0', 'EQUIPMENT & CONDUIT SCHEDULE', street||pname, 0);
+  s+='</svg>';
+  return s;
+}
+
+/* E5.1 -- continuation of the conduit schedule when the run count exceeds
+   one sheet. Rendered only if E5.0 actually overflowed, so a normal-sized
+   job never produces a blank second page. Must be called AFTER
+   _ppRenderCondSchedule, which is what computes the overflow. */
+function _ppRenderCondScheduleCont(sizeKey, street){
+  var ov = window._ppCondOverflow;
+  if(!ov || !ov.rows || !ov.rows.length) return null;
+  var sheet=PP_SHEETS[sizeKey]||PP_SHEETS.B;
+  var W=sheet.w*PP_DPI, H=sheet.h*PP_DPI;
+  var _v=_ppVocab();
+  var pname=(document.getElementById('pname')||{}).value||(_v.noun+' Project');
+  var tbW=250, tbH=140, lx=54, ly=80, availW=W-tbW-lx-70;
+
+  var s='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="Arial, sans-serif">';
+  s+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#ffffff"/>';
+  s+='<rect x="14" y="14" width="'+(W-28)+'" height="'+(H-28)+'" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>';
+  s+='<text x="'+lx+'" y="'+ly+'" font-size="18" font-weight="800" fill="#1a1a1a">CONDUIT SCHEDULE (CONTINUED)</text>';
+  ly+=15;
+  s+='<text x="'+lx+'" y="'+ly+'" font-size="10" fill="#555">Continued from sheet E5.0.</text>';
+  ly+=26;
+
+  var hdr=['TAG','SERVICE / RUN','TYPE','CONDUIT','FROM','TO',(ov.scaled?'LENGTH':'LENGTH (px)')];
+  var rows=[hdr].concat(ov.rows);
+  var rowH=17;
+  var avail=(H-tbH-40)-ly-60;
+  if(rows.length*rowH > avail) rowH=Math.max(9, Math.floor(avail/rows.length));
+  _ppMiniTable(function(seg){s+=seg;}, rows, lx, ly, availW, ov.cw, rowH);
+
+  s+=_ppTitleBlock(W, H, tbW, tbH, 'E5.1', 'CONDUIT SCHEDULE (CONT.)', street||pname, 0);
   s+='</svg>';
   return s;
 }
@@ -31628,7 +32048,13 @@ function _sPadDims(asm){
 function _ppRenderBessPad(sizeKey, street){
   var sheet=PP_SHEETS[sizeKey]||PP_SHEETS.B;
   var W=sheet.w*PP_DPI, H=sheet.h*PP_DPI;
-  var pname=(document.getElementById('pname')||{}).value||'BESS Project';
+  /* The slab, pier, anchor and bollard geometry on this sheet is generic
+     structural work -- it is equally correct under a charger pedestal, an
+     inverter skid or a compute container. Only the LABELS were BESS-only,
+     which is what made an EV or solar export print a sheet titled "BESS
+     PAD DETAIL". Titles now follow the PROJECT TYPE selector. */
+  var _v=_ppVocab();
+  var pname=(document.getElementById('pname')||{}).value||(_v.noun+' Project');
   var asm=_ppFindAssembly();
   var pd=_sPadDims(asm);
   function gv(id){ var e=document.getElementById(id); return e?e.value:''; }
@@ -31665,17 +32091,17 @@ function _ppRenderBessPad(sizeKey, street){
   var npX=cX+cW/2-70, npY=cY+cH/2-24;
   s+='<rect x="'+npX+'" y="'+npY+'" width="140" height="48" fill="#fff" stroke="#1a1a1a" stroke-width="0.8"/>';
   s+='<text x="'+(npX+70)+'" y="'+(npY+15)+'" font-size="8" font-weight="700" fill="#1a1a1a" text-anchor="middle">'+_ppEsc(pd.model)+'</text>';
-  s+='<text x="'+(npX+70)+'" y="'+(npY+28)+'" font-size="7" fill="#1a1a1a" text-anchor="middle">BESS</text>';
+  s+='<text x="'+(npX+70)+'" y="'+(npY+28)+'" font-size="7" fill="#1a1a1a" text-anchor="middle">'+_ppEsc(_v.noun.toUpperCase())+'</text>';
   s+='<text x="'+(npX+70)+'" y="'+(npY+41)+'" font-size="7" fill="#1a1a1a" text-anchor="middle">Max Wt = '+_ppEsc(maxWt)+'</text>';
   /* dims */
   s+=_sDimH(t1x, t1x+padW, t1y-14, _ftIn(pd.padLf));
   s+=_sDimV(t1x-14, t1y, t1y+padH, _ftIn(pd.padWf));
   /* callouts */
-  s+=_sLeader(cX+cW*0.5, cY-6, cX+cW*0.5, cY, 'BESS CONTAINER FOOTPRINT','middle');
+  s+=_sLeader(cX+cW*0.5, cY-6, cX+cW*0.5, cY, _ppEsc(_v.padSubject.toUpperCase())+' FOOTPRINT','middle');
   s+=_sLeader(t1x+8, t1y+padH+34, t1x+8, t1y+padH+9, '14" DIAM x 4\'-6" LONG PIER, TYP.','start');
   s+=_sLeader(cX+cW+8, cY+6, cX+cW, cY+6, 'SIMPSON PAB8H W/ 9" EMBEDMENT','start');
   s+='<text x="'+(t1x+padW/2)+'" y="'+(t1y+padH+52)+'" font-size="7.5" fill="#1a1a1a" text-anchor="middle">MAINTENANCE ACCESS &amp; FIRE CLEARANCE PER CFC 1207.1-1207.9</text>';
-  s+='<text x="'+t1x+'" y="'+(t1y-24)+'" font-size="10" font-weight="700" fill="#1a1a1a">1  BESS PAD DETAILS - TOP VIEW   (SCALE: 1" = 2\')</text>';
+  s+='<text x="'+t1x+'" y="'+(t1y-24)+'" font-size="10" font-weight="700" fill="#1a1a1a">1  '+_ppEsc(_v.padTitle)+'S - TOP VIEW   (SCALE: 1" = 2\')</text>';
 
   /* ---- Detail 2: BESS PAD - SIDE VIEW (slab section) ---- */
   var s2x=90, s2y=t1y+padH+120, slabW=padW, slabH=48;
@@ -31695,7 +32121,7 @@ function _ppRenderBessPad(sizeKey, street){
   s+=_sLeader(s2x+slabW*0.55, s2y-8, s2x+slabW*0.55, s2y+6, '12" THICK SLAB W/ #4 BAR @ 18" O.C. EACH WAY TOP &amp; BOTTOM','middle');
   s+=_sLeader(s2x+slabW*0.35, s2y+slabH+52, s2x+slabW*0.35, s2y+slabH+20, 'GRAVEL BACKFILL UNDER SLAB, COMPACT IN 6" LIFTS','middle');
   s+=_sLeader(s2x+slabW*0.8, s2y+slabH+30, s2x+slabW*0.8, s2y+slabH+8, 'COLD JOINTS','middle');
-  s+='<text x="'+s2x+'" y="'+(s2y+slabH+95)+'" font-size="10" font-weight="700" fill="#1a1a1a">2  BESS PAD DETAILS - SIDE VIEW   (SCALE: 1" = 2\')</text>';
+  s+='<text x="'+s2x+'" y="'+(s2y+slabH+95)+'" font-size="10" font-weight="700" fill="#1a1a1a">2  '+_ppEsc(_v.padTitle)+'S - SIDE VIEW   (SCALE: 1" = 2\')</text>';
 
   /* ---- Detail 3: TYPICAL 4" BOLLARD ---- */
   var b3x=W-tbW-260, b3y=90;
@@ -31736,7 +32162,7 @@ function _ppRenderBessPad(sizeKey, street){
   ];
   _ppWrapList(function(seg){s+=seg;}, bn, nx, by+16, tbW+180, 9, 12);
 
-  s+=_ppTitleBlock(W, H, tbW, tbH, 'S1.1', 'BESS PAD DETAIL', street||pname, 0);
+  s+=_ppTitleBlock(W, H, tbW, tbH, 'S1.1', _v.padTitle, street||pname, 0);
   s+='</svg>';
   return s;
 }
@@ -32145,7 +32571,8 @@ async function _ppGenerateAINotes(){
 function _ppRenderE0(sizeKey, street){
   var sheet=PP_SHEETS[sizeKey]||PP_SHEETS.B;
   var W=sheet.w*PP_DPI, H=sheet.h*PP_DPI;
-  var pname=(document.getElementById('pname')||{}).value||'BESS Project';
+  var _v=_ppVocab();
+  var pname=(document.getElementById('pname')||{}).value||(_v.noun+' Project');
   var asm=_ppFindAssembly();
   var fleet=_ppCollectFleet();  /* aggregate across ALL placed BESS assemblies */
   /* pull spec data: prefer the plot-plan modal's E0 fields, then the one-line
@@ -32313,7 +32740,12 @@ function _ppRenderE0(sizeKey, street){
     ['E2.0','Single Line Diagram'],
     ['E3.0','Signage'],
     ['E4.0','POI Signage'],
-    ['S1.1','BESS Pad Detail'],
+    ['E5.0','Equipment & Conduit Schedule'],
+    /* Title-case for the index, but leave acronyms alone -- a naive
+       word-caser turns BESS into "Bess" and PV into "Pv". */
+    ['S1.1',_v.padTitle.replace(/\b[A-Za-z]+\b/g,function(w){
+       return /^(BESS|PV|DER|EV|EVSE|DCFC|MDP|PCS|AC|DC|UPS|EMS)$/.test(w)
+         ? w : (w.charAt(0)+w.slice(1).toLowerCase()); })],
     ['S1.2','Gear Pad Details'],
     ['S2.0','Grounding Detail'],
     ['S3.0','Fencing Detail']
@@ -32323,7 +32755,7 @@ function _ppRenderE0(sizeKey, street){
   /* BESS FLEET SUMMARY -- per-model breakdown + totals (multi-unit land sites) */
   if(fleet.units>0){
     myy+=18;
-    s+='<text x="'+mx+'" y="'+myy+'" font-size="11" font-weight="700" fill="#1a1a1a">BESS SYSTEM SUMMARY</text>'; myy+=8;
+    s+='<text x="'+mx+'" y="'+myy+'" font-size="11" font-weight="700" fill="#1a1a1a">'+((_ppTypeKey()==='bess'||_ppTypeKey()==='solarbess')?'BESS SYSTEM SUMMARY':'ENERGY STORAGE SUMMARY')+'</text>'; myy+=8;
     var fRows=[['MODEL','QTY','kWh ea','kW ea','TOTAL kWh']];
     for(var mk in fleet.byModel){ if(!fleet.byModel.hasOwnProperty(mk)) continue;
       var bm=fleet.byModel[mk];
@@ -32504,6 +32936,7 @@ async function _ppExport(){
   _setBtn('Generating sheets\u2026');
   var wantE12=_cbChecked('pp-e12'), wantE20=_cbChecked('pp-e20'), wantE30=_cbChecked('pp-e30'), wantE40=_cbChecked('pp-e40');
   var wantS11=_cbChecked('pp-s11'), wantS12=_cbChecked('pp-s12'), wantS20=_cbChecked('pp-s20'), wantS30=_cbChecked('pp-s30');
+  var wantE50=_cbChecked('pp-e50');
   var fmt='pdf'; var radios=document.getElementsByName('pp-fmt');
   for(var i=0;i<radios.length;i++){ if(radios[i].checked) fmt=radios[i].value; }
   var pname=((document.getElementById('pname')||{}).value||'BESS_Project').replace(/[^a-z0-9]+/gi,'_');
@@ -32521,6 +32954,12 @@ async function _ppExport(){
     }
     if(wantE30) sheets.push({ no:'E3.0', svg:_ppRenderSignage(sizeKey, street) });
     if(wantE40) sheets.push({ no:'E4.0', svg:_ppRenderPOISignage(sizeKey, street) });
+    if(wantE50){
+      sheets.push({ no:'E5.0', svg:_ppRenderCondSchedule(sizeKey, street) });
+      /* only produced when E5.0 actually ran out of room */
+      var _contSvg=_ppRenderCondScheduleCont(sizeKey, street);
+      if(_contSvg) sheets.push({ no:'E5.1', svg:_contSvg });
+    }
     if(wantS11) sheets.push({ no:'S1.1', svg:_ppRenderBessPad(sizeKey, street) });
     if(wantS12) sheets.push({ no:'S1.2', svg:_ppRenderGearPad(sizeKey, street) });
     if(wantS20) sheets.push({ no:'S2.0', svg:_ppRenderGrounding(sizeKey, street) });
@@ -35275,12 +35714,19 @@ async function generatePermitSet() {
       var conduitList = (typeof S !== 'undefined')
         ? (S.conduits||[]).map(function(c){ return (c.condType||'RMC')+': '+Math.round(c.ftLen||0)+'ft'; }).join(', ')
         : '';
-      var aiP = 'You are a PE generating a BESS permit set for '+brandName()+'.'
-        + '\nProject: ' + P.siteAddr + '\nSystem: ' + P.kwh + 'kWh / ' + P.kw + 'kW BESS NON-EXPORT BTM'
-        + '\nBattery: ' + P.batMfr + ' ' + P.batModel + '\nInverter: ' + P.invMfr + ' ' + P.invModel
+      /* This prompt opened with "a BESS permit set" for every project --
+         so an EV or solar job got AI-written scope, general notes and
+         electrical notes describing a battery system. Describe what the
+         PROJECT TYPE selector actually says it is. */
+      var _aiCtx = (typeof _ppTypeAi==='function') ? _ppTypeAi() : 'a battery energy storage system (BESS) installation';
+      var _aiVoc = (typeof _ppVocab==='function') ? _ppVocab() : null;
+      var aiP = 'You are a PE generating a permit set for '+_aiCtx+', for '+brandName()+'.'
+        + '\nProject: ' + P.siteAddr + '\nSystem: ' + P.kwh + 'kWh / ' + P.kw + 'kW NON-EXPORT BTM'
+        + '\nPrimary equipment: ' + P.batMfr + ' ' + P.batModel + '\nInverter: ' + P.invMfr + ' ' + P.invModel
         + '\nAC: ' + P.acv + ', XFMR: ' + P.xfmr + 'kVA, Disconnect: ' + P.acdis + 'A, MSB: ' + P.msb + 'A'
         + '\nCodes: ' + P.codes + ', Utility: ' + P.utility + '\nConduit: ' + (conduitList||'see drawing')
-        + '\nRespond ONLY with JSON no markdown: {"scope_of_work":"2-3 sentence scope","general_notes":["note","note","note","note","note","note","note","note","note","note","note","note"],"electrical_notes":["NEC 706","interconnection","non-export","UL 9540","grounding NEC 250","arc-flash","conduit","labeling"],"sld_notes":"SLD description","pad_design_criteria":"structural criteria","fencing_notes":["IFC 1207","NFPA 855","post/panel spec"]}';
+        + '\nCite only the NEC articles and fire-code chapters that actually govern '+_aiCtx+'. Do not cite battery or energy-storage articles unless this project includes stored energy.'
+        + '\nRespond ONLY with JSON no markdown: {"scope_of_work":"2-3 sentence scope","general_notes":["note","note","note","note","note","note","note","note","note","note","note","note"],"electrical_notes":["governing NEC article","interconnection","non-export","equipment listing standard","grounding NEC 250","arc-flash","conduit","labeling"],"sld_notes":"SLD description","pad_design_criteria":"structural criteria","fencing_notes":["applicable fire code","separation/clearance","post/panel spec"]}';
       var aiMsgs = canvasImg
         ? [{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:canvasImg.split(',')[1]}},{type:'text',text:aiP}]}]
         : [{role:'user',content:aiP}];
@@ -35813,7 +36259,16 @@ function _psNorth() {
 
 // -- E0 Cover Sheet -- NextNRG Engineering Drawing Format ------
 function _psE0(P, ai, today, sheet, sn, idx) {
-  var scope = (ai.scope_of_work) || ('The project consists of installing a new Battery Energy Storage System (BESS) and associated electrical balance-of-system equipment at '+_h(P.siteAddr||'the project site')+'. The system is configured as a non-export, behind-the-meter energy storage system. Installation shall comply with '+_h(P.utility||'ComEd')+' DER interconnection requirements, NFPA 855, IFC Chapter 12, and '+_h(P.codes||'2020 NEC, 2021 IBC, 2021 IFC')+' as adopted by the AHJ.');
+  /* Fallback scope when the AI call is skipped or fails. This used to
+     assert a battery system regardless of project type; now it states
+     whatever the PROJECT TYPE selector says, and only cites NFPA 855 /
+     IFC 12 on the types that actually involve stored energy. */
+  var _sv = (typeof _ppVocab==='function') ? _ppVocab() : null;
+  var _sk = (typeof _ppTypeKey==='function') ? _ppTypeKey() : 'bess';
+  var _hasStorage = (_sk==='bess'||_sk==='solarbess'||_sk==='der');
+  var _scopeAct = _sv ? _sv.scope : 'installing a new Battery Energy Storage System (BESS) and associated electrical balance-of-system equipment';
+  var _scopeCodes = _hasStorage ? 'NFPA 855, IFC Chapter 12, and ' : '';
+  var scope = (ai.scope_of_work) || ('The project consists of '+_scopeAct+' at '+_h(P.siteAddr||'the project site')+'. The system is configured as a non-export, behind-the-meter installation. Installation shall comply with '+_h(P.utility||'the serving utility')+' DER interconnection requirements, '+_scopeCodes+_h(P.codes||'2020 NEC, 2021 IBC, 2021 IFC')+' as adopted by the AHJ.');
   var gnotes = (ai.general_notes) || [
     'All construction shall comply with the codes adopted by the AHJ including but not limited to '+_h(P.codes||'2020 NEC, 2021 IBC, 2021 IFC, NFPA 855')+'. Where codes conflict, the more restrictive shall govern.',
     'Engineer of Record (EOR) shall be notified of any field conditions differing from approved drawings prior to proceeding with affected work.',
@@ -54455,7 +54910,7 @@ window._crmToastModal=_crmToastModal;
     bess: {
       label:'BESS \u2014 Battery Energy Storage',
       noun:'BESS', assembly:'bess',
-      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:0,s11:1,s12:1,s20:1,s30:1 },
+      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:0,e50:1,s11:1,s12:1,s20:1,s30:1 },
       names:{ s11:'S1.1 \u2014 BESS Pad Detail (structural)',
               s12:'S1.2 \u2014 Gear Pad Details (structural)',
               e20:'E2.0 \u2014 Single Line Diagram',
@@ -54465,21 +54920,36 @@ window._crmToastModal=_crmToastModal;
       hint:'NFPA 855 separation and signage sheets are included by default.'
     },
     ev: {
-      label:'EV Charging \u2014 DCFC / Level 2',
-      noun:'EV charging', assembly:'charger',
-      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:1,s11:1,s12:1,s20:1,s30:0 },
+      label:'EV Charging \u2014 DCFC (fast charge)',
+      noun:'DC fast charging', assembly:'charger',
+      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:1,e50:1,s11:1,s12:1,s20:1,s30:0 },
       names:{ s11:'S1.1 \u2014 Charger Pad Detail (structural)',
-              s12:'S1.2 \u2014 Gear Pad Details (structural)',
-              e20:'E2.0 \u2014 Single Line Diagram',
+              s12:'S1.2 \u2014 Gear / Transformer Pad Details (structural)',
+              e20:'E2.0 \u2014 Single Line Diagram (DCFC)',
               e30:'E3.0 \u2014 Signage (ADA + EV)' },
       cover:{ model:'Charger model', mfr:'Charger manufacturer' },
-      ai:'an electric vehicle charging installation',
-      hint:'ADA signage and POI placards are included by default for EV sites.'
+      ai:'a DC fast-charging (DCFC) electric vehicle charging installation with utility service and transformer work',
+      hint:'DCFC draws utility/MV coordination \u2014 gear pad (S1.2) and grounding are on by default alongside ADA signage and POI placards.'
+    },
+    /* Level 2 was folded in with DCFC and got the same sheet set. It
+       almost never needs its own transformer or MV coordination, so the
+       gear-pad sheet defaulting ON produced a page with nothing to draw. */
+    evl2: {
+      label:'EV Charging \u2014 Level 2',
+      noun:'Level 2 EV charging', assembly:'charger',
+      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:1,e50:1,s11:1,s12:0,s20:1,s30:0 },
+      names:{ s11:'S1.1 \u2014 Charger Mounting Detail (structural)',
+              s12:'S1.2 \u2014 Gear Pad Details (structural)',
+              e20:'E2.0 \u2014 Single Line Diagram (Level 2)',
+              e30:'E3.0 \u2014 Signage (ADA + EV)' },
+      cover:{ model:'Charger model', mfr:'Charger manufacturer' },
+      ai:'a Level 2 (208/240V AC) electric vehicle charging installation fed from existing building service',
+      hint:'Level 2 typically feeds off existing service \u2014 the gear/transformer pad sheet is off by default. Turn it on if this site adds a dedicated transformer.'
     },
     solar: {
       label:'Solar PV',
       noun:'solar array', assembly:'solar',
-      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:0,s11:1,s12:0,s20:1,s30:0 },
+      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:0,e50:1,s11:1,s12:0,s20:1,s30:0 },
       names:{ s11:'S1.1 \u2014 Array Racking Detail (structural)',
               s12:'S1.2 \u2014 Inverter Pad Details (structural)',
               e20:'E2.0 \u2014 Single Line Diagram (PV)',
@@ -54491,7 +54961,7 @@ window._crmToastModal=_crmToastModal;
     der: {
       label:'DER \u2014 mixed / microgrid',
       noun:'DER system', assembly:null,
-      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:0,s11:1,s12:1,s20:1,s30:1 },
+      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:0,e50:1,s11:1,s12:1,s20:1,s30:1 },
       names:{ s11:'S1.1 \u2014 Equipment Pad Detail (structural)',
               s12:'S1.2 \u2014 Gear Pad Details (structural)',
               e20:'E2.0 \u2014 Single Line Diagram (DER)',
@@ -54499,6 +54969,30 @@ window._crmToastModal=_crmToastModal;
       cover:{ model:'Primary equipment model', mfr:'Manufacturer' },
       ai:'a distributed energy resource (DER) installation',
       hint:'Mixed-asset sites: every structural and signage sheet is on by default.'
+    },
+    solarbess: {
+      label:'Solar + BESS \u2014 Combined System',
+      noun:'solar + BESS system', assembly:'bess',
+      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:0,e50:1,s11:1,s12:1,s20:1,s30:1 },
+      names:{ s11:'S1.1 \u2014 Array Racking + BESS Pad Detail (structural)',
+              s12:'S1.2 \u2014 Gear Pad Details (structural)',
+              e20:'E2.0 \u2014 Single Line Diagram (PV + BESS)',
+              e30:'E3.0 \u2014 Signage (NEC 690 + NFPA 855)' },
+      cover:{ model:'Primary equipment model', mfr:'Manufacturer' },
+      ai:'a combined solar photovoltaic and battery energy storage (PV + BESS) installation',
+      hint:'Both PV rapid-shutdown/array signage and NFPA 855 battery signage are included \u2014 this is the CSE non-export solar + storage combo.'
+    },
+    datacenter: {
+      label:'Data Center / Compute Load',
+      noun:'compute load facility', assembly:null,
+      sheets:{ e0:1,e10:1,e1:1,e12:0,e20:1,e30:1,e40:0,e50:1,s11:1,s12:1,s20:1,s30:1 },
+      names:{ s11:'S1.1 \u2014 Compute Pod / Container Pad Detail (structural)',
+              s12:'S1.2 \u2014 Gear Pad Details (structural)',
+              e20:'E2.0 \u2014 Single Line Diagram (Compute + DER)',
+              e30:'E3.0 \u2014 Signage (Critical Facility / Arc Flash)' },
+      cover:{ model:'Compute/DER equipment model', mfr:'Manufacturer' },
+      ai:'a data center or critical compute-load facility, typically paired with on-site DER (solar/BESS) for load support',
+      hint:'Arc-flash and critical-facility electrical signage apply in place of battery-specific NFPA 855 placards; add those separately if BESS is also on site.'
     }
   };
 
@@ -67143,6 +67637,85 @@ window._crmToastModal=_crmToastModal;
     return { lf: 2.5, wf: 1.5 };                      /* residential stack    */
   }
 
+  /* ─────────────────────────────────────────────────────────────────
+     CAPACITY-AWARE FOOTPRINTS -- XFMR / SWITCHGEAR / PCS SKID
+
+     These three shipped as fixed defaults (6'x5' xfmr, 10'x3' switchgear,
+     12'x8' PCS skid) regardless of what was actually being installed --
+     right for maybe one size of system and wrong for every other one. A
+     380 kW C&I BESS does not need a 2 MW-class 12'x8' central inverter
+     skid or a 10-foot multi-section switchgear lineup; a 5 MW utility
+     system needs more than the 380 kW footprint gives it either way.
+
+     Interpolated between real-world reference points rather than a single
+     multiplier, because the relationship isn't linear at either end (a
+     100 kVA and a 300 kVA pad-mount are closer in footprint than a 2000
+     and a 3000). Same "typical, not gospel, editable per placement"
+     caveat as the rest of the utility catalogue.
+     ───────────────────────────────────────────────────────────────── */
+  function _interpFootprint(table, x){
+    if(x<=table[0][0]) return { lf:table[0][1], wf:table[0][2] };
+    for(var i=1;i<table.length;i++){
+      if(x<=table[i][0]){
+        var a=table[i-1], b=table[i];
+        var f=(x-a[0])/(b[0]-a[0]);
+        return { lf:+(a[1]+f*(b[1]-a[1])).toFixed(1), wf:+(a[2]+f*(b[2]-a[2])).toFixed(1) };
+      }
+    }
+    var last=table[table.length-1];
+    return { lf:last[1], wf:last[2] };
+  }
+  /* Pad-mount transformer, by kVA. [kVA, lf, wf] */
+  var XFMR_TABLE = [
+    [150,  5.0,4.0], [300, 5.5,4.5], [500, 6.0,5.0], [750, 6.5,5.5],
+    [1000, 7.0,6.0], [1500,7.5,6.5], [2000,8.0,7.0], [3000,9.0,7.5]
+  ];
+  /* Main switchgear/MDP, by amps. A BTM system's gear is one or two
+     sections at these ratings, not a utility lineup. [A, lf, wf] */
+  var SWGR_TABLE = [
+    [225, 3.5,3.0], [400, 4.0,3.0], [600, 5.0,3.0], [800, 6.0,3.0],
+    [1200,7.0,3.0], [2000,9.0,3.0], [3000,12.0,3.5], [4000,14.0,3.5]
+  ];
+  /* PCS / inverter skid, by kW AC. A 380 kW system is a single outdoor
+     cabinet, not a 2 MW-class central-inverter skid -- 12'x8' is right
+     around 2 MW, which is exactly why it read wrong at 380 kW. [kW, lf, wf] */
+  var PCS_TABLE = [
+    [100, 4.0,3.0], [250,5.0,4.0], [500,6.0,5.0], [1000,8.0,6.0],
+    [2000,12.0,8.0], [2500,14.0,9.0], [3500,16.0,10.0]
+  ];
+  function xfmrFootprint(kva){ return _interpFootprint(XFMR_TABLE, Math.max(1,+kva||0)); }
+  function switchgearFootprint(amps){ return _interpFootprint(SWGR_TABLE, Math.max(1,+amps||0)); }
+  function pcsFootprint(kw){ return _interpFootprint(PCS_TABLE, Math.max(1,+kw||0)); }
+  /* kVA at the transformer / amps at the switchgear, both derived from the
+     BESS kW at a conservative-but-typical 0.9 kVA/kW and 480V 3-phase. A
+     transformer and service entrance are sized with headroom above the
+     nameplate they serve, not sized exactly to it. */
+  function _svcKva(bessKw){ return (+bessKw||0) * 1.15; }         /* ~15% headroom over BESS kW */
+  function _svcAmps(bessKw){ return ((+bessKw||0)*1000*1.15) / (Math.sqrt(3)*480); }
+  /* Apply all three sized footprints into UTILITY_CATALOG at once, from
+     the same spec the BESS step already computes. Called BEFORE the
+     xfmr/mdp/pcs steps are armed (see start(), below) so each one places
+     at the right size the first time -- not the BESS step's fixed
+     default, and not a generic catalogue default either. */
+  function applyServiceSizes(spec){
+    try {
+      if (typeof UTILITY_CATALOG === 'undefined' || !spec || !spec.totKw) return;
+      var kw = spec.totKw;
+      var xf = xfmrFootprint(_svcKva(kw));
+      var sg = switchgearFootprint(_svcAmps(kw));
+      var pc = pcsFootprint(kw);
+      var x = UTILITY_CATALOG.xfmr || (UTILITY_CATALOG.xfmr = {});
+      x.lf = xf.lf; x.wf = xf.wf; x.label = x.label || 'UTILITY XFMR';
+      var m = UTILITY_CATALOG.mdp || (UTILITY_CATALOG.mdp = {});
+      m.lf = sg.lf; m.wf = sg.wf; m.label = m.label || 'MAIN SWITCHGEAR / MDP';
+      var pk = UTILITY_CATALOG.pcs || (UTILITY_CATALOG.pcs = {});
+      pk.lf = pc.lf; pk.wf = pc.wf; pk.label = pk.label || 'PCS / INVERTER SKID';
+      console.info(TAG+' service equipment sized off '+fmt(kw)+' kW BESS: XFMR '
+        +xf.lf+'x'+xf.wf+'\u2032 ('+Math.round(_svcKva(kw))+' kVA), switchgear '
+        +sg.lf+'x'+sg.wf+'\u2032 ('+Math.round(_svcAmps(kw))+' A), PCS skid '+pc.lf+'x'+pc.wf+'\u2032.');
+    } catch(e) {}
+  }
+
   function shortName(u) {
     var t = String((u && u.model) || (u && u.key) || 'CUSTOM');
     t = t.replace(/\s*\(.*?\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
@@ -67346,6 +67919,31 @@ window._crmToastModal=_crmToastModal;
     s.conduits = s.conduits || [];
     s.conduits.push(c);
     try { if (typeof renderConduit === 'function') renderConduit(c); } catch (e) {}
+    /* This run used to depend entirely on the interval handler's later
+       pushHist() to pick up a geo anchor -- fine as long as nothing else
+       ever ran in between, but the Engineering Build panel repaints,
+       shows/hides banners and can retrigger the shape-watcher's own
+       polling tick before that pushHist ever fires. Stamp it here,
+       immediately, so the run is anchored to the map the instant it's
+       drawn rather than depending on a later, unrelated call to catch it.
+       _geoRestampOne works on anything with .pts, not just S.shapes
+       members, so it applies directly to a conduit record. */
+    try { if (typeof _geoRestampOne === 'function') _geoRestampOne(c); } catch (e) {}
+    /* Force-refresh both endpoints' own anchors too (not just fill gaps).
+       centreOf() reads cx+tx/cy+ty; _geoStampShape's default fill-only
+       pass anchors cx/cy alone the first time a shape is touched and never
+       revisits it, so a shape nudged between placement and this link()
+       call would leave the conduit anchored to a slightly different point
+       than the equipment it's actually drawn from. */
+    try {
+      var msNow = (typeof _liveMapState === 'function') ? _liveMapState() : null;
+      if (msNow && typeof _geoStampShape === 'function') {
+        var szNow = (typeof _getCanvasSize === 'function') ? _getCanvasSize() : { w: 1200, h: 800 };
+        var toGeoNow = function (x, y) { return _pxToLatLng(x, y, msNow, szNow.w, szNow.h); };
+        _geoStampShape(fromSh, toGeoNow, true);
+        _geoStampShape(toSh, toGeoNow, true);
+      }
+    } catch (e) {}
     return c;
   }
 
@@ -67391,9 +67989,10 @@ window._crmToastModal=_crmToastModal;
       p.innerHTML =
         '<div style="padding:9px 11px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;gap:8px">'
         + '<span style="font-size:13px">\u25a4</span>'
-        + '<div style="flex:1;font-weight:700;font-size:12px">BESS \u2014 system size</div>'
+        + '<div style="flex:1;font-weight:700;font-size:12px">System size</div>'
         + '<button id="oeb-x" style="background:none;border:none;color:#8BA3C4;font-size:17px;cursor:pointer;line-height:1">\u00d7</button></div>'
         + '<div style="padding:10px 11px">'
+        + '<div style="font-size:9.5px;color:#7D95B4;line-height:1.5;margin-bottom:8px">Sets the BESS container AND the transformer, switchgear and PCS skid footprints that follow \u2014 all four scale off this number, so it\u2019s asked before any of them place.</div>'
         + '<div style="font-size:10px;color:#7D95B4;margin-bottom:3px">CONTAINER / CABINET</div>'
         + '<select id="oeb-model" style="width:100%;background:#152A45;border:1px solid rgba(255,255,255,.16);'
         + 'color:#E8F0FE;border-radius:5px;padding:5px;font:11px/1.3 \'IBM Plex Sans\',sans-serif;margin-bottom:8px">'
@@ -67413,7 +68012,7 @@ window._crmToastModal=_crmToastModal;
         + 'border-radius:5px;padding:7px 0;font:700 11px/1 \'IBM Plex Mono\',monospace;cursor:pointer">Size &amp; place</button>'
         + '<button id="oeb-skip" style="margin-top:6px;width:100%;background:#152A45;'
         + 'border:1px solid rgba(255,255,255,.16);color:#E8F0FE;border-radius:5px;padding:6px 0;'
-        + 'font:700 11px/1 \'IBM Plex Mono\',monospace;cursor:pointer">Skip this step</button>'
+        + 'font:700 11px/1 \'IBM Plex Mono\',monospace;cursor:pointer">Use generic defaults</button>'
         + '</div>';
 
       var sel = p.querySelector('#oeb-model');
@@ -67448,7 +68047,7 @@ window._crmToastModal=_crmToastModal;
       recalc(true);
 
       p.querySelector('#oeb-x').onclick = cancel;
-      p.querySelector('#oeb-skip').onclick = skip;
+      p.querySelector('#oeb-skip').onclick = skipSizing;
       p.querySelector('#oeb-size-go').onclick = function () {
         var spec = readSize();
         if (!spec.totKwh) { calc.innerHTML = 'Enter a system size first.'; return; }
@@ -67456,6 +68055,7 @@ window._crmToastModal=_crmToastModal;
         run.remaining = spec.qty;
         run.bessIds = [];
         applySize(spec);
+        applyServiceSizes(spec);
         run.sizing = false;
         console.info(TAG + ' BESS sized \u2014 ' + spec.qty + ' \u00d7 ' + shortName(spec.unit)
           + ' @ ' + spec.lf + '\u2032 \u00d7 ' + spec.wf + '\u2032 \u2014 '
@@ -67580,7 +68180,14 @@ window._crmToastModal=_crmToastModal;
     /* plan-set style for the whole flow, and no stale guide flag holding it */
     try { if (window.OmegaEng && OmegaEng.set) OmegaEng.set(true); else window.ENG_MODE = true; } catch (e) {}
     console.info(TAG + ' started \u2014 ' + SEQ.length + ' steps, Engineering Mode on');
-    arm();
+    /* Ask the system size BEFORE placing anything. The BESS step (#5 in the
+       walk-the-one-line order) used to be where sizing happened, which is
+       AFTER the transformer, switchgear and PCS skid (#2-4) had already
+       gone down at generic defaults -- there was no system kW yet to size
+       them from. Asking up front means every downstream footprint reads
+       the real number from step 1 on, not just the BESS container itself. */
+    run.sizing = true;
+    paint();
     return { steps: SEQ.length };
   }
 
@@ -67589,6 +68196,17 @@ window._crmToastModal=_crmToastModal;
     console.info(TAG + ' skipped ' + SEQ[run.i].key);
     run.i++;
     if (run.i >= SEQ.length) finish(); else arm();
+    return run.i;
+  }
+
+  /* Skipping the UPFRONT sizing prompt is not the same as skipping a step:
+     it means "place everything at generic defaults, I'll size later" --
+     the current step (mpoi, first in line) still needs placing. */
+  function skipSizing() {
+    if (!run) return null;
+    console.info(TAG + ' sizing skipped \u2014 XFMR/switchgear/PCS will use generic defaults');
+    run.sizing = false;
+    arm();
     return run.i;
   }
 
