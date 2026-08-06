@@ -9900,6 +9900,35 @@ function _shapeBBox(sh){
     var miny=Math.min(t0.y, an.y-12), maxy=Math.max(t0.y, an.y+12);
     return { x:minx, y:miny, w:Math.max(1,maxx-minx), h:Math.max(1,maxy-miny) };
   }
+  /* EV Catalog kinds (post/cabinet/standalone unit/L2). These were ONLY ever
+     given a bbox via a later wrapper around window._shapeBBox -- every
+     caller here that uses the bare "_shapeBBox(sh)" name (this function's
+     own hoisted declaration) always resolved to THIS body, never the
+     wrapper, and fell through to the generic single-point fallback below.
+     For a one-point shape that returns a 1x1 pixel box regardless of the
+     charger's real rendered size. _shapeResizeStart uses that box to decide
+     how many screen pixels of drag equal a 1x scale step -- with a box
+     that's really ~1px instead of the charger's actual ~15-40px, an
+     ordinary resize drag produced a wildly oversized scale multiplier that
+     then stayed baked into the shape permanently, which is why the charger
+     looked correctly sized only until the very next zoom or resize
+     highlighted how oversized it actually was. Matching the real footprint
+     here, in the function every caller actually reaches, fixes it at the
+     root instead of in just the one call site that was reported. */
+  if(sh.kind==='evpost'||sh.kind==='evcab'||sh.kind==='evunit'||sh.kind==='evl2'){
+    var evppf=(typeof _evScale==='function') ? _evScale() : ((S.pxPerFt && S.pxPerFt>0) ? S.pxPerFt : 6);
+    var evw=(sh.lf||1.5)*evppf, evh=(sh.wf||2)*evppf;
+    if(sh.kind==='evl2'){ evw=Math.max(14,evw); evh=Math.max(20,evh); }
+    return { x:sh.pts[0].x-evw/2, y:sh.pts[0].y-evh/2, w:evw, h:evh };
+  }
+  /* Zone Box / Substation: two literal corners in pts. The generic
+     point-iteration fallback below happens to compute the right box for
+     these (it spans whatever points pts actually holds), but making it
+     explicit removes any fragility if that fallback ever changes shape. */
+  if(sh.kind==='zonebox'||sh.kind==='substation'){
+    var za=sh.pts[0], zb=sh.pts[1];
+    return { x:Math.min(za.x,zb.x), y:Math.min(za.y,zb.y), w:Math.abs(zb.x-za.x), h:Math.abs(zb.y-za.y) };
+  }
   /* line / rect / polyline: bbox over points */
   var xs=[], ys=[];
   for(var i=0;i<sh.pts.length;i++){ xs.push(sh.pts[i].x); ys.push(sh.pts[i].y); }
@@ -10151,10 +10180,17 @@ function _calloutDragEnd(){
   document.removeEventListener('touchend', _calloutDragEnd, true);
   /* The new position becomes the new ground truth -- without this the next
      map idle/zoom reprojects from the OLD stale anchor and snaps the callout
-     back to where it was before this drag. */
+     back to where it was before this drag. Clears every anchor field the
+     active engine's stampOne() checks for a callout (_geoAnchor plus the
+     two point-specific fields), not just _geoAnchor alone -- the engine's
+     own restamp() helper only clears _geoAnchor, which would leave the
+     point-specific fields stale and skip re-stamping entirely. */
   try{
     var sh=null; for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===_movedId){ sh=S.shapes[i]; break; } }
-    if(sh && typeof window._geoRestampOne==='function') window._geoRestampOne(sh);
+    if(sh){
+      delete sh._geoAnchor; delete sh._geoTarget; delete sh._geoAnchorPt;
+      if(typeof window._geoRestampOne==='function') window._geoRestampOne(sh);
+    }
   }catch(e){}
   if(typeof pushHist==='function') pushHist();
 }
@@ -37010,10 +37046,15 @@ function _dimDragEnd(){
   document.removeEventListener('touchmove', _dimDragMove, true);
   document.removeEventListener('touchend', _dimDragEnd, true);
   /* New endpoints become the new ground truth, same reasoning as callouts:
-     without this the next reproject snaps the line back to its old anchor. */
+     without this the next reproject snaps the line back to its old anchor.
+     Clears every field the active engine's stampOne() checks for a
+     dimension (_geoAnchor plus both endpoint-specific fields). */
   try{
     var el=null; for(var i=0;i<S.elements.length;i++){ if(S.elements[i].id===_movedId){ el=S.elements[i]; break; } }
-    if(el && typeof window._geoRestampOne==='function') window._geoRestampOne(el);
+    if(el){
+      delete el._geoAnchor; delete el._geoD1; delete el._geoD2;
+      if(typeof window._geoRestampOne==='function') window._geoRestampOne(el);
+    }
   }catch(e){}
   if(typeof pushHist==='function') pushHist();
 }
@@ -59356,6 +59397,11 @@ window._crmToastModal=_crmToastModal;
     return { x:o.x + ((o.w||60)/2), y:o.y + ((o.h||o.w||60)/2), __xy:true };
   }
   function anchorOf(o){
+    /* Callout: the label (anchor) is the primary reference point for the
+       generic single-anchor code paths (delete, hit-test helpers, etc).
+       Its ground tracking is handled specially in stampOne/applyOne below,
+       since a callout is really TWO independent points, not one. */
+    if(o.kind==='callout' && o.anchor) return o.anchor;
     if(o.pts && o.pts.length && o.pts[0]) return o.pts[0];
     if(o.cx!=null && o.cy!=null)           return {x:o.cx, y:o.cy, __cxcy:true};
     if(typeof o.x==='number' && typeof o.y==='number') return _elAnchorPt(o);
@@ -59402,6 +59448,42 @@ window._crmToastModal=_crmToastModal;
 
   function stampOne(o, ms, sz){
     if(o._geoAnchor) return false;
+
+    /* Callout: target (arrow tip) and anchor (label) are TWO independent
+       points, not one -- rigid-translating by a single delta (the generic
+       path below) is what left the whole thing frozen, since anchorOf()
+       had no case for either field and returned null, so stampOne bailed
+       out before ever reaching the pixel-to-lat/lng conversion. Stamp both
+       explicitly, matching how a multi-vertex conduit gets a ground point
+       per vertex instead of one shared anchor. */
+    if(o.kind==='callout'){
+      if(o._geoTarget && o._geoAnchorPt) return false;
+      if(typeof _pxToLatLng!=='function') return false;
+      var okC=false;
+      if(o.target && !o._geoTarget){
+        var gt3=_pxToLatLng(o.target.x, o.target.y, ms, sz.w, sz.h);
+        if(gt3){ o._geoTarget={lat:gt3.lat,lng:gt3.lng}; okC=true; }
+      }
+      if(o.anchor && !o._geoAnchorPt){
+        var ga3=_pxToLatLng(o.anchor.x, o.anchor.y, ms, sz.w, sz.h);
+        if(ga3){ o._geoAnchorPt={lat:ga3.lat,lng:ga3.lng}; o._geoAnchor={lat:ga3.lat,lng:ga3.lng}; okC=true; }
+      }
+      return okC;
+    }
+    /* Dimension: the two line endpoints (x1,y1)/(x2,y2) are what actually
+       render -- the generic o.x/o.y this engine tracks for every other
+       element is a dead center field a dimension carries but never draws
+       from, so the rigid-translate path silently moved nothing visible. */
+    if(o.type==='dimension'){
+      if(o._geoD1 && o._geoD2) return false;
+      if(typeof _pxToLatLng!=='function') return false;
+      var gd1=_pxToLatLng(o.x1, o.y1, ms, sz.w, sz.h);
+      var gd2=_pxToLatLng(o.x2, o.y2, ms, sz.w, sz.h);
+      if(!gd1 || !gd2) return false;
+      o._geoD1={lat:gd1.lat,lng:gd1.lng}; o._geoD2={lat:gd2.lat,lng:gd2.lng};
+      o._geoAnchor={lat:gd1.lat,lng:gd1.lng};
+      return true;
+    }
 
     /* ADOPT AN EXISTING ANCHOR, NEVER RE-DERIVE ONE.
        If _geoPts or _geoLat is already set, that IS the ground truth -
@@ -59522,6 +59604,49 @@ window._crmToastModal=_crmToastModal;
     if(!o._geoAnchor) return false;
     if(typeof _latLngToPx!=='function') return false;
     _lastMs=ms;
+
+    /* Callout: project target and anchor independently from their own
+       stamps, instead of moving one shared anchor by a single delta -- a
+       rigid translate here would be wrong the moment either point is
+       dragged away from the other (which the label/target drag handles
+       let the user do deliberately). */
+    if(o.kind==='callout'){
+      var movedC=false;
+      if(o._geoTarget && o.target){
+        var pt3=_latLngToPx(o._geoTarget.lat, o._geoTarget.lng, ms, sz.w, sz.h);
+        if(pt3 && (Math.abs(pt3.x-o.target.x)>0.01 || Math.abs(pt3.y-o.target.y)>0.01)){
+          o.target.x=pt3.x; o.target.y=pt3.y; movedC=true;
+        }
+      }
+      if(o._geoAnchorPt && o.anchor){
+        var pa3=_latLngToPx(o._geoAnchorPt.lat, o._geoAnchorPt.lng, ms, sz.w, sz.h);
+        if(pa3 && (Math.abs(pa3.x-o.anchor.x)>0.01 || Math.abs(pa3.y-o.anchor.y)>0.01)){
+          o.anchor.x=pa3.x; o.anchor.y=pa3.y; movedC=true;
+        }
+      }
+      return movedC;
+    }
+    /* Dimension: project both endpoints independently -- same reasoning,
+       plus a rigid translate never touched x1/y1/x2/y2 in the first place
+       (only the unused generic o.x/o.y), so the drawn line never moved. */
+    if(o.type==='dimension'){
+      var movedD=false;
+      if(o._geoD1){
+        var pd1b=_latLngToPx(o._geoD1.lat, o._geoD1.lng, ms, sz.w, sz.h);
+        if(pd1b && (Math.abs(pd1b.x-o.x1)>0.01 || Math.abs(pd1b.y-o.y1)>0.01)){
+          o.x1=pd1b.x; o.y1=pd1b.y; movedD=true;
+        }
+      }
+      if(o._geoD2){
+        var pd2b=_latLngToPx(o._geoD2.lat, o._geoD2.lng, ms, sz.w, sz.h);
+        if(pd2b && (Math.abs(pd2b.x-o.x2)>0.01 || Math.abs(pd2b.y-o.y2)>0.01)){
+          o.x2=pd2b.x; o.y2=pd2b.y; movedD=true;
+        }
+      }
+      if(movedD && typeof renderDimension==='function'){ try{ renderDimension(o); }catch(e){} }
+      return movedD;
+    }
+
     var a=anchorOf(o); if(!a) return false;
     var t=_latLngToPx(o._geoAnchor.lat, o._geoAnchor.lng, ms, sz.w, sz.h);
     if(!t) return false;
