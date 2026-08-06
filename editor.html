@@ -10031,12 +10031,20 @@ function _renderCallout(g, sh){
   box.setAttribute('fill','rgba(12,18,30,0.92)');
   box.setAttribute('stroke',_shapeInk(sh)); box.setAttribute('stroke-width','1.5');
   box.style.cursor='move';
+  /* hide together with its text in full Labels-off mode, so there is never
+     an orphaned empty box left behind (see the text exemption just below). */
+  box.setAttribute('class','omega-utillabel');
   g.appendChild(box);
   var tx=_mkNS('text');
   tx.setAttribute('x',lx+7); tx.setAttribute('y',ly+fs*0.36);
   tx.setAttribute('fill','#F5F0E1'); tx.setAttribute('font-size',fs);
   tx.setAttribute('font-weight','700');
   tx.setAttribute('font-family','ui-monospace, Menlo, monospace'); tx.setAttribute('pointer-events','none');
+  /* Exempt from the Labels "dimensions only" auto-classifier -- without this,
+     plain callout text with no foot-mark (e.g. "Substation") gets tagged as
+     a hideable stencil name, leaving exactly the dark box with no visible
+     text that this was reported as. */
+  tx.setAttribute('class','omega-utillabel');
   tx.textContent=txt;
   g.appendChild(tx);
   /* dragging the box (the label + its leader line) moves ONLY sh.anchor --
@@ -36840,6 +36848,11 @@ function renderDimension(el) {
   bgRect.setAttribute('width',lw); bgRect.setAttribute('height',16);
   bgRect.setAttribute('rx',3); bgRect.setAttribute('fill','rgba(10,18,38,.85)');
   bgRect.setAttribute('stroke','#00D4FF'); bgRect.setAttribute('stroke-width','1');
+  /* The auto-generated "16.7 ft" label already survives the Labels
+     "dimensions only" mode (it carries a foot-mark), but a CUSTOM label
+     typed via the edit modal often won't -- exempt both explicitly so a
+     renamed dimension can't lose its text the same way callouts did. */
+  bgRect.setAttribute('class','omega-utillabel');
 
   const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
   txt.setAttribute('x',midX-xr/2); txt.setAttribute('y',midY+1);
@@ -36847,6 +36860,7 @@ function renderDimension(el) {
   txt.setAttribute('font-size','10'); txt.setAttribute('font-weight','800');
   txt.setAttribute('font-family',"'IBM Plex Mono',monospace");
   txt.setAttribute('fill','#00D4FF'); txt.setAttribute('pointer-events','none');
+  txt.setAttribute('class','omega-utillabel');
   txt.textContent=label;
 
   g.appendChild(line); g.appendChild(ext1); g.appendChild(ext2);
@@ -50168,7 +50182,11 @@ function _evRenderZone(g, sh){
   if(sh.label){
     /* Legible regardless of the fill/border color the user picked (which can
        be black, as it is by default) -- give the text its own small dark
-       chip so it never blends into the box it's labeling. */
+       chip so it never blends into the box it's labeling. Tagged
+       omega-utillabel so the Labels "dimensions only" view mode does not
+       auto-classify user-typed text as a hideable stencil name -- the same
+       gap that hid utility component labels earlier also applied here,
+       since nothing exempted Zone Box / Callout / Dimension text from it. */
     var lfs=12;
     var ltxt=sh.label;
     var lw=Math.max(20, ltxt.length*lfs*0.58)+10, lh=lfs+8;
@@ -50178,8 +50196,10 @@ function _evRenderZone(g, sh){
     chip.setAttribute('width',lw); chip.setAttribute('height',lh);
     chip.setAttribute('rx',3); chip.setAttribute('fill','rgba(8,12,20,0.82)');
     chip.setAttribute('pointer-events','none');
+    chip.setAttribute('class','omega-utillabel');
     g.appendChild(chip);
-    _evText(g, lcx, lcy+4, ltxt, lfs, '#F5F0E1', 'middle', '700');
+    var lblNode=_evText(g, lcx, lcy+4, ltxt, lfs, '#F5F0E1', 'middle', '700');
+    if(lblNode) lblNode.setAttribute('class','omega-utillabel');
   }
 }
 
