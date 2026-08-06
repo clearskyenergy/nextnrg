@@ -36676,7 +36676,6 @@ function renderDimension(el) {
   document.querySelector('[data-dim-id="'+el.id+'"]')?.remove();
 
   const {x1,y1,x2,y2} = el;
-  const angle = Math.atan2(y2-y1,x2-x1)*180/Math.PI;
   const pxDist = Math.hypot(x2-x1,y2-y1);
   const label  = el.label || (S.pxPerFt?(pxDist/S.pxPerFt).toFixed(1)+' ft':Math.round(pxDist)+'px');
 
@@ -36686,7 +36685,7 @@ function renderDimension(el) {
 
   const g = document.createElementNS('http://www.w3.org/2000/svg','g');
   g.dataset.dimId = el.id;
-  g.style.cursor = 'pointer';
+  g.style.cursor = 'move';
 
   // Main dimension line
   const line = document.createElementNS('http://www.w3.org/2000/svg','line');
@@ -36707,9 +36706,10 @@ function renderDimension(el) {
   ext2.setAttribute('x2',x2+px*1.4); ext2.setAttribute('y2',y2+py*1.4);
   ext2.setAttribute('stroke','#00D4FF'); ext2.setAttribute('stroke-width','1');
 
-  // Label background + text
+  // Label background + text (extra width reserved for the X close button)
   const midX=(x1+x2)/2, midY=(y1+y2)/2;
-  const lw = label.length*7+12;
+  const xr=8;                                 /* X button footprint */
+  const lw = label.length*7+12+xr*2;
   const bgRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
   bgRect.setAttribute('x',midX-lw/2); bgRect.setAttribute('y',midY-9);
   bgRect.setAttribute('width',lw); bgRect.setAttribute('height',16);
@@ -36717,32 +36717,150 @@ function renderDimension(el) {
   bgRect.setAttribute('stroke','#00D4FF'); bgRect.setAttribute('stroke-width','1');
 
   const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
-  txt.setAttribute('x',midX); txt.setAttribute('y',midY+1);
+  txt.setAttribute('x',midX-xr/2); txt.setAttribute('y',midY+1);
   txt.setAttribute('text-anchor','middle'); txt.setAttribute('dominant-baseline','middle');
   txt.setAttribute('font-size','10'); txt.setAttribute('font-weight','800');
   txt.setAttribute('font-family',"'IBM Plex Mono',monospace");
-  txt.setAttribute('fill','#00D4FF'); txt.textContent=label;
-
-  // Click to edit label
-  g.addEventListener('dblclick', () => {
-    const newLabel = prompt('Edit dimension label:', label);
-    if(newLabel !== null) { el.label = newLabel; renderDimension(el); }
-  });
-  // Right-click to delete
-  g.addEventListener('contextmenu', e => {
-    e.preventDefault();
-    if(confirm('Delete this dimension?')) {
-      S.elements = S.elements.filter(x=>x.id!==el.id);
-      g.remove();
-    }
-  });
+  txt.setAttribute('fill','#00D4FF'); txt.setAttribute('pointer-events','none');
+  txt.textContent=label;
 
   g.appendChild(line); g.appendChild(ext1); g.appendChild(ext2);
   g.appendChild(bgRect); g.appendChild(txt);
 
+  // X close button at the label chip's right edge -- one click, no confirm()
+  const xcx = midX+lw/2-xr-1, xcy = midY-1;
+  const xbtn = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  xbtn.setAttribute('cx',xcx); xbtn.setAttribute('cy',xcy); xbtn.setAttribute('r','6.5');
+  xbtn.setAttribute('fill','rgba(220,60,60,0.92)'); xbtn.setAttribute('stroke','#fff'); xbtn.setAttribute('stroke-width','1');
+  xbtn.style.cursor='pointer';
+  const xtxt = document.createElementNS('http://www.w3.org/2000/svg','text');
+  xtxt.setAttribute('x',xcx); xtxt.setAttribute('y',xcy+3.4);
+  xtxt.setAttribute('text-anchor','middle'); xtxt.setAttribute('font-size','9.5'); xtxt.setAttribute('font-weight','800');
+  xtxt.setAttribute('fill','#fff'); xtxt.setAttribute('pointer-events','none');
+  xtxt.textContent='\u00d7';
+  xbtn.addEventListener('mousedown', e=>{ e.stopPropagation(); });
+  xbtn.addEventListener('click', e=>{ e.stopPropagation(); e.preventDefault(); _dimDelete(el.id); });
+  xbtn.addEventListener('touchstart', e=>{ e.stopPropagation(); e.preventDefault(); _dimDelete(el.id); }, {passive:false});
+  g.appendChild(xbtn); g.appendChild(xtxt);
+
+  // Endpoint handles -- drag either end to reposition/resize the run.
+  const h1 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  h1.setAttribute('cx',x1); h1.setAttribute('cy',y1); h1.setAttribute('r','5');
+  h1.setAttribute('fill','#0B1626'); h1.setAttribute('stroke','#00D4FF'); h1.setAttribute('stroke-width','1.5');
+  h1.style.cursor='crosshair';
+  h1.addEventListener('mousedown', e=>{ _dimStartDrag(e, el, 'p1'); });
+  h1.addEventListener('touchstart', e=>{ _dimStartDrag(e, el, 'p1'); }, {passive:false});
+  const h2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  h2.setAttribute('cx',x2); h2.setAttribute('cy',y2); h2.setAttribute('r','5');
+  h2.setAttribute('fill','#0B1626'); h2.setAttribute('stroke','#00D4FF'); h2.setAttribute('stroke-width','1.5');
+  h2.style.cursor='crosshair';
+  h2.addEventListener('mousedown', e=>{ _dimStartDrag(e, el, 'p2'); });
+  h2.addEventListener('touchstart', e=>{ _dimStartDrag(e, el, 'p2'); }, {passive:false});
+  g.appendChild(h1); g.appendChild(h2);
+
+  // Drag the body (line/extension/label, anywhere that isn't a handle or the
+  // X) to move the whole dimension; both endpoints translate together.
+  [line, ext1, ext2, bgRect, txt].forEach(node=>{
+    node.style.cursor='move';
+    node.addEventListener('mousedown', e=>{ _dimStartDrag(e, el, 'move'); });
+    node.addEventListener('touchstart', e=>{ _dimStartDrag(e, el, 'move'); }, {passive:false});
+  });
+
+  // Double-click the label to edit its text via a proper modal (not prompt()).
+  g.addEventListener('dblclick', (e) => { e.stopPropagation(); _dimEditLabel(el.id); });
+
   // Ensure arrowhead markers exist
   _ensureDimArrows();
   svg.appendChild(g);
+}
+
+/* Drag state for a dimension: whole-line move, or a single endpoint. Mirrors
+   the self-contained document-listener pattern used elsewhere in the app so
+   it works regardless of any other drag system's state. */
+var _dimDrag = null;
+function _dimStartDrag(e, el, mode){
+  e.stopPropagation(); if(e.cancelable) e.preventDefault();
+  var pt=(e.touches&&e.touches.length)?{x:e.touches[0].clientX,y:e.touches[0].clientY}:{x:e.clientX,y:e.clientY};
+  _dimDrag = { id:el.id, mode:mode, startX:pt.x, startY:pt.y,
+               x1:el.x1, y1:el.y1, x2:el.x2, y2:el.y2 };
+  document.addEventListener('mousemove', _dimDragMove, true);
+  document.addEventListener('mouseup', _dimDragEnd, true);
+  document.addEventListener('touchmove', _dimDragMove, {passive:false, capture:true});
+  document.addEventListener('touchend', _dimDragEnd, true);
+}
+function _dimDragMove(e){
+  if(!_dimDrag) return; if(e.cancelable) e.preventDefault();
+  var pt=(e.touches&&e.touches.length)?{x:e.touches[0].clientX,y:e.touches[0].clientY}:{x:e.clientX,y:e.clientY};
+  var dx=pt.x-_dimDrag.startX, dy=pt.y-_dimDrag.startY;
+  var el=(S.elements||[]).filter(function(x){return x.id===_dimDrag.id;})[0];
+  if(!el) return;
+  if(_dimDrag.mode==='move'){
+    el.x1=_dimDrag.x1+dx; el.y1=_dimDrag.y1+dy;
+    el.x2=_dimDrag.x2+dx; el.y2=_dimDrag.y2+dy;
+  } else if(_dimDrag.mode==='p1'){
+    el.x1=_dimDrag.x1+dx; el.y1=_dimDrag.y1+dy;
+  } else if(_dimDrag.mode==='p2'){
+    el.x2=_dimDrag.x2+dx; el.y2=_dimDrag.y2+dy;
+  }
+  /* re-derive the ft/label from the new geometry unless the user typed a
+     custom label (custom text stays put; only the auto-generated default
+     tracks length changes) */
+  var d=Math.hypot(el.x2-el.x1,el.y2-el.y1);
+  el.pxDist=d; el.ftDist=S.pxPerFt?(d/S.pxPerFt).toFixed(1):null;
+  if(!el._customLabel){ el.label = el.ftDist ? el.ftDist+' ft' : Math.round(d)+'px'; }
+  renderDimension(el);
+}
+function _dimDragEnd(){
+  if(!_dimDrag) return;
+  _dimDrag=null;
+  document.removeEventListener('mousemove', _dimDragMove, true);
+  document.removeEventListener('mouseup', _dimDragEnd, true);
+  document.removeEventListener('touchmove', _dimDragMove, true);
+  document.removeEventListener('touchend', _dimDragEnd, true);
+  if(typeof pushHist==='function') pushHist();
+}
+
+/* Edit a dimension's label text via a small modal (replaces prompt()). */
+function _dimEditLabel(id){
+  var el=(S.elements||[]).filter(function(x){return x.id===id;})[0]; if(!el) return;
+  var m=document.getElementById('dim-label-modal');
+  if(!m){
+    m=document.createElement('div'); m.id='dim-label-modal'; m.className='modal-bg'; m.style.display='none';
+    m.innerHTML=''+
+      '<div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;width:320px;font-family:var(--font-sans,sans-serif)" onmousedown="event.stopPropagation()">'+
+      '<h3 style="font-size:14px;font-weight:700;margin-bottom:10px;color:var(--text)">Dimension Label</h3>'+
+      '<input type="text" id="dim-label-text" style="width:100%;padding:8px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;font-size:13px;box-sizing:border-box;margin-bottom:12px" '+
+      'onkeydown="if(event.key===\'Enter\')_dimLabelConfirm();if(event.key===\'Escape\')_dimLabelCancel()">'+
+      '<div style="display:flex;gap:6px;justify-content:flex-end">'+
+      '<button onclick="_dimLabelCancel()" style="padding:7px 14px;border-radius:5px;border:none;cursor:pointer;font-size:12px;background:var(--surface);color:var(--sub)">Cancel</button>'+
+      '<button onclick="_dimLabelConfirm()" style="padding:7px 16px;border-radius:5px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:var(--accent);color:var(--navy)">Save</button></div>'+
+      '</div>';
+    document.body.appendChild(m);
+  }
+  window._dimEditingId=id;
+  var inp=document.getElementById('dim-label-text');
+  inp.value=el.label||'';
+  m.style.display='flex';
+  setTimeout(function(){ inp.focus(); inp.select(); },30);
+}
+function _dimLabelCancel(){ var m=document.getElementById('dim-label-modal'); if(m) m.style.display='none'; window._dimEditingId=null; }
+function _dimLabelConfirm(){
+  var id=window._dimEditingId; window._dimEditingId=null;
+  var m=document.getElementById('dim-label-modal'); if(m) m.style.display='none';
+  if(!id) return;
+  var el=(S.elements||[]).filter(function(x){return x.id===id;})[0]; if(!el) return;
+  var v=(document.getElementById('dim-label-text')||{}).value||'';
+  el.label=v; el._customLabel=true;   /* stop auto-tracking length once the user sets their own text */
+  renderDimension(el);
+  if(typeof pushHist==='function') pushHist();
+}
+/* Delete a dimension (X button). */
+function _dimDelete(id){
+  S.elements=(S.elements||[]).filter(function(x){return x.id!==id;});
+  var g=document.querySelector('[data-dim-id="'+id+'"]'); if(g&&g.parentNode) g.parentNode.removeChild(g);
+  if(typeof updCount==='function') updCount();
+  if(typeof pushHist==='function') pushHist();
+  if(typeof showBanner==='function') showBanner('wiz',' Dimension removed.');
 }
 
 function _ensureDimArrows() {
