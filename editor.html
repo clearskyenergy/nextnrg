@@ -5848,6 +5848,11 @@ const GOTION_CATALOG_DIMS = {
   'AUTEL-ESS-256':    { l:'10\'-0"',   w:'4\'-6"',    h:'7\'-0"',    wt:'~3,500 lbs',  lf:10.0,   wf:4.5,   hf:7.0   },
   'PYTES-30-60':      { l:'4\'-0"',    w:'2\'-6"',    h:'6\'-0"',    wt:'~900 lbs',    lf:4.0,    wf:2.5,   hf:6.0   },
   'PYTES-60-120':     { l:'6\'-0"',    w:'2\'-6"',    h:'6\'-0"',    wt:'~1,600 lbs',  lf:6.0,    wf:2.5,   hf:6.0   },
+  'CSI-KUBANK2-277':  { l:'5\'-1"',    w:'6\'-11"',   h:'7\'-6"',    wt:'~7,937 lbs',  lf:5.08,   wf:6.89,  hf:7.48  },
+  'CSI-KUBANK-371':   { l:'5\'-1"',    w:'6\'-11"',   h:'7\'-11"',   wt:'~9,259 lbs',  lf:5.08,   wf:6.92,  hf:7.92  },
+  'CSI-SOLBANK3-5016':{ l:'19\'-10.5"',w:'7\'-12.0"', h:'9\'-6.0"',  wt:'~83,000 lbs', lf:19.875, wf:8.0,   hf:9.5   },
+  'CSI-CSES351A6':    { l:'129\'-3"',  w:'11\'-2"',   h:'8\'-10"',   wt:'~392,000 lbs',lf:129.3,  wf:11.15, hf:8.86  },
+  'CSI-POWERBLOCK-ESPB4H':{ l:'19\'-10.5"',w:'7\'-12.0"',h:'9\'-6.0"',wt:'~85,000 lbs ea',lf:19.875,wf:8.0, hf:9.5 },
 };
 
 const CTYPES=[
@@ -8793,7 +8798,13 @@ function _bespadModels(){
       for(var k in GOTION_CATALOG_DIMS){
         if(!GOTION_CATALOG_DIMS.hasOwnProperty(k)) continue;
         var g=GOTION_CATALOG_DIMS[k];
-        if(g && g.lf && g.wf) list.push({ id:k, name:k, lf:g.lf, wf:g.wf, sysQty:(g.sysQty||0) });
+        if(g && g.lf && g.wf){
+          /* Prefer a friendly catalog name over the raw key so entries like
+             CSI-KUBANK2-277 read as "Canadian Solar KuBank 2.0 ..." */
+          var nm=k;
+          try{ if(typeof BESS_CATALOG!=='undefined' && BESS_CATALOG[k] && BESS_CATALOG[k].model) nm=BESS_CATALOG[k].model; }catch(e){}
+          list.push({ id:k, name:nm, lf:g.lf, wf:g.wf, sysQty:(g.sysQty||0) });
+        }
       }
     }
   }catch(e){}
@@ -9080,22 +9091,76 @@ function _renderUtility(g, sh){
      satellite imagery. Font scales with the box but is clamped. The chip and
      its text share a class so a labels-off toggle hides the WHOLE chip, not
      just the text (which would leave an empty black box). */
+  /* label under the box: always legible, with a dark chip so it reads over
+     satellite imagery. The chip is DRAGGABLE (its own offset stored on the
+     shape) so overlapping component labels can be pulled apart, and it shares
+     a class so a labels-off toggle hides the whole chip, not just the text. */
   var lfs=Math.max(10, Math.min(15, w*0.14));
   var txt=(sh.label||def.label||'UTILITY');
-  var lw=txt.length*lfs*0.58+10, lx=sh.cx-lw/2, ly=y+h+4;
+  var ldx=sh.labelDx||0, ldy=sh.labelDy||0;
+  var lw=txt.length*lfs*0.58+12, lx=sh.cx-lw/2+ldx, ly=y+h+4+ldy, lh=lfs+8;
+  var lg=_mkNS('g');
+  lg.setAttribute('class','omega-utillabel omega-utillabel-drag');
+  lg.setAttribute('style','cursor:move');
+  /* leader line from the box to the label when it has been moved away */
+  if(ldx||ldy){
+    var ll=_mkNS('line');
+    ll.setAttribute('x1',sh.cx); ll.setAttribute('y1',y+h);
+    ll.setAttribute('x2',sh.cx+ldx); ll.setAttribute('y2',ly+lh/2);
+    ll.setAttribute('stroke','rgba(245,200,113,0.5)'); ll.setAttribute('stroke-width','1');
+    ll.setAttribute('stroke-dasharray','3 2'); g.appendChild(ll);
+  }
   var chip=_mkNS('rect');
   chip.setAttribute('x',lx); chip.setAttribute('y',ly);
-  chip.setAttribute('width',lw); chip.setAttribute('height',lfs+7);
-  chip.setAttribute('rx',4); chip.setAttribute('fill','rgba(10,12,22,0.88)');
-  chip.setAttribute('stroke','rgba(245,158,11,0.35)'); chip.setAttribute('stroke-width','1');
-  chip.setAttribute('class','omega-utillabel');
-  g.appendChild(chip);
+  chip.setAttribute('width',lw); chip.setAttribute('height',lh);
+  chip.setAttribute('rx',4); chip.setAttribute('fill','rgba(6,10,18,0.94)');
+  chip.setAttribute('stroke','#F5C871'); chip.setAttribute('stroke-width','1.2');
+  lg.appendChild(chip);
   var lb=_mkNS('text');
-  lb.setAttribute('x',sh.cx); lb.setAttribute('y',ly+lfs+0.5);
+  lb.setAttribute('x',lx+lw/2); lb.setAttribute('y',ly+lfs+1);
   lb.setAttribute('text-anchor','middle'); lb.setAttribute('font-size',lfs);
-  lb.setAttribute('font-weight','700'); lb.setAttribute('fill','#F5C871');
-  lb.setAttribute('class','omega-utillabel');
-  lb.textContent=txt; g.appendChild(lb);
+  lb.setAttribute('font-weight','800'); lb.setAttribute('fill','#FFE9B0');
+  lb.setAttribute('pointer-events','none');
+  lb.textContent=txt; lg.appendChild(lb);
+  g.appendChild(lg);
+  /* wire the drag on the next tick (the node is now in the DOM) */
+  (function(shp, groupNode){
+    if(typeof _attachUtilLabelDrag==='function') _attachUtilLabelDrag(shp, groupNode);
+  })(sh, lg);
+}
+/* Drag a utility component's label chip independently of its box. Stores the
+   offset on the shape (labelDx/labelDy) so it survives re-render, save + zoom
+   (the chip is inside the shape's <g>, which is already geo-reprojected). */
+function _attachUtilLabelDrag(sh, node){
+  if(!node) return;
+  var start=null;
+  function down(ev){
+    ev.stopPropagation(); if(ev.cancelable) ev.preventDefault();
+    var pt=(typeof _evtXY==='function')?_evtXY(ev):{x:ev.clientX,y:ev.clientY};
+    start={x:pt.x, y:pt.y, dx:sh.labelDx||0, dy:sh.labelDy||0};
+    document.addEventListener('mousemove', move, true);
+    document.addEventListener('mouseup', up, true);
+    document.addEventListener('touchmove', move, {passive:false, capture:true});
+    document.addEventListener('touchend', up, true);
+  }
+  function move(ev){
+    if(!start) return; if(ev.cancelable) ev.preventDefault();
+    var pt=(typeof _evtXY==='function')?_evtXY(ev):{x:ev.clientX,y:ev.clientY};
+    sh.labelDx=start.dx+(pt.x-start.x);
+    sh.labelDy=start.dy+(pt.y-start.y);
+    if(typeof renderShape==='function') renderShape(sh);
+    /* re-bind because renderShape rebuilt the node */
+  }
+  function up(){
+    start=null;
+    document.removeEventListener('mousemove', move, true);
+    document.removeEventListener('mouseup', up, true);
+    document.removeEventListener('touchmove', move, true);
+    document.removeEventListener('touchend', up, true);
+    if(typeof pushHist==='function') pushHist();
+  }
+  node.addEventListener('mousedown', down, true);
+  node.addEventListener('touchstart', down, {passive:false, capture:true});
 }
 function _placeBesPad(p){
   /* If the user has pre-set a quantity/model via Config (quick mode), auto-place
