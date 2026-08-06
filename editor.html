@@ -9555,20 +9555,30 @@ function _renderBesPad(g, sh){
     inner.setAttribute('stroke-width','0.75'); inner.setAttribute('stroke-dasharray','3,3');
     g.appendChild(inner);
   }
-  /* label: model + dimensions, centered */
+  /* label: model + dimensions, centered. Counter-rotate against the shape's
+     own rotation so the text stays upright and readable no matter how the pad
+     is turned (otherwise it renders sideways / mirrored with the group). */
+  var _lcx=ox+wPx/2, _lcy=oy+hPx/2;
+  var _rot=(sh.rot||0);
+  var _counter = _rot ? (' rotate('+(-_rot)+' '+_lcx+' '+_lcy+')') : '';
   var t=_mkNS('text');
-  t.setAttribute('x',ox+wPx/2); t.setAttribute('y',oy+hPx/2);
+  t.setAttribute('x',_lcx); t.setAttribute('y',_lcy);
   t.setAttribute('text-anchor','middle'); t.setAttribute('dominant-baseline','middle');
-  t.setAttribute('fill',_shapeInk(sh)); t.setAttribute('font-size','10');
-  t.setAttribute('font-family','monospace'); t.setAttribute('pointer-events','none');
+  t.setAttribute('fill','#FFE9B0'); t.setAttribute('font-size','10');
+  t.setAttribute('font-weight','800');
+  t.setAttribute('font-family','ui-monospace, Menlo, monospace'); t.setAttribute('pointer-events','none');
+  t.setAttribute('paint-order','stroke'); t.setAttribute('stroke','rgba(6,10,18,0.9)'); t.setAttribute('stroke-width','3');
+  if(_counter) t.setAttribute('transform', _counter.trim());
   t.textContent=(sh.model||'BESS');
   g.appendChild(t);
   var t2=_mkNS('text');
-  t2.setAttribute('x',ox+wPx/2); t2.setAttribute('y',oy+hPx/2+12);
+  t2.setAttribute('x',_lcx); t2.setAttribute('y',_lcy+12);
   t2.setAttribute('text-anchor','middle'); t2.setAttribute('dominant-baseline','middle');
-  t2.setAttribute('fill',_shapeInk(sh)); t2.setAttribute('font-size','8');
-  t2.setAttribute('font-family','monospace'); t2.setAttribute('opacity','0.8');
+  t2.setAttribute('fill','#E2EEF9'); t2.setAttribute('font-size','8');
+  t2.setAttribute('font-family','ui-monospace, Menlo, monospace');
+  t2.setAttribute('paint-order','stroke'); t2.setAttribute('stroke','rgba(6,10,18,0.9)'); t2.setAttribute('stroke-width','2.5');
   t2.setAttribute('pointer-events','none');
+  if(_counter) t2.setAttribute('transform', 'rotate('+(-_rot)+' '+_lcx+' '+(_lcy+12)+')');
   t2.textContent=sh.lf+'\u2032 x '+sh.wf+'\u2032';
   g.appendChild(t2);
 }
@@ -9660,8 +9670,11 @@ function _renderAssembly(g, sh){
   if(anyFence){
     var ft=_mkNS('text');
     ft.setAttribute('x',fx+4); ft.setAttribute('y',fy-4);
-    ft.setAttribute('fill',_shapeInk(sh)); ft.setAttribute('font-size','8');
-    ft.setAttribute('font-family','monospace'); ft.setAttribute('pointer-events','none');
+    ft.setAttribute('fill','#FFE9B0'); ft.setAttribute('font-size','9'); ft.setAttribute('font-weight','700');
+    ft.setAttribute('font-family','ui-monospace, Menlo, monospace'); ft.setAttribute('pointer-events','none');
+    ft.setAttribute('paint-order','stroke'); ft.setAttribute('stroke','rgba(6,10,18,0.9)'); ft.setAttribute('stroke-width','2.5');
+    /* keep upright regardless of assembly rotation */
+    if(sh.rot){ ft.setAttribute('transform','rotate('+(-(sh.rot||0))+' '+(fx+4)+' '+(fy-4)+')'); }
     ft.textContent='SECURITY FENCE ('+sh.fenceClear+'\u2032 CLR)';
     g.appendChild(ft);
   }
@@ -10075,10 +10088,38 @@ function _renderCallout(g, sh){
   tx.setAttribute('font-family','ui-monospace, Menlo, monospace'); tx.setAttribute('pointer-events','none');
   tx.textContent=txt;
   g.appendChild(tx);
+  /* X close button at the box's top-right corner -- click removes the callout */
+  var cxx=lx+w-8, cyy=ly-h/2+8;
+  var cbtn=_mkNS('circle');
+  cbtn.setAttribute('cx',cxx); cbtn.setAttribute('cy',cyy); cbtn.setAttribute('r','7');
+  cbtn.setAttribute('fill','rgba(220,60,60,0.92)'); cbtn.setAttribute('stroke','#fff'); cbtn.setAttribute('stroke-width','1');
+  cbtn.setAttribute('style','cursor:pointer'); cbtn.setAttribute('class','omega-callout-x');
+  g.appendChild(cbtn);
+  var cx1=_mkNS('text');
+  cx1.setAttribute('x',cxx); cx1.setAttribute('y',cyy+3.5);
+  cx1.setAttribute('text-anchor','middle'); cx1.setAttribute('font-size','10'); cx1.setAttribute('font-weight','800');
+  cx1.setAttribute('fill','#fff'); cx1.setAttribute('style','cursor:pointer'); cx1.setAttribute('pointer-events','none');
+  cx1.textContent='\u00d7'; g.appendChild(cx1);
+  (function(id, node){
+    if(!node) return;
+    node.addEventListener('click', function(ev){
+      ev.stopPropagation(); if(ev.cancelable) ev.preventDefault();
+      _deleteCalloutShape(id);
+    }, true);
+    node.addEventListener('touchstart', function(ev){
+      ev.stopPropagation(); if(ev.cancelable) ev.preventDefault();
+      _deleteCalloutShape(id);
+    }, {passive:false, capture:true});
+  })(sh.id, cbtn);
 }
-
-/* Edit an existing callout shape's text (double-click). Reuses a small inline
-   prompt so the label + leader stay put and only the text changes. */
+/* Remove a callout shape by id (from its X button). */
+function _deleteCalloutShape(id){
+  for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===id){ S.shapes.splice(i,1); break; } }
+  var el=document.querySelector('#csvg [data-shid="'+id+'"]'); if(el&&el.parentNode) el.parentNode.removeChild(el);
+  if(typeof updShapeCount==='function') updShapeCount();
+  if(typeof pushHist==='function') pushHist();
+  if(typeof showBanner==='function') showBanner('shape',' Callout removed.');
+}
 function _calloutEditText(id){
   var sh=null; for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===id){ sh=S.shapes[i]; break; } }
   if(!sh || sh.kind!=='callout') return;
