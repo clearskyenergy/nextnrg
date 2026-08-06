@@ -9990,6 +9990,7 @@ function _renderCallout(g, sh){
     ln.setAttribute('x1',a.x); ln.setAttribute('y1',a.y);
     ln.setAttribute('x2',t.x); ln.setAttribute('y2',t.y);
     ln.setAttribute('stroke',_shapeInk(sh)); ln.setAttribute('stroke-width','1.5');
+    ln.setAttribute('pointer-events','none');
     g.appendChild(ln);
     /* arrowhead at target */
     var ang=Math.atan2(t.y-a.y, t.x-a.x);
@@ -10000,12 +10001,22 @@ function _renderCallout(g, sh){
     var head=_mkNS('polygon');
     head.setAttribute('points', t.x+','+t.y+' '+p1x+','+p1y+' '+p2x+','+p2y);
     head.setAttribute('fill',_shapeInk(sh));
+    head.setAttribute('pointer-events','none');
     g.appendChild(head);
-    /* small dot at the target */
+    /* visible dot at the target, plus a larger invisible hit-circle around it
+       so it's easy to grab -- this is the point the arrow ANCHORS to. It is
+       independently draggable from the label: moving the label must never
+       move this point, and this point must never move the label. */
     var dot=_mkNS('circle');
-    dot.setAttribute('cx',t.x); dot.setAttribute('cy',t.y); dot.setAttribute('r','2');
-    dot.setAttribute('fill',_shapeInk(sh));
-    g.appendChild(dot);
+    dot.setAttribute('cx',t.x); dot.setAttribute('cy',t.y); dot.setAttribute('r','3.5');
+    dot.setAttribute('fill','#FFFFFF'); dot.setAttribute('stroke',_shapeInk(sh)); dot.setAttribute('stroke-width','1.5');
+    dot.setAttribute('pointer-events','none');
+    var dotHit=_mkNS('circle');
+    dotHit.setAttribute('cx',t.x); dotHit.setAttribute('cy',t.y); dotHit.setAttribute('r','10');
+    dotHit.setAttribute('fill','transparent'); dotHit.style.cursor='crosshair';
+    g.appendChild(dotHit); g.appendChild(dot);
+    dotHit.addEventListener('mousedown', function(ev){ _calloutStartDrag(ev, sh, 'target'); });
+    dotHit.addEventListener('touchstart', function(ev){ _calloutStartDrag(ev, sh, 'target'); }, {passive:false});
   }
   /* label: measure roughly by text length for the background box */
   var fs=12;
@@ -10019,6 +10030,7 @@ function _renderCallout(g, sh){
   box.setAttribute('rx','3');
   box.setAttribute('fill','rgba(12,18,30,0.92)');
   box.setAttribute('stroke',_shapeInk(sh)); box.setAttribute('stroke-width','1.5');
+  box.style.cursor='move';
   g.appendChild(box);
   var tx=_mkNS('text');
   tx.setAttribute('x',lx+7); tx.setAttribute('y',ly+fs*0.36);
@@ -10027,6 +10039,10 @@ function _renderCallout(g, sh){
   tx.setAttribute('font-family','ui-monospace, Menlo, monospace'); tx.setAttribute('pointer-events','none');
   tx.textContent=txt;
   g.appendChild(tx);
+  /* dragging the box (the label + its leader line) moves ONLY sh.anchor --
+     the target point set above stays exactly where it was placed. */
+  box.addEventListener('mousedown', function(ev){ _calloutStartDrag(ev, sh, 'anchor'); });
+  box.addEventListener('touchstart', function(ev){ _calloutStartDrag(ev, sh, 'anchor'); }, {passive:false});
   /* X close button at the box's top-right corner -- click removes the callout */
   var cxx=lx+w-8, cyy=ly-h/2+8;
   var cbtn=_mkNS('circle');
@@ -10041,6 +10057,7 @@ function _renderCallout(g, sh){
   cx1.textContent='\u00d7'; g.appendChild(cx1);
   (function(id, node){
     if(!node) return;
+    node.addEventListener('mousedown', function(ev){ ev.stopPropagation(); });
     node.addEventListener('click', function(ev){
       ev.stopPropagation(); if(ev.cancelable) ev.preventDefault();
       _deleteCalloutShape(id);
@@ -10050,6 +10067,41 @@ function _renderCallout(g, sh){
       _deleteCalloutShape(id);
     }, {passive:false, capture:true});
   })(sh.id, cbtn);
+}
+/* Independent drag for a callout's TARGET point or its LABEL/anchor point.
+   Self-contained (document-level listeners) so it never touches the generic
+   rigid-body shape-drag system -- that system was moving target and label
+   together, which is exactly the behavior being replaced here. */
+var _calloutDrag=null;
+function _calloutStartDrag(e, sh, part){
+  e.stopPropagation(); if(e.cancelable) e.preventDefault();
+  if(typeof selectShape==='function') selectShape(sh.id);
+  var pt=(e.touches&&e.touches.length)?{x:e.touches[0].clientX,y:e.touches[0].clientY}:{x:e.clientX,y:e.clientY};
+  var p0=(part==='target') ? (sh.target||{x:0,y:0}) : (sh.anchor||{x:0,y:0});
+  _calloutDrag={ id:sh.id, part:part, startX:pt.x, startY:pt.y, x0:p0.x, y0:p0.y };
+  document.addEventListener('mousemove', _calloutDragMove, true);
+  document.addEventListener('mouseup', _calloutDragEnd, true);
+  document.addEventListener('touchmove', _calloutDragMove, {passive:false, capture:true});
+  document.addEventListener('touchend', _calloutDragEnd, true);
+}
+function _calloutDragMove(e){
+  if(!_calloutDrag) return; if(e.cancelable) e.preventDefault();
+  var pt=(e.touches&&e.touches.length)?{x:e.touches[0].clientX,y:e.touches[0].clientY}:{x:e.clientX,y:e.clientY};
+  var dx=pt.x-_calloutDrag.startX, dy=pt.y-_calloutDrag.startY;
+  var sh=null; for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===_calloutDrag.id){ sh=S.shapes[i]; break; } }
+  if(!sh) return;
+  var np={ x:_calloutDrag.x0+dx, y:_calloutDrag.y0+dy };
+  if(_calloutDrag.part==='target') sh.target=np; else sh.anchor=np;
+  renderShape(sh);
+}
+function _calloutDragEnd(){
+  if(!_calloutDrag) return;
+  _calloutDrag=null;
+  document.removeEventListener('mousemove', _calloutDragMove, true);
+  document.removeEventListener('mouseup', _calloutDragEnd, true);
+  document.removeEventListener('touchmove', _calloutDragMove, true);
+  document.removeEventListener('touchend', _calloutDragEnd, true);
+  if(typeof pushHist==='function') pushHist();
 }
 /* Remove a callout shape by id (from its X button). */
 function _deleteCalloutShape(id){
@@ -10099,6 +10151,11 @@ function _removeShapeHandles(){
    track live during move/rotate/resize. */
 function _drawShapeHandles(sh){
   _removeShapeHandles();
+  /* Callouts get their own drag handles (target dot + label box) and their
+     own delete X, drawn directly in _renderCallout. The generic resize/
+     rotate/delete overlay doesn't apply to a target+label pair and was
+     drawing a SECOND, redundant delete-X near the target point. */
+  if(sh.kind==='callout') return;
   var svg=document.getElementById('csvg');
   var b=_shapeBBox(sh);
   var g=_mkNS('g'); g.setAttribute('id','shape-handles');
@@ -10209,6 +10266,13 @@ function deleteSelectedShape(){
 /* ---- MOVE ---- */
 function _shapeMouseDown(e, id){
   if(S.mode!=='select') return;   /* only interact in select mode */
+  var sh0=S.shapes.find(function(s){return s.id===id;});
+  /* Callouts are dragged via their own two independent handles (the label
+     box moves sh.anchor, the target dot moves sh.target -- see
+     _renderCallout / _calloutStartDrag). The generic rigid-body drag below
+     would move BOTH together, which is exactly the "arrow follows the box"
+     behavior this replaces, so callouts skip it entirely. */
+  if(sh0 && sh0.kind==='callout') return;
   /* ignore if a handle initiated this (handles stopPropagation themselves) */
   e.stopPropagation();
   if(e.cancelable) e.preventDefault();
@@ -49885,6 +49949,12 @@ function _evPlaceZone(a, b){
            fill:(typeof SHAPE_STROKE!=='undefined'?SHAPE_STROKE:'#2563EB'),
            fillOpacity:0.20, label:'', border:'solid' };
   S.shapes.push(sh); renderShape(sh);
+  /* Two placement clicks close together can register with the browser as a
+     native double-click on #cov right after this runs; that synthetic
+     dblclick used to re-trigger the panel open/close logic below and was
+     the actual cause of the panel flashing then vanishing. Stamp the time so
+     the dblclick handler can recognize and ignore that artifact. */
+  window._nnJustPlacedShapeAt = Date.now();
   /* Return to Select immediately so the box is draggable/resizable and the
      panel's minimize/close controls are reachable. While the Zone Box tool
      stays armed, a full-screen capture layer sits above the canvas and
@@ -50094,6 +50164,10 @@ function _placeSubstation(a, b){
            capMw:10, mva:12, voltage:'34.5 kV', firm:true,
            color:'#F59E0B', fill:'#F59E0B', fillOpacity:0.10 };
   S.shapes.push(sh); renderShape(sh);
+  /* Same guard as Zone Box: two close-together placement clicks can register
+     as a native double-click on #cov, which used to re-fire the panel
+     open/close logic and cause the same flash-then-vanish symptom. */
+  window._nnJustPlacedShapeAt = Date.now();
   /* Same fix as Zone Box: leave the placement tool immediately so the
      substation is draggable/resizable and its panel controls are reachable
      (setMode before selectShape -- leaving a shape-draw mode clears the
@@ -50175,7 +50249,7 @@ function _subShowProps(id){
       +'<button onclick="_subDelete(\''+sh.id+'\')" style="background:none;border:1px solid #4A3410;color:#94A3B8;border-radius:6px;padding:8px 10px;font-size:12px;cursor:pointer">Delete</button>'
     +'</div>';
   document.body.appendChild(wrap);
-  wrap.dataset.shid=id;
+  wrap.dataset.panelShid=id;
   if(typeof nnMakeFloatable==='function'){ try{ nnMakeFloatable(wrap); }catch(e){} }
 }
 function _subApply(id){
@@ -50239,13 +50313,13 @@ function _evZoneShowProps(id){
       +'<option value="none"'+(sh.border==='none'?' selected':'')+'>None</option>'
     +'</select>';
   document.body.appendChild(wrap);
-  wrap.dataset.shid=id;
+  wrap.dataset.panelShid=id;
   if(typeof nnMakeFloatable==='function'){ try{ nnMakeFloatable(wrap); }catch(e){} }
 }
 function _evZoneClose(){ var w=document.getElementById('ev-zone-props'); if(w) w.parentNode.removeChild(w); }
 function _evZoneSet(key, val){
   var w=document.getElementById('ev-zone-props'); if(!w) return;
-  var id=w.dataset.shid, sh=null;
+  var id=w.dataset.panelShid, sh=null;
   for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===id){ sh=S.shapes[i]; break; } }
   if(!sh) return;
   if(key==='label') sh.label=val;
@@ -51636,11 +51710,11 @@ function _nnZoneWrap(){
       _sel(id);
       /* close a panel that belongs to a DIFFERENT shape */
       var pz=document.getElementById('ev-zone-props');
-      if(pz && pz.dataset && pz.dataset.shid && pz.dataset.shid!==id){
+      if(pz && pz.dataset && pz.dataset.panelShid && pz.dataset.panelShid!==id){
         if(typeof _evZoneClose==='function') _evZoneClose();
       }
       var ps=document.getElementById('sub-props');
-      if(ps && ps.dataset && ps.dataset.shid && ps.dataset.shid!==id){
+      if(ps && ps.dataset && ps.dataset.panelShid && ps.dataset.panelShid!==id){
         if(typeof _subClose==='function') _subClose();
       }
       /* NOTE: no auto-open on select. The panel is opened by _evPlaceZone on
@@ -51652,7 +51726,7 @@ function _nnZoneWrap(){
     var _close=_evZoneClose;
     window._evZoneClose=function(){
       var p=document.getElementById('ev-zone-props');
-      if(p && p.dataset && p.dataset.shid) _znDismissed[p.dataset.shid]=true;
+      if(p && p.dataset && p.dataset.panelShid) _znDismissed[p.dataset.panelShid]=true;
       _close();
     };
   }
@@ -51661,10 +51735,24 @@ function _nnZoneWrap(){
   var svg=document.getElementById('csvg');
   function dbl(e){
     if(typeof S==='undefined' || !S.shapes) return;
-    /* hit-test zoneboxes (topmost first) */
+    /* Two rapid placement clicks (drawing a zonebox/substation corner-to-
+       corner) register with the browser as a native double-click on #cov,
+       right after _evPlaceZone/_placeSubstation already opened the panel.
+       That redundant dblclick then re-ran this same open/close logic a
+       second time, which is what caused the panel to flash and vanish.
+       Ignore any dblclick that lands within the placement's own grace
+       window -- it is an artifact of the two placement clicks, not a
+       genuine double-click on an existing shape. */
+    if(window._nnJustPlacedShapeAt && (Date.now()-window._nnJustPlacedShapeAt)<500) return;
+    /* hit-test zoneboxes (topmost first). Coordinates must be converted to
+       the same MODEL/plot space the shapes' pts are stored in -- comparing
+       raw screen pixels only happened to work at zoom 1 with no pan; at any
+       other zoom/pan this hit-test silently missed (or mis-hit) the shape. */
     var sc=document.getElementById('sc'); if(!sc) return;
     var r=sc.getBoundingClientRect();
-    var x=e.clientX-r.left, y=e.clientY-r.top;
+    var rawPt={ x:e.clientX-r.left, y:e.clientY-r.top };
+    var mp=(typeof _plotUnproject==='function') ? _plotUnproject(rawPt) : rawPt;
+    var x=mp.x, y=mp.y;
     /* callout shapes first: double-click the label box to edit its text */
     for(var ci=S.shapes.length-1;ci>=0;ci--){
       var cs=S.shapes[ci];
@@ -59397,8 +59485,8 @@ window._crmToastModal=_crmToastModal;
       var panels=['ev-zone-props','shape-props','sh-props'];
       for(var i=0;i<panels.length;i++){
         var p=document.getElementById(panels[i]);
-        if(p && (p.dataset && (p.dataset.shid===o.id || p.dataset.id===o.id))) return true;
-        if(p && p.getAttribute && p.getAttribute('data-shid')===o.id) return true;
+        if(p && (p.dataset && (p.dataset.panelShid===o.id || p.dataset.id===o.id))) return true;
+        if(p && p.getAttribute && p.getAttribute('data-panel-shid')===o.id) return true;
       }
       /* the zone panel does not tag itself - if it is open at all, and this
          is a zonebox, leave it alone */
