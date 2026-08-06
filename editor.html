@@ -9024,7 +9024,14 @@ function _calloutConfirm(){
            text:txt, arrow:!!arrow };
   S.shapes.push(sh); renderShape(sh);
   updShapeCount(); pushHist();
-  showBanner('shape',' Callout added. Click a point to add another . ESC exits');
+  /* Return to Select so the callout is immediately draggable and its close
+     button is clickable. While the Callout tool stays armed, a full-screen
+     capture layer sits above the drawing and swallows every click -- which
+     is exactly why the callout you just placed felt undraggable and its X
+     unreachable. Dropping back to Select removes that layer. */
+  if(typeof setMode==='function') setMode('select');
+  if(typeof selectShape==='function') selectShape(sh.id);
+  showBanner('shape',' Callout added \u2014 drag to move, click the \u00d7 to remove, or pick Callout Arrow again to add another.');
 }
 
 /* --- BESS pad: a to-scale rectangle sized in real feet ------------- */
@@ -49760,10 +49767,17 @@ function _evPlaceZone(a, b){
            fill:(typeof SHAPE_STROKE!=='undefined'?SHAPE_STROKE:'#2563EB'),
            fillOpacity:0.20, label:'', border:'solid' };
   S.shapes.push(sh); renderShape(sh);
+  /* Return to Select immediately so the box is draggable/resizable and the
+     panel's minimize/close controls are reachable. While the Zone Box tool
+     stays armed, a full-screen capture layer sits above the canvas and
+     swallows every click meant for the shape underneath -- setMode MUST run
+     before selectShape, since leaving a shape-draw mode clears the current
+     selection; selecting after avoids that clobbering our new shape. */
+  if(typeof setMode==='function') setMode('select');
   if(typeof selectShape==='function') selectShape(sh.id);
   _evZoneShowProps(sh.id);
   updShapeCount(); pushHist();
-  _evBanner('Zone box placed \u2014 edit color/opacity/label in the panel, or draw another');
+  _evBanner('Zone box placed \u2014 drag/resize on the map, edit in the panel. Pick Zone Box again to draw another.');
 }
 
 /* ---- RENDER (extend renderShape via wrapper) -------------------------- */
@@ -49962,11 +49976,16 @@ function _placeSubstation(a, b){
            capMw:10, mva:12, voltage:'34.5 kV', firm:true,
            color:'#F59E0B', fill:'#F59E0B', fillOpacity:0.10 };
   S.shapes.push(sh); renderShape(sh);
+  /* Same fix as Zone Box: leave the placement tool immediately so the
+     substation is draggable/resizable and its panel controls are reachable
+     (setMode before selectShape -- leaving a shape-draw mode clears the
+     current selection, so select AFTER switching to Select). */
+  if(typeof setMode==='function') setMode('select');
   if(typeof selectShape==='function') selectShape(sh.id);
   _subShowProps(sh.id);
   updShapeCount(); pushHist();
   if(typeof updateSummaryPanel==='function') try{ updateSummaryPanel(); }catch(e){}
-  _evBanner('Substation placed \u2014 set its firm capacity (MW) in the panel. It feeds the POWER results.');
+  _evBanner('Substation placed \u2014 set its firm capacity (MW) in the panel. Pick Substation again to draw another.');
 }
 /* Sum of all substation firm capacity on the map, in kW (for POWER rollup). */
 function _substationCapKw(){
