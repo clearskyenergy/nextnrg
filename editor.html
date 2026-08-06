@@ -9087,80 +9087,25 @@ function _renderUtility(g, sh){
   t.setAttribute('font-weight','700'); t.setAttribute('fill',_shapeInk(sh));
   t.setAttribute('class','omega-utillabel');
   t.textContent=def.abbr; g.appendChild(t);
-  /* label under the box: always legible, with a dark chip so it reads over
-     satellite imagery. Font scales with the box but is clamped. The chip and
-     its text share a class so a labels-off toggle hides the WHOLE chip, not
-     just the text (which would leave an empty black box). */
-  /* label under the box: always legible, with a dark chip so it reads over
-     satellite imagery. The chip is DRAGGABLE (its own offset stored on the
-     shape) so overlapping component labels can be pulled apart, and it shares
-     a class so a labels-off toggle hides the whole chip, not just the text. */
+  /* label under the box: a simple dark chip with the component name. Draw
+     components are auto-labeled -- no callout controls (drag / close) here;
+     a deliberate callout comes from the Annotate tab instead. */
   var lfs=Math.max(10, Math.min(15, w*0.14));
   var txt=(sh.label||def.label||'UTILITY');
-  var ldx=sh.labelDx||0, ldy=sh.labelDy||0;
-  var lw=txt.length*lfs*0.58+12, lx=sh.cx-lw/2+ldx, ly=y+h+4+ldy, lh=lfs+8;
-  var lg=_mkNS('g');
-  lg.setAttribute('class','omega-utillabel omega-utillabel-drag');
-  lg.setAttribute('style','cursor:move');
-  /* leader line from the box to the label when it has been moved away */
-  if(ldx||ldy){
-    var ll=_mkNS('line');
-    ll.setAttribute('x1',sh.cx); ll.setAttribute('y1',y+h);
-    ll.setAttribute('x2',sh.cx+ldx); ll.setAttribute('y2',ly+lh/2);
-    ll.setAttribute('stroke','rgba(245,200,113,0.5)'); ll.setAttribute('stroke-width','1');
-    ll.setAttribute('stroke-dasharray','3 2'); g.appendChild(ll);
-  }
+  var lw=txt.length*lfs*0.58+12, lx=sh.cx-lw/2, ly=y+h+4, lh=lfs+8;
   var chip=_mkNS('rect');
   chip.setAttribute('x',lx); chip.setAttribute('y',ly);
   chip.setAttribute('width',lw); chip.setAttribute('height',lh);
-  chip.setAttribute('rx',4); chip.setAttribute('fill','rgba(6,10,18,0.94)');
-  chip.setAttribute('stroke','#F5C871'); chip.setAttribute('stroke-width','1.2');
-  lg.appendChild(chip);
+  chip.setAttribute('rx',4); chip.setAttribute('fill','rgba(10,12,22,0.88)');
+  chip.setAttribute('stroke','rgba(245,158,11,0.35)'); chip.setAttribute('stroke-width','1');
+  chip.setAttribute('class','omega-utillabel'); chip.setAttribute('pointer-events','none');
+  g.appendChild(chip);
   var lb=_mkNS('text');
-  lb.setAttribute('x',lx+lw/2); lb.setAttribute('y',ly+lfs+1);
+  lb.setAttribute('x',sh.cx); lb.setAttribute('y',ly+lfs+1);
   lb.setAttribute('text-anchor','middle'); lb.setAttribute('font-size',lfs);
-  lb.setAttribute('font-weight','800'); lb.setAttribute('fill','#FFE9B0');
-  lb.setAttribute('pointer-events','none');
-  lb.textContent=txt; lg.appendChild(lb);
-  g.appendChild(lg);
-  /* wire the drag on the next tick (the node is now in the DOM) */
-  (function(shp, groupNode){
-    if(typeof _attachUtilLabelDrag==='function') _attachUtilLabelDrag(shp, groupNode);
-  })(sh, lg);
-}
-/* Drag a utility component's label chip independently of its box. Stores the
-   offset on the shape (labelDx/labelDy) so it survives re-render, save + zoom
-   (the chip is inside the shape's <g>, which is already geo-reprojected). */
-function _attachUtilLabelDrag(sh, node){
-  if(!node) return;
-  var start=null;
-  function down(ev){
-    ev.stopPropagation(); if(ev.cancelable) ev.preventDefault();
-    var pt=(typeof _evtXY==='function')?_evtXY(ev):{x:ev.clientX,y:ev.clientY};
-    start={x:pt.x, y:pt.y, dx:sh.labelDx||0, dy:sh.labelDy||0};
-    document.addEventListener('mousemove', move, true);
-    document.addEventListener('mouseup', up, true);
-    document.addEventListener('touchmove', move, {passive:false, capture:true});
-    document.addEventListener('touchend', up, true);
-  }
-  function move(ev){
-    if(!start) return; if(ev.cancelable) ev.preventDefault();
-    var pt=(typeof _evtXY==='function')?_evtXY(ev):{x:ev.clientX,y:ev.clientY};
-    sh.labelDx=start.dx+(pt.x-start.x);
-    sh.labelDy=start.dy+(pt.y-start.y);
-    if(typeof renderShape==='function') renderShape(sh);
-    /* re-bind because renderShape rebuilt the node */
-  }
-  function up(){
-    start=null;
-    document.removeEventListener('mousemove', move, true);
-    document.removeEventListener('mouseup', up, true);
-    document.removeEventListener('touchmove', move, true);
-    document.removeEventListener('touchend', up, true);
-    if(typeof pushHist==='function') pushHist();
-  }
-  node.addEventListener('mousedown', down, true);
-  node.addEventListener('touchstart', down, {passive:false, capture:true});
+  lb.setAttribute('font-weight','700'); lb.setAttribute('fill','#F5C871');
+  lb.setAttribute('class','omega-utillabel'); lb.setAttribute('pointer-events','none');
+  lb.textContent=txt; g.appendChild(lb);
 }
 function _placeBesPad(p){
   /* If the user has pre-set a quantity/model via Config (quick mode), auto-place
@@ -9555,30 +9500,20 @@ function _renderBesPad(g, sh){
     inner.setAttribute('stroke-width','0.75'); inner.setAttribute('stroke-dasharray','3,3');
     g.appendChild(inner);
   }
-  /* label: model + dimensions, centered. Counter-rotate against the shape's
-     own rotation so the text stays upright and readable no matter how the pad
-     is turned (otherwise it renders sideways / mirrored with the group). */
-  var _lcx=ox+wPx/2, _lcy=oy+hPx/2;
-  var _rot=(sh.rot||0);
-  var _counter = _rot ? (' rotate('+(-_rot)+' '+_lcx+' '+_lcy+')') : '';
+  /* label: model + dimensions, centered */
   var t=_mkNS('text');
-  t.setAttribute('x',_lcx); t.setAttribute('y',_lcy);
+  t.setAttribute('x',ox+wPx/2); t.setAttribute('y',oy+hPx/2);
   t.setAttribute('text-anchor','middle'); t.setAttribute('dominant-baseline','middle');
-  t.setAttribute('fill','#FFE9B0'); t.setAttribute('font-size','10');
-  t.setAttribute('font-weight','800');
-  t.setAttribute('font-family','ui-monospace, Menlo, monospace'); t.setAttribute('pointer-events','none');
-  t.setAttribute('paint-order','stroke'); t.setAttribute('stroke','rgba(6,10,18,0.9)'); t.setAttribute('stroke-width','3');
-  if(_counter) t.setAttribute('transform', _counter.trim());
+  t.setAttribute('fill',_shapeInk(sh)); t.setAttribute('font-size','10');
+  t.setAttribute('font-family','monospace'); t.setAttribute('pointer-events','none');
   t.textContent=(sh.model||'BESS');
   g.appendChild(t);
   var t2=_mkNS('text');
-  t2.setAttribute('x',_lcx); t2.setAttribute('y',_lcy+12);
+  t2.setAttribute('x',ox+wPx/2); t2.setAttribute('y',oy+hPx/2+12);
   t2.setAttribute('text-anchor','middle'); t2.setAttribute('dominant-baseline','middle');
-  t2.setAttribute('fill','#E2EEF9'); t2.setAttribute('font-size','8');
-  t2.setAttribute('font-family','ui-monospace, Menlo, monospace');
-  t2.setAttribute('paint-order','stroke'); t2.setAttribute('stroke','rgba(6,10,18,0.9)'); t2.setAttribute('stroke-width','2.5');
+  t2.setAttribute('fill',_shapeInk(sh)); t2.setAttribute('font-size','8');
+  t2.setAttribute('font-family','monospace'); t2.setAttribute('opacity','0.8');
   t2.setAttribute('pointer-events','none');
-  if(_counter) t2.setAttribute('transform', 'rotate('+(-_rot)+' '+_lcx+' '+(_lcy+12)+')');
   t2.textContent=sh.lf+'\u2032 x '+sh.wf+'\u2032';
   g.appendChild(t2);
 }
@@ -9670,11 +9605,8 @@ function _renderAssembly(g, sh){
   if(anyFence){
     var ft=_mkNS('text');
     ft.setAttribute('x',fx+4); ft.setAttribute('y',fy-4);
-    ft.setAttribute('fill','#FFE9B0'); ft.setAttribute('font-size','9'); ft.setAttribute('font-weight','700');
-    ft.setAttribute('font-family','ui-monospace, Menlo, monospace'); ft.setAttribute('pointer-events','none');
-    ft.setAttribute('paint-order','stroke'); ft.setAttribute('stroke','rgba(6,10,18,0.9)'); ft.setAttribute('stroke-width','2.5');
-    /* keep upright regardless of assembly rotation */
-    if(sh.rot){ ft.setAttribute('transform','rotate('+(-(sh.rot||0))+' '+(fx+4)+' '+(fy-4)+')'); }
+    ft.setAttribute('fill',_shapeInk(sh)); ft.setAttribute('font-size','8');
+    ft.setAttribute('font-family','monospace'); ft.setAttribute('pointer-events','none');
     ft.textContent='SECURITY FENCE ('+sh.fenceClear+'\u2032 CLR)';
     g.appendChild(ft);
   }
@@ -51557,9 +51489,10 @@ function _nnObserve(){
    it), while a double-click on a zonebox opens/re-opens the editor. --------- */
 var _znDismissed = {};   /* id -> true if user X'd the panel */
 function _nnZoneWrap(){
-  /* wrap selectShape: single-click selecting a zonebox/substation opens its
-     editor panel (users expect one click, not a double-click), and switching
-     to a different shape closes a panel that belonged to the previous one. */
+  /* wrap selectShape: single-click just SELECTS the shape. The zone/substation
+     panel opens only when you DRAW the box (or double-click it later), not on
+     a plain select. Switching to a different shape closes a panel that
+     belonged to the previous one. */
   if(typeof selectShape==='function'){
     var _sel=selectShape;
     window.selectShape=function(id){
@@ -51573,18 +51506,8 @@ function _nnZoneWrap(){
       if(ps && ps.dataset && ps.dataset.shid && ps.dataset.shid!==id){
         if(typeof _subClose==='function') _subClose();
       }
-      /* open the right panel for the newly selected shape (unless the user
-         X'd it during THIS selection) */
-      try{
-        var sh=null; if(typeof S!=='undefined' && S.shapes){ for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===id){ sh=S.shapes[i]; break; } } }
-        if(sh){
-          if(sh.kind==='zonebox' && !_znDismissed[id] && typeof _evZoneShowProps==='function'){
-            if(!document.getElementById('ev-zone-props')) _evZoneShowProps(id);
-          } else if(sh.kind==='substation' && typeof _subShowProps==='function'){
-            if(!document.getElementById('sub-props')) _subShowProps(id);
-          }
-        }
-      }catch(e){}
+      /* NOTE: no auto-open on select. The panel is opened by _evPlaceZone on
+         draw and by the double-click handler below. */
     };
   }
   /* wrap the zone close so we remember the dismissal */
