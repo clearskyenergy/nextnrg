@@ -10096,11 +10096,19 @@ function _calloutDragMove(e){
 }
 function _calloutDragEnd(){
   if(!_calloutDrag) return;
+  var _movedId=_calloutDrag.id;
   _calloutDrag=null;
   document.removeEventListener('mousemove', _calloutDragMove, true);
   document.removeEventListener('mouseup', _calloutDragEnd, true);
   document.removeEventListener('touchmove', _calloutDragMove, true);
   document.removeEventListener('touchend', _calloutDragEnd, true);
+  /* The new position becomes the new ground truth -- without this the next
+     map idle/zoom reprojects from the OLD stale anchor and snaps the callout
+     back to where it was before this drag. */
+  try{
+    var sh=null; for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===_movedId){ sh=S.shapes[i]; break; } }
+    if(sh && typeof window._geoRestampOne==='function') window._geoRestampOne(sh);
+  }catch(e){}
   if(typeof pushHist==='function') pushHist();
 }
 /* Remove a callout shape by id (from its X button). */
@@ -30443,6 +30451,21 @@ function _geoStampShape(sh, toGeo, force){
         return g?{lat:g.lat, lng:g.lng, a:t.a||0}:null;
       });
     }
+    /* Callout shapes (kind:'callout') carry TWO independent points -- target
+       (the arrow tip) and anchor (the label) -- neither named pts/cx/cy, so
+       they fell through every branch above and were never anchored at all:
+       panning or zooming the map left a callout frozen in its old screen
+       position while everything around it moved. Stamp both points
+       independently so each tracks the ground on its own, matching how the
+       two are now dragged independently on-screen. */
+    if(sh.target && typeof sh.target.x==='number' && (force || !sh._geoTarget)){
+      var gt2=toGeo(sh.target.x, sh.target.y);
+      if(gt2) sh._geoTarget={lat:gt2.lat, lng:gt2.lng};
+    }
+    if(sh.anchor && typeof sh.anchor.x==='number' && (force || !sh._geoAnchorPt)){
+      var ga2=toGeo(sh.anchor.x, sh.anchor.y);
+      if(ga2) sh._geoAnchorPt={lat:ga2.lat, lng:ga2.lng};
+    }
   }catch(e){}
 }
 
@@ -30521,6 +30544,15 @@ function _geoApplyShape(sh, toPx, ppf){
       sh.wPx=maxX-minX; sh.hPx=maxY-minY;
       if(sh.pts && sh.pts.length===1){ sh.pts[0].x=minX; sh.pts[0].y=minY; }
     }
+    /* Callout: rebuild both independent points from their own stamps. */
+    if(sh._geoTarget && sh.target){
+      var ptt2=toPx(sh._geoTarget.lat, sh._geoTarget.lng);
+      if(ptt2){ sh.target.x=ptt2.x; sh.target.y=ptt2.y; }
+    }
+    if(sh._geoAnchorPt && sh.anchor){
+      var paa2=toPx(sh._geoAnchorPt.lat, sh._geoAnchorPt.lng);
+      if(paa2){ sh.anchor.x=paa2.x; sh.anchor.y=paa2.y; }
+    }
   }catch(e){}
 }
 
@@ -30536,10 +30568,13 @@ function _geoRestampOne(o){
   var sz=_getCanvasSize();
   var toGeo=function(x,y){ return _pxToLatLng(x,y,ms,sz.w,sz.h); };
   try{
-    if(o.pts || o.boundary || o.tables || typeof o.cx==='number'){
+    if(o.pts || o.boundary || o.tables || typeof o.cx==='number' || o.target || o.anchor){
       _geoStampShape(o, toGeo, true);
     }
-    if(typeof o.x==='number' && typeof o.y==='number' && !o.pts){
+    if(o.type==='dimension' && typeof o.x1==='number'){
+      var gd1r=toGeo(o.x1,o.y1), gd2r=toGeo(o.x2,o.y2);
+      if(gd1r && gd2r){ o._geoD1={lat:gd1r.lat,lng:gd1r.lng}; o._geoD2={lat:gd2r.lat,lng:gd2r.lng}; }
+    } else if(typeof o.x==='number' && typeof o.y==='number' && !o.pts){
       var g=toGeo(o.x+((o.w||60)/2), o.y+((o.h||o.w||60)/2));
       if(g){ o._geoLat=g.lat; o._geoLng=g.lng; }
     }
@@ -30841,6 +30876,19 @@ function _geoStampAll(){
   var toGeo=function(x,y){ return _pxToLatLng(x,y,ms,sz.w,sz.h); };
   try{
     (S.elements||[]).forEach(function(el){
+      /* Dimension elements render from x1/y1/x2/y2, NOT from the generic
+         x/y/w center this loop stamps for every other element type. The
+         center-based anchor below is silently pointless for a dimension --
+         nothing reads it back into the drawn line -- which is why a
+         dimension never tracked the map at all. Stamp both endpoints of
+         the line independently instead. */
+      if(el.type==='dimension'){
+        if(el._geoD1==null || el._geoD2==null){
+          var gd1=toGeo(el.x1, el.y1), gd2=toGeo(el.x2, el.y2);
+          if(gd1 && gd2){ el._geoD1={lat:gd1.lat,lng:gd1.lng}; el._geoD2={lat:gd2.lat,lng:gd2.lng}; }
+        }
+        return;
+      }
       if(el._geoLat!=null) return;               /* already anchored */
       var g=toGeo(el.x+((el.w||60)/2), el.y+((el.h||el.w||60)/2));
       if(g){ el._geoLat=g.lat; el._geoLng=g.lng; }
@@ -30921,6 +30969,19 @@ function _geoReprojectAll(){
     var sz=_getCanvasSize();
     var toPx=function(lat,lng){ return _latLngToPx(lat,lng,ms,sz.w,sz.h); };
     (S.elements||[]).forEach(function(el){
+      /* Dimension: reproject BOTH endpoints from their own stamps (not the
+         unused generic x/y center) and actually redraw the line -- editing
+         x1/y1/x2/y2 alone does not move anything on screen, since the SVG
+         line's own attributes only change when renderDimension rebuilds it. */
+      if(el.type==='dimension'){
+        if(el._geoD1==null || el._geoD2==null) return;
+        var pd1=toPx(el._geoD1.lat, el._geoD1.lng);
+        var pd2=toPx(el._geoD2.lat, el._geoD2.lng);
+        if(pd1){ el.x1=pd1.x; el.y1=pd1.y; }
+        if(pd2){ el.x2=pd2.x; el.y2=pd2.y; }
+        if(pd1 && pd2 && typeof renderDimension==='function'){ try{ renderDimension(el); }catch(e){} }
+        return;
+      }
       if(el._geoLat==null || el._geoLng==null) return;
       var px=toPx(el._geoLat, el._geoLng);
       if(!px) return;
@@ -36876,11 +36937,18 @@ function _dimDragMove(e){
 }
 function _dimDragEnd(){
   if(!_dimDrag) return;
+  var _movedId=_dimDrag.id;
   _dimDrag=null;
   document.removeEventListener('mousemove', _dimDragMove, true);
   document.removeEventListener('mouseup', _dimDragEnd, true);
   document.removeEventListener('touchmove', _dimDragMove, true);
   document.removeEventListener('touchend', _dimDragEnd, true);
+  /* New endpoints become the new ground truth, same reasoning as callouts:
+     without this the next reproject snaps the line back to its old anchor. */
+  try{
+    var el=null; for(var i=0;i<S.elements.length;i++){ if(S.elements[i].id===_movedId){ el=S.elements[i]; break; } }
+    if(el && typeof window._geoRestampOne==='function') window._geoRestampOne(el);
+  }catch(e){}
   if(typeof pushHist==='function') pushHist();
 }
 
@@ -50098,7 +50166,20 @@ function _evRenderZone(g, sh){
   if(stroke!=='none'){ r.setAttribute('stroke',stroke); r.setAttribute('stroke-width','2'); if(dash) r.setAttribute('stroke-dasharray',dash); }
   g.appendChild(r);
   if(sh.label){
-    _evText(g, x+w/2, y+h/2+4, sh.label, 12, (sh.border==='none'?(sh.color||'#1D4ED8'):(sh.color||'#1D4ED8')), 'middle', '700');
+    /* Legible regardless of the fill/border color the user picked (which can
+       be black, as it is by default) -- give the text its own small dark
+       chip so it never blends into the box it's labeling. */
+    var lfs=12;
+    var ltxt=sh.label;
+    var lw=Math.max(20, ltxt.length*lfs*0.58)+10, lh=lfs+8;
+    var lcx=x+w/2, lcy=y+h/2;
+    var chip=_mkNS('rect');
+    chip.setAttribute('x',lcx-lw/2); chip.setAttribute('y',lcy-lh/2);
+    chip.setAttribute('width',lw); chip.setAttribute('height',lh);
+    chip.setAttribute('rx',3); chip.setAttribute('fill','rgba(8,12,20,0.82)');
+    chip.setAttribute('pointer-events','none');
+    g.appendChild(chip);
+    _evText(g, lcx, lcy+4, ltxt, lfs, '#F5F0E1', 'middle', '700');
   }
 }
 
