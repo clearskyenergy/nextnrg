@@ -3802,6 +3802,9 @@ if(document.readyState==='loading'){
               <option value="CATL-QUOTE-REQ-UTILITY">CATL Utility-Scale -- Quote Required</option>
             </optgroup>
             <optgroup label="Canadian Solar / e-STORAGE (Greenfield / MV)">
+              <option value="CSI-KUBANK2-277">KuBank 2.0 S-277 -- 125 kW / 277 kWh C&amp;I -- Quote Req.</option>
+              <option value="CSI-KUBANK-371">KuBank S-371 -- 185 kW / 371 kWh C&amp;I -- Quote Req.</option>
+              <option value="CSI-SOLBANK3-5016">SolBank 3.0 -- up to 2.35 MW / 5.0 MWh (20-ft) -- Quote Req.</option>
               <option value="CSI-CSES351A6">Energy Station CSES351A6 -- 14.2 MWh / 3.5 MVA -- Quote Req.</option>
               <option value="CSI-POWERBLOCK-ESPB4H">PowerBlock ESPB-4H -- ~20 MWh / ~5 MVA (sized) -- Quote Req.</option>
             </optgroup>
@@ -9071,9 +9074,12 @@ function _renderUtility(g, sh){
   t.setAttribute('x',sh.cx); t.setAttribute('y',sh.cy+gfs*0.34);
   t.setAttribute('text-anchor','middle'); t.setAttribute('font-size',gfs);
   t.setAttribute('font-weight','700'); t.setAttribute('fill',_shapeInk(sh));
+  t.setAttribute('class','omega-utillabel');
   t.textContent=def.abbr; g.appendChild(t);
   /* label under the box: always legible, with a dark chip so it reads over
-     satellite imagery. Font scales with the box but is clamped. */
+     satellite imagery. Font scales with the box but is clamped. The chip and
+     its text share a class so a labels-off toggle hides the WHOLE chip, not
+     just the text (which would leave an empty black box). */
   var lfs=Math.max(10, Math.min(15, w*0.14));
   var txt=(sh.label||def.label||'UTILITY');
   var lw=txt.length*lfs*0.58+10, lx=sh.cx-lw/2, ly=y+h+4;
@@ -9082,11 +9088,13 @@ function _renderUtility(g, sh){
   chip.setAttribute('width',lw); chip.setAttribute('height',lfs+7);
   chip.setAttribute('rx',4); chip.setAttribute('fill','rgba(10,12,22,0.88)');
   chip.setAttribute('stroke','rgba(245,158,11,0.35)'); chip.setAttribute('stroke-width','1');
+  chip.setAttribute('class','omega-utillabel');
   g.appendChild(chip);
   var lb=_mkNS('text');
   lb.setAttribute('x',sh.cx); lb.setAttribute('y',ly+lfs+0.5);
   lb.setAttribute('text-anchor','middle'); lb.setAttribute('font-size',lfs);
   lb.setAttribute('font-weight','700'); lb.setAttribute('fill','#F5C871');
+  lb.setAttribute('class','omega-utillabel');
   lb.textContent=txt; g.appendChild(lb);
 }
 function _placeBesPad(p){
@@ -16850,6 +16858,28 @@ const BESS_CATALOG = {
     certs:'UL 9540, IEC 62933',controller:'Modbus TCP / web local UI (1s dispatch, 150ms fast option)',
     configurable:true,capRangeKwh:'4,800-20,000+',durRange:'1.5-4+ hr',
     notes:'e-STORAGE (Canadian Solar) PowerBlock ESPB-2H / ESPB-4H integrated MV BESS building block. DYNAMICALLY SIZED: 4.8 MWh to 20+ MWh, 1.5 to 4+ hr duration -- this entry is a representative ESPB-4H at ~5 MVA / ~20 MWh; adjust kW/kWh/duration to the specific PowerBlock config. Direct MV AC interface (10/22/33/34.5 kV), SolBank LFP, EMS-integrated, verified via UL 9540 / IEC 62933 integration test (PCS+SolBank+EMS). Multiple PowerBlocks parallel on the MV side to GWh scale. PRICE: quote required. CSI Solar / Canadian Solar, Guelph ON, support@csestorage.com.'},
+  'CSI-KUBANK2-277': {mfr:'Canadian Solar / e-STORAGE',model:'Canadian Solar KuBank 2.0 S-277-2h (125 kW / 277 kWh C&I)',chem:'LFP',kwh:277,usable:263,kw:125,dur:2.0,dcv:'883.2V (772.8-993.6V)',eqcost:null,
+    inv:'Integrated modular PCS',ikva:125,xfmr:'N/A (480 Vac AC-coupled)',disco:'AC out (480V)',
+    ci:true,gridConnectV:'480 Vac 3-phase',acVoltRange:'422-528 Vac',freq:'60 Hz (59.3-60.5)',thd:'<3%',pf:'-1 to 1',
+    cells:'LFP 1P276S (4 packs, 69 cells/pack)',cooling:'Liquid-cooled battery, active-balancing BMS (2A)',
+    dims:'Battery 1550x2280x2100 mm (61x90x83 in) + PCS 600x500x2000 mm',weight:'3,600 kg (7,937 lb)',tempRange:'-30..55C',
+    certs:'UL1973, UL9540, UL9540A, UN38.3, UL1741, UL1741SB, IEEE1547',controller:'Modbus TCP/RTU, CAN, Ethernet/RS485',
+    installType:'Outdoor cabinet, NEMA 3R / IP54',ctrlBackup:'2-hr UPS for BMS/controls',
+    notes:'Canadian Solar KuBank 2.0, all-in-one C&I cabinet (battery + modular PCS in one outdoor enclosure). 277 kWh / 125 kVA, 2-hr, 480 Vac AC-coupled -- no separate step-up transformer for BTM C&I. Up to 8 units parallel. Liquid-cooled LFP, aerosol fire suppression, combustible-gas + smoke detection. Ideal for smaller peak-shaving / demand-management projects. PRICE: quote required. CSI Solar, Kitchener ON, support@csisolar.com. Datasheet KuBank2.0 UL v1.0 (Jun 2025).'},
+  'CSI-KUBANK-371': {mfr:'Canadian Solar / e-STORAGE',model:'Canadian Solar KuBank S-371-2H (185 kW / 371 kWh C&I)',chem:'LFP',kwh:371,usable:352,kw:185,dur:2.0,dcv:'1324.8V',eqcost:null,
+    inv:'Integrated modular PCS',ikva:185,xfmr:'N/A (AC-coupled) or via site STS/xfmr',disco:'AC out',
+    ci:true,gridConnectV:'480 Vac 3-phase (via integrated PCS)',rteDcac:'>=92% DC/AC',
+    cells:'LFP 280Ah, 1P414S',cooling:'Liquid-cooled, multi-stage thermal management',
+    dims:'61 x 95 x 83 in (WxHxD)',weight:'9,259 lb (4,200 kg)',tempRange:'-30..55C (-22F to 131F)',
+    certs:'UL9540/UL9540A class C&I',controller:'EMS w/ peak-shaving & demand modes',
+    installType:'Outdoor cabinet, NEMA 3R',ctrlBackup:'Online 2-hr UPS for auxiliaries',
+    notes:'Canadian Solar KuBank S-371-2H-UL C&I cabinet. 371 kWh / 185 kW, 2-hr, 1324.8 Vdc, 280Ah LFP (1P414S). >=92% DC/AC efficiency. Integrated modular PCS + BMS + STS + transformer options. Heat/smoke/combustible-gas sensors, fire control panel, audible/strobe alarms. Larger C&I sibling to the KuBank 2.0 277. Up to multi-cabinet parallel. PRICE: quote required. CSI Solar, support@csisolar.com.'},
+  'CSI-SOLBANK3-5016': {mfr:'Canadian Solar / e-STORAGE',model:'Canadian Solar SolBank 3.0 (up to 2.35 MW / 5.0 MWh, 20-ft)',chem:'LFP',kwh:5016,usable:4750,kw:2350,dur:2.13,dcv:'~1331V (1164.8-1497.6V)',eqcost:null,
+    inv:'External PCS required (DC-coupled container)',ikva:2350,xfmr:'Via site PCS + step-up',disco:'DC terminal',
+    greenfield:true,dcCoupled:true,powerRange:'1.2-2.35 MW (PCS-dependent)',
+    cells:'LFP 314Ah',cooling:'Smart liquid cooling TMS, active-balancing BMS, IP67 packs',
+    dims:'20-ft container',certs:'NFPA855, NFPA69, NFPA72, NFPA70E (opt. NFPA68), UL9540/UL9540A',
+    notes:'Canadian Solar / e-STORAGE SolBank 3.0 (S-5016-2H / S-5016-4H), 20-ft containerized DC block: 5,016 kWh nominal, up to 2.35 MW at the DC terminal (1.2-2.35 MW depending on paired PCS). 314Ah LFP, ~45% higher density than SolBank 1.0. DC-COUPLED -- needs an external/central PCS + step-up transformer (unlike the all-in-one Energy Station / PowerBlock). Mid-size building block between the KuBank C&I cabinets and the 14 MWh Energy Station; parallels to utility scale. PRICE: quote required. CSI Solar / e-STORAGE. Datasheet SolBank 3.0 v1.6x NA.'},
 };
 
 function applyBMCatalog() {
@@ -69176,11 +69206,16 @@ window._crmToastModal=_crmToastModal;
     if (m === 'dims') {
       /* A dimension is a token like 20.3'x18.79' or 6' x 5'. Names are not.
          Keeping the size and dropping the name is the usual plan-set
-         compromise on a busy pad. */
+         compromise on a busy pad. Utility identifier chips (M-POI, XFMR,
+         switchgear) are STRUCTURAL, not chatty stencil names, and are tagged
+         .omega-utillabel (never .omega-name), so they stay visible here. */
       return '#csvg text.omega-name{display:none!important}'
         + '.omega-lab{display:none!important}';
     }
+    /* full off: hide the whole utility chip (rect + text) together so no
+       orphaned black box is left behind. */
     return '#csvg text{display:none!important}'
+      + '#csvg .omega-utillabel{display:none!important}'
       + '#csvg .omega-lab,.omega-lab{display:none!important}'
       + '#cov .omega-lab{display:none!important}';
   }
@@ -69233,6 +69268,9 @@ window._crmToastModal=_crmToastModal;
       for (var i = 0; i < nodes.length; i++) {
         var t = nodes[i];
         if (t.getAttribute('data-omega-cls')) continue;
+        /* utility identifier chips manage their own visibility — never tag
+           them as a stencil name (which dims-mode would hide). */
+        if (t.classList && t.classList.contains('omega-utillabel')) { t.setAttribute('data-omega-cls','util'); continue; }
         var s = (t.textContent || '');
         var isDim = /[\u2032'"]\s*[x\u00d7]|\d\s*[\u2032']/.test(s) || /^\s*[\d.]+\s*(ft|')/.test(s);
         t.setAttribute('data-omega-cls', isDim ? 'dim' : 'name');
