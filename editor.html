@@ -1168,8 +1168,10 @@ input[type=range]::-moz-range-thumb{width:15px;height:15px;background:linear-gra
 /* BESS list card hover */
 .bi:hover{border-color:rgba(197,165,90,.3)!important;background:rgba(197,165,90,.04)!important}
 
-/* Callout element upgraded */
-.callout-el{background:rgba(197,165,90,.15)!important;border:1.5px solid var(--gold)!important;color:#E8F0FE!important}
+/* Callout element — dark chip, gold border, legible light text. Opaque so it
+   reads over satellite imagery; single source of truth (the earlier light-
+   yellow rule is overridden here on purpose). */
+.callout-el{background:rgba(12,18,30,.92)!important;border:1.5px solid var(--gold)!important;color:#F5F0E1!important;border-radius:5px;padding:6px 10px;min-width:80px;font-size:11px;font-weight:700;cursor:move;display:inline-block;position:relative;white-space:pre-wrap}
 
 /* -- TOP BAR RESPONSIVE (grouped menu bar handles its own mobile CSS below) -- */
 @media (max-width:768px){
@@ -3798,6 +3800,10 @@ if(document.readyState==='loading'){
             <optgroup label="CATL (Quote Required)">
               <option value="CATL-QUOTE-REQ-CI">CATL C&I BESS -- Quote Required</option>
               <option value="CATL-QUOTE-REQ-UTILITY">CATL Utility-Scale -- Quote Required</option>
+            </optgroup>
+            <optgroup label="Canadian Solar / e-STORAGE (Greenfield / MV)">
+              <option value="CSI-CSES351A6">Energy Station CSES351A6 -- 14.2 MWh / 3.5 MVA -- Quote Req.</option>
+              <option value="CSI-POWERBLOCK-ESPB4H">PowerBlock ESPB-4H -- ~20 MWh / ~5 MVA (sized) -- Quote Req.</option>
             </optgroup>
             <optgroup label="Custom"><option value="CUSTOM">Custom / Manual Entry</option></optgroup>
           </select>
@@ -8976,7 +8982,7 @@ function _buildCalloutModal(){
 }
 function _calloutCancel(){
   var m=document.getElementById('callout-modal'); if(m) m.style.display='none';
-  _pendingCallout=null; _removeTmpShape();
+  _pendingCallout=null; _removeTmpShape(); window._calloutEditingId=null;
   S.shapeDrawing=false; S.shapeStart=null;
 }
 function _calloutConfirm(){
@@ -8984,8 +8990,20 @@ function _calloutConfirm(){
   var arrow=_cbChecked('callout-arrow');
   var m=document.getElementById('callout-modal'); if(m) m.style.display='none';
   _removeTmpShape();
-  if(!_pendingCallout){ return; }
   if(!txt){ txt='CALLOUT'; }
+  /* EDIT MODE: update an existing callout instead of creating a new one */
+  if(window._calloutEditingId){
+    var eid=window._calloutEditingId; window._calloutEditingId=null;
+    for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===eid){
+      S.shapes[i].text=txt; S.shapes[i].arrow=!!arrow;
+      renderShape(S.shapes[i]);
+      if(typeof pushHist==='function') pushHist();
+      break;
+    } }
+    _pendingCallout=null;
+    return;
+  }
+  if(!_pendingCallout){ return; }
   var pc=_pendingCallout; _pendingCallout=null;
   var sh={ id:uid(), kind:'callout', style:S.shapeStyle, color:SHAPE_STROKE,
            target:{x:pc.target.x,y:pc.target.y}, anchor:{x:pc.anchor.x,y:pc.anchor.y},
@@ -9965,24 +9983,42 @@ function _renderCallout(g, sh){
     g.appendChild(dot);
   }
   /* label: measure roughly by text length for the background box */
-  var fs=11;
-  var w=Math.max(24, txt.length*fs*0.60)+12;
-  var h=fs+8;
+  var fs=12;
+  var w=Math.max(28, txt.length*fs*0.62)+14;
+  var h=fs+10;
   var lx=a.x, ly=a.y;
   /* anchor box left edge is at the anchor point; nudge so it doesn't cover the tip */
   var box=_mkNS('rect');
   box.setAttribute('x',lx); box.setAttribute('y',ly-h/2);
   box.setAttribute('width',w); box.setAttribute('height',h);
-  box.setAttribute('rx','2');
-  box.setAttribute('fill','rgba(20,20,20,0.72)');
-  box.setAttribute('stroke',_shapeInk(sh)); box.setAttribute('stroke-width','1');
+  box.setAttribute('rx','3');
+  box.setAttribute('fill','rgba(12,18,30,0.92)');
+  box.setAttribute('stroke',_shapeInk(sh)); box.setAttribute('stroke-width','1.5');
   g.appendChild(box);
   var tx=_mkNS('text');
-  tx.setAttribute('x',lx+6); tx.setAttribute('y',ly+fs*0.35);
-  tx.setAttribute('fill','#FFFFFF'); tx.setAttribute('font-size',fs);
-  tx.setAttribute('font-family','monospace'); tx.setAttribute('pointer-events','none');
+  tx.setAttribute('x',lx+7); tx.setAttribute('y',ly+fs*0.36);
+  tx.setAttribute('fill','#F5F0E1'); tx.setAttribute('font-size',fs);
+  tx.setAttribute('font-weight','700');
+  tx.setAttribute('font-family','ui-monospace, Menlo, monospace'); tx.setAttribute('pointer-events','none');
   tx.textContent=txt;
   g.appendChild(tx);
+}
+
+/* Edit an existing callout shape's text (double-click). Reuses a small inline
+   prompt so the label + leader stay put and only the text changes. */
+function _calloutEditText(id){
+  var sh=null; for(var i=0;i<S.shapes.length;i++){ if(S.shapes[i].id===id){ sh=S.shapes[i]; break; } }
+  if(!sh || sh.kind!=='callout') return;
+  if(typeof selectShape==='function') selectShape(id);
+  var m=document.getElementById('callout-modal'); if(!m){ m=_buildCalloutModal(); }
+  var inp=document.getElementById('callout-text');
+  var arw=document.getElementById('callout-arrow');
+  if(inp){ inp.value=sh.text||''; }
+  if(arw){ arw.checked=(sh.arrow!==false); }
+  /* route confirm to an edit of THIS shape rather than creating a new one */
+  window._calloutEditingId=id;
+  m.style.display='flex';
+  setTimeout(function(){ if(inp){ inp.focus(); inp.select(); } },30);
 }
 
 /* ---- Selection + interactive handles (move / rotate / resize) ------ */
@@ -11170,9 +11206,11 @@ function placeEmsAndWire(){
       renderEl(ems);
     }
   } else {
+    var _ppfE=(S.pxPerFt&&S.pxPerFt>0)?S.pxPerFt:6;
+    var _emsW=Math.max(12, Math.round(2.5*_ppfE));
     ems=addEl({ type:'eq', eqId:'ems', label:'EMS',
                 spec:'Energy Management System \u2014 fleet dispatch & SCADA',
-                x:Math.round(cx-18), y:Math.round(cy-18), w:36, rot:0 });
+                x:Math.round(cx-_emsW/2), y:Math.round(cy-_emsW/2), w:_emsW, rot:0 });
   }
   if(!ems) return null;
 
@@ -16799,6 +16837,19 @@ const BESS_CATALOG = {
   'GENERIC-BESS': {mfr:'',model:'Generic BESS — size only, make/model TBD',chem:'LFP (assumed)',kwh:null,usable:null,kw:null,dur:null,dcv:'TBD',eqcost:null,inv:'Integrated PCS (assumed)',ikva:null,xfmr:'TBD',disco:'TBD',placeholder:true,notes:'PLACEHOLDER used by the guided build. Carries capacity (kW/kWh) through the design while the manufacturer is undecided. Enter kW and kWh; everything else stays TBD until a real unit is selected.'},
   'CATL-QUOTE-REQ-CI': {mfr:'CATL',model:'CATL C&I BESS -- Quote Required',chem:'LFP',kwh:null,usable:null,kw:null,dur:null,dcv:'TBD',eqcost:null,inv:'TBD',ikva:null,xfmr:'TBD',disco:'TBD',notes:'Manufacturer/vendor quote required. Contact CATL integrator.'},
   'CATL-QUOTE-REQ-UTILITY': {mfr:'CATL',model:'CATL Utility-Scale BESS -- Quote Required',chem:'LFP',kwh:null,usable:null,kw:null,dur:null,dcv:'TBD',eqcost:null,inv:'TBD',ikva:null,xfmr:'TBD',disco:'TBD',notes:'Manufacturer/vendor quote required. Contact CATL integrator.'},
+  'CSI-CSES351A6': {mfr:'Canadian Solar / e-STORAGE',model:'Canadian Solar Energy Station CSES351A6 (14.2 MWh / 3.5 MVA)',chem:'LFP (SolBank)',kwh:14200,usable:13490,kw:3500,dur:4.06,dcv:'MV-coupled (integrated)',eqcost:null,
+    inv:'Integrated PCS (turnkey MV skid)',ikva:3500,xfmr:'Integrated MV transformer (34.5 kV)',disco:'Vacuum circuit-breaker module',
+    greenfield:true,mvNative:true,gridConnectV:'34.5 kV +10%/-12%',acCurrent:'60A @ 34.5 kV',rteBol:'90%',rteY20:'87.5%',pf:'-0.5 to 0.5',thd:'<5%',freq:'59.3-60.5 Hz',
+    dims:'39.4 x 3.4 x 2.7 m',weight:'177,820 kg',cooling:'Forced-air inverter / liquid-cooled battery',tempRange:'-20..45C rated (-20..55C derated)',
+    certs:'UL1973, UN38.3, UL1741SA, FCC Part 15',warranty:'20-yr performance guarantee available',controller:'Modbus TCP / web local UI',installType:'Pad-mount, NEMA 3R',
+    notes:'Canadian Solar / e-STORAGE Energy Station, all-in-one MV BESS: MV switchgear (RMU) + MV transformer + inverter + SolBank LFP battery + controls in one turnkey skid. 14.2 MWh AC / 3.5 MVA AC at the 34.5 kV MV interface (native MV -- no separate step-up needed). Units parallel directly on the MV side for utility-scale sites. Performance guarantee: 14.2 MWh BOL -> 10.6 MWh @ 20 yr (~95% daily DOD). Dims 39.4x3.4x2.7 m, 177.8 t. PRICE: quote required. CSI Solar / Canadian Solar, Guelph ON, support@canadiansolar.com. Preliminary datasheet 2023 -- verify final submittal.'},
+  'CSI-POWERBLOCK-ESPB4H': {mfr:'Canadian Solar / e-STORAGE',model:'e-STORAGE PowerBlock ESPB-4H (~5 MVA / ~20 MWh, 4-hr)',chem:'LFP (SolBank)',kwh:20000,usable:19000,kw:5000,dur:4.0,dcv:'MV-coupled (integrated)',eqcost:null,
+    inv:'Integrated PCS (turnkey MV skid)',ikva:5000,xfmr:'Integrated MV transformer',disco:'MV interface',
+    greenfield:true,mvNative:true,gridConnectV:'10 / 22 / 33 / 34.5 kV',rteBol:'>=90%',pf:'-1 to 1',thd:'<5%',freq:'50/60 Hz',
+    cooling:'Liquid-cooled battery / forced-air PCS',tempRange:'-30..45C rated (-30..55C derated)',installType:'Pad-mount, NEMA 3R',
+    certs:'UL 9540, IEC 62933',controller:'Modbus TCP / web local UI (1s dispatch, 150ms fast option)',
+    configurable:true,capRangeKwh:'4,800-20,000+',durRange:'1.5-4+ hr',
+    notes:'e-STORAGE (Canadian Solar) PowerBlock ESPB-2H / ESPB-4H integrated MV BESS building block. DYNAMICALLY SIZED: 4.8 MWh to 20+ MWh, 1.5 to 4+ hr duration -- this entry is a representative ESPB-4H at ~5 MVA / ~20 MWh; adjust kW/kWh/duration to the specific PowerBlock config. Direct MV AC interface (10/22/33/34.5 kV), SolBank LFP, EMS-integrated, verified via UL 9540 / IEC 62933 integration test (PCS+SolBank+EMS). Multiple PowerBlocks parallel on the MV side to GWh scale. PRICE: quote required. CSI Solar / Canadian Solar, Guelph ON, support@csestorage.com.'},
 };
 
 function applyBMCatalog() {
@@ -17170,7 +17221,24 @@ function deleteBess(id){
 }
 
 // == TEXT / CALLOUT ===========================================
-function addTextBox(){const scr=document.getElementById('sc').getBoundingClientRect();addEl({type:'text',label:'Double-click to edit',x:scr.width/2-70,y:scr.height/2-14,w:140,rot:0});}
+function addTextBox(){
+  var scr=document.getElementById('sc').getBoundingClientRect();
+  var el=addEl({type:'text',label:'Double-click to edit',x:scr.width/2-70,y:scr.height/2-14,w:140,rot:0});
+  /* select it and drop straight into edit mode so the user can type at once */
+  try{
+    if(el && el.id){
+      if(typeof selEl==='function') selEl(el.id);
+      setTimeout(function(){
+        var dom=document.querySelector('[data-elid="'+el.id+'"]');
+        var tb=dom && dom.querySelector('.txt-el');
+        if(tb){ tb.contentEditable='true'; tb.focus();
+          try{ var rng=document.createRange(); rng.selectNodeContents(tb); var sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(rng); }catch(e){}
+        }
+      },40);
+    }
+  }catch(e){}
+  return el;
+}
 function addCallout(){const scr=document.getElementById('sc').getBoundingClientRect();addEl({type:'callout',label:'Callout note',x:scr.width/2-70,y:scr.height/2-14,w:150,rot:0});}
 
 // == MODE / BANNER ============================================
@@ -45536,7 +45604,11 @@ window._valProjMarkReceived=_valProjMarkReceived;
 var _emsNodeId = null;
 function placeEmsNode(p){
   if(!p){ /* default: center of view */ var scr=document.getElementById('csvg'); p={x:(scr?scr.clientWidth/2:400), y:(scr?scr.clientHeight/2:300)}; }
-  var el = addEl({ type:'eq', eqId:'ems', label:'EMS', x:p.x-16, y:p.y-16, w:32, rot:0,
+  /* Size the EMS cabinet from a real ~2.5 ft footprint, scaled to the drawing,
+     so it is not an oversized fixed 32px box next to to-scale equipment. */
+  var _ppf=(S.pxPerFt&&S.pxPerFt>0)?S.pxPerFt:6;
+  var emsW=Math.max(12, Math.round(2.5*_ppf));
+  var el = addEl({ type:'eq', eqId:'ems', label:'EMS', x:p.x-emsW/2, y:p.y-emsW/2, w:emsW, rot:0,
                    spec:'Energy Management System' });
   _emsNodeId = el.id;
   if(typeof showBanner==='function') showBanner('ok',' EMS node placed \u2014 drag it just outside the BESS perimeter. BESS units will trench to it.');
@@ -46748,30 +46820,33 @@ function placeDerBuildAt(p){
     var cx=p.x+c*cellW, cy=p.y+r*cellH;
     _derBuildBlock(cfg, spec, cx, cy, blkW, blkH, n+1);
     /* PV needs a string/central inverter (DC->AC) before the step-up XFMR.
-       Place a PV inverter just below the array block, then the XFMR below
-       that, and record a DC run block->inverter and an AC run inverter->xfmr
-       so the generation is electrically complete, not just panels + a can. */
-    var invEl=null, invCx=cx+blkW/2, invCy=cy+blkH+6+10;
+       Size equipment from REAL footprints scaled to the drawing (pxPerFt) so
+       the PCS / XFMR read correctly next to a to-scale array instead of a
+       fixed 32px blob that dwarfs the battery. PCS ~4ft, XFMR ~6ft wide. */
+    var _ppf=(S.pxPerFt&&S.pxPerFt>0)?S.pxPerFt:6;
+    var pcsW=Math.max(14, Math.round(4.0*_ppf));
+    var xfmrW=Math.max(16, Math.round(6.0*_ppf));
+    var invEl=null, invCx=cx+blkW/2, invCy=cy+blkH+6+pcsW/2;
     if(cfg.src==='pv'){
       invEl=addEl({ type:'eq', eqId:'pcs', label:'PV Inverter '+(n+1),
-                    x:invCx-16, y:invCy-16, w:32, rot:0,
+                    x:invCx-pcsW/2, y:invCy-pcsW/2, w:pcsW, rot:0,
                     spec:'String/central inverter \\u00b7 '+spec.blockKw+' kW DC\\u2192AC' });
     }
     /* per-block XFMR just below the block (or below the inverter for PV) */
     if(cfg.xfmr){
-      var xfmrY = cfg.src==='pv' ? (invCy+16+6) : (cy+blkH+6);
-      var xel=addEl({ type:'eq', eqId:'xfmr', label:'XFMR '+(n+1), x:cx+blkW/2-18, y:xfmrY, w:32, rot:0 });
-      var xfmrCy=xfmrY+16;
+      var xfmrY = cfg.src==='pv' ? (invCy+pcsW/2+6) : (cy+blkH+6);
+      var xel=addEl({ type:'eq', eqId:'xfmr', label:'XFMR '+(n+1), x:cx+blkW/2-xfmrW/2, y:xfmrY, w:xfmrW, rot:0 });
+      var xfmrCy=xfmrY+xfmrW/2;
       xfmrEls.push({el:xel, cx:cx+blkW/2, cy:xfmrCy});
       /* PV: DC run array->inverter, then AC run inverter->xfmr */
       if(cfg.src==='pv' && invEl){
-        var dcPts=[{x:cx+blkW/2,y:cy+blkH,elId:null},{x:invCx,y:invCy-16,elId:invEl.id}];
+        var dcPts=[{x:cx+blkW/2,y:cy+blkH,elId:null},{x:invCx,y:invCy-pcsW/2,elId:invEl.id}];
         var dc={ id:uid(), condType:'RMC-DC', pts:dcPts, pxLen:_polyLen(dcPts),
                  ftLen:+(_polyLen(dcPts)/(S.pxPerFt||6)).toFixed(1),
                  fromElId:invEl.id, toElId:invEl.id, derCollector:true,
                  labelHidden:(n!==0), runLabel:'PV DC', labelDx:24, labelDy:-16 };
         S.conduits.push(dc); if(typeof renderConduit==='function') renderConduit(dc);
-        var acPts=[{x:invCx,y:invCy+16,elId:invEl.id},{x:cx+blkW/2,y:xfmrY,elId:xel.id}];
+        var acPts=[{x:invCx,y:invCy+pcsW/2,elId:invEl.id},{x:cx+blkW/2,y:xfmrY,elId:xel.id}];
         var ac={ id:uid(), condType:'RMC-AC', pts:acPts, pxLen:_polyLen(acPts),
                  ftLen:+(_polyLen(acPts)/(S.pxPerFt||6)).toFixed(1),
                  fromElId:invEl.id, toElId:xel.id, derCollector:true,
@@ -51394,6 +51469,17 @@ function _nnZoneWrap(){
     var sc=document.getElementById('sc'); if(!sc) return;
     var r=sc.getBoundingClientRect();
     var x=e.clientX-r.left, y=e.clientY-r.top;
+    /* callout shapes first: double-click the label box to edit its text */
+    for(var ci=S.shapes.length-1;ci>=0;ci--){
+      var cs=S.shapes[ci];
+      if(cs.kind!=='callout') continue;
+      var an=cs.anchor||{x:0,y:0};
+      var lw=Math.max(24,(cs.text||'').length*11*0.60)+12, lh=19;
+      if(x>=an.x-4 && x<=an.x+lw+4 && y>=an.y-lh/2-4 && y<=an.y+lh/2+4){
+        if(typeof _calloutEditText==='function') _calloutEditText(cs.id);
+        e.stopPropagation(); return;
+      }
+    }
     for(var i=S.shapes.length-1;i>=0;i--){
       var s=S.shapes[i];
       if(s.kind!=='zonebox' && s.kind!=='substation') continue;
@@ -70145,6 +70231,102 @@ window._crmToastModal=_crmToastModal;
     return null;
   }
 
+  /* MANUAL TRENCH DRAW — let the user route the run themselves so it can
+     dodge obstacles instead of taking the auto orthogonal path. Seeds the
+     start at the FROM component, lets them click waypoints, and finishes by
+     snapping the last point onto the TO component (Enter / double-click).
+     Builds the same conduit object link() would, so the schedule + legend
+     read it identically. Returns via onDone(conduit|null). */
+  var _td = null;   /* active trench-draw session */
+  function drawTrench(fromSh, toSh, condType, onDone) {
+    var s = S_(); if (!s || !fromSh || !toSh) { if (onDone) onDone(null); return; }
+    var a = centreOf(fromSh), b = centreOf(toSh);
+    if (!a || !b) { if (onDone) onDone(null); return; }
+    var cov = document.getElementById('cov') || document.getElementById('sc');
+    if (!cov) { if (onDone) onDone(link(fromSh, toSh, condType)); return; }
+
+    _td = { from: fromSh, to: toSh, cond: condType, pts: [{ x: a.x, y: a.y, elId: fromSh.id }], onDone: onDone };
+    var ctObj = null;
+    try { for (var i = 0; i < CTYPES.length; i++) if (CTYPES[i].id === condType) { ctObj = CTYPES[i]; break; } } catch (e) {}
+    var col = (ctObj && ctObj.color) || '#FBBF24';
+    var dash = (ctObj && ctObj.dash) || '';
+    var sw = (ctObj && ctObj.sw) || 2;
+
+    function toModel(ev) {
+      var scr = document.getElementById('sc').getBoundingClientRect();
+      var raw = { x: ev.clientX - scr.left, y: ev.clientY - scr.top };
+      return (typeof _plotUnproject === 'function') ? _plotUnproject(raw) : raw;
+    }
+    function tmp() {
+      var svg = document.getElementById('csvg'); if (!svg) return;
+      var l = document.getElementById('oeb-tmp-trench');
+      if (!l) { l = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); l.id = 'oeb-tmp-trench'; svg.appendChild(l); }
+      var pts = _td.pts.concat(_td.cursor ? [_td.cursor] : []).concat([{ x: b.x, y: b.y }]);
+      l.setAttribute('points', pts.map(function (p) { return p.x + ',' + p.y; }).join(' '));
+      l.setAttribute('stroke', col); l.setAttribute('stroke-width', sw);
+      l.setAttribute('fill', 'none'); l.setAttribute('opacity', '0.6');
+      l.setAttribute('stroke-linecap', 'round'); l.setAttribute('stroke-linejoin', 'round');
+      if (dash) l.setAttribute('stroke-dasharray', dash); else l.removeAttribute('stroke-dasharray');
+    }
+    function onMove(ev) { if (!_td) return; _td.cursor = toModel(ev); tmp(); }
+    function onClick(ev) {
+      if (!_td) return; ev.stopPropagation(); ev.preventDefault();
+      var p = toModel(ev);
+      /* clicking near the TO component finishes and snaps to it */
+      if (Math.hypot(p.x - b.x, p.y - b.y) < Math.max(14, 3 * ((s.pxPerFt) || 6))) { finishTrench(); return; }
+      _td.pts.push({ x: p.x, y: p.y }); tmp();
+    }
+    function onDbl(ev) { if (!_td) return; ev.stopPropagation(); ev.preventDefault(); finishTrench(); }
+    function onKey(ev) {
+      if (!_td) return;
+      if (ev.key === 'Enter') { ev.preventDefault(); finishTrench(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); cancelTrench(); }
+    }
+    function teardown() {
+      cov.removeEventListener('mousemove', onMove, true);
+      cov.removeEventListener('click', onClick, true);
+      cov.removeEventListener('dblclick', onDbl, true);
+      document.removeEventListener('keydown', onKey, true);
+      var l = document.getElementById('oeb-tmp-trench'); if (l && l.parentNode) l.parentNode.removeChild(l);
+    }
+    function finishTrench() {
+      var td = _td; _td = null; teardown();
+      td.pts.push({ x: b.x, y: b.y, elId: toSh.id });
+      var len = 0; for (var i = 1; i < td.pts.length; i++) len += Math.hypot(td.pts[i].x - td.pts[i - 1].x, td.pts[i].y - td.pts[i - 1].y);
+      var c = {
+        id: (typeof uid === 'function') ? uid() : ('c' + Date.now()),
+        condType: td.cond, pts: td.pts, pxLen: len,
+        ftLen: (function () { var sc = (s.pxPerFt > 0) ? s.pxPerFt : 0; return sc ? +(len / sc).toFixed(1) : len; })(),
+        fromId: fromSh.id, toId: toSh.id, fromElId: fromSh.id, toElId: toSh.id,
+        engBuild: true, handDrawn: true
+      };
+      if (ctObj) { c.color = ctObj.color; c.dash = ctObj.dash || false; }
+      s.conduits = s.conduits || []; s.conduits.push(c);
+      try { if (typeof renderConduit === 'function') renderConduit(c); } catch (e) {}
+      try { if (typeof _geoStampAll === 'function') _geoStampAll(); } catch (e) {}
+      try { if (typeof showBanner === 'function') showBanner('ok', ' Trench drawn \u2014 ' + c.ftLen + unitWord()); } catch (e) {}
+      if (td.onDone) td.onDone(c);
+    }
+    function cancelTrench() {
+      var td = _td; _td = null; teardown();
+      /* fall back to the auto route so the step still completes wired */
+      var c = link(fromSh, toSh, condType);
+      if (td.onDone) td.onDone(c);
+    }
+    _td.cancel = cancelTrench;
+
+    cov.addEventListener('mousemove', onMove, true);
+    cov.addEventListener('click', onClick, true);
+    cov.addEventListener('dblclick', onDbl, true);
+    document.addEventListener('keydown', onKey, true);
+    tmp();
+    try {
+      if (typeof showBanner === 'function')
+        showBanner('cond', ' Draw the ' + condType + ' trench \u2014 click waypoints, then click the '
+          + (UTILITY_CATALOG[toSh.utype] ? UTILITY_CATALOG[toSh.utype].label : 'target') + ' (or Enter) to finish \u00b7 ESC = auto-route');
+    } catch (e) {}
+  }
+
   /* Draw the leg between two placements. Orthogonal, because a plan-set
      run does not go diagonally across a yard. */
   function link(fromSh, toSh, condType) {
@@ -70345,8 +70527,12 @@ window._crmToastModal=_crmToastModal;
           + ((st.size && run.spec && run.spec.qty > 1)
             ? ('<br>' + run.remaining + ' of ' + run.spec.qty + ' remaining \u00b7 '
               + fmt(run.spec.unit.kwh) + ' kWh each.') : '')
-          + (st.cond ? '<br>A ' + st.cond + ' run will follow automatically.' : '')
+          + (st.cond ? '<br>A ' + st.cond + ' run will '
+              + (run.drawMode ? '<b style="color:#FBBF24">be drawn by you</b> after placing.' : 'follow automatically.') : '')
           + '</div>'
+          + '<label style="margin-top:8px;display:flex;align-items:center;gap:7px;font-size:10px;color:#B8C6DA;cursor:pointer">'
+          + '<input type="checkbox" id="oeb-drawtrench"' + (run.drawMode ? ' checked' : '') + '>'
+          + 'Draw trenches myself (route around obstacles)</label>'
           + '<button id="oeb-skip" style="margin-top:8px;width:100%;background:#152A45;'
           + 'border:1px solid rgba(255,255,255,.16);color:#E8F0FE;border-radius:5px;padding:6px 0;'
           + 'font:700 11px/1 \'IBM Plex Mono\',monospace;cursor:pointer">Skip this step</button>'
@@ -70358,6 +70544,8 @@ window._crmToastModal=_crmToastModal;
     p.querySelector('#oeb-x').onclick = cancel;
     var sk = p.querySelector('#oeb-skip');
     if (sk) sk.onclick = skip;
+    var dt = p.querySelector('#oeb-drawtrench');
+    if (dt) dt.onchange = function () { run.drawMode = !!dt.checked; paint(); };
   }
 
   function arm() {
@@ -70398,49 +70586,65 @@ window._crmToastModal=_crmToastModal;
       try { if (typeof renderShape === 'function') renderShape(fresh); } catch (e) {}
     }
 
+    /* ── primary leg to the previous component ───────────────────────
+       In draw mode the user routes it by hand; otherwise it auto-routes.
+       Either way, the rest of the step (secondary legs, multi-container
+       loop, advance) runs in continueAfterPrimary() so the flow does not
+       jump ahead before a hand-drawn trench is finished. */
+    var advanced = false;
+    function continueAfterPrimary() {
+      if (advanced) return; advanced = true;
+
+      /* secondary legs — the EMS reads the battery and takes control power */
+      if (st.also && st.also.length) {
+        st.also.forEach(function (leg) {
+          var tid = (leg.to === 'bessctr' && run.bessIds && run.bessIds.length)
+            ? run.bessIds[0] : run.placed[leg.to];
+          if (!tid) return;
+          var tsh = utilityShapes().filter(function (x) { return x.id === tid; })[0];
+          if (!tsh) return;
+          var c2 = link(tsh, fresh, leg.cond);
+          if (c2) console.info(TAG + ' ' + leg.cond + ' \u2014 ' + c2.ftLen + unitWord());
+        });
+      }
+
+      /* a multi-container system stays on this step until every unit is down */
+      if (st.size && run.spec && run.remaining > 1) {
+        run.remaining--;
+        try { if (typeof _refreshConduitStyle === 'function') _refreshConduitStyle(); } catch (e) {}
+        try { if (typeof pushHist === 'function') pushHist(); } catch (e) {}
+        arm();
+        return;
+      }
+
+      run.i++;
+      try { if (typeof _refreshConduitStyle === 'function') _refreshConduitStyle(); } catch (e) {}
+      try { if (typeof pushHist === 'function') pushHist(); } catch (e) {}
+      if (run.i >= SEQ.length) finish(); else arm();
+    }
+
     if (st.cond) {
       var fromKey = st.from || SEQ[run.i - 1] && SEQ[run.i - 1].key;
       var fromId = fromKey && run.placed[fromKey];
       var fromSh = fromId && utilityShapes().filter(function (x) { return x.id === fromId; })[0];
       if (fromSh) {
-        var c = link(fromSh, fresh, st.cond);
-        if (c) console.info(TAG + ' ' + st.cond + ' \u2014 ' + c.ftLen + unitWord());
+        if (run.drawMode) {
+          /* hand-drawn: continue only once the trench is committed/cancelled */
+          drawTrench(fromSh, fresh, st.cond, function () { continueAfterPrimary(); });
+          return;   /* wait for the draw to finish */
+        } else {
+          var c = link(fromSh, fresh, st.cond);
+          if (c) console.info(TAG + ' ' + st.cond + ' \u2014 ' + c.ftLen + unitWord());
+        }
       }
     }
-
-    /* secondary legs — the EMS reads the battery and takes control power */
-    if (st.also && st.also.length) {
-      st.also.forEach(function (leg) {
-        /* on a multi-container system the BMS run lands on the first unit */
-        var tid = (leg.to === 'bessctr' && run.bessIds && run.bessIds.length)
-          ? run.bessIds[0] : run.placed[leg.to];
-        if (!tid) return;
-        var tsh = utilityShapes().filter(function (x) { return x.id === tid; })[0];
-        if (!tsh) return;
-        var c2 = link(tsh, fresh, leg.cond);
-        if (c2) console.info(TAG + ' ' + leg.cond + ' \u2014 ' + c2.ftLen + unitWord());
-      });
-    }
-
-    /* a multi-container system stays on this step until every unit is down */
-    if (st.size && run.spec && run.remaining > 1) {
-      run.remaining--;
-      try { if (typeof _refreshConduitStyle === 'function') _refreshConduitStyle(); } catch (e) {}
-      try { if (typeof pushHist === 'function') pushHist(); } catch (e) {}
-      arm();
-      return;
-    }
-
-    run.i++;
-    try { if (typeof _refreshConduitStyle === 'function') _refreshConduitStyle(); } catch (e) {}
-    try { if (typeof pushHist === 'function') pushHist(); } catch (e) {}
-    if (run.i >= SEQ.length) finish(); else arm();
+    continueAfterPrimary();
   }, 350);
 
   function start() {
     seedCatalog(); seedCtypes();
     if (typeof setUtilityType !== 'function') { console.warn(TAG, 'the utility placer is not available'); return null; }
-    run = { i: 0, placed: {}, spec: null, remaining: 0, sizing: false, bessIds: [],
+    run = { i: 0, placed: {}, spec: null, remaining: 0, sizing: false, bessIds: [], drawMode: false,
             engWas: (function () { try { return window.ENG_MODE; } catch (e) { return true; } })() };
     lastCount = utilityShapes().length;
     /* plan-set style for the whole flow, and no stale guide flag holding it */
@@ -70493,6 +70697,7 @@ window._crmToastModal=_crmToastModal;
 
   function cancel() {
     if (!run) return null;
+    try { if (_td && _td.cancel) { _td = null; var l = document.getElementById('oeb-tmp-trench'); if (l && l.parentNode) l.parentNode.removeChild(l); } } catch (e) {}
     try { if (window.ENG_MODE !== run.engWas && window.OmegaEng && OmegaEng.set) OmegaEng.set(run.engWas); } catch (e) {}
     run = null;
     var p = document.getElementById('omega-engbuild'); if (p) p.remove();
