@@ -2365,7 +2365,14 @@ function rbInsert(eqId){
     var h=sc?sc.getBoundingClientRect().height:400;
     /* ensure we're in select mode so the placed block is interactive */
     if(typeof setMode==='function' && S.mode!=='select') setMode('select');
-    var _dw=_eqDropW(eqId); addEl({type:'eq',eqId:eqId,label:label,x:w/2-_dw/2,y:h/2-_dw/2,w:_dw,rot:0,spec:_eqSpec(eqId)});
+    /* Convert the screen-center point into the same model/plot coordinate
+       space every other placement path uses (this was the same bug Text
+       Note had: raw screen pixels stored directly meant the geo-anchor
+       stamp was computed from the wrong coordinate system, so the dropped
+       item was correctly positioned only until the next pan/zoom). */
+    var rawCenter={x:w/2, y:h/2};
+    var center=(typeof _plotUnproject==='function') ? _plotUnproject(rawCenter) : rawCenter;
+    var _dw=_eqDropW(eqId); addEl({type:'eq',eqId:eqId,label:label,x:center.x-_dw/2,y:center.y-_dw/2,w:_dw,rot:0,spec:_eqSpec(eqId)});
   }catch(err){}
 }
 
@@ -5814,10 +5821,38 @@ var DC_CATALOG = {
 };
 // Compute drop width (px) for an equipment id. DC units scale to real footprint
 // when the map is calibrated; everything else keeps the 60px default.
+// == GENERIC INSERT-TAB EQUIPMENT FOOTPRINTS (real-world ft) ================
+// These are the icons on the Insert tab (BESS Cabinet, PCS, Transformer, etc.)
+// -- distinct from the dedicated, precisely-modeled BESS/EV catalogs used
+// elsewhere. Representative C&I/utility sizes so a dropped icon reads at the
+// right proportion once the map is calibrated, instead of a fixed 60px that
+// only DC_CATALOG items ever escaped.
+var EQ_FOOTPRINT_FT = {
+  bess:     { lf:5.0,  wf:8.0 },   // generic C&I BESS cabinet
+  pcs:      { lf:4.0,  wf:3.0 },   // PCS / inverter skid
+  xfmr:     { lf:6.0,  wf:5.0 },   // pad-mount transformer
+  disco:    { lf:3.0,  wf:2.5 },   // AC disconnect enclosure
+  panel:    { lf:2.0,  wf:1.5 },   // wall-mount panelboard
+  meter:    { lf:1.5,  wf:1.0 },   // meter can
+  building: { lf:3.0,  wf:3.0 },   // facility-load tie-in marker (not to-scale)
+  hydrant:  { lf:1.5,  wf:1.5 },   // fire hydrant
+  genset:   { lf:12.0, wf:6.0 },   // diesel/gas generator skid
+  solar:    { lf:6.5,  wf:3.25 },  // single PV module (use the Solar draw tool for a to-scale array)
+  pad:      { lf:10.0, wf:10.0 },  // generic equipment pad
+  bollard:  { lf:0.5,  wf:0.5 },   // bollard post
+  fence:    { lf:8.0,  wf:0.5 },   // one fence panel segment
+  jbox:     { lf:1.5,  wf:1.5 },   // junction box
+  charger:  { lf:2.5,  wf:2.0 },   // generic EV pedestal (use EV Catalog for a specific model)
+  camera:   { lf:1.0,  wf:1.0 },   // pole-mount camera
+  ups:      { lf:3.0,  wf:2.5 },   // UPS cabinet
+  pole:     { lf:1.25, wf:1.25 }   // utility pole (point-like footprint)
+};
 function _eqDropW(id){
   var dc = DC_CATALOG[id];
   if(dc && S.pxPerFt && S.pxPerFt>0){ return Math.max(40, Math.round(dc.lf * S.pxPerFt)); }
   if(dc){ return 90; } // uncalibrated: still show DC units a bit larger than generic
+  var gf = EQ_FOOTPRINT_FT[id];
+  if(gf && S.pxPerFt && S.pxPerFt>0){ return Math.max(14, Math.round(gf.lf * S.pxPerFt)); }
   return 60;
 }
 // Spec string for an equipment id (used to prefill the Spec/Nameplate field).
@@ -10031,20 +10066,20 @@ function _renderCallout(g, sh){
   box.setAttribute('fill','rgba(12,18,30,0.92)');
   box.setAttribute('stroke',_shapeInk(sh)); box.setAttribute('stroke-width','1.5');
   box.style.cursor='move';
-  /* hide together with its text in full Labels-off mode, so there is never
-     an orphaned empty box left behind (see the text exemption just below). */
-  box.setAttribute('class','omega-utillabel');
+  /* This is user-authored annotate content, not an auto-generated equipment
+     label -- the box itself is a rect, never touched by the Labels toggle's
+     text-hiding rules in the first place, so it is left untagged and always
+     visible. Only its TEXT needs the omega-annotate exemption below. */
   g.appendChild(box);
   var tx=_mkNS('text');
   tx.setAttribute('x',lx+7); tx.setAttribute('y',ly+fs*0.36);
   tx.setAttribute('fill','#F5F0E1'); tx.setAttribute('font-size',fs);
   tx.setAttribute('font-weight','700');
   tx.setAttribute('font-family','ui-monospace, Menlo, monospace'); tx.setAttribute('pointer-events','none');
-  /* Exempt from the Labels "dimensions only" auto-classifier -- without this,
-     plain callout text with no foot-mark (e.g. "Substation") gets tagged as
-     a hideable stencil name, leaving exactly the dark box with no visible
-     text that this was reported as. */
-  tx.setAttribute('class','omega-utillabel');
+  /* omega-annotate is exempt from the Labels toggle in EVERY mode (on,
+     dimensions-only, and full off) -- a callout is markup the user placed
+     deliberately, not a stencil name the toggle exists to declutter. */
+  tx.setAttribute('class','omega-annotate');
   tx.textContent=txt;
   g.appendChild(tx);
   /* dragging the box (the label + its leader line) moves ONLY sh.anchor --
@@ -10062,6 +10097,10 @@ function _renderCallout(g, sh){
   cx1.setAttribute('x',cxx); cx1.setAttribute('y',cyy+3.5);
   cx1.setAttribute('text-anchor','middle'); cx1.setAttribute('font-size','10'); cx1.setAttribute('font-weight','800');
   cx1.setAttribute('fill','#fff'); cx1.setAttribute('style','cursor:pointer'); cx1.setAttribute('pointer-events','none');
+  /* The X's own "\u00d7" glyph is a <text> node too -- without this it was
+     being swept up by full Labels-off mode's blanket text-hide rule, which
+     is why the delete button looked like an empty red dot with no × in it. */
+  cx1.setAttribute('class','omega-annotate');
   cx1.textContent='\u00d7'; g.appendChild(cx1);
   (function(id, node){
     if(!node) return;
@@ -17378,7 +17417,18 @@ function deleteBess(id){
 // == TEXT / CALLOUT ===========================================
 function addTextBox(){
   var scr=document.getElementById('sc').getBoundingClientRect();
-  var el=addEl({type:'text',label:'Double-click to edit',x:scr.width/2-70,y:scr.height/2-14,w:140,rot:0});
+  /* Placed at screen-center, but STORED in the same model/plot coordinate
+     space every other placement path uses (Zone Box, Callout, Dimension, and
+     every equipment drop all convert through _plotUnproject before storing).
+     Using raw screen pixels here meant the note looked right the instant it
+     was created, but the geo-anchor stamp computed from those raw pixels was
+     wrong, so the note jumped to an incorrect spot the first time the map
+     panned or zoomed -- the box itself was also never sized from the actual
+     drawing scale (pxPerFt), so it looked correct only at the zoom level it
+     happened to be created at. */
+  var rawCenter={x:scr.width/2, y:scr.height/2};
+  var center=(typeof _plotUnproject==='function') ? _plotUnproject(rawCenter) : rawCenter;
+  var el=addEl({type:'text',label:'Double-click to edit',x:center.x-70,y:center.y-14,w:140,rot:0});
   /* select it and drop straight into edit mode so the user can type at once */
   try{
     if(el && el.id){
@@ -36848,11 +36898,8 @@ function renderDimension(el) {
   bgRect.setAttribute('width',lw); bgRect.setAttribute('height',16);
   bgRect.setAttribute('rx',3); bgRect.setAttribute('fill','rgba(10,18,38,.85)');
   bgRect.setAttribute('stroke','#00D4FF'); bgRect.setAttribute('stroke-width','1');
-  /* The auto-generated "16.7 ft" label already survives the Labels
-     "dimensions only" mode (it carries a foot-mark), but a CUSTOM label
-     typed via the edit modal often won't -- exempt both explicitly so a
-     renamed dimension can't lose its text the same way callouts did. */
-  bgRect.setAttribute('class','omega-utillabel');
+  /* A rect is never touched by the Labels toggle's text-hiding rules in the
+     first place, so it stays untagged and always visible. */
 
   const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
   txt.setAttribute('x',midX-xr/2); txt.setAttribute('y',midY+1);
@@ -36860,7 +36907,11 @@ function renderDimension(el) {
   txt.setAttribute('font-size','10'); txt.setAttribute('font-weight','800');
   txt.setAttribute('font-family',"'IBM Plex Mono',monospace");
   txt.setAttribute('fill','#00D4FF'); txt.setAttribute('pointer-events','none');
-  txt.setAttribute('class','omega-utillabel');
+  /* omega-annotate is exempt from the Labels toggle in every mode -- the
+     auto "16.7 ft" text already survives dims-mode on its own (it carries a
+     foot-mark), but a CUSTOM label typed via the edit modal often won't, and
+     full off-mode would hide either one without this. */
+  txt.setAttribute('class','omega-annotate');
   txt.textContent=label;
 
   g.appendChild(line); g.appendChild(ext1); g.appendChild(ext2);
@@ -36876,6 +36927,7 @@ function renderDimension(el) {
   xtxt.setAttribute('x',xcx); xtxt.setAttribute('y',xcy+3.4);
   xtxt.setAttribute('text-anchor','middle'); xtxt.setAttribute('font-size','9.5'); xtxt.setAttribute('font-weight','800');
   xtxt.setAttribute('fill','#fff'); xtxt.setAttribute('pointer-events','none');
+  xtxt.setAttribute('class','omega-annotate');
   xtxt.textContent='\u00d7';
   xbtn.addEventListener('mousedown', e=>{ e.stopPropagation(); });
   xbtn.addEventListener('click', e=>{ e.stopPropagation(); e.preventDefault(); _dimDelete(el.id); });
@@ -50182,11 +50234,11 @@ function _evRenderZone(g, sh){
   if(sh.label){
     /* Legible regardless of the fill/border color the user picked (which can
        be black, as it is by default) -- give the text its own small dark
-       chip so it never blends into the box it's labeling. Tagged
-       omega-utillabel so the Labels "dimensions only" view mode does not
-       auto-classify user-typed text as a hideable stencil name -- the same
-       gap that hid utility component labels earlier also applied here,
-       since nothing exempted Zone Box / Callout / Dimension text from it. */
+       chip so it never blends into the box it's labeling. This is
+       user-authored annotate content, not an auto-generated equipment name,
+       so the chip is never tagged as hideable and the text carries
+       omega-annotate, which the Labels toggle exempts unconditionally in
+       every mode (on / dimensions-only / off). */
     var lfs=12;
     var ltxt=sh.label;
     var lw=Math.max(20, ltxt.length*lfs*0.58)+10, lh=lfs+8;
@@ -50196,10 +50248,9 @@ function _evRenderZone(g, sh){
     chip.setAttribute('width',lw); chip.setAttribute('height',lh);
     chip.setAttribute('rx',3); chip.setAttribute('fill','rgba(8,12,20,0.82)');
     chip.setAttribute('pointer-events','none');
-    chip.setAttribute('class','omega-utillabel');
     g.appendChild(chip);
     var lblNode=_evText(g, lcx, lcy+4, ltxt, lfs, '#F5F0E1', 'middle', '700');
-    if(lblNode) lblNode.setAttribute('class','omega-utillabel');
+    if(lblNode) lblNode.setAttribute('class','omega-annotate');
   }
 }
 
@@ -69557,22 +69608,31 @@ window._crmToastModal=_crmToastModal;
   }
 
   function css(m) {
-    if (m === 'on') return '';
-    if (m === 'dims') {
+    var base;
+    if (m === 'on') base = '';
+    else if (m === 'dims') {
       /* A dimension is a token like 20.3'x18.79' or 6' x 5'. Names are not.
          Keeping the size and dropping the name is the usual plan-set
          compromise on a busy pad. Utility identifier chips (M-POI, XFMR,
          switchgear) are STRUCTURAL, not chatty stencil names, and are tagged
          .omega-utillabel (never .omega-name), so they stay visible here. */
-      return '#csvg text.omega-name{display:none!important}'
+      base = '#csvg text.omega-name{display:none!important}'
         + '.omega-lab{display:none!important}';
+    } else {
+      /* full off: hide the whole utility chip (rect + text) together so no
+         orphaned black box is left behind. */
+      base = '#csvg text{display:none!important}'
+        + '#csvg .omega-utillabel{display:none!important}'
+        + '#csvg .omega-lab,.omega-lab{display:none!important}'
+        + '#cov .omega-lab{display:none!important}';
     }
-    /* full off: hide the whole utility chip (rect + text) together so no
-       orphaned black box is left behind. */
-    return '#csvg text{display:none!important}'
-      + '#csvg .omega-utillabel{display:none!important}'
-      + '#csvg .omega-lab,.omega-lab{display:none!important}'
-      + '#cov .omega-lab{display:none!important}';
+    /* Annotate content (Text Note, Callout Arrow, Dimension, Zone Box) is a
+       separate, user-authored markup layer, not the auto-generated
+       equipment/stencil names this toggle exists to declutter -- it must
+       never be hidden by ANY Labels mode. Appended last, unconditionally,
+       so it wins by source order even against the blanket
+       "#csvg text{display:none}" rule in full off mode. */
+    return base + '#csvg text.omega-annotate{display:inline!important}';
   }
 
   function apply() {
@@ -69626,6 +69686,7 @@ window._crmToastModal=_crmToastModal;
         /* utility identifier chips manage their own visibility — never tag
            them as a stencil name (which dims-mode would hide). */
         if (t.classList && t.classList.contains('omega-utillabel')) { t.setAttribute('data-omega-cls','util'); continue; }
+        if (t.classList && t.classList.contains('omega-annotate')) { t.setAttribute('data-omega-cls','annotate'); continue; }
         var s = (t.textContent || '');
         var isDim = /[\u2032'"]\s*[x\u00d7]|\d\s*[\u2032']/.test(s) || /^\s*[\d.]+\s*(ft|')/.test(s);
         t.setAttribute('data-omega-cls', isDim ? 'dim' : 'name');
