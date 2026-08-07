@@ -9929,6 +9929,24 @@ function _shapeBBox(sh){
     var za=sh.pts[0], zb=sh.pts[1];
     return { x:Math.min(za.x,zb.x), y:Math.min(za.y,zb.y), w:Math.abs(zb.x-za.x), h:Math.abs(zb.y-za.y) };
   }
+  /* Stencil / geometric kinds defined in a LATER IIFE, which registers them
+     only via a window._shapeBBox wrapper. Same trap as the EV kinds above:
+     bare-name callers (_shapeResizeStart, _drawShapeHandles, _shapeCenter)
+     reach THIS body, never that wrapper, so these fell through to the
+     single-point fallback and got a 1x1 box -- making resize drags wildly
+     oversensitive and drawing selection handles at the wrong place.
+     Values are inlined rather than calling that IIFE's private _sc() /
+     STENCIL_W_FT, which aren't reachable from this scope. */
+  if(sh.kind==='evstencil'||sh.kind==='adastencil'){
+    var stppf=(S.pxPerFt && S.pxPerFt>0) ? S.pxPerFt : 6;
+    var stw=(sh.wf||9)*stppf, sth=(sh.lf||18)*stppf;   /* 9 x 18 ft stall stencil */
+    return { x:sh.pts[0].x-stw/2, y:sh.pts[0].y-sth/2, w:stw, h:sth };
+  }
+  if(sh.kind==='polygon'){
+    var pc=sh.pts[0], pv=sh.pts[1];
+    var pr=Math.hypot(pv.x-pc.x, pv.y-pc.y);
+    return { x:pc.x-pr, y:pc.y-pr, w:2*pr, h:2*pr };
+  }
   /* line / rect / polyline: bbox over points */
   var xs=[], ys=[];
   for(var i=0;i<sh.pts.length;i++){ xs.push(sh.pts[i].x); ys.push(sh.pts[i].y); }
