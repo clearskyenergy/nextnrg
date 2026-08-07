@@ -8058,10 +8058,24 @@ function removeEl(id){
 }
 
 function selEl(id){
+  var _prev=S.sel;
   document.querySelectorAll('.cel').forEach(e=>e.classList.remove('sel'));
   S.sel=id;
   if(id){document.querySelector(`[data-elid="${id}"]`)?.classList.add('sel');showProps(id);}
   else showProps(null);
+  /* Dimensions render into the SVG canvas, not as .cel nodes, and draw their
+     delete X only while selected -- so a selection change must repaint the
+     dimension entering AND the one leaving selection, or the X would never
+     appear or (the reported bug) never go away on Escape. */
+  try{
+    if(typeof renderDimension==='function' && S.elements){
+      [_prev, id].forEach(function(t){
+        if(!t || _prev===id) return;
+        var d=S.elements.filter(function(x){return x.id===t && x.type==='dimension';})[0];
+        if(d) renderDimension(d);
+      });
+    }
+  }catch(e){}
 }
 
 function showProps(id){
@@ -10100,9 +10114,19 @@ function _renderCallout(g, sh){
     dotHit.addEventListener('mousedown', function(ev){ _calloutStartDrag(ev, sh, 'target'); });
     dotHit.addEventListener('touchstart', function(ev){ _calloutStartDrag(ev, sh, 'target'); }, {passive:false});
   }
-  /* label: measure roughly by text length for the background box */
-  var fs=12;
-  var w=Math.max(28, txt.length*fs*0.62)+14;
+  /* Label box. Sized from the drawing scale so it grows/shrinks with the map
+     instead of staying a fixed screen size, and with dedicated room reserved
+     on the right for the delete X so the X can never sit on top of the text
+     (for short labels it used to overlap the last characters, making them
+     unreadable). The X itself is only drawn when this callout is SELECTED --
+     it was previously always visible, which cluttered every callout. */
+  var _cppf=(typeof S!=='undefined' && S.pxPerFt && S.pxPerFt>0) ? S.pxPerFt : 6;
+  var fs=Math.max(10, Math.min(20, _cppf*1.1));
+  var _selHere=(typeof _selShapeId!=='undefined' && _selShapeId===sh.id);
+  var xr=_selHere ? fs*0.75 : 0;              /* reserved width for the X */
+  var padL=fs*0.6, padR=fs*0.5;
+  var textW=txt.length*fs*0.62;
+  var w=padL+textW+padR+(xr?xr*2+fs*0.3:0);
   var h=fs+10;
   var lx=a.x, ly=a.y;
   /* anchor box left edge is at the anchor point; nudge so it doesn't cover the tip */
@@ -10119,7 +10143,7 @@ function _renderCallout(g, sh){
      visible. Only its TEXT needs the omega-annotate exemption below. */
   g.appendChild(box);
   var tx=_mkNS('text');
-  tx.setAttribute('x',lx+7); tx.setAttribute('y',ly+fs*0.36);
+  tx.setAttribute('x',lx+padL); tx.setAttribute('y',ly+fs*0.36);
   tx.setAttribute('fill','#F5F0E1'); tx.setAttribute('font-size',fs);
   tx.setAttribute('font-weight','700');
   tx.setAttribute('font-family','ui-monospace, Menlo, monospace'); tx.setAttribute('pointer-events','none');
@@ -10134,15 +10158,16 @@ function _renderCallout(g, sh){
   box.addEventListener('mousedown', function(ev){ _calloutStartDrag(ev, sh, 'anchor'); });
   box.addEventListener('touchstart', function(ev){ _calloutStartDrag(ev, sh, 'anchor'); }, {passive:false});
   /* X close button at the box's top-right corner -- click removes the callout */
-  var cxx=lx+w-8, cyy=ly-h/2+8;
+  var cxx=lx+w-padR-xr, cyy=ly;
+  if(_selHere){
   var cbtn=_mkNS('circle');
-  cbtn.setAttribute('cx',cxx); cbtn.setAttribute('cy',cyy); cbtn.setAttribute('r','7');
+  cbtn.setAttribute('cx',cxx); cbtn.setAttribute('cy',cyy); cbtn.setAttribute('r',xr);
   cbtn.setAttribute('fill','rgba(220,60,60,0.92)'); cbtn.setAttribute('stroke','#fff'); cbtn.setAttribute('stroke-width','1');
   cbtn.setAttribute('style','cursor:pointer'); cbtn.setAttribute('class','omega-callout-x');
   g.appendChild(cbtn);
   var cx1=_mkNS('text');
-  cx1.setAttribute('x',cxx); cx1.setAttribute('y',cyy+3.5);
-  cx1.setAttribute('text-anchor','middle'); cx1.setAttribute('font-size','10'); cx1.setAttribute('font-weight','800');
+  cx1.setAttribute('x',cxx); cx1.setAttribute('y',cyy+xr*0.5);
+  cx1.setAttribute('text-anchor','middle'); cx1.setAttribute('font-size',xr*1.35); cx1.setAttribute('font-weight','800');
   cx1.setAttribute('fill','#fff'); cx1.setAttribute('style','cursor:pointer'); cx1.setAttribute('pointer-events','none');
   /* The X's own "\u00d7" glyph is a <text> node too -- without this it was
      being swept up by full Labels-off mode's blanket text-hide rule, which
@@ -10161,6 +10186,7 @@ function _renderCallout(g, sh){
       _deleteCalloutShape(id);
     }, {passive:false, capture:true});
   })(sh.id, cbtn);
+  }
 }
 /* Independent drag for a callout's TARGET point or its LABEL/anchor point.
    Self-contained (document-level listeners) so it never touches the generic
@@ -10240,16 +10266,35 @@ var _selShapeId=null;
 var SH_HANDLE='#E8E8E8';
 
 function selectShape(id){
+  var _prevSel=_selShapeId;
   _clearShapeSel();
   _selShapeId=id;
   var sh=S.shapes.find(function(s){return s.id===id;});
   if(sh){ _drawShapeHandles(sh); showBanner('shape',' Shape selected \u2014 drag to move, handles to resize/rotate, Delete to remove'); }
+  /* A callout draws its delete X only while selected, so selection changes
+     must repaint the callouts entering AND leaving selection -- neither this
+     nor _clearShapeSel() repaints anything on its own. */
+  try{
+    if(sh && sh.kind==='callout' && typeof renderShape==='function') renderShape(sh);
+    if(_prevSel && _prevSel!==id){
+      var prev=S.shapes.find(function(s){return s.id===_prevSel;});
+      if(prev && prev.kind==='callout' && typeof renderShape==='function') renderShape(prev);
+    }
+  }catch(e){}
 }
 function _clearShapeSel(){
+  var _wasSel=_selShapeId;
   _selShapeId=null;
   _removeShapeHandles();
   if(typeof _closeAsmPanel==='function') _closeAsmPanel();
   _selAsmPart={ id:null, idx:-1 };
+  /* repaint a deselected callout so its X disappears */
+  try{
+    if(_wasSel && typeof S!=='undefined' && S.shapes){
+      var w=S.shapes.find(function(s){return s.id===_wasSel;});
+      if(w && w.kind==='callout' && typeof renderShape==='function') renderShape(w);
+    }
+  }catch(e){}
 }
 function _removeShapeHandles(){
   var ov=document.getElementById('shape-handles');
@@ -14490,11 +14535,60 @@ function renderLegend(){
     });
     Object.keys(counts).forEach(function(id){
       var eq=(typeof EQ!=='undefined')?EQ.find(x=>x.id===id):null;
-      var label=eq?eq.label:id;
+      /* Data-center units live in DC_CATALOG, not EQ, so they fell through
+         to showing their raw internal id instead of a readable name. */
+      var dc=(typeof DC_CATALOG!=='undefined')?DC_CATALOG[id]:null;
+      var label=eq?eq.label:(dc?(dc.model||dc.label||id):id);
+      var sub='';
+      if(dc){
+        var dparts=[];
+        if(dc.kw) dparts.push(Math.round(dc.kw).toLocaleString()+' kW');
+        if(dc.lf&&dc.wf) dparts.push(dc.lf+"' \u00d7 "+dc.wf+"'");
+        if(dparts.length) sub='<br><span style="font-size:8px;opacity:.65">'+dparts.join(' \u00b7 ')+'</span>';
+      }
       eqRows+='<div class="li"><div class="li-ico">'+((ICONS[id]||ICONS.jbox)(16))+'</div>'
-        +'<span class="li-txt">'+label+(counts[id]>1?(' \u00d7'+counts[id]):'')+'</span></div>';
+        +'<span class="li-txt">'+label+(counts[id]>1?(' \u00d7'+counts[id]):'')+sub+'</span></div>';
       eqCount+=counts[id];
     });
+  }catch(e){}
+
+  /* EV chargers placed from the Draw > EV Catalog. These are SHAPES
+     (kind evpost/evcab/evunit/evl2), not elements, so the element-only
+     collection above never saw them and they were missing from the legend
+     entirely. Group by model and total the kW, matching how BESS is shown. */
+  try{
+    var evGroups={}, evOrder=[], evTotalKw=0, evTotalUnits=0;
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh) return;
+      if(sh.kind!=='evpost' && sh.kind!=='evcab' && sh.kind!=='evunit' && sh.kind!=='evl2') return;
+      var key=(sh.model||sh.evId||sh.kind);
+      if(!evGroups[key]){ evGroups[key]={qty:0, kw:0, kind:sh.kind, mfr:sh.mfr||'', ports:0}; evOrder.push(key); }
+      evGroups[key].qty++;
+      evGroups[key].kw += (+sh.kw||0);
+      evGroups[key].ports += (+sh.ports||0);
+      evTotalUnits++;
+      /* A power cabinet feeds the posts it serves -- counting both would
+         double-count the site's charging capacity, so only the
+         user-facing dispensers/units contribute to the kW total. */
+      if(sh.kind!=='evcab') evTotalKw += (+sh.kw||0);
+    });
+    if(evOrder.length){
+      evOrder.forEach(function(k){
+        var G=evGroups[k];
+        var spec=[];
+        if(G.kw) spec.push(Math.round(G.kw).toLocaleString()+' kW');
+        if(G.ports) spec.push(G.ports+' port'+(G.ports>1?'s':''));
+        eqRows+='<div class="li"><div class="li-ico" style="font-size:13px">\u26a1</div>'
+          +'<span class="li-txt">'+k+(G.qty>1?(' \u00d7'+G.qty):'')
+          +(spec.length?('<br><span style="font-size:8px;opacity:.65">'+spec.join(' \u00b7 ')+'</span>'):'')
+          +'</span></div>';
+        eqCount+=G.qty;
+      });
+      /* expose for the results panel so EV load can be reported */
+      try{ window._evLegendTotals={ units:evTotalUnits, kw:evTotalKw }; }catch(e){}
+    } else {
+      try{ window._evLegendTotals={ units:0, kw:0 }; }catch(e){}
+    }
   }catch(e){}
 
   if(eqRows){
@@ -29000,6 +29094,28 @@ function omegaRenderResults(){
     pw += _omRow('DC compute load', Math.round(dcL).toLocaleString()+' kW',
                  null, 'Data-centre nodes placed on the drawing.');
   }
+  /* EV charging load placed from Draw > EV Catalog. These are shapes, so
+     they were never picked up by the element-based totals above and the
+     site's charging demand never appeared in the results at all. Counts
+     dispensers/standalone units only -- a power cabinet feeds the posts it
+     serves, so including both would double-count the same capacity. */
+  var evKw=0, evUnits=0;
+  try{
+    (S.shapes||[]).forEach(function(sh){
+      if(!sh) return;
+      if(sh.kind==='evpost' || sh.kind==='evunit' || sh.kind==='evl2'){
+        evKw += (+sh.kw||0); evUnits++;
+      }
+    });
+  }catch(e){}
+  if(evUnits>0){
+    pw += _omRow('EV charging load',
+                 Math.round(evKw).toLocaleString()+' kW',
+                 null,
+                 evUnits+' charger'+(evUnits>1?'s':'')+' placed \u00b7 nameplate sum, not a '
+                 +'diversified demand. Actual site draw depends on simultaneity and any '
+                 +'load management.');
+  }
   if(!bKw && !sDc && !wKw && !aKw){
     pw += '<div class="rr-gate">Place BESS, solar, wind or a fuel cell to size '
         + 'the system.</div>';
@@ -29013,10 +29129,18 @@ function omegaRenderResults(){
   var fl='';
   fl += _omRow('Active power at POI', poiKw ? Math.round(poiKw).toLocaleString()+' kW' : null);
   fl += _omRow('DC/AC at POI', (poiKw && sDc) ? _omFix(sDc/poiKw,3) : null);
-  if(dcL>0){
-    fl += _omRow('Net at POI', Math.round(poiKw-dcL).toLocaleString()+' kW',
-                 (poiKw-dcL)>=0 ? 'rr-pos' : 'rr-neg',
-                 'Generation less on-site DC compute load.');
+  /* Total on-site load = DC compute + EV charging. EV was previously absent
+     entirely, so a site whose only load was chargers showed no load at all
+     and the substation headroom below compared against peak export instead
+     of the real demand. */
+  var siteLoadKw = dcL + evKw;
+  if(siteLoadKw>0){
+    var _loadBits=[];
+    if(dcL>0) _loadBits.push('DC compute '+Math.round(dcL).toLocaleString()+' kW');
+    if(evKw>0) _loadBits.push('EV charging '+Math.round(evKw).toLocaleString()+' kW');
+    fl += _omRow('Net at POI', Math.round(poiKw-siteLoadKw).toLocaleString()+' kW',
+                 (poiKw-siteLoadKw)>=0 ? 'rr-pos' : 'rr-neg',
+                 'Generation less on-site load ('+_loadBits.join(' + ')+').');
   }
   /* Spell out what went into the sum. A bare number invites the reader to
      assume it means something it does not. */
@@ -29043,8 +29167,8 @@ function omegaRenderResults(){
       /* Demand side to test against: on-site DC/compute load if present,
          else the exporting nameplate (a greenfield often sizes the
          substation to the load it must serve). */
-      var need = (dcL>0) ? dcL : poiKw;
-      var needLbl = (dcL>0) ? 'site load' : 'peak export';
+      var need = (siteLoadKw>0) ? siteLoadKw : poiKw;
+      var needLbl = (siteLoadKw>0) ? 'site load' : 'peak export';
       if(need>0){
         var head = subKw - need;
         fl += _omRow('Capacity headroom vs '+needLbl,
@@ -36971,7 +37095,12 @@ function renderDimension(el) {
   g.appendChild(line); g.appendChild(ext1); g.appendChild(ext2);
   g.appendChild(bgRect); g.appendChild(txt);
 
-  // X close button at the label chip's right edge -- one click, no confirm()
+  // X close button -- shown ONLY while this dimension is selected. It used to
+  // render unconditionally, so every dimension carried a permanent red X that
+  // cluttered the drawing and could not be dismissed (Escape had nothing to
+  // act on because the X was not tied to selection at all).
+  const _dimSel = (typeof S!=='undefined' && S.sel===el.id);
+  if(_dimSel){
   const xcx = midX+lw/2-xr-1, xcy = midY-1;
   const xbtn = document.createElementNS('http://www.w3.org/2000/svg','circle');
   xbtn.setAttribute('cx',xcx); xbtn.setAttribute('cy',xcy); xbtn.setAttribute('r','6.5');
@@ -36987,6 +37116,7 @@ function renderDimension(el) {
   xbtn.addEventListener('click', e=>{ e.stopPropagation(); e.preventDefault(); _dimDelete(el.id); });
   xbtn.addEventListener('touchstart', e=>{ e.stopPropagation(); e.preventDefault(); _dimDelete(el.id); }, {passive:false});
   g.appendChild(xbtn); g.appendChild(xtxt);
+  }
 
   // Endpoint handles -- drag either end to reposition/resize the run.
   const h1 = document.createElementNS('http://www.w3.org/2000/svg','circle');
@@ -37025,6 +37155,9 @@ function renderDimension(el) {
 var _dimDrag = null;
 function _dimStartDrag(e, el, mode){
   e.stopPropagation(); if(e.cancelable) e.preventDefault();
+  /* Select on grab so the delete X (which renders only while selected)
+     appears, and so Escape has something to clear. */
+  try{ if(typeof selEl==='function' && S.sel!==el.id) selEl(el.id); }catch(err){}
   var pt=(e.touches&&e.touches.length)?{x:e.touches[0].clientX,y:e.touches[0].clientY}:{x:e.clientX,y:e.clientY};
   _dimDrag = { id:el.id, mode:mode, startX:pt.x, startY:pt.y,
                x1:el.x1, y1:el.y1, x2:el.x2, y2:el.y2 };
@@ -49932,7 +50065,15 @@ try {
 function _evNearestStall(p){
   if(typeof S==='undefined' || !S.shapes) return null;
   var best=null, bestD=1e9;
-  var tol=70;   /* px search radius */
+  /* Snap radius in FEET, converted to pixels, instead of a hardcoded 70px.
+     A fixed pixel radius means the snap reaches a wildly different ground
+     distance at every zoom: zoomed out, 70px can span dozens of feet, so a
+     click gets yanked to a stall far from where the user actually clicked
+     (it reads as "it places it well below where I clicked"). Tie it to the
+     real world -- roughly half a stall width -- so the behaviour is the
+     same at every zoom. */
+  var _snapPpf=(typeof S!=='undefined' && S.pxPerFt && S.pxPerFt>0) ? S.pxPerFt : 6;
+  var tol=Math.max(12, Math.min(90, 5 * _snapPpf));   /* ~5 ft, clamped */
   for(var i=0;i<S.shapes.length;i++){
     var sh=S.shapes[i];
     if(sh.kind!=='parking') continue;
@@ -59475,7 +59616,6 @@ window._crmToastModal=_crmToastModal;
        explicitly, matching how a multi-vertex conduit gets a ground point
        per vertex instead of one shared anchor. */
     if(o.kind==='callout'){
-      if(o._geoTarget && o._geoAnchorPt) return false;
       if(typeof _pxToLatLng!=='function') return false;
       var okC=false;
       if(o.target && !o._geoTarget){
@@ -59484,8 +59624,18 @@ window._crmToastModal=_crmToastModal;
       }
       if(o.anchor && !o._geoAnchorPt){
         var ga3=_pxToLatLng(o.anchor.x, o.anchor.y, ms, sz.w, sz.h);
-        if(ga3){ o._geoAnchorPt={lat:ga3.lat,lng:ga3.lng}; o._geoAnchor={lat:ga3.lat,lng:ga3.lng}; okC=true; }
+        if(ga3){ o._geoAnchorPt={lat:ga3.lat,lng:ga3.lng}; okC=true; }
       }
+      /* BACKFILL THE SENTINEL. applyOne() bails on its very first line if
+         _geoAnchor is missing. The OLDER stamping system (still invoked by
+         pushHist -> _geoStampAll) sets _geoTarget/_geoAnchorPt but never
+         _geoAnchor, so by the time this ran both points already existed,
+         this branch returned early, and _geoAnchor was never set -- leaving
+         applyOne permanently short-circuited and the callout frozen on
+         screen while the map moved under it. Set it from whichever point
+         we have, every pass, regardless of who stamped the points. */
+      if(!o._geoAnchor && o._geoAnchorPt){ o._geoAnchor={lat:o._geoAnchorPt.lat,lng:o._geoAnchorPt.lng}; okC=true; }
+      else if(!o._geoAnchor && o._geoTarget){ o._geoAnchor={lat:o._geoTarget.lat,lng:o._geoTarget.lng}; okC=true; }
       return okC;
     }
     /* Dimension: the two line endpoints (x1,y1)/(x2,y2) are what actually
@@ -59493,14 +59643,21 @@ window._crmToastModal=_crmToastModal;
        element is a dead center field a dimension carries but never draws
        from, so the rigid-translate path silently moved nothing visible. */
     if(o.type==='dimension'){
-      if(o._geoD1 && o._geoD2) return false;
       if(typeof _pxToLatLng!=='function') return false;
-      var gd1=_pxToLatLng(o.x1, o.y1, ms, sz.w, sz.h);
-      var gd2=_pxToLatLng(o.x2, o.y2, ms, sz.w, sz.h);
-      if(!gd1 || !gd2) return false;
-      o._geoD1={lat:gd1.lat,lng:gd1.lng}; o._geoD2={lat:gd2.lat,lng:gd2.lng};
-      o._geoAnchor={lat:gd1.lat,lng:gd1.lng};
-      return true;
+      var okD=false;
+      if(!o._geoD1 || !o._geoD2){
+        var gd1=_pxToLatLng(o.x1, o.y1, ms, sz.w, sz.h);
+        var gd2=_pxToLatLng(o.x2, o.y2, ms, sz.w, sz.h);
+        if(gd1 && gd2){
+          o._geoD1={lat:gd1.lat,lng:gd1.lng}; o._geoD2={lat:gd2.lat,lng:gd2.lng};
+          okD=true;
+        }
+      }
+      /* Same sentinel backfill as callouts above -- the older stamping
+         system sets _geoD1/_geoD2 without _geoAnchor, which would leave
+         applyOne short-circuited and the dimension frozen. */
+      if(!o._geoAnchor && o._geoD1){ o._geoAnchor={lat:o._geoD1.lat,lng:o._geoD1.lng}; okD=true; }
+      return okD;
     }
 
     /* ADOPT AN EXISTING ANCHOR, NEVER RE-DERIVE ONE.
@@ -59619,16 +59776,22 @@ window._crmToastModal=_crmToastModal;
 
   var _lastMs=null;
   function applyOne(o, ms, sz){
-    if(!o._geoAnchor) return false;
     if(typeof _latLngToPx!=='function') return false;
-    _lastMs=ms;
 
-    /* Callout: project target and anchor independently from their own
-       stamps, instead of moving one shared anchor by a single delta -- a
-       rigid translate here would be wrong the moment either point is
-       dragged away from the other (which the label/target drag handles
-       let the user do deliberately). */
-    if(o.kind==='callout'){
+    /* Callouts and dimensions are handled BEFORE the _geoAnchor guard below.
+       They carry their own point-specific ground stamps (_geoTarget /
+       _geoAnchorPt, _geoD1 / _geoD2) and do not need the single shared
+       _geoAnchor marker that the generic rigid-translate path requires.
+       Gating them behind that marker is what kept leaving them frozen
+       whenever anything set their points without also setting the marker --
+       including shapes restored from a saved project. Self-healing: if the
+       marker is missing but the points exist, backfill it here too. */
+    if(o.kind==='callout' && (o._geoTarget || o._geoAnchorPt)){
+      _lastMs=ms;
+      if(!o._geoAnchor){
+        var src0=o._geoAnchorPt||o._geoTarget;
+        o._geoAnchor={lat:src0.lat,lng:src0.lng};
+      }
       var movedC=false;
       if(o._geoTarget && o.target){
         var pt3=_latLngToPx(o._geoTarget.lat, o._geoTarget.lng, ms, sz.w, sz.h);
@@ -59644,10 +59807,9 @@ window._crmToastModal=_crmToastModal;
       }
       return movedC;
     }
-    /* Dimension: project both endpoints independently -- same reasoning,
-       plus a rigid translate never touched x1/y1/x2/y2 in the first place
-       (only the unused generic o.x/o.y), so the drawn line never moved. */
-    if(o.type==='dimension'){
+    if(o.type==='dimension' && (o._geoD1 || o._geoD2)){
+      _lastMs=ms;
+      if(!o._geoAnchor && o._geoD1){ o._geoAnchor={lat:o._geoD1.lat,lng:o._geoD1.lng}; }
       var movedD=false;
       if(o._geoD1){
         var pd1b=_latLngToPx(o._geoD1.lat, o._geoD1.lng, ms, sz.w, sz.h);
@@ -59664,6 +59826,9 @@ window._crmToastModal=_crmToastModal;
       if(movedD && typeof renderDimension==='function'){ try{ renderDimension(o); }catch(e){} }
       return movedD;
     }
+
+    if(!o._geoAnchor) return false;
+    _lastMs=ms;
 
     var a=anchorOf(o); if(!a) return false;
     var t=_latLngToPx(o._geoAnchor.lat, o._geoAnchor.lng, ms, sz.w, sz.h);
