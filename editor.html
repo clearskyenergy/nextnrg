@@ -85161,10 +85161,10 @@ window._crmToastModal=_crmToastModal;
 </script>
 <!-- OMEGA FIX PACK END -->
 
-<!-- OMEGA TERRAIN + ELECTRICAL PACK v2.5 BEGIN -->
+<!-- OMEGA TERRAIN + ELECTRICAL PACK v2.7 BEGIN -->
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
-   OMEGA TERRAIN + ELECTRICAL PACK  ·  v2.5
+   OMEGA TERRAIN + ELECTRICAL PACK  ·  v2.7
    ──────────────────────────────────────────────────────────────────────────
    Closes the gap between the terrain OMEGA already samples and the
    flat-ground layout engine that never reads it.
@@ -85207,6 +85207,10 @@ window._crmToastModal=_crmToastModal;
          so a surveyed site and a DEM site are the same object
    v2.5  combiners grouped by 2D proximity instead of index order:
          cable intensity 83.9 -> 29.8 ft/kW on the same layout
+   v2.6  imported geometry becomes real boundaries and exclusions
+         instead of being parsed and then dropped in a variable
+   v2.7  PVWatts yield in-tool: real TMY weather instead of the flat
+         capacity factors, sized on the BUILDABLE kW
 
    HONESTY NOTE, carried from the base file: the elevation source is a DEM
    (about 10 m posts via 3DEP, 30 m elsewhere), not a survey. Reveals and
@@ -85219,7 +85223,7 @@ window._crmToastModal=_crmToastModal;
   'use strict';
 
   var TAG = '[omega-terrain]';
-  var VERSION = '2.5';
+  var VERSION = '2.7';
 
   /* ══════════════════════════════════════════════════════════════════
      0.  UTILITIES
@@ -85274,13 +85278,26 @@ window._crmToastModal=_crmToastModal;
   }
 
   /* Least-squares affine fit  (x,y) -> v.  Cramer on the 3x3 normals, same
-     approach the base file already uses for its best-fit plane. */
+     approach the base file already uses for its best-fit plane.
+
+     Inputs are CENTRED first, and that is not a nicety. Fitting directly
+     on longitude and latitude means x is around -90 and y around 41
+     while the site varies by 0.01 degrees, so Sxx is ~8100 per point and
+     the information is in the eleventh significant figure. The normal
+     equations lose it to cancellation and the fit comes back garbage —
+     measured at 4610 px of round-trip error before this was centred.
+     Subtracting the mean makes the same fit exact, and the offset is put
+     back at evaluation. */
   function affineFit(pts, vals) {
     var n = pts.length;
     if (n < 3) return null;
+    var mx = 0, my = 0;
+    for (var q = 0; q < n; q++) { mx += pts[q].x; my += pts[q].y; }
+    mx /= n; my /= n;
+
     var Sx = 0, Sy = 0, Sxx = 0, Syy = 0, Sxy = 0, Sv = 0, Sxv = 0, Syv = 0;
     for (var i = 0; i < n; i++) {
-      var p = pts[i], v = vals[i];
+      var p = { x: pts[i].x - mx, y: pts[i].y - my }, v = vals[i];
       Sx += p.x; Sy += p.y; Sv += v;
       Sxx += p.x * p.x; Syy += p.y * p.y; Sxy += p.x * p.y;
       Sxv += p.x * v; Syv += p.y * v;
@@ -85299,9 +85316,11 @@ window._crmToastModal=_crmToastModal;
       for (var i = 0; i < 3; i++) m[i][c] = V[i];
       return det3(m) / D;
     }
-    return { a: sub(0), b: sub(1), c: sub(2) };
+    return { a: sub(0), b: sub(1), c: sub(2), mx: mx, my: my };
   }
-  function affineEval(f, x, y) { return f.a * x + f.b * y + f.c; }
+  function affineEval(f, x, y) {
+    return f.a * (x - (f.mx || 0)) + f.b * (y - (f.my || 0)) + f.c;
+  }
 
   function bboxOf(pts) {
     var b = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
@@ -88613,6 +88632,557 @@ window._crmToastModal=_crmToastModal;
     };
   }
 
+
+  /* ══════════════════════════════════════════════════════════════════
+     26.  IMPORTED GEOMETRY -> REAL SHAPES                  (pack v2.6)
+     ──────────────────────────────────────────────────────────────────
+     Both import paths stopped halfway. The shapefile reader parsed rings
+     correctly and then assigned them to OmegaTerrain.lastImport with a
+     message telling you to look in the console; the DXF reader took the
+     contour layers and ignored the parcel boundary, the wetlands and the
+     setback lines sitting in the same file. Parsing geometry nobody can
+     use is not an import.
+
+     This closes it. A ring becomes either the BOUNDARY of a new array —
+     laid out immediately with the current assumptions — or an EXCLUSION
+     on an existing one, which triggers a relayout so the tables actually
+     move out of the wetland.
+
+     THE HARD PART is lat/lng back to canvas pixels. Going the other way
+     was easy because the analysis only ever needed to ask "what is the
+     ground under this pixel". Placing geometry needs the inverse, and
+     _latLngToPx only works while the map is live and unlocked. So the
+     same affine trick is used in reverse: an existing array carries
+     matched _geoBoundary/boundary vertex pairs, and those give a fit
+     that works with the plot frozen. Without either, the import is
+     refused rather than dropped somewhere approximate.
+     ══════════════════════════════════════════════════════════════════ */
+
+  /* lat/lng -> canvas px. Mirror of makeProjector, opposite direction. */
+  function makeGeoToPx() {
+    /* route: live map */
+    try {
+      if (typeof _liveMapState === 'function' && typeof _latLngToPx === 'function' &&
+          typeof _getCanvasSize === 'function') {
+        var ms = _liveMapState();
+        if (ms) {
+          var cs = _getCanvasSize();
+          return {
+            mode: 'live', quality: 'anchored',
+            px: function (lat, lng) { return _latLngToPx(lat, lng, ms, cs.w, cs.h); }
+          };
+        }
+      }
+    } catch (e) {}
+
+    /* route: geo — fit from any shape carrying matched vertex pairs */
+    try {
+      var best = null, bestN = 0;
+      (S.shapes || []).forEach(function (sh) {
+        if (!sh || !sh._geoBoundary || !sh.boundary) return;
+        if (sh._geoBoundary.length !== sh.boundary.length) return;
+        if (sh._geoBoundary.length > bestN) { best = sh; bestN = sh._geoBoundary.length; }
+      });
+      if (best && bestN >= 3) {
+        var pts = [], xs = [], ys = [], ok = true;
+        for (var i = 0; i < bestN; i++) {
+          var g = best._geoBoundary[i], p = best.boundary[i];
+          if (!g || g.lat == null || !p) { ok = false; break; }
+          pts.push({ x: g.lng, y: g.lat });      /* fit in lng/lat space */
+          xs.push(p.x); ys.push(p.y);
+        }
+        if (ok) {
+          var fx = affineFit(pts, xs), fy = affineFit(pts, ys);
+          if (fx && fy) {
+            return {
+              mode: 'geo', quality: 'anchored',
+              px: function (lat, lng) {
+                return { x: affineEval(fx, lng, lat), y: affineEval(fy, lng, lat) };
+              }
+            };
+          }
+        }
+      }
+    } catch (e) {}
+
+    return null;
+  }
+
+  function ringToPx(ring, g2p) {
+    var out = [];
+    for (var i = 0; i < ring.length; i++) {
+      var v = ring[i];
+      var lat = (v.lat != null) ? v.lat : v[1];
+      var lng = (v.lng != null) ? v.lng : v[0];
+      var p = g2p.px(lat, lng);
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) return null;
+      out.push({ x: p.x, y: p.y });
+    }
+    /* Drop a duplicated closing vertex — shapefiles always carry one and
+       the layout engine treats rings as implicitly closed. */
+    if (out.length > 3) {
+      var a = out[0], b = out[out.length - 1];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < 0.01) out.pop();
+    }
+    return out.length >= 3 ? out : null;
+  }
+
+  /* Shoelace area in acres, for sorting and for the preview. */
+  function ringAcres(pxRing) {
+    var P = ppf();
+    if (!(P > 0)) return 0;
+    var a = 0;
+    for (var i = 0, j = pxRing.length - 1; i < pxRing.length; j = i++) {
+      a += pxRing[j].x * pxRing[i].y - pxRing[i].x * pxRing[j].y;
+    }
+    return Math.abs(a / 2) / (P * P) / 43560;
+  }
+
+  /* Create a new auto-layout array from an imported boundary. */
+  function boundaryToArray(pxRing, opts) {
+    opts = opts || {};
+    if (typeof computeGroundLayout !== 'function' || typeof applyGroundLayout !== 'function') {
+      return { ok: false, why: 'The layout engine is not available.' };
+    }
+    var L = computeGroundLayout({
+      boundary: pxRing,
+      exclusions: opts.exclusions || [],
+      presetKey: opts.presetKey,
+      gcr: opts.gcr
+    });
+    if (!L) return { ok: false, why: 'The layout engine produced nothing for that ring — check the setback is not larger than the parcel.' };
+    var sh = applyGroundLayout(pxRing, L, opts.exclusions || []);
+    if (!sh) return { ok: false, why: 'Could not create the array shape.' };
+
+    /* Stamp the geo anchor so the analysis can tie it to terrain even
+       once the plot is frozen. */
+    try {
+      if (opts.geoRing && opts.geoRing.length === pxRing.length) {
+        sh._geoBoundary = opts.geoRing.map(function (v) {
+          return { lat: (v.lat != null ? v.lat : v[1]), lng: (v.lng != null ? v.lng : v[0]) };
+        });
+      } else if (typeof _geoRestampOne === 'function') { _geoRestampOne(sh); }
+    } catch (e) {}
+
+    return { ok: true, shape: sh, tables: L.tableCount, kw: L.kw,
+             acres: +ringAcres(pxRing).toFixed(2) };
+  }
+
+  /* Add exclusions to an existing array and re-run its layout, so the
+     tables actually move rather than the zone being drawn over them. */
+  function addExclusions(sh, pxRings, opts) {
+    opts = opts || {};
+    if (!sh) return { ok: false, why: 'No array selected.' };
+    if (!sh.boundary || sh.boundary.length < 3) {
+      return { ok: false, why: 'That array has no boundary to re-fill.' };
+    }
+    sh.exclusions = (sh.exclusions || []).concat(pxRings);
+
+    var before = sh.tableCount || (sh.tables ? sh.tables.length : 0);
+    var L = computeGroundLayout({
+      boundary: sh.boundary, exclusions: sh.exclusions,
+      presetKey: sh.presetKey, gcr: sh.gcr,
+      tableWft: sh.tableWft, tableHft: sh.tableHft
+    });
+    if (!L) return { ok: false, why: 'Re-layout failed; exclusions were not applied.' };
+
+    sh.tables = L.tooMany ? [] : L.tables;
+    sh.tableCount = L.tableCount;
+    sh.rowCount = L.rowCount;
+    sh.kw = L.kw;
+    sh.densityOnly = !!L.tooMany;
+    /* The feet model is the source of truth for rendering; drop the stale
+       capture so it is rebuilt from the new pixels. */
+    delete sh._ftTables; delete sh._ftExcl;
+
+    try { if (typeof renderShape === 'function') renderShape(sh); } catch (e) {}
+    try { if (typeof pushHist === 'function') pushHist(); } catch (e) {}
+
+    return { ok: true, before: before, after: L.tableCount,
+             removed: before - L.tableCount, kw: L.kw,
+             acres: pxRings.reduce(function (a, r) { return a + ringAcres(r); }, 0) };
+  }
+
+  /* ---- classify-and-apply dialog ----------------------------------- */
+
+  function geometryDialog(source, geoRings, meta) {
+    var g2p = makeGeoToPx();
+    var d = document.getElementById('omega-geo');
+    if (d) d.remove();
+    d = document.createElement('div');
+    d.id = 'omega-geo';
+    d.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);'
+      + 'width:min(520px,94vw);max-height:82vh;overflow:auto;background:#1b1b1c;'
+      + 'border:1px solid #3C3C3C;border-radius:10px;padding:14px;z-index:100000;'
+      + 'box-shadow:0 20px 60px rgba(0,0,0,.7);'
+      + 'font-family:"IBM Plex Mono",ui-monospace,monospace;color:#E2EEF9;font-size:11px';
+
+    if (!g2p) {
+      d.innerHTML = '<div style="color:#C86A6A;line-height:1.6">Nothing to anchor the import to. '
+        + 'Geometry arrives as latitude and longitude and has to land on real pixels \u2014 '
+        + 'that needs either a live unlocked map, or an existing array whose boundary '
+        + 'carries a geo anchor. Unlock the map, or draw one array first, then import again.</div>'
+        + '<button id="geo-x" style="width:100%;margin-top:11px;padding:7px;background:#252526;'
+        + 'border:1px solid #3C3C3C;color:#E2EEF9;border-radius:5px;font:inherit;cursor:pointer">Close</button>';
+      document.body.appendChild(d);
+      document.getElementById('geo-x').onclick = function () { d.remove(); };
+      return;
+    }
+
+    /* Project everything once, drop what will not land, sort big first. */
+    var items = [];
+    geoRings.forEach(function (r, i) {
+      var px = ringToPx(r.ring || r, g2p);
+      if (!px) return;
+      items.push({
+        i: i, px: px, geo: (r.ring || r),
+        label: r.label || ('ring ' + (i + 1)),
+        acres: +ringAcres(px).toFixed(2),
+        verts: px.length
+      });
+    });
+    items.sort(function (a, b) { return b.acres - a.acres; });
+
+    if (!items.length) {
+      d.innerHTML = '<div style="color:#C86A6A">None of the ' + geoRings.length
+        + ' ring(s) could be placed on the canvas.</div>'
+        + '<button id="geo-x" style="width:100%;margin-top:11px;padding:7px;background:#252526;'
+        + 'border:1px solid #3C3C3C;color:#E2EEF9;border-radius:5px;font:inherit;cursor:pointer">Close</button>';
+      document.body.appendChild(d);
+      document.getElementById('geo-x').onclick = function () { d.remove(); };
+      return;
+    }
+
+    var arrays_ = arrays();
+    var h = '<div style="font-size:9.5px;letter-spacing:.07em;color:#2FB54A;font-weight:700;'
+      + 'margin-bottom:9px">PLACE IMPORTED GEOMETRY \u2014 ' + esc(source) + '</div>'
+      + '<div style="color:#8FA3B8;line-height:1.6;margin-bottom:10px">'
+      + items.length + ' ring(s) placed via the <b>' + g2p.mode + '</b> anchor. '
+      + 'The largest is usually the parcel; the rest are usually things to avoid.</div>';
+
+    h += '<div style="max-height:250px;overflow:auto;border:1px solid #2e2e30;border-radius:5px;padding:5px">';
+    items.forEach(function (it, k) {
+      var def = (k === 0 && !arrays_.length) ? 'boundary' : 'exclusion';
+      h += '<div style="display:flex;gap:8px;align-items:center;padding:4px 2px;'
+        + 'border-bottom:1px solid #232325">'
+        + '<span style="flex:1"><b>' + esc(it.label) + '</b>'
+        + '<span style="color:#7d8a97"> \u00b7 ' + it.acres + ' ac \u00b7 ' + it.verts + ' verts</span></span>'
+        + '<select data-ring="' + k + '" style="padding:4px;background:#252526;'
+        + 'border:1px solid #3C3C3C;color:#E2EEF9;border-radius:4px;font:inherit;font-size:10px">'
+        + '<option value="ignore"' + (def === 'ignore' ? ' selected' : '') + '>ignore</option>'
+        + '<option value="boundary"' + (def === 'boundary' ? ' selected' : '') + '>new array boundary</option>'
+        + '<option value="exclusion"' + (def === 'exclusion' ? ' selected' : '') + '>exclusion</option>'
+        + '</select></div>';
+    });
+    h += '</div>';
+
+    if (arrays_.length) {
+      h += '<div style="margin-top:9px"><label style="color:#8FA3B8;display:block;margin-bottom:3px">'
+        + 'Add exclusions to</label><select id="geo-target" style="width:100%;padding:6px;'
+        + 'background:#252526;border:1px solid #3C3C3C;color:#E2EEF9;border-radius:5px;font:inherit">';
+      arrays_.forEach(function (a) {
+        h += '<option value="' + a.id + '">' + (a.tableCount || 0) + ' tables \u00b7 '
+          + (a.kw || 0).toLocaleString() + ' kW \u00b7 ' + a.id + '</option>';
+      });
+      h += '</select></div>';
+    }
+
+    h += '<div id="geo-out" style="margin-top:10px"></div>'
+      + '<div style="display:flex;gap:7px;margin-top:11px">'
+      + '<button id="geo-go" style="flex:1;padding:8px;background:rgba(47,181,74,.16);'
+      + 'border:1px solid rgba(47,181,74,.45);color:#2FB54A;border-radius:5px;font:inherit;'
+      + 'font-weight:700;cursor:pointer">Place</button>'
+      + '<button id="geo-x" style="padding:8px 14px;background:#252526;border:1px solid #3C3C3C;'
+      + 'color:#E2EEF9;border-radius:5px;font:inherit;cursor:pointer">Cancel</button></div>';
+
+    d.innerHTML = h;
+    document.body.appendChild(d);
+    document.getElementById('geo-x').onclick = function () { d.remove(); };
+
+    document.getElementById('geo-go').onclick = function () {
+      var out = document.getElementById('geo-out');
+      var roles = {};
+      Array.prototype.forEach.call(d.querySelectorAll('[data-ring]'), function (sel) {
+        roles[+sel.getAttribute('data-ring')] = sel.value;
+      });
+      var bnd = [], exc = [];
+      items.forEach(function (it, k) {
+        if (roles[k] === 'boundary') bnd.push(it);
+        else if (roles[k] === 'exclusion') exc.push(it);
+      });
+      if (!bnd.length && !exc.length) { out.innerHTML = '<div style="color:#D9A441">Nothing selected.</div>'; return; }
+
+      var msg = [];
+
+      /* Exclusions land on a new array if one is being made from this
+         same import, otherwise on the chosen existing array. */
+      if (bnd.length) {
+        bnd.forEach(function (it) {
+          var r = boundaryToArray(it.px, {
+            exclusions: exc.map(function (e) { return e.px; }),
+            geoRing: it.geo
+          });
+          msg.push(r.ok
+            ? ('Array created: ' + r.tables.toLocaleString() + ' tables, '
+               + r.kw.toLocaleString() + ' kW over ' + r.acres + ' ac.')
+            : ('Boundary failed: ' + r.why));
+        });
+      } else if (exc.length) {
+        var tgtId = (document.getElementById('geo-target') || {}).value;
+        var tgt = pickArray(tgtId);
+        var r2 = addExclusions(tgt, exc.map(function (e) { return e.px; }));
+        msg.push(r2.ok
+          ? (exc.length + ' exclusion(s) applied \u2014 ' + r2.removed.toLocaleString()
+             + ' tables removed, now ' + r2.after.toLocaleString() + ' at '
+             + r2.kw.toLocaleString() + ' kW.')
+          : ('Exclusions failed: ' + r2.why));
+      }
+
+      out.innerHTML = '<div style="color:#8FA3B8;line-height:1.6">' + msg.map(esc).join('<br>') + '</div>';
+      say(msg.join(' '));
+      try { if (LAST && LAST.ok) render(analyze()); } catch (e) {}
+    };
+  }
+
+  /* ---- DXF: pull non-elevation closed polylines as candidate rings --
+     Contour layers are excluded by construction: a contour carries an
+     elevation and a parcel does not, which is the cleanest signal in the
+     file. Closed polylines only — an open one is a road centreline or a
+     match line, not a zone. */
+  function dxfRings(ents, grid, unitToFt, lat0, lng0) {
+    if (!grid || !grid.bbox) return [];
+    var bb = grid.bbox, fLng = ftPerDegLng(lat0);
+    var out = [];
+    ents.forEach(function (e) {
+      if (['LWPOLYLINE', 'POLYLINE'].indexOf(e.type) < 0) return;
+      if ((e.flags & 1) !== 1) return;                  /* not closed */
+      if (entityElevation(e)) return;                   /* it is a contour */
+      var pts = e.pts.filter(function (p) { return isFinite(p.x) && isFinite(p.y); });
+      if (pts.length < 3) return;
+      out.push({
+        label: (e.layer || 'unnamed') + ' (' + pts.length + ' pts)',
+        ring: pts.map(function (p) {
+          var xFt = (p.x - bb.minX) * unitToFt, yFt = (p.y - bb.minY) * unitToFt;
+          return { lat: lat0 + yFt / FT_PER_DEG_LAT, lng: lng0 + xFt / fLng };
+        })
+      });
+    });
+    return out;
+  }
+
+
+  /* ══════════════════════════════════════════════════════════════════
+     27.  PVWATTS YIELD                                     (pack v2.7)
+     ──────────────────────────────────────────────────────────────────
+     Until now every energy figure in the editor came from a flat
+     capacity factor: cf 0.18 for fixed-tilt, 0.22 for a tracker,
+     hardcoded and identical in Arizona and Vermont. The base file is
+     honest about it — "generic annual capacity factor; replace with
+     PVWatts" — and this is that replacement.
+
+     PVWatts is a free web API from the National Laboratory of the
+     Rockies. Give it a location, a system size and a geometry, and it
+     returns annual and monthly kWh against 2020 TMY weather from the
+     NSRDB, at roughly 4 km resolution.
+
+     WHAT THIS PACK CONTRIBUTES that PVWatts cannot work out for itself:
+
+       system size   the BUILDABLE kW after terrain screening, not the
+                     flat-ground number. On rolling ground those differ
+                     by tens of percent and the yield follows.
+       shading loss  PVWatts models row-to-row self-shading for 1-axis
+                     trackers from the GCR you pass, but NOT for fixed
+                     tilt. For fixed arrays the shortfall computed in
+                     section 8 is converted to a loss percentage and
+                     added, so a site with rows too tight reports lower
+                     yield instead of the same yield.
+       array type    resolved from the racking preset, including
+                     backtracking, which changes the model PVWatts runs.
+
+     TWO HONEST LIMITS. This needs the network, so it does not work from
+     file:// or offline; and PVWatts is a monthly-resolution model with a
+     stated accuracy of about ±10% annually. It replaces a guess with a
+     measurement, not with a bankable number — for that the PVsyst scene
+     export is still the right handoff.
+
+     The API key is the user's own, free from the NLR developer network,
+     and is kept in localStorage next to the ones the editor already
+     stores rather than being written into the file.
+     ══════════════════════════════════════════════════════════════════ */
+
+  var PVW_BASE = 'https://developer.nlr.gov/api/pvwatts/v8.json';
+  var PVW_KEY_LS = 'omegaPvwattsKey';
+
+  function pvwKey(v) {
+    try {
+      if (v !== undefined) { localStorage.setItem(PVW_KEY_LS, v || ''); return v; }
+      return localStorage.getItem(PVW_KEY_LS) || '';
+    } catch (e) { return ''; }
+  }
+
+  /* Racking preset -> PVWatts array_type and tilt.
+     0 fixed open rack, 1 fixed roof, 2 one-axis, 3 one-axis backtracking,
+     4 two-axis. Trackers are sent as BACKTRACKING because that is what
+     the pack's own backtracking section assumes the controller does, and
+     the two models give materially different yields. */
+  function pvwArrayType(presetKey) {
+    if (presetKey === 'rooftop') return { type: 1, label: 'fixed, roof mounted' };
+    if (presetKey === 'carport') return { type: 0, label: 'fixed, open rack' };
+    if (isTrackerPreset(presetKey)) return { type: 3, label: 'one-axis with backtracking' };
+    return { type: 0, label: 'fixed, open rack' };
+  }
+
+  /* Row-shading loss for FIXED arrays, from the pitch shortfall the
+     shading section already computes. PVWatts handles this itself for
+     trackers via GCR, so adding it there would double-count.
+
+     The curve is deliberately crude and labelled as such: shading loss
+     is not linear in pitch shortfall, and anyone who needs the real
+     number should run the PVsyst scene. What it does correctly is move
+     in the right direction with the right rough magnitude, instead of
+     the flat 1% PVWatts assumes when you say nothing. */
+  function pvwShadeLoss(res) {
+    var sd = res && res.shading;
+    if (!sd || !sd.ok) return { pct: 1, why: 'no shading analysis; PVWatts default' };
+    if (isTrackerPreset(res.presetKey)) {
+      return { pct: 0, why: 'trackers: PVWatts derives self-shading from GCR' };
+    }
+    var need = num(sd.requiredPitchWindowFt, 0);
+    var have = num(sd.actualPitchFt, 0);
+    if (!(need > 0) || !(have > 0)) return { pct: 1, why: 'pitch unknown; PVWatts default' };
+    if (have >= need) return { pct: 1, why: 'rows clear for the design window' };
+    var short = clamp(1 - have / need, 0, 0.9);
+    /* ~12 points of loss at half the required pitch, tapering to 1 at none */
+    var pct = +(1 + 24 * short * short).toFixed(1);
+    return { pct: clamp(pct, 1, 25),
+             why: 'rows ' + sd.shortfallFt + ' ft tight for a '
+                  + sd.targetHours + '-hour clear window' };
+  }
+
+  function pvwRun(cfg, cb) {
+    cfg = cfg || {};
+    var res = cfg.res || LAST;
+    var key = cfg.apiKey || pvwKey();
+    if (!key) return cb({ ok: false, why: 'No PVWatts API key. Get a free one from the NLR developer network and paste it in.' });
+
+    var ll = siteLatLng();
+    if (!ll) return cb({ ok: false, why: 'No site location. Sample terrain or place the map first.' });
+
+    /* Buildable kW, not the flat-ground number. */
+    var kwDc = num(cfg.systemKwDc, 0);
+    var basis = 'given';
+    if (!(kwDc > 0) && res && res.ok) {
+      kwDc = res.kwReal; basis = 'buildable after terrain screening';
+    }
+    if (!(kwDc > 0)) {
+      try {
+        var sh = pickArray();
+        if (sh && sh.kw > 0) { kwDc = sh.kw; basis = 'array nameplate (no terrain screening)'; }
+      } catch (e) {}
+    }
+    if (!(kwDc > 0)) return cb({ ok: false, why: 'No system size. Draw an array, or pass systemKwDc.' });
+
+    var presetKey = (res && res.ok) ? res.presetKey : 'fixed-ground';
+    var R = rackTuned(presetKey);
+    var at = pvwArrayType(presetKey);
+    var tilt = num(cfg.tiltDeg, num(res && res.tiltDeg, R.tiltDeg));
+    if (at.type === 2 || at.type === 3) tilt = 0;        /* tracker tilt is the axis */
+    var gcr = clamp(num(cfg.gcr, num(res && res.shading && res.shading.actualGcr, 0.4)), 0.01, 0.99);
+
+    /* PVWatts azimuth: 0-360 clockwise from north, 180 = due south. */
+    var az = num(cfg.azimuthDeg, num(res && res.rowAzimuthDeg, 180));
+    az = ((az % 360) + 360) % 360;
+    if (az >= 360) az = 359.9;
+
+    var shade = pvwShadeLoss(res);
+    var baseLoss = num(cfg.baseLossPct, 14);   /* PVWatts default bundle */
+    var losses = clamp(baseLoss + (cfg.includeShading === false ? 0 : shade.pct - 1), -5, 99);
+
+    var q = {
+      api_key: key, format: 'json',
+      lat: ll.lat.toFixed(6), lon: ll.lng.toFixed(6),
+      system_capacity: kwDc.toFixed(3),
+      module_type: num(cfg.moduleType, 0),
+      array_type: at.type,
+      tilt: tilt.toFixed(1),
+      azimuth: az.toFixed(1),
+      losses: losses.toFixed(2),
+      gcr: gcr.toFixed(3),
+      dc_ac_ratio: num(cfg.dcAcRatio, 1.25).toFixed(2),
+      inv_eff: num(cfg.invEff, 96).toFixed(1),
+      radius: 0,
+      dataset: cfg.dataset || 'nsrdb',
+      timeframe: 'monthly'
+    };
+    var url = PVW_BASE + '?' + Object.keys(q).map(function (k) {
+      return encodeURIComponent(k) + '=' + encodeURIComponent(q[k]);
+    }).join('&');
+
+    fetch(url).then(function (r) {
+      if (!r.ok && r.status !== 422) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (j) {
+      if (j.errors && j.errors.length) {
+        return cb({ ok: false, why: j.errors.join(' '), raw: j });
+      }
+      var o = j.outputs || {};
+      if (!(o.ac_annual > 0)) return cb({ ok: false, why: 'PVWatts returned no annual output.', raw: j });
+
+      var st = j.station_info || {};
+      var out = {
+        ok: true,
+        kwDc: +kwDc.toFixed(1), sizeBasis: basis,
+        arrayType: at.label, tiltDeg: +tilt, azimuthDeg: +az, gcr: +gcr,
+        lossesPct: +losses.toFixed(2), baseLossPct: baseLoss,
+        shadeLossPct: +shade.pct, shadeWhy: shade.why,
+        acAnnualKwh: Math.round(o.ac_annual),
+        acMonthlyKwh: (o.ac_monthly || []).map(function (v) { return Math.round(v); }),
+        dcMonthlyKwh: (o.dc_monthly || []).map(function (v) { return Math.round(v); }),
+        solradAnnual: +(+o.solrad_annual).toFixed(2),
+        capacityFactorPct: +(+o.capacity_factor).toFixed(2),
+        specificYield: +(o.ac_annual / kwDc).toFixed(0),      /* kWh per kW-DC */
+        station: {
+          city: st.city || '', state: st.state || '',
+          elevM: st.elev, distanceM: st.distance,
+          source: st.weather_data_source || ''
+        },
+        version: j.version,
+        warnings: j.warnings || [],
+        at: Date.now()
+      };
+
+      /* Compare against the flat capacity factor this replaces, because
+         that is the number every existing sheet in the editor uses. */
+      var cf = num(R.cf, 0.18);
+      out.legacyCf = cf;
+      out.legacyKwh = Math.round(kwDc * cf * 8760);
+      out.deltaPct = out.legacyKwh > 0
+        ? +(((out.acAnnualKwh / out.legacyKwh) - 1) * 100).toFixed(1) : 0;
+
+      if (LAST && LAST.ok) {
+        LAST.pvwatts = out;
+        try {
+          var shp = (S.shapes || []).filter(function (x) { return x.id === LAST.shapeId; })[0];
+          if (shp && shp.terrainAnalysis) {
+            shp.terrainAnalysis.yield = {
+              acAnnualKwh: out.acAnnualKwh,
+              specificYield: out.specificYield,
+              capacityFactorPct: out.capacityFactorPct,
+              lossesPct: out.lossesPct,
+              source: 'PVWatts v' + out.version
+            };
+          }
+        } catch (e) {}
+      }
+      cb(out);
+    }).catch(function (e) {
+      var m = (e && e.message) || 'request failed';
+      cb({ ok: false, why: /Failed to fetch|NetworkError|TypeError/i.test(m)
+        ? 'Could not reach PVWatts. It needs a network connection and does not work from a file:// page.'
+        : ('PVWatts request failed: ' + m) });
+    });
+  }
+
   /* ══════════════════════════════════════════════════════════════════
      14.  ORCHESTRATOR
      ══════════════════════════════════════════════════════════════════ */
@@ -89137,6 +89707,7 @@ window._crmToastModal=_crmToastModal;
       + '<button data-x="pvsyst">PVsyst scene</button>'
       + '<button data-x="shp">Shapefile ZIP</button>'
       + '<button class="wide" data-x="trench">Trench schedule CSV</button>'
+      + '<button class="wide" data-x="pvwatts">Energy yield \u2014 PVWatts\u2026</button>'
       + '<button class="wide" data-x="dxf">Import survey from .dxf\u2026</button>'
       + '<button class="wide" data-x="import">Import boundary from .shp</button>'
       + '</div>';
@@ -89166,6 +89737,7 @@ window._crmToastModal=_crmToastModal;
         else if (k === 'pvsyst') exportPVsyst(LAST);
         else if (k === 'shp') exportShapefileZip(LAST, 'tables');
         else if (k === 'trench') exportTrenchCSV(LAST);
+        else if (k === 'pvwatts') pvwPrompt();
         else if (k === 'dxf') dxfPrompt();
         else if (k === 'import') pickSHP();
       };
@@ -89183,9 +89755,9 @@ window._crmToastModal=_crmToastModal;
         if (err) { say('Shapefile import failed: ' + err.message); return; }
         if (!rings.length) { say('No polygons found in that shapefile.'); return; }
         window.OmegaTerrain.lastImport = rings;
-        say(rings.length + ' ring(s) imported \u2014 available as OmegaTerrain.lastImport '
-          + '(lat/lng). Largest has ' + rings[0].length + ' vertices.');
-        if (window.console) console.info(TAG, 'imported shapefile', raw.type, rings);
+        geometryDialog(f.name, rings.map(function (r, i) {
+          return { label: 'polygon ' + (i + 1), ring: r };
+        }));
       });
     };
     inp.click();
@@ -89438,6 +90010,127 @@ window._crmToastModal=_crmToastModal;
         + (r.replaced ? ' The DEM surface was replaced.' : ''));
       d.remove();
       try { render(analyze()); } catch (e) {}
+      /* The same file usually carries the parcel and the wetlands. Offer
+         them rather than reading the contours and throwing the rest away. */
+      try {
+        var T2 = terrain();
+        var rings = dxfRings(ents, g, +document.getElementById('dxf-unit').value,
+                             T2.lat0, T2.lng0);
+        if (rings.length) {
+          setTimeout(function () { geometryDialog(name + ' \u2014 closed polylines', rings); }, 400);
+        }
+      } catch (e) {}
+    };
+  }
+
+
+  /* ---- PVWatts panel ------------------------------------------------ */
+  function pvwPrompt() {
+    var d = document.getElementById('omega-pvw');
+    if (d) d.remove();
+    d = document.createElement('div');
+    d.id = 'omega-pvw';
+    d.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);'
+      + 'width:min(480px,94vw);max-height:84vh;overflow:auto;background:#1b1b1c;'
+      + 'border:1px solid #3C3C3C;border-radius:10px;padding:14px;z-index:100000;'
+      + 'box-shadow:0 20px 60px rgba(0,0,0,.7);'
+      + 'font-family:"IBM Plex Mono",ui-monospace,monospace;color:#E2EEF9;font-size:11px';
+
+    var res = LAST;
+    var kw = (res && res.ok) ? res.kwReal : 0;
+    var shade = pvwShadeLoss(res);
+
+    d.innerHTML =
+      '<div style="font-size:9.5px;letter-spacing:.07em;color:#2FB54A;font-weight:700;'
+      + 'margin-bottom:9px">ENERGY YIELD \u2014 PVWATTS v8</div>'
+      + '<div style="color:#8FA3B8;line-height:1.6;margin-bottom:10px">'
+      + 'Free TMY-weather yield from the NLR developer network, replacing the flat '
+      + 'capacity factor. Needs a network connection and your own API key '
+      + '(free, one minute to get).</div>'
+      + '<label style="display:block;color:#8FA3B8;margin-bottom:3px">API key</label>'
+      + '<input id="pvw-key" type="password" placeholder="paste your NLR key" value="'
+      + esc(pvwKey()) + '" style="width:100%;padding:7px;background:#252526;'
+      + 'border:1px solid #3C3C3C;color:#E2EEF9;border-radius:5px;font:inherit;margin-bottom:9px">'
+      + '<div style="display:flex;gap:9px;margin-bottom:9px">'
+      + '<div style="flex:1"><label style="color:#8FA3B8;display:block;margin-bottom:3px">System kW-DC</label>'
+      + '<input id="pvw-kw" type="number" step="1" value="' + (kw || '')
+      + '" placeholder="from the array" style="width:100%;padding:6px;background:#252526;'
+      + 'border:1px solid #3C3C3C;color:#E2EEF9;border-radius:5px;font:inherit"></div>'
+      + '<div style="flex:1"><label style="color:#8FA3B8;display:block;margin-bottom:3px">Base losses %</label>'
+      + '<input id="pvw-loss" type="number" step="0.5" value="14" '
+      + 'style="width:100%;padding:6px;background:#252526;border:1px solid #3C3C3C;'
+      + 'color:#E2EEF9;border-radius:5px;font:inherit"></div></div>'
+      + (kw ? ('<div style="color:#7d8a97;line-height:1.55;margin-bottom:9px">Size defaults to the '
+          + '<b style="color:#E2EEF9">buildable</b> ' + kw.toLocaleString() + ' kW after terrain '
+          + 'screening, not the flat-ground figure. Row shading adds '
+          + '<b style="color:#E2EEF9">' + shade.pct + '%</b> loss \u2014 ' + esc(shade.why) + '.</div>')
+        : '<div style="color:#D9A441;margin-bottom:9px">No analysis yet, so no buildable size. '
+          + 'Run the terrain analysis first, or type a size.</div>')
+      + '<div id="pvw-out"></div>'
+      + '<div style="display:flex;gap:7px;margin-top:11px">'
+      + '<button id="pvw-go" style="flex:1;padding:8px;background:rgba(47,181,74,.16);'
+      + 'border:1px solid rgba(47,181,74,.45);color:#2FB54A;border-radius:5px;font:inherit;'
+      + 'font-weight:700;cursor:pointer">Run PVWatts</button>'
+      + '<button id="pvw-x" style="padding:8px 14px;background:#252526;border:1px solid #3C3C3C;'
+      + 'color:#E2EEF9;border-radius:5px;font:inherit;cursor:pointer">Close</button></div>'
+      + '<div style="color:#5d6874;margin-top:9px;line-height:1.5;font-size:9px">'
+      + 'PVWatts is a monthly model with a stated accuracy near \u00b110% annually. It replaces '
+      + 'a guess with a measurement, not with a bankable number \u2014 for that, use the PVsyst '
+      + 'scene export.</div>';
+
+    document.body.appendChild(d);
+    document.getElementById('pvw-x').onclick = function () { d.remove(); };
+    document.getElementById('pvw-go').onclick = function () {
+      var out = document.getElementById('pvw-out');
+      var k = document.getElementById('pvw-key').value.trim();
+      pvwKey(k);
+      out.innerHTML = '<div style="color:#8FA3B8">contacting PVWatts\u2026</div>';
+      pvwRun({
+        apiKey: k,
+        systemKwDc: +document.getElementById('pvw-kw').value || 0,
+        baseLossPct: +document.getElementById('pvw-loss').value
+      }, function (r) {
+        if (!r.ok) { out.innerHTML = '<div style="color:#C86A6A;line-height:1.55">' + esc(r.why) + '</div>'; return; }
+        var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var peak = Math.max.apply(null, r.acMonthlyKwh);
+        var bars = '';
+        r.acMonthlyKwh.forEach(function (v, i) {
+          var pc = peak > 0 ? (v / peak * 100) : 0;
+          bars += '<div style="display:flex;align-items:center;gap:5px;font-size:9px">'
+            + '<span style="width:22px;color:#7d8a97">' + MO[i] + '</span>'
+            + '<span style="flex:1;background:#252526;border-radius:2px;height:8px;overflow:hidden">'
+            + '<span style="display:block;height:8px;width:' + pc.toFixed(0) + '%;background:#2FB54A"></span></span>'
+            + '<span style="width:62px;text-align:right;color:#8FA3B8">'
+            + (v / 1000).toFixed(0) + ' MWh</span></div>';
+        });
+        out.innerHTML =
+          '<div style="border-top:1px solid #2e2e30;padding-top:9px">'
+          + '<div style="display:flex;justify-content:space-between;padding:2px 0">'
+          + '<span style="color:#8FA3B8">Annual AC</span><b style="color:#2FB54A">'
+          + (r.acAnnualKwh / 1000).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' MWh</b></div>'
+          + '<div style="display:flex;justify-content:space-between;padding:2px 0">'
+          + '<span style="color:#8FA3B8">Specific yield</span><b>' + r.specificYield
+          + ' kWh/kW-DC</b></div>'
+          + '<div style="display:flex;justify-content:space-between;padding:2px 0">'
+          + '<span style="color:#8FA3B8">Capacity factor</span><b>' + r.capacityFactorPct + '%</b></div>'
+          + '<div style="display:flex;justify-content:space-between;padding:2px 0">'
+          + '<span style="color:#8FA3B8">vs flat cf ' + r.legacyCf + '</span><b style="color:'
+          + (r.deltaPct < 0 ? '#C86A6A' : '#D9A441') + '">'
+          + (r.deltaPct > 0 ? '+' : '') + r.deltaPct + '%</b></div>'
+          + '<div style="display:flex;justify-content:space-between;padding:2px 0">'
+          + '<span style="color:#8FA3B8">Losses applied</span><b>' + r.lossesPct + '%</b></div>'
+          + '<div style="display:flex;justify-content:space-between;padding:2px 0">'
+          + '<span style="color:#8FA3B8">Array model</span><b>' + esc(r.arrayType) + '</b></div>'
+          + '</div>'
+          + '<div style="margin-top:9px">' + bars + '</div>'
+          + '<div style="color:#7d8a97;margin-top:8px;line-height:1.55;font-size:9.5px">'
+          + 'Weather: ' + esc(r.station.source || 'NSRDB') + '\u00b7 station '
+          + esc([r.station.city, r.station.state].filter(Boolean).join(', ') || 'nearest')
+          + (r.station.distanceM ? ' at ' + Math.round(r.station.distanceM / 1609) + ' mi' : '')
+          + '. Sized on ' + esc(r.sizeBasis) + '.</div>';
+        say('PVWatts: ' + (r.acAnnualKwh / 1000).toFixed(0) + ' MWh/yr, '
+          + r.specificYield + ' kWh/kW, cf ' + r.capacityFactorPct + '%.');
+      });
     };
   }
 
@@ -89544,6 +90237,15 @@ window._crmToastModal=_crmToastModal;
     },
 
     /* v2 */
+    pvwatts: pvwRun,
+    pvwattsPanel: pvwPrompt,
+    pvwattsKey: pvwKey,
+    pvwShadeLoss: pvwShadeLoss,
+    placeGeometry: geometryDialog,
+    geoToPx: makeGeoToPx,
+    boundaryToArray: boundaryToArray,
+    addExclusions: addExclusions,
+    dxfRings: dxfRings,
     parseDXF: parseDXF,
     dxfInventory: dxfInventory,
     contoursToGrid: contoursToGrid,
