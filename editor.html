@@ -85161,10 +85161,10 @@ window._crmToastModal=_crmToastModal;
 </script>
 <!-- OMEGA FIX PACK END -->
 
-<!-- OMEGA TERRAIN + ELECTRICAL PACK v2.2 BEGIN -->
+<!-- OMEGA TERRAIN + ELECTRICAL PACK v2.5 BEGIN -->
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
-   OMEGA TERRAIN + ELECTRICAL PACK  ·  v2.2
+   OMEGA TERRAIN + ELECTRICAL PACK  ·  v2.5
    ──────────────────────────────────────────────────────────────────────────
    Closes the gap between the terrain OMEGA already samples and the
    flat-ground layout engine that never reads it.
@@ -85201,6 +85201,12 @@ window._crmToastModal=_crmToastModal;
          swept-edge clearance at stow rotation
    v2.2  constraint colouring on the canvas; results persisted onto the
          shape so they survive a save and a reload
+   v2.3  trench draping — 3D cable length against plan length, MST
+         collection routing, per-conductor-size rollup
+   v2.4  DXF survey import — contours resampled onto the same lattice,
+         so a surveyed site and a DEM site are the same object
+   v2.5  combiners grouped by 2D proximity instead of index order:
+         cable intensity 83.9 -> 29.8 ft/kW on the same layout
 
    HONESTY NOTE, carried from the base file: the elevation source is a DEM
    (about 10 m posts via 3DEP, 30 m elsewhere), not a survey. Reveals and
@@ -85213,7 +85219,7 @@ window._crmToastModal=_crmToastModal;
   'use strict';
 
   var TAG = '[omega-terrain]';
-  var VERSION = '2.2';
+  var VERSION = '2.5';
 
   /* ══════════════════════════════════════════════════════════════════
      0.  UTILITIES
@@ -86378,16 +86384,68 @@ window._crmToastModal=_crmToastModal;
        Keep it and flag it rather than rounding it away. */
     if (cur && cur.modules > 0) { cur.partial = true; strings.push(cur); }
 
-    /* Combiners: consecutive strings, centroid placement. */
+    /* Combiners: 2D spatial clustering.
+       ────────────────────────────────────────────────────────────────
+       Two wrong models were tried before this one, and both produced a
+       plausible number:
+
+         by index      16 consecutive strings spanned 2138 ft along the
+                       row, because a row here is twelve 180 ft tubes end
+                       to end. Average home run 643 ft, 83.9 ft/kW
+                       against a utility norm of 15-30.
+         1D span cap   capping the along-row span at 300 ft fixed the
+                       runs but produced 1377 combiners for 30 MW, since
+                       a single string already spans a whole 180 ft tube
+                       and two barely fit inside the cap.
+
+       The mistake in both was treating the group as a line. A combiner
+       serves a compact BLOCK — strings from several adjacent rows, a few
+       tables deep — so the grouping is 2D. Bin the strings into square
+       cells sized to hold about stringsPerCombiner of them, and put one
+       combiner at the centroid of each cell. Cells that overfill split.
+
+       Cell size falls out of density rather than being guessed: total
+       string extent over the target combiner count, square-rooted. */
+    var targetCombs = Math.max(1, Math.ceil(strings.length / strPerComb));
+    var sxMin = Infinity, sxMax = -Infinity, syMin = Infinity, syMax = -Infinity;
+    strings.forEach(function (g) {
+      var mx = (g.minLx + g.maxLx) / 2;
+      if (mx < sxMin) sxMin = mx; if (mx > sxMax) sxMax = mx;
+      if (g.ly < syMin) syMin = g.ly; if (g.ly > syMax) syMax = g.ly;
+    });
+    var fieldW = Math.max(sxMax - sxMin, 1), fieldH = Math.max(syMax - syMin, 1);
+    var cellFt = Math.max(Math.sqrt((fieldW * fieldH) / targetCombs), 1);
+
+    var bins = {};
+    strings.forEach(function (g) {
+      var mx = (g.minLx + g.maxLx) / 2;
+      var cx = Math.floor((mx - sxMin) / cellFt);
+      var cy = Math.floor((g.ly - syMin) / cellFt);
+      var k = cx + ':' + cy;
+      (bins[k] || (bins[k] = [])).push(g);
+    });
+
+    /* Split any bin that overfilled, so the count limit still holds. */
+    var groups = [];
+    Object.keys(bins).forEach(function (k) {
+      var b = bins[k];
+      b.sort(function (p, q) { return (p.ly - q.ly) || (p.minLx - q.minLx); });
+      for (var o = 0; o < b.length; o += strPerComb) groups.push(b.slice(o, o + strPerComb));
+    });
+    groups.sort(function (a, b) { return (a[0].ly - b[0].ly) || (a[0].minLx - b[0].minLx); });
+
     var combiners = [];
-    for (var i = 0; i < strings.length; i += strPerComb) {
-      var grp = strings.slice(i, i + strPerComb);
+    for (var i = 0; i < groups.length; i++) {
+      var grp = groups[i];
       var lx = grp.reduce(function (acc, g) { return acc + (g.minLx + g.maxLx) / 2; }, 0) / grp.length;
       var ly = grp.reduce(function (acc, g) { return acc + g.ly; }, 0) / grp.length;
       var amps = grp.length * imp;
+      var gl = [], gh = [];
+      grp.forEach(function (g) { gl.push(g.minLx); gh.push(g.maxLx); });
       combiners.push({
         id: combiners.length + 1, strings: grp.map(function (g) { return g.id; }),
-        lx: lx, ly: ly, ampsDc: +amps.toFixed(1), gauge: gaugeFor(amps * 1.25)
+        lx: lx, ly: ly, ampsDc: +amps.toFixed(1), gauge: gaugeFor(amps * 1.25),
+        spanFt: +(Math.max.apply(null, gh) - Math.min.apply(null, gl)).toFixed(0)
       });
       grp.forEach(function (g) { g.combiner = combiners.length; });
     }
@@ -86440,6 +86498,13 @@ window._crmToastModal=_crmToastModal;
       partialStrings: strings.filter(function (g) { return g.partial; }).length,
       combiners: combiners, combinerCount: combiners.length,
       stringsPerCombiner: strPerComb,
+      combinerCellFt: +cellFt.toFixed(0),
+      medianCombinerSpanFt: (function () {
+        var v = combiners.map(function (c) { return c.spanFt; }).sort(function (a, b) { return a - b; });
+        return v.length ? v[Math.floor(v.length / 2)] : 0;
+      })(),
+      avgStringsPerCombiner: combiners.length
+        ? +(strings.length / combiners.length).toFixed(1) : 0,
       blocks: blocks, blockCount: blocks.length,
       homeRunFt: Math.round(homeRunFt),
       trunkFt: Math.round(trunkFt),
@@ -87832,6 +87897,722 @@ window._crmToastModal=_crmToastModal;
     return h + '</div>';
   }
 
+
+  /* ══════════════════════════════════════════════════════════════════
+     24.  DRAPING AND TRENCHING                             (pack v2.3)
+     ──────────────────────────────────────────────────────────────────
+     Every run length in the editor is a PLAN length. renderConduit sets
+     ftLen = pxLen / pxPerFt, which is the distance across the map, not
+     the distance the cable travels. On flat ground those are the same
+     number. On rolling ground they are not, and the difference is
+     conductor somebody has to buy.
+
+     Draping fixes that: resample the run at a fixed step, read ground
+     elevation at each vertex, drop by the trench depth, and sum the 3D
+     segment lengths. The step matters — too coarse and you chord across
+     the relief and under-report, too fine and you are just adding up
+     DEM noise. 10 ft is the default here (PVcase uses 3 m for the same
+     reason).
+
+     Conduits carry _geoPts — lat/lng per vertex, stamped at creation and
+     maintained by the anchoring system — so draping an existing run
+     needs no projector and works with the plot frozen. Runs that were
+     drawn before anchoring existed have no _geoPts and are reported as
+     un-drapeable rather than silently guessed at.
+
+     WHAT THIS DOES NOT DO. It does not re-route anything. The trench
+     follows the line you drew; only its length is corrected. Suggesting
+     a shorter path is a different problem and one you would want to
+     approve rather than have applied.
+     ══════════════════════════════════════════════════════════════════ */
+
+  var TRENCH_DEPTH_FT = 3.0;          /* 36 in cover, the usual default */
+
+  /* Drape a lat/lng polyline. Returns 2D and 3D length plus the profile. */
+  function drapeLatLng(geoPts, field, T, opts) {
+    opts = opts || {};
+    var step = num(opts.stepFt, 10);
+    var depth = num(opts.trenchDepthFt, TRENCH_DEPTH_FT);
+    if (!geoPts || geoPts.length < 2 || !field) return null;
+
+    var lat0 = T.lat0, lng0 = T.lng0, fLng = ftPerDegLng(lat0);
+    function toFt(g) {
+      return { x: (g.lng - lng0) * fLng, y: (g.lat - lat0) * FT_PER_DEG_LAT };
+    }
+
+    var verts = [], len2 = 0, len3 = 0, missing = 0, total = 0;
+    var minZ = Infinity, maxZ = -Infinity;
+    var prev = null;
+
+    for (var i = 1; i < geoPts.length; i++) {
+      var a = toFt(geoPts[i - 1]), b = toFt(geoPts[i]);
+      var segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      len2 += segLen;
+      var n = Math.max(1, Math.ceil(segLen / step));
+      for (var k = (i === 1 ? 0 : 1); k <= n; k++) {
+        var t = k / n;
+        var x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+        var g = field.zAt(x, y);
+        total++;
+        if (g == null) missing++;
+        var z = (g == null) ? null : g - depth;
+        if (z != null) { if (z < minZ) minZ = z; if (z > maxZ) maxZ = z; }
+        var v = { x: x, y: y, z: z, groundFt: g };
+        if (prev) {
+          /* A vertex with no ground data contributes its plan length
+             only — better than dropping the segment and under-reporting
+             the run, and the missing count says how much is affected. */
+          len3 += (prev.z != null && z != null)
+            ? Math.hypot(x - prev.x, y - prev.y, z - prev.z)
+            : Math.hypot(x - prev.x, y - prev.y);
+        }
+        verts.push(v);
+        prev = v;
+      }
+    }
+
+    return {
+      verts: verts,
+      len2dFt: +len2.toFixed(1),
+      len3dFt: +len3.toFixed(1),
+      extraFt: +(len3 - len2).toFixed(1),
+      extraPct: len2 > 0 ? +((len3 / len2 - 1) * 100).toFixed(2) : 0,
+      trenchDepthFt: depth,
+      stepFt: step,
+      sampled: total, missing: missing,
+      coverage: total ? +(1 - missing / total).toFixed(3) : 0,
+      invertMinFt: isFinite(minZ) ? +minZ.toFixed(2) : null,
+      invertMaxFt: isFinite(maxZ) ? +maxZ.toFixed(2) : null
+    };
+  }
+
+  /* Drape every conduit on the drawing. */
+  function drapeConduits(opts) {
+    opts = opts || {};
+    var T = terrain();
+    if (!T) return { ok: false, why: 'No terrain sampled — nothing to drape onto.' };
+    var field = makeField();
+    if (!field) return { ok: false, why: 'Terrain samples unusable — re-sample.' };
+
+    var runs = [], noGeo = 0, skipped = 0;
+    var t2 = 0, t3 = 0;
+    var bySize = {};
+
+    try {
+      (S.conduits || []).forEach(function (c) {
+        if (!c) return;
+        if (!c._geoPts || c._geoPts.length < 2) { noGeo++; return; }
+        var d = drapeLatLng(c._geoPts, field, T, opts);
+        if (!d) { skipped++; return; }
+
+        /* Only trenched runs get the depth; a surface run rides the
+           ground, so its invert is the ground itself. Both still gain
+           the 3D correction — a surface run over a rise is longer than
+           its plan length too. */
+        var trenched = (c.route === 'trench' || c.route === 'trenched' || c.trench === true);
+        if (!trenched) d.trenchDepthFt = 0;
+
+        var size = c._condSize || c.condSize || c.type || 'unspecified';
+        var e = bySize[size] || (bySize[size] = { runs: 0, ft2: 0, ft3: 0 });
+        e.runs++; e.ft2 += d.len2dFt; e.ft3 += d.len3dFt;
+
+        t2 += d.len2dFt; t3 += d.len3dFt;
+        runs.push({
+          id: c.id, label: c._baseLabel || c.label || '',
+          size: size, trenched: trenched,
+          reportedFt: num(c.ftLen, null),
+          len2dFt: d.len2dFt, len3dFt: d.len3dFt,
+          extraFt: d.extraFt, extraPct: d.extraPct,
+          coverage: d.coverage,
+          drape: d
+        });
+        c._drape = { len3dFt: d.len3dFt, extraFt: d.extraFt, at: Date.now() };
+      });
+    } catch (e) { return { ok: false, why: 'Could not read conduits: ' + (e && e.message) }; }
+
+    Object.keys(bySize).forEach(function (k) {
+      var e = bySize[k];
+      e.ft2 = Math.round(e.ft2); e.ft3 = Math.round(e.ft3);
+      e.extraFt = e.ft3 - e.ft2;
+    });
+
+    return {
+      ok: true,
+      runs: runs, runCount: runs.length,
+      noGeo: noGeo, skipped: skipped,
+      total2dFt: Math.round(t2), total3dFt: Math.round(t3),
+      extraFt: Math.round(t3 - t2),
+      extraPct: t2 > 0 ? +((t3 / t2 - 1) * 100).toFixed(2) : 0,
+      bySize: bySize,
+      trenchDepthFt: num(opts.trenchDepthFt, TRENCH_DEPTH_FT),
+      stepFt: num(opts.stepFt, 10)
+    };
+  }
+
+  /* ── DC collection routing ─────────────────────────────────────────
+     The stringing module places combiners and inverter blocks at
+     centroids and measures cable Manhattan-style, which is right for a
+     takeoff but is not a route. This turns it into one: home runs from
+     each string to its combiner, combiner trunks to the block inverter,
+     then a minimum spanning tree across the blocks for the MV collection
+     — the map's choice, and the right one, because an MST is what people
+     actually edit afterwards. Full Steiner would produce a prettier
+     number and a route nobody would keep.
+
+     Every leg is then draped, so the DC and MV lengths carry the same
+     3D correction as the conduits. */
+
+  function routeDC(res, opts) {
+    opts = opts || {};
+    res = res || LAST;
+    if (!res || !res.ok || !res.strings) {
+      return { ok: false, why: 'Run the terrain analysis first.' };
+    }
+    var T = terrain();
+    var field = res.field;
+    var st = res.strings;
+    var P = ppf();
+
+    /* Local-frame (lx,ly) in feet -> terrain feet. The stringing module
+       works in the array's rotated frame; undo the rotation, scale to
+       pixels, then push through the projector that the analysis already
+       validated. */
+    var a = res.kept.length ? (res.kept[0].a || 0) : 0;
+    var c = Math.cos(a), s = Math.sin(a);
+    function localToTerrain(lx, ly) {
+      var px = (lx * c - ly * s) * P;
+      var py = (lx * s + ly * c) * P;
+      return res.proj.toFt(px, py);
+    }
+    function localToLatLng(lx, ly) {
+      var px = (lx * c - ly * s) * P;
+      var py = (lx * s + ly * c) * P;
+      return res.proj.toLatLng(px, py);
+    }
+
+    var legs = [];
+    function addLeg(kind, p0, p1) {
+      var g0 = localToLatLng(p0[0], p0[1]), g1 = localToLatLng(p1[0], p1[1]);
+      if (!g0 || !g1) return;
+      var d = drapeLatLng([g0, g1], field, T, opts);
+      if (!d) return;
+      legs.push({ kind: kind, len2dFt: d.len2dFt, len3dFt: d.len3dFt, drape: d });
+    }
+
+    /* home runs: string mid to its combiner, both conductors */
+    st.strings.forEach(function (g) {
+      var cb = st.combiners[g.combiner - 1];
+      if (!cb) return;
+      addLeg('homerun', [(g.minLx + g.maxLx) / 2, g.ly], [cb.lx, cb.ly]);
+    });
+
+    /* trunks: combiner to its block */
+    st.combiners.forEach(function (cb) {
+      var b = st.blocks[cb.block - 1];
+      if (!b) return;
+      addLeg('trunk', [cb.lx, cb.ly], [b.lx, b.ly]);
+    });
+
+    /* MV collection: minimum spanning tree across the inverter blocks.
+       Prim's with a plain O(n^2) scan — block counts are in the tens, so
+       the constant never matters and the code stays inspectable. */
+    var mvLegs = 0;
+    if (st.blocks.length > 1) {
+      var inTree = { 0: true }, count = 1;
+      while (count < st.blocks.length) {
+        var bi = -1, bj = -1, bd = Infinity;
+        for (var i = 0; i < st.blocks.length; i++) {
+          if (!inTree[i]) continue;
+          for (var j = 0; j < st.blocks.length; j++) {
+            if (inTree[j]) continue;
+            var dd = Math.hypot(st.blocks[i].lx - st.blocks[j].lx,
+                                st.blocks[i].ly - st.blocks[j].ly);
+            if (dd < bd) { bd = dd; bi = i; bj = j; }
+          }
+        }
+        if (bj < 0) break;
+        inTree[bj] = true; count++;
+        addLeg('mv', [st.blocks[bi].lx, st.blocks[bi].ly],
+                     [st.blocks[bj].lx, st.blocks[bj].ly]);
+        mvLegs++;
+      }
+    }
+
+    function sum(kind, key) {
+      return Math.round(legs.filter(function (l) { return l.kind === kind; })
+        .reduce(function (acc, l) { return acc + l[key]; }, 0));
+    }
+
+    /* Home runs are two conductors, positive and negative. */
+    var hr2 = sum('homerun', 'len2dFt') * 2, hr3 = sum('homerun', 'len3dFt') * 2;
+    var tr2 = sum('trunk', 'len2dFt'), tr3 = sum('trunk', 'len3dFt');
+    var mv2 = sum('mv', 'len2dFt'), mv3 = sum('mv', 'len3dFt');
+
+    return {
+      ok: true,
+      legs: legs, legCount: legs.length, mvLegs: mvLegs,
+      homerun2dFt: hr2, homerun3dFt: hr3,
+      trunk2dFt: tr2, trunk3dFt: tr3,
+      mv2dFt: mv2, mv3dFt: mv3,
+      total2dFt: hr2 + tr2 + mv2,
+      total3dFt: hr3 + tr3 + mv3,
+      extraFt: (hr3 + tr3 + mv3) - (hr2 + tr2 + mv2),
+      extraPct: (hr2 + tr2 + mv2) > 0
+        ? +(((hr3 + tr3 + mv3) / (hr2 + tr2 + mv2) - 1) * 100).toFixed(2) : 0,
+      trenchDepthFt: num(opts.trenchDepthFt, TRENCH_DEPTH_FT),
+      stepFt: num(opts.stepFt, 10)
+    };
+  }
+
+  /* Trench schedule CSV: per run, plan vs draped, plus a size rollup. */
+  function exportTrenchCSV(res) {
+    var d = (res && res.drape) ? res.drape : drapeConduits();
+    if (!d || !d.ok) { say(d && d.why ? d.why : 'Nothing to drape.'); return false; }
+
+    var rows = [['# Draped conduit schedule \u2014 OMEGA ' + VERSION],
+                ['# step ' + d.stepFt + ' ft, trench depth ' + d.trenchDepthFt + ' ft'],
+                ['# 2D is the plan length the editor reports; 3D follows the ground.'],
+                ['# ' + (LAST && LAST.ok ? stamp(LAST) : 'DEM screening. Not a survey.')],
+                []];
+    rows.push(['run_id', 'label', 'size', 'trenched', 'reported_ft',
+               'plan_2d_ft', 'draped_3d_ft', 'extra_ft', 'extra_pct', 'data_coverage']);
+    d.runs.forEach(function (r) {
+      rows.push([r.id, r.label, r.size, r.trenched ? 'YES' : '',
+                 r.reportedFt == null ? '' : r.reportedFt,
+                 r.len2dFt, r.len3dFt, r.extraFt, r.extraPct,
+                 Math.round(r.coverage * 100) + '%']);
+    });
+
+    rows.push([], ['conductor_size', 'runs', 'plan_2d_ft', 'draped_3d_ft', 'extra_ft']);
+    Object.keys(d.bySize).sort().forEach(function (k) {
+      var e = d.bySize[k];
+      rows.push([k, e.runs, e.ft2, e.ft3, e.extraFt]);
+    });
+
+    if (LAST && LAST.ok && LAST.dcRoute && LAST.dcRoute.ok) {
+      var R = LAST.dcRoute;
+      rows.push([], ['# DC / MV collection, routed and draped']);
+      rows.push(['segment', 'plan_2d_ft', 'draped_3d_ft', 'extra_ft']);
+      rows.push(['home runs (2 conductors)', R.homerun2dFt, R.homerun3dFt, R.homerun3dFt - R.homerun2dFt]);
+      rows.push(['combiner trunks', R.trunk2dFt, R.trunk3dFt, R.trunk3dFt - R.trunk2dFt]);
+      rows.push(['MV collection (MST)', R.mv2dFt, R.mv3dFt, R.mv3dFt - R.mv2dFt]);
+      rows.push(['TOTAL', R.total2dFt, R.total3dFt, R.extraFt]);
+    }
+
+    rows.push([], ['TOTALS', d.runCount + ' runs', d.total2dFt + ' ft plan',
+                   d.total3dFt + ' ft draped', d.extraFt + ' ft extra',
+                   d.extraPct + '%']);
+    if (d.noGeo) {
+      rows.push([], ['# ' + d.noGeo + ' run(s) have no geo anchor and could not be draped.']);
+    }
+    return download(projName() + '_trench-schedule.csv', toCSV(rows), 'text/csv');
+  }
+
+
+  /* ══════════════════════════════════════════════════════════════════
+     25.  DXF SURVEY IMPORT                                 (pack v2.4)
+     ──────────────────────────────────────────────────────────────────
+     Everything above this point runs on the Google Elevation API: a DEM
+     at roughly 10 m posts in the US, 30 m elsewhere. Good enough to
+     decide whether a site is worth pursuing, and stamped as screening
+     on every sheet for exactly that reason.
+
+     This reads the real thing. A surveyor's DXF carries contours at a
+     0.5 or 1 ft interval derived from actual shots, and once that is
+     loaded the same pile schedules and grading volumes stop being
+     screening numbers.
+
+     WHY NO PARSER LIBRARY. DXF is a flat sequence of (group code, value)
+     pairs — the format is verbose but it is not hard, and the subset
+     that matters here is small: LWPOLYLINE and POLYLINE for contours,
+     POINT for survey shots, LINE and 3DFACE for the occasional
+     breakline or TIN export. Vendoring dxf-parser would add a CDN
+     dependency to a single-file offline-capable app to save about two
+     hundred lines. Not a good trade.
+
+     WHY NO DELAUNAY. The pack already has an exact sampler over a
+     regular lattice, and S.terrain is that lattice. So rather than build
+     a second surface type, contours are RESAMPLED onto a grid in the
+     same format e5Sample produces. Everything downstream — projector,
+     screening, piles, draping, the cross-section walker — then works
+     with no changes at all, and a DXF site and a DEM site are the same
+     object to the rest of the code.
+     ══════════════════════════════════════════════════════════════════ */
+
+  /* ---- group-code reader ------------------------------------------- */
+  /* DXF pairs a numeric group code line with a value line, forever. The
+     only structure we need is ENTITIES, and inside it a 0-code starts a
+     new entity. Everything else is a property of the entity in hand. */
+  function parseDXF(text) {
+    var lines = String(text).split(/\r\n|\r|\n/);
+    var ents = [], cur = null, inEntities = false;
+    var i = 0, n = lines.length;
+
+    function push() {
+      if (cur && cur.type) ents.push(cur);
+      cur = null;
+    }
+
+    while (i + 1 < n) {
+      var code = parseInt(lines[i].trim(), 10);
+      var val = lines[i + 1];
+      i += 2;
+      if (isNaN(code)) continue;
+      var v = (val == null) ? '' : String(val).trim();
+
+      if (code === 0) {
+        if (v === 'SECTION') { cur = null; continue; }
+        if (v === 'ENDSEC') { push(); inEntities = false; continue; }
+        if (v === 'EOF') { push(); break; }
+        push();
+        if (inEntities) cur = { type: v, layer: '', z: null, pts: [], flags: 0, elev: null };
+        continue;
+      }
+      if (code === 2) {
+        if (v === 'ENTITIES') { inEntities = true; cur = null; }
+        continue;
+      }
+      if (!cur) continue;
+
+      switch (code) {
+        case 8:  cur.layer = v; break;
+        case 10: cur.pts.push({ x: +v, y: 0, z: null }); break;
+        case 20: if (cur.pts.length) cur.pts[cur.pts.length - 1].y = +v; break;
+        case 30: if (cur.pts.length) cur.pts[cur.pts.length - 1].z = +v; break;
+        case 11: cur.pts.push({ x: +v, y: 0, z: null }); break;   /* LINE end */
+        case 21: if (cur.pts.length) cur.pts[cur.pts.length - 1].y = +v; break;
+        case 31: if (cur.pts.length) cur.pts[cur.pts.length - 1].z = +v; break;
+        case 38: cur.elev = +v; break;                 /* LWPOLYLINE elevation */
+        case 39: if (cur.elev == null) cur.elev = +v; break;      /* thickness */
+        case 70: cur.flags = parseInt(v, 10) || 0; break;
+        default: break;
+      }
+    }
+    push();
+    return ents;
+  }
+
+  /* Elevation of a contour, in the order it is usually reliable:
+     per-vertex z, then the entity elevation, then a number embedded in
+     the layer name — which is a real convention and, per the build map,
+     a legitimate reason to show a preview before committing. */
+  function entityElevation(e) {
+    var zs = e.pts.map(function (p) { return p.z; }).filter(function (z) { return z != null && isFinite(z); });
+    if (zs.length) {
+      var same = zs.every(function (z) { return Math.abs(z - zs[0]) < 1e-6; });
+      return { z: zs[0], src: same ? 'vertex' : 'vertex-3d', varies: !same };
+    }
+    if (e.elev != null && isFinite(e.elev) && e.elev !== 0) return { z: e.elev, src: 'entity', varies: false };
+    var m = String(e.layer).match(/(-?\d+(?:\.\d+)?)/);
+    if (m) return { z: +m[1], src: 'layer-name', varies: false };
+    if (e.elev === 0) return { z: 0, src: 'entity', varies: false };
+    return null;
+  }
+
+  /* ---- inventory, for the preview --------------------------------- */
+  function dxfInventory(text) {
+    var ents = parseDXF(text);
+    var byLayer = {}, usable = 0, noZ = 0;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    var zMin = Infinity, zMax = -Infinity;
+
+    ents.forEach(function (e) {
+      var kind = e.type;
+      if (['LWPOLYLINE', 'POLYLINE', 'LINE', 'POINT', '3DFACE'].indexOf(kind) < 0) return;
+      var pts = e.pts.filter(function (p) { return isFinite(p.x) && isFinite(p.y); });
+      if (!pts.length) return;
+      var ev = entityElevation(e);
+      var L = byLayer[e.layer] || (byLayer[e.layer] = {
+        layer: e.layer, entities: 0, vertices: 0, kinds: {},
+        zMin: Infinity, zMax: -Infinity, zSource: null, withZ: 0, withoutZ: 0
+      });
+      L.entities++; L.vertices += pts.length;
+      L.kinds[kind] = (L.kinds[kind] || 0) + 1;
+      if (ev) {
+        usable++; L.withZ++;
+        L.zSource = L.zSource || ev.src;
+        if (ev.z < L.zMin) L.zMin = ev.z;
+        if (ev.z > L.zMax) L.zMax = ev.z;
+        if (ev.z < zMin) zMin = ev.z;
+        if (ev.z > zMax) zMax = ev.z;
+      } else { noZ++; L.withoutZ++; }
+      pts.forEach(function (p) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      });
+    });
+
+    var layers = Object.keys(byLayer).map(function (k) { return byLayer[k]; })
+      .sort(function (a, b) { return b.vertices - a.vertices; });
+
+    return {
+      entities: ents.length, usableEntities: usable, noElevation: noZ,
+      layers: layers,
+      bbox: isFinite(minX) ? { minX: minX, minY: minY, maxX: maxX, maxY: maxY,
+                               w: maxX - minX, h: maxY - minY } : null,
+      zMinFt: isFinite(zMin) ? zMin : null,
+      zMaxFt: isFinite(zMax) ? zMax : null
+    };
+  }
+
+  /* ---- contours -> the regular lattice S.terrain already speaks ----
+     For each grid node, find the nearest sample at each distinct contour
+     elevation within a search radius, take the two closest DISTINCT
+     levels, and interpolate by distance:
+
+         z = (z1*d2 + z2*d1) / (d1 + d2)
+
+     This is the classic contour-to-grid method and it is right nearly
+     everywhere. Where it is not: inside a contour that closes on itself
+     — a valley floor, a hilltop, the inside of a hairpin — only ONE
+     level is reachable, and the node gets that level, producing a flat
+     patch. That is the same defect flat triangles produce in a Delaunay
+     TIN, it is inherent to interpolating contours without drainage
+     lines, and it is REPORTED rather than hidden: flatFilled tells you
+     how many nodes had only one contour to work with. */
+  function contoursToGrid(ents, opts) {
+    opts = opts || {};
+    var gridN = clamp(num(opts.gridN, 96) | 0, 8, 256);
+    var densify = num(opts.densifyFt, 0);      /* 0 = auto */
+    var searchMul = num(opts.searchMul, 3);
+
+    /* Collect (x,y,z) samples along every elevation-bearing entity. */
+    var S1 = [], levels = {};
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    ents.forEach(function (e) {
+      if (['LWPOLYLINE', 'POLYLINE', 'LINE', 'POINT', '3DFACE'].indexOf(e.type) < 0) return;
+      if (opts.layers && opts.layers.length && opts.layers.indexOf(e.layer) < 0) return;
+      var pts = e.pts.filter(function (p) { return isFinite(p.x) && isFinite(p.y); });
+      if (!pts.length) return;
+      var ev = entityElevation(e);
+      if (!ev) return;
+
+      function add(x, y, z) {
+        if (!isFinite(z)) return;
+        S1.push({ x: x, y: y, z: z });
+        levels[z.toFixed(3)] = 1;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+
+      if (e.type === 'POINT' || pts.length === 1) {
+        add(pts[0].x, pts[0].y, (pts[0].z != null && isFinite(pts[0].z)) ? pts[0].z : ev.z);
+        return;
+      }
+      for (var i = 0; i < pts.length; i++) {
+        var z0 = (ev.varies && pts[i].z != null) ? pts[i].z : ev.z;
+        add(pts[i].x, pts[i].y, z0);
+      }
+    });
+
+    if (S1.length < 8) return { ok: false, why: 'Fewer than 8 usable elevation points in that selection.' };
+    var w = maxX - minX, h = maxY - minY;
+    if (!(w > 0) || !(h > 0)) return { ok: false, why: 'Selected geometry has no extent.' };
+
+    /* Densify long segments so the search finds a contour near every
+       node. Auto step is half a grid cell — finer buys nothing because
+       the grid cannot resolve it. */
+    var cell = Math.max(w, h) / (gridN - 1);
+    var step = densify > 0 ? densify : Math.max(cell / 2, 1e-6);
+    var dense = [];
+    ents.forEach(function (e) {
+      if (['LWPOLYLINE', 'POLYLINE', 'LINE', '3DFACE'].indexOf(e.type) < 0) return;
+      if (opts.layers && opts.layers.length && opts.layers.indexOf(e.layer) < 0) return;
+      var ev = entityElevation(e);
+      if (!ev) return;
+      var pts = e.pts.filter(function (p) { return isFinite(p.x) && isFinite(p.y); });
+      var closed = (e.flags & 1) === 1;
+      var lim = closed ? pts.length : pts.length - 1;
+      for (var i = 0; i < lim; i++) {
+        var a = pts[i], b = pts[(i + 1) % pts.length];
+        if (!a || !b) continue;
+        var za = (ev.varies && a.z != null) ? a.z : ev.z;
+        var zb = (ev.varies && b.z != null) ? b.z : ev.z;
+        var seg = Math.hypot(b.x - a.x, b.y - a.y);
+        var k = Math.floor(seg / step);
+        for (var j = 1; j < k; j++) {
+          var t = j / k;
+          dense.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t,
+                       z: za + (zb - za) * t });
+        }
+      }
+    });
+    var all = S1.concat(dense);
+
+    /* Bucket index so the per-node search stays local.
+
+       The bucket width is deliberately tied to the DATA, not to the
+       output grid. An earlier version used the grid cell, which made the
+       search radius shrink as the grid got finer — so a denser grid
+       reached fewer distinct contour levels and fell back to flat-fill
+       more often. Measured: flat-filled went 14.7% -> 46.3% -> 70.6% as
+       the grid went 64 -> 96 -> 144, which is exactly backwards. Output
+       resolution must not change what the search can see. */
+    var bw = Math.max(Math.max(w, h) / 64, 1e-6);
+    var nbx = Math.max(1, Math.ceil(w / bw) + 1), nby = Math.max(1, Math.ceil(h / bw) + 1);
+    var buckets = {};
+    all.forEach(function (p) {
+      var cx = clamp(Math.floor((p.x - minX) / bw), 0, nbx - 1);
+      var cy = clamp(Math.floor((p.y - minY) / bw), 0, nby - 1);
+      var k = cy * nbx + cx;
+      (buckets[k] || (buckets[k] = [])).push(p);
+    });
+
+    /* Search out to a physical radius of a few bucket widths, capped so a
+       node in a data hole gives up rather than scanning the whole site. */
+    var maxRing = Math.max(3, Math.ceil(searchMul) + 1);
+    var samples = [], flatFilled = 0, unresolved = 0;
+    var dx = w / (gridN - 1), dy = h / (gridN - 1);
+
+    for (var r = 0; r < gridN; r++) {
+      for (var c = 0; c < gridN; c++) {
+        var gx = minX + c * dx, gy = minY + r * dy;
+        var c0 = clamp(Math.floor((gx - minX) / bw), 0, nbx - 1);
+        var r0 = clamp(Math.floor((gy - minY) / bw), 0, nby - 1);
+
+        /* nearest distance per distinct elevation */
+        var best = {}, found = 0;
+        for (var ring = 0; ring <= maxRing && found < 400; ring++) {
+          for (var ddx = -ring; ddx <= ring; ddx++) {
+            for (var ddy = -ring; ddy <= ring; ddy++) {
+              if (ring > 0 && Math.max(Math.abs(ddx), Math.abs(ddy)) !== ring) continue;
+              var cx2 = c0 + ddx, cy2 = r0 + ddy;
+              if (cx2 < 0 || cy2 < 0 || cx2 >= nbx || cy2 >= nby) continue;
+              var arr = buckets[cy2 * nbx + cx2];
+              if (!arr) continue;
+              for (var q = 0; q < arr.length; q++) {
+                var p = arr[q];
+                var d = Math.hypot(p.x - gx, p.y - gy);
+                var key = p.z.toFixed(3);
+                if (best[key] == null || d < best[key]) { best[key] = d; }
+                found++;
+              }
+            }
+          }
+          /* Stop as soon as two distinct levels are in hand AND one more
+             ring has been swept past the first hit, so the second level
+             is the genuinely nearest one rather than whichever bucket
+             happened to be scanned first. */
+          if (Object.keys(best).length >= 2 && ring >= 2) break;
+        }
+
+        var keys = Object.keys(best);
+        var z;
+        if (!keys.length) { unresolved++; samples.push(null); continue; }
+        if (keys.length === 1) {
+          z = +keys[0];
+          flatFilled++;
+        } else {
+          keys.sort(function (a, b) { return best[a] - best[b]; });
+          var z1 = +keys[0], d1 = best[keys[0]];
+          var z2 = +keys[1], d2 = best[keys[1]];
+          var den = d1 + d2;
+          z = den > 1e-9 ? (z1 * d2 + z2 * d1) / den : z1;
+        }
+        samples.push({ gx: gx, gy: gy, z: z, row: r, col: c });
+      }
+    }
+
+    return {
+      ok: true,
+      samples: samples, gridN: gridN,
+      bbox: { minX: minX, minY: minY, maxX: maxX, maxY: maxY, w: w, h: h },
+      cellFt: cell, densifyFt: step,
+      contourPoints: S1.length, densifiedPoints: dense.length,
+      levels: Object.keys(levels).length,
+      flatFilled: flatFilled, unresolved: unresolved,
+      flatPct: +(100 * flatFilled / (gridN * gridN)).toFixed(1)
+    };
+  }
+
+  /* ---- write the grid into S.terrain ------------------------------
+     Produces exactly the object e5Sample produces, so nothing else in
+     the pack — or in the base file's terrain layer — needs to know the
+     surface came from a survey rather than the DEM. */
+  function applyDXFTerrain(grid, opts) {
+    opts = opts || {};
+    if (!grid || !grid.ok) return { ok: false, why: grid && grid.why };
+
+    /* The DXF is in its own coordinate system (usually state plane or
+       UTM, in feet or metres). Anchor it: the caller supplies the lat/lng
+       the survey origin corresponds to, or we reuse the existing terrain
+       origin so an imported survey lands on the same site as the DEM. */
+    var T0 = terrain();
+    var lat0 = num(opts.lat0, T0 ? T0.lat0 : NaN);
+    var lng0 = num(opts.lng0, T0 ? T0.lng0 : NaN);
+    if (!isFinite(lat0) || !isFinite(lng0)) {
+      try {
+        var ms = _liveMapState();
+        if (ms) { lat0 = ms.lat; lng0 = ms.lng; }
+      } catch (e) {}
+    }
+    if (!isFinite(lat0)) {
+      return { ok: false, why: 'No site origin. Sample terrain once, or place the map, so the survey has somewhere to land.' };
+    }
+
+    var unitToFt = num(opts.unitToFt, 1);      /* 3.28084 if the DXF is metric */
+    var fLng = ftPerDegLng(lat0);
+    var bb = grid.bbox;
+    var out = [];
+
+    grid.samples.forEach(function (s) {
+      if (!s) return;
+      /* Survey coordinates are relative to the data's own south-west
+         corner, then treated as feet east/north of the site origin. */
+      var xFt = (s.gx - bb.minX) * unitToFt;
+      var yFt = (s.gy - bb.minY) * unitToFt;
+      out.push({
+        x: xFt, y: yFt, zFt: s.z * unitToFt,
+        row: s.row, col: s.col, inside: true,
+        lat: lat0 + yFt / FT_PER_DEG_LAT,
+        lng: lng0 + xFt / fLng
+      });
+    });
+
+    if (out.length < 8) return { ok: false, why: 'Grid produced too few points.' };
+
+    var zs = out.map(function (p) { return p.zFt; });
+    var zMin = Math.min.apply(null, zs), zMax = Math.max.apply(null, zs);
+    var wFt = bb.w * unitToFt, hFt = bb.h * unitToFt;
+
+    var prev = T0;
+    S.terrain = {
+      samples: out, n: out.length, gridN: grid.gridN, nAll: out.length,
+      lat0: lat0, lng0: lng0,
+      zMinFt: zMin, zMaxFt: zMax,
+      zMeanFt: zs.reduce(function (a, b) { return a + b; }, 0) / zs.length,
+      reliefFt: zMax - zMin,
+      spacingFt: Math.max(wFt, hFt) / Math.max(1, grid.gridN - 1),
+      areaFt2: wFt * hFt,
+      extent: 'dxf',
+      source: 'dxf-survey',
+      dxf: {
+        levels: grid.levels,
+        contourPoints: grid.contourPoints,
+        flatFilled: grid.flatFilled,
+        flatPct: grid.flatPct,
+        unresolved: grid.unresolved,
+        unitToFt: unitToFt
+      },
+      fetchedAt: Date.now()
+    };
+
+    try { if (typeof e5Compute === 'function') e5Compute(); } catch (e) {}
+    try { if (typeof tlRender === 'function') tlRender(); } catch (e) {}
+
+    return {
+      ok: true,
+      points: out.length,
+      spacingFt: +S.terrain.spacingFt.toFixed(1),
+      reliefFt: +(zMax - zMin).toFixed(1),
+      extentFt: { w: Math.round(wFt), h: Math.round(hFt) },
+      acres: +((wFt * hFt) / 43560).toFixed(1),
+      replaced: !!prev,
+      flatPct: grid.flatPct
+    };
+  }
+
   /* ══════════════════════════════════════════════════════════════════
      14.  ORCHESTRATOR
      ══════════════════════════════════════════════════════════════════ */
@@ -87954,6 +88735,12 @@ window._crmToastModal=_crmToastModal;
        read an analysis that had already been run. */
     try { persistToShape(sh, LAST); } catch (e) {}
 
+    /* Route and drape the DC collection. Needs the strings, so it runs
+       after them; needs the field, which analyze() already holds. */
+    try { LAST.dcRoute = routeDC(LAST, opts); }
+    catch (e) { LAST.dcRoute = { ok: false, why: (e && e.message) || 'failed' }; }
+    try { LAST.drape = drapeConduits(opts); } catch (e) { LAST.drape = null; }
+
     /* Colour the canvas. This is the point of the whole exercise: a
        count of rejected tables does not tell you they are all in one
        corner, and that is what decides whether you regrade or move the
@@ -88037,6 +88824,19 @@ window._crmToastModal=_crmToastModal;
         medianDzFt: res.backtrack.medianDzFt,
         worstDzFt: res.backtrack.worstDzFt,
         maxCorrectionDeg: res.backtrack.maxCorrectionDeg
+      } : null,
+      collection: res.dcRoute && res.dcRoute.ok ? {
+        total2dFt: res.dcRoute.total2dFt,
+        total3dFt: res.dcRoute.total3dFt,
+        extraFt: res.dcRoute.extraFt,
+        mvLegs: res.dcRoute.mvLegs
+      } : null,
+      trench: res.drape && res.drape.ok ? {
+        runs: res.drape.runCount,
+        total2dFt: res.drape.total2dFt,
+        total3dFt: res.drape.total3dFt,
+        extraFt: res.drape.extraFt,
+        noGeo: res.drape.noGeo
       } : null,
       dc: res.strings ? {
         modules: res.strings.totalModules,
@@ -88151,6 +88951,17 @@ window._crmToastModal=_crmToastModal;
     h += '<h4>Surface</h4>'
       + row('Sampler', fld.kind === 'tin' ? 'grid TIN' : 'IDW fallback', fld.kind === 'tin' ? 'g' : 'a')
       + row('Samples \u00b7 spacing', fld.count + ' \u00b7 ' + Math.round(fld.spacingFt) + ' ft');
+    try {
+      var _T = terrain();
+      if (_T && _T.source === 'dxf-survey') {
+        h += row('Source', 'DXF survey', 'g');
+        if (_T.dxf && _T.dxf.flatPct > 0) {
+          h += row('Flat-filled nodes', _T.dxf.flatPct + '%', _T.dxf.flatPct > 10 ? 'a' : 'g');
+        }
+      } else {
+        h += row('Source', 'public DEM', 'a');
+      }
+    } catch (e) {}
     if (fld.kind === 'tin') {
       h += row('Lattice', fld.gridR + ' \u00d7 ' + fld.gridC)
         + row('Surface coverage', Math.round(fld.coverage * 100) + '%',
@@ -88271,10 +89082,49 @@ window._crmToastModal=_crmToastModal;
         + row('Per table', st.modulesPerTable)
         + row('Strings', st.stringCount.toLocaleString() + ' \u00d7 ' + st.modulesPerString)
         + row('Partial strings', st.partialStrings, st.partialStrings ? 'a' : 'g')
-        + row('Combiners', st.combinerCount)
+        + row('Combiners', st.combinerCount + ' \u00b7 ' + st.avgStringsPerCombiner + ' strings ea')
+        + row('Combiner block', st.medianCombinerSpanFt + ' ft span')
         + row('Inverter blocks', st.blockCount)
         + row('DC cable', st.totalDcFt.toLocaleString() + ' ft')
         + row('Cable intensity', st.dcPerKw + ' ft/kW');
+    }
+
+    var dr = res.dcRoute, dp = res.drape;
+    if ((dr && dr.ok) || (dp && dp.ok)) {
+      h += '<h4>Trenching \u00b7 draped length</h4>';
+      if (dr && dr.ok) {
+        h += row('DC home runs', dr.homerun2dFt.toLocaleString() + ' \u2192 '
+                 + dr.homerun3dFt.toLocaleString() + ' ft')
+          + row('Combiner trunks', dr.trunk2dFt.toLocaleString() + ' \u2192 '
+                 + dr.trunk3dFt.toLocaleString() + ' ft')
+          + row('MV collection (MST)', dr.mv2dFt.toLocaleString() + ' \u2192 '
+                 + dr.mv3dFt.toLocaleString() + ' ft')
+          + row('Collection total', dr.total3dFt.toLocaleString() + ' ft',
+                'g')
+          + row('Terrain adds', '+' + dr.extraFt.toLocaleString() + ' ft ('
+                 + dr.extraPct + '%)', dr.extraPct > 1 ? 'a' : 'g');
+      }
+      if (dp && dp.ok && dp.runCount) {
+        h += row('Drawn conduit runs', dp.runCount)
+          + row('Plan \u2192 draped', dp.total2dFt.toLocaleString() + ' \u2192 '
+                 + dp.total3dFt.toLocaleString() + ' ft')
+          + row('Terrain adds', '+' + dp.extraFt.toLocaleString() + ' ft ('
+                 + dp.extraPct + '%)', dp.extraPct > 1 ? 'a' : 'g');
+        if (dp.noGeo) {
+          h += '<div class="note">' + dp.noGeo + ' run(s) have no geo anchor, so they '
+             + 'cannot be draped and are excluded from these totals.</div>';
+        }
+      }
+      h += '<div class="note">The editor reports PLAN length \u2014 pxLen / pxPerFt, the '
+         + 'distance across the map. Draped length follows the ground at a '
+         + (dp && dp.stepFt ? dp.stepFt : 10) + ' ft step. The difference is conductor '
+         + 'somebody buys.</div>';
+      if (st && st.dcPerKw > 45) {
+        h += '<div class="note">Cable intensity is ' + st.dcPerKw + ' ft/kW against a utility '
+           + 'norm of roughly 15\u201330. Combiners are serving strings spread further apart '
+           + 'than the layout wants \u2014 check stringsPerCombiner and the module count per '
+           + 'table before quoting this.</div>';
+      }
     }
 
     h += '<div class="note">' + esc(stamp(res)) + '</div>';
@@ -88286,6 +89136,8 @@ window._crmToastModal=_crmToastModal;
       + '<button data-x="string">Stringing CSV</button>'
       + '<button data-x="pvsyst">PVsyst scene</button>'
       + '<button data-x="shp">Shapefile ZIP</button>'
+      + '<button class="wide" data-x="trench">Trench schedule CSV</button>'
+      + '<button class="wide" data-x="dxf">Import survey from .dxf\u2026</button>'
       + '<button class="wide" data-x="import">Import boundary from .shp</button>'
       + '</div>';
 
@@ -88313,6 +89165,8 @@ window._crmToastModal=_crmToastModal;
         else if (k === 'string') exportStringCSV(LAST);
         else if (k === 'pvsyst') exportPVsyst(LAST);
         else if (k === 'shp') exportShapefileZip(LAST, 'tables');
+        else if (k === 'trench') exportTrenchCSV(LAST);
+        else if (k === 'dxf') dxfPrompt();
         else if (k === 'import') pickSHP();
       };
     });
@@ -88427,6 +89281,166 @@ window._crmToastModal=_crmToastModal;
     };
   }
 
+
+  /* ---- DXF import UI ------------------------------------------------
+     The preview is not decoration. Contour elevation lives in the vertex
+     z, the entity elevation, or a number in the LAYER NAME depending on
+     who exported it, and picking the wrong layers silently produces a
+     surface that looks plausible and is wrong. Show what was found,
+     which layers carry elevation and from where, and let the user choose
+     before anything replaces the site terrain. */
+  function dxfPrompt() {
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = '.dxf,.txt';
+    inp.onchange = function () {
+      var f = inp.files && inp.files[0];
+      if (!f) return;
+      var fr = new FileReader();
+      fr.onload = function () {
+        var inv, ents;
+        try {
+          ents = parseDXF(fr.result);
+          inv = dxfInventory(fr.result);
+        } catch (e) { say('Could not read that DXF: ' + (e && e.message)); return; }
+        dxfDialog(f.name, ents, inv);
+      };
+      fr.onerror = function () { say('Could not read the file.'); };
+      fr.readAsText(f);
+    };
+    inp.click();
+  }
+
+  function dxfDialog(name, ents, inv) {
+    var d = document.getElementById('omega-dxf');
+    if (d) d.remove();
+    d = document.createElement('div');
+    d.id = 'omega-dxf';
+    d.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);'
+      + 'width:min(560px,94vw);max-height:84vh;overflow:auto;background:#1b1b1c;'
+      + 'border:1px solid #3C3C3C;border-radius:10px;padding:14px;z-index:100000;'
+      + 'box-shadow:0 20px 60px rgba(0,0,0,.7);'
+      + 'font-family:"IBM Plex Mono",ui-monospace,monospace;color:#E2EEF9;font-size:11px';
+
+    if (!inv.layers.length || !inv.bbox) {
+      d.innerHTML = '<div style="color:#C86A6A">No usable geometry found in ' + esc(name)
+        + '. Expected LWPOLYLINE, POLYLINE, LINE, POINT or 3DFACE inside an ENTITIES section.</div>'
+        + '<button id="dxf-x" style="width:100%;margin-top:11px;padding:7px;background:#252526;'
+        + 'border:1px solid #3C3C3C;color:#E2EEF9;border-radius:5px;font:inherit;cursor:pointer">Close</button>';
+      document.body.appendChild(d);
+      document.getElementById('dxf-x').onclick = function () { d.remove(); };
+      return;
+    }
+
+    var h = '<div style="font-size:9.5px;letter-spacing:.07em;color:#2FB54A;font-weight:700;'
+      + 'margin-bottom:9px">IMPORT SURVEY \u2014 ' + esc(name) + '</div>';
+
+    h += '<div style="color:#8FA3B8;line-height:1.6;margin-bottom:10px">'
+      + inv.entities.toLocaleString() + ' entities, ' + inv.usableEntities.toLocaleString()
+      + ' with elevation'
+      + (inv.noElevation ? ', <b style="color:#D9A441">' + inv.noElevation + ' without</b>' : '')
+      + '. Extent ' + Math.round(inv.bbox.w).toLocaleString() + ' \u00d7 '
+      + Math.round(inv.bbox.h).toLocaleString() + ' units, elevation '
+      + (inv.zMinFt == null ? '?' : Math.round(inv.zMinFt)) + '\u2013'
+      + (inv.zMaxFt == null ? '?' : Math.round(inv.zMaxFt)) + '.</div>';
+
+    h += '<div style="color:#8FA3B8;margin-bottom:5px">Layers to use as terrain</div>'
+      + '<div style="max-height:190px;overflow:auto;border:1px solid #2e2e30;border-radius:5px;padding:5px">';
+    inv.layers.forEach(function (L, i) {
+      var kinds = Object.keys(L.kinds).map(function (k) { return k + '\u00d7' + L.kinds[k]; }).join(' ');
+      var on = L.withZ > 0;
+      h += '<label style="display:flex;gap:7px;align-items:flex-start;padding:3px 2px;cursor:pointer">'
+        + '<input type="checkbox" data-lyr="' + esc(L.layer) + '"' + (on ? ' checked' : '')
+        + ' style="margin-top:2px">'
+        + '<span style="flex:1"><b style="color:#E2EEF9">' + (esc(L.layer) || '(no layer)') + '</b>'
+        + '<span style="color:#7d8a97"> \u00b7 ' + L.vertices.toLocaleString() + ' verts \u00b7 '
+        + esc(kinds) + '</span><br>'
+        + '<span style="color:' + (L.withZ ? '#8FA3B8' : '#C86A6A') + ';font-size:9.5px">'
+        + (L.withZ
+            ? ('elevation ' + Math.round(L.zMin) + '\u2013' + Math.round(L.zMax)
+               + ' from <b>' + L.zSource + '</b>')
+            : 'no elevation found')
+        + '</span></span></label>';
+    });
+    h += '</div>';
+
+    h += '<div style="display:flex;gap:9px;margin-top:10px">'
+      + '<div style="flex:1"><label style="color:#8FA3B8;display:block;margin-bottom:3px">Grid resolution</label>'
+      + '<select id="dxf-grid" style="width:100%;padding:6px;background:#252526;border:1px solid #3C3C3C;'
+      + 'color:#E2EEF9;border-radius:5px;font:inherit">'
+      + '<option value="64">64 \u00d7 64 (fast)</option>'
+      + '<option value="96" selected>96 \u00d7 96</option>'
+      + '<option value="144">144 \u00d7 144</option>'
+      + '<option value="200">200 \u00d7 200 (slow)</option></select></div>'
+      + '<div style="flex:1"><label style="color:#8FA3B8;display:block;margin-bottom:3px">Drawing units</label>'
+      + '<select id="dxf-unit" style="width:100%;padding:6px;background:#252526;border:1px solid #3C3C3C;'
+      + 'color:#E2EEF9;border-radius:5px;font:inherit">'
+      + '<option value="1" selected>feet</option>'
+      + '<option value="3.280839895">metres</option></select></div></div>';
+
+    h += '<div id="dxf-out" style="margin-top:10px"></div>'
+      + '<div style="display:flex;gap:7px;margin-top:11px">'
+      + '<button id="dxf-prev" style="flex:1;padding:8px;background:#252526;border:1px solid #3C3C3C;'
+      + 'color:#E2EEF9;border-radius:5px;font:inherit;font-weight:700;cursor:pointer">Preview grid</button>'
+      + '<button id="dxf-go" style="flex:1;padding:8px;background:rgba(47,181,74,.16);'
+      + 'border:1px solid rgba(47,181,74,.45);color:#2FB54A;border-radius:5px;font:inherit;'
+      + 'font-weight:700;cursor:pointer">Replace site terrain</button>'
+      + '<button id="dxf-x" style="padding:8px 12px;background:#252526;border:1px solid #3C3C3C;'
+      + 'color:#E2EEF9;border-radius:5px;font:inherit;cursor:pointer">Cancel</button></div>';
+
+    d.innerHTML = h;
+    document.body.appendChild(d);
+    document.getElementById('dxf-x').onclick = function () { d.remove(); };
+
+    function chosen() {
+      return Array.prototype.map.call(d.querySelectorAll('[data-lyr]:checked'), function (c) {
+        return c.getAttribute('data-lyr');
+      });
+    }
+    function build() {
+      return contoursToGrid(ents, {
+        gridN: +document.getElementById('dxf-grid').value,
+        layers: chosen()
+      });
+    }
+    function report(g) {
+      var out = document.getElementById('dxf-out');
+      if (!g.ok) { out.innerHTML = '<div style="color:#C86A6A">' + esc(g.why) + '</div>'; return null; }
+      var u = +document.getElementById('dxf-unit').value;
+      out.innerHTML = '<div style="color:#8FA3B8;line-height:1.65">'
+        + g.levels + ' distinct elevations \u00b7 ' + g.contourPoints.toLocaleString()
+        + ' survey points + ' + g.densifiedPoints.toLocaleString() + ' densified \u00b7 grid cell '
+        + (g.cellFt * u).toFixed(1) + ' ft'
+        + (g.flatFilled
+            ? ('<br><b style="color:#D9A441">' + g.flatPct + '% of nodes had only one contour '
+               + 'in reach</b> and were filled flat at that elevation \u2014 valley floors, hilltops '
+               + 'and the inside of hairpins. Interpolating contours without drainage lines '
+               + 'cannot do better; a Delaunay TIN produces the same flat patches.')
+            : '')
+        + (g.unresolved ? '<br><b style="color:#C86A6A">' + g.unresolved
+             + ' nodes found no contour at all.</b>' : '')
+        + '</div>';
+      return g;
+    }
+
+    document.getElementById('dxf-prev').onclick = function () { report(build()); };
+    document.getElementById('dxf-go').onclick = function () {
+      var g = report(build());
+      if (!g) return;
+      var r = applyDXFTerrain(g, { unitToFt: +document.getElementById('dxf-unit').value });
+      if (!r.ok) {
+        document.getElementById('dxf-out').innerHTML =
+          '<div style="color:#C86A6A">' + esc(r.why) + '</div>';
+        return;
+      }
+      say('Survey imported: ' + r.points.toLocaleString() + ' grid points at '
+        + r.spacingFt + ' ft over ' + r.acres + ' acres, ' + r.reliefFt + ' ft relief.'
+        + (r.replaced ? ' The DEM surface was replaced.' : ''));
+      d.remove();
+      try { render(analyze()); } catch (e) {}
+    };
+  }
+
   /* ══════════════════════════════════════════════════════════════════
      16.  INSTALL
      ══════════════════════════════════════════════════════════════════ */
@@ -88530,6 +89544,15 @@ window._crmToastModal=_crmToastModal;
     },
 
     /* v2 */
+    parseDXF: parseDXF,
+    dxfInventory: dxfInventory,
+    contoursToGrid: contoursToGrid,
+    applyDXF: applyDXFTerrain,
+    importDXF: dxfPrompt,
+    drape: drapeConduits,
+    drapeLine: drapeLatLng,
+    routeDC: routeDC,
+    exportTrench: function () { return exportTrenchCSV(LAST); },
     paint: paintTables,
     paintModes: PAINT_MODES,
     get paintMode() { return _paintMode; },
