@@ -85161,10 +85161,10 @@ window._crmToastModal=_crmToastModal;
 </script>
 <!-- OMEGA FIX PACK END -->
 
-<!-- OMEGA TERRAIN + ELECTRICAL PACK v2.1 BEGIN -->
+<!-- OMEGA TERRAIN + ELECTRICAL PACK v2.2 BEGIN -->
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
-   OMEGA TERRAIN + ELECTRICAL PACK  ·  v2.1
+   OMEGA TERRAIN + ELECTRICAL PACK  ·  v2.2
    ──────────────────────────────────────────────────────────────────────────
    Closes the gap between the terrain OMEGA already samples and the
    flat-ground layout engine that never reads it.
@@ -85199,6 +85199,8 @@ window._crmToastModal=_crmToastModal;
          tracker axis fix; capacity iteration; cross-section tool
    v2.1  terrain-aware backtracking; per-pile local relief probe ring;
          swept-edge clearance at stow rotation
+   v2.2  constraint colouring on the canvas; results persisted onto the
+         shape so they survive a save and a reload
 
    HONESTY NOTE, carried from the base file: the elevation source is a DEM
    (about 10 m posts via 3DEP, 30 m elsewhere), not a survey. Reveals and
@@ -85211,7 +85213,7 @@ window._crmToastModal=_crmToastModal;
   'use strict';
 
   var TAG = '[omega-terrain]';
-  var VERSION = '2.1';
+  var VERSION = '2.2';
 
   /* ══════════════════════════════════════════════════════════════════
      0.  UTILITIES
@@ -87599,6 +87601,237 @@ window._crmToastModal=_crmToastModal;
     };
   }
 
+
+  /* ══════════════════════════════════════════════════════════════════
+     22.  CONSTRAINT COLOURING                              (pack v2.2)
+     ──────────────────────────────────────────────────────────────────
+     Everything above this section produces numbers. A panel can tell you
+     663 tables were rejected; it cannot tell you they are all in the
+     north-east corner, which is the thing that decides whether you
+     regrade a corner or move the fence.
+
+     HOW IT SURVIVES A RE-RENDER. The base renderer rebuilds every rect
+     from scratch, and it is re-run by settleRender, _geoReprojectAll,
+     pushHist and the __omegaGround wrapper — double renders are routine.
+     Painting the rects once would work until the first pan.
+
+     So the status is written onto the TABLE OBJECTS (t._omegaPaint) and
+     _derRenderAutoLayout is wrapped to apply it after the base renderer
+     has drawn. Re-rendering ten times gives the same colours as
+     rendering once, and because the tag rides on the table it also
+     survives a project save.
+
+     MODES. Each answers a different question:
+       status     is this table buildable, and if not, why
+       slope      how close to the limit is it, as a continuous ramp
+       reveal     which piles need cut and which need fill — two
+                  colours, two meanings, both actionable by a civil
+                  engineer, per the build map
+       clearance  where structure meets ground
+       off        hand the array back to the base renderer untouched
+     ══════════════════════════════════════════════════════════════════ */
+
+  var PAINT_MODES = ['off', 'status', 'slope', 'reveal', 'clearance'];
+  var _paintMode = 'status';
+
+  var PAINT_COLORS = {
+    ok:        { fill: 'rgba(47,181,74,.55)',  stroke: '#1F7A33', label: 'buildable' },
+    along:     { fill: 'rgba(229,83,75,.62)',  stroke: '#A5342E', label: 'axis slope' },
+    cross:     { fill: 'rgba(217,164,65,.62)', stroke: '#8A6520', label: 'cross slope' },
+    warp:      { fill: 'rgba(176,131,240,.62)',stroke: '#6B44A8', label: 'twist' },
+    noData:    { fill: 'rgba(110,118,129,.5)', stroke: '#484F58', label: 'no data' },
+    cut:       { fill: 'rgba(229,83,75,.62)',  stroke: '#A5342E', label: 'needs cut' },
+    fill:      { fill: 'rgba(88,166,255,.62)', stroke: '#2C6FBF', label: 'needs fill' },
+    both:      { fill: 'rgba(176,131,240,.62)',stroke: '#6B44A8', label: 'cut and fill' },
+    strike:    { fill: 'rgba(229,83,75,.7)',   stroke: '#A5342E', label: 'grade strike' },
+    swept:     { fill: 'rgba(217,164,65,.66)', stroke: '#8A6520', label: 'swept edge' },
+    relief:    { fill: 'rgba(176,131,240,.55)',stroke: '#6B44A8', label: 'local relief' },
+    unknown:   { fill: 'rgba(37,99,235,.55)',  stroke: '#1D4ED8', label: 'not analysed' }
+  };
+
+  /* Continuous green -> amber -> red by fraction of the limit used. */
+  function rampColor(frac) {
+    var f = clamp(num(frac, 0), 0, 1.35);
+    var r, g, b;
+    if (f <= 0.5) {                       /* green -> amber */
+      var u = f / 0.5;
+      r = Math.round(47 + (217 - 47) * u);
+      g = Math.round(181 + (164 - 181) * u);
+      b = Math.round(74 + (65 - 74) * u);
+    } else {                              /* amber -> red */
+      var v = clamp((f - 0.5) / 0.5, 0, 1);
+      r = Math.round(217 + (229 - 217) * v);
+      g = Math.round(164 + (83 - 164) * v);
+      b = Math.round(65 + (75 - 65) * v);
+    }
+    return { fill: 'rgba(' + r + ',' + g + ',' + b + ',.6)',
+             stroke: 'rgb(' + Math.round(r * .65) + ',' + Math.round(g * .65) + ',' + Math.round(b * .65) + ')' };
+  }
+
+  /* Write paint tags onto the table objects of the analysed array. */
+  function paintTables(res, mode) {
+    res = res || LAST;
+    mode = mode || _paintMode;
+    if (!res || !res.ok) return 0;
+
+    var sh = null;
+    try {
+      sh = (S.shapes || []).filter(function (x) { return x.id === res.shapeId; })[0];
+    } catch (e) {}
+    if (!sh || !sh.tables) return 0;
+
+    /* Clear first: a table that was rejected last run and is buildable
+       now must lose its old colour, and modes disagree about which
+       tables they even mention. */
+    sh.tables.forEach(function (t) { t._omegaPaint = null; });
+    if (mode === 'off') { redraw(); return 0; }
+
+    var R = rackTuned(res.presetKey);
+    var idxOf = {};
+    res.kept.forEach(function (t, i) { idxOf[i] = t; });
+
+    /* status: reason-coded */
+    if (mode === 'status') {
+      res.kept.forEach(function (t) { t._omegaPaint = PAINT_COLORS.ok; });
+      res.rejected.forEach(function (r) {
+        var w = r.why || '';
+        var key = w.indexOf('axis') === 0 ? 'along'
+                : w.indexOf('cross') === 0 ? 'cross'
+                : w.indexOf('twist') === 0 ? 'warp' : 'noData';
+        r.t._omegaPaint = PAINT_COLORS[key];
+      });
+    }
+
+    /* slope: continuous, as a fraction of whichever limit binds hardest */
+    else if (mode === 'slope') {
+      var limA = num(res.screen.limitAlongPct, R.slopeAlongPct);
+      var limC = num(res.screen.limitCrossPct, R.slopeCrossPct);
+      sh.tables.forEach(function (t) {
+        var s = t._slope;
+        if (!s) { t._omegaPaint = PAINT_COLORS.noData; return; }
+        var fa = limA > 0 ? Math.abs(s.slopeAlongPct) / limA : 0;
+        var fc = limC > 0 ? Math.abs(s.slopeCrossPct) / limC : 0;
+        var c = rampColor(Math.max(fa, fc));
+        t._omegaPaint = { fill: c.fill, stroke: c.stroke,
+                          label: Math.max(fa, fc).toFixed(2) + '\u00d7 limit' };
+      });
+    }
+
+    /* reveal: cut vs fill, the two-colours-two-meanings view */
+    else if (mode === 'reveal') {
+      if (!res.piles) return 0;
+      var byTable = {};
+      res.piles.piles.forEach(function (p) {
+        var e = byTable[p.tableIdx] || (byTable[p.tableIdx] = { cut: 0, fill: 0 });
+        if (p.status === 'cut') e.cut++;
+        else if (p.status === 'fill') e.fill++;
+      });
+      res.kept.forEach(function (t, i) {
+        var e = byTable[i];
+        if (!e) { t._omegaPaint = PAINT_COLORS.ok; return; }
+        t._omegaPaint = (e.cut && e.fill) ? PAINT_COLORS.both
+                      : e.cut ? PAINT_COLORS.cut
+                      : e.fill ? PAINT_COLORS.fill
+                      : PAINT_COLORS.ok;
+      });
+    }
+
+    /* clearance: where structure meets ground */
+    else if (mode === 'clearance') {
+      var c = res.collisions;
+      if (!c) return 0;
+      res.kept.forEach(function (t) { t._omegaPaint = PAINT_COLORS.ok; });
+      c.localRelief.forEach(function (x) {
+        if (idxOf[x.tableIdx]) idxOf[x.tableIdx]._omegaPaint = PAINT_COLORS.relief;
+      });
+      c.swept.forEach(function (x) {
+        if (idxOf[x.tableIdx]) idxOf[x.tableIdx]._omegaPaint = PAINT_COLORS.swept;
+      });
+      /* strikes and buried piles are hard stops, so they win the colour */
+      c.strikes.forEach(function (x) {
+        if (idxOf[x.idx]) idxOf[x.idx]._omegaPaint = PAINT_COLORS.strike;
+      });
+      c.buried.forEach(function (x) {
+        if (idxOf[x.tableIdx]) idxOf[x.tableIdx]._omegaPaint = PAINT_COLORS.strike;
+      });
+    }
+
+    var n = 0;
+    sh.tables.forEach(function (t) { if (t._omegaPaint) n++; });
+    _paintMode = mode;
+    redraw();
+    return n;
+  }
+
+  function redraw() {
+    try { if (typeof settleRender === 'function') { settleRender(); return; } } catch (e) {}
+    try { if (typeof renderAll === 'function') { renderAll(); return; } } catch (e) {}
+    try { if (typeof render === 'function' && render.length === 0) render(); } catch (e) {}
+  }
+
+  /* Wrap the array renderer so paint is re-applied after every rebuild. */
+  function installPainter() {
+    var orig = window._derRenderAutoLayout;
+    if (typeof orig !== 'function' || orig.__omegaPaint) return false;
+
+    var wrapped = function (g, sh) {
+      var r = orig.call(this, g, sh);
+      try {
+        if (!sh || !sh.tables || !sh.tables.length) return r;
+        var painted = false;
+        for (var i = 0; i < sh.tables.length; i++) {
+          if (sh.tables[i]._omegaPaint) { painted = true; break; }
+        }
+        if (!painted) return r;
+
+        /* The base renderer appends one rect.o2-tbl per table, in table
+           order, so index alignment holds. Query inside THIS shape's
+           group only — several arrays can share the canvas. */
+        var rects = g.querySelectorAll ? g.querySelectorAll('rect.o2-tbl') : null;
+        if (!rects || rects.length !== sh.tables.length) return r;
+        for (var j = 0; j < rects.length; j++) {
+          var p = sh.tables[j]._omegaPaint;
+          if (!p) continue;
+          rects[j].setAttribute('fill', p.fill);
+          rects[j].setAttribute('stroke', p.stroke);
+          rects[j].setAttribute('stroke-width', '0.5');
+        }
+      } catch (e) {}
+      return r;
+    };
+    wrapped.__omegaPaint = true;
+    window._derRenderAutoLayout = wrapped;
+    return true;
+  }
+
+  /* Legend for whichever mode is showing. */
+  function legendFor(mode, res) {
+    var keys = mode === 'status'    ? ['ok', 'along', 'cross', 'warp', 'noData']
+             : mode === 'reveal'    ? ['ok', 'cut', 'fill', 'both']
+             : mode === 'clearance' ? ['ok', 'relief', 'swept', 'strike']
+             : null;
+    if (mode === 'slope') {
+      var stops = [0, .25, .5, .75, 1], sw = '';
+      stops.forEach(function (f) {
+        sw += '<span style="display:inline-block;width:26px;height:9px;background:'
+           + rampColor(f).fill + '"></span>';
+      });
+      return '<div class="note" style="margin-top:7px">' + sw
+        + '<div style="display:flex;justify-content:space-between;width:130px;margin-top:2px">'
+        + '<span>0</span><span>at limit</span></div>'
+        + 'Fraction of the binding slope limit each table uses.</div>';
+    }
+    if (!keys) return '';
+    var h = '<div class="note" style="margin-top:7px;line-height:1.9">';
+    keys.forEach(function (k) {
+      var c = PAINT_COLORS[k];
+      h += '<span style="display:inline-block;width:9px;height:9px;border-radius:2px;'
+        + 'background:' + c.fill + ';border:1px solid ' + c.stroke + ';margin-right:4px"></span>'
+        + c.label + '&nbsp;&nbsp;';
+    });
+    return h + '</div>';
+  }
+
   /* ══════════════════════════════════════════════════════════════════
      14.  ORCHESTRATOR
      ══════════════════════════════════════════════════════════════════ */
@@ -87714,7 +87947,107 @@ window._crmToastModal=_crmToastModal;
     /* Backtracking reads the solved pile tops, so it runs last. */
     try { LAST.backtrack = backtrackReport(LAST, opts); }
     catch (e) { LAST.backtrack = { ok: false, why: (e && e.message) || 'failed' }; }
+
+    /* Persist the headline result onto the SHAPE, not just this object.
+       Until now everything lived in LAST and vanished on reload, so
+       nothing downstream — BOM, permit sheets, the one-line — could
+       read an analysis that had already been run. */
+    try { persistToShape(sh, LAST); } catch (e) {}
+
+    /* Colour the canvas. This is the point of the whole exercise: a
+       count of rejected tables does not tell you they are all in one
+       corner, and that is what decides whether you regrade or move the
+       fence. */
+    try { paintTables(LAST, _paintMode); } catch (e) {}
+
     return LAST;
+  }
+
+
+  /* ══════════════════════════════════════════════════════════════════
+     23.  PERSISTENCE                                       (pack v2.2)
+     ──────────────────────────────────────────────────────────────────
+     The build map asks for solved geometry to be stored per table so
+     downstream stages read it rather than recomputing. Piles are written
+     onto the table in the shape the map specifies, and a compact summary
+     onto the shape, so a saved project carries its analysis.
+
+     Deliberately NOT stored: the projector and the field. Those are
+     closures over a live terrain lattice and would not survive
+     JSON.stringify — a saved project reloads the summary and the pile
+     schedule, and re-running the analysis rebuilds the rest.
+     ══════════════════════════════════════════════════════════════════ */
+
+  function persistToShape(sh, res) {
+    if (!sh || !res || !res.ok) return false;
+
+    /* Per-table piles, in the field-pipeline shape:
+       {station,x,y,groundZ,topZ,reveal,length,flag} */
+    if (res.piles) {
+      var byTable = {};
+      res.piles.piles.forEach(function (p) {
+        (byTable[p.tableIdx] || (byTable[p.tableIdx] = [])).push({
+          station: +p.runFt.toFixed(2),
+          x: +p.xFt.toFixed(2), y: +p.yFt.toFixed(2),
+          groundZ: +p.groundFt.toFixed(2), topZ: +p.topFt.toFixed(2),
+          reveal: +p.revealFt.toFixed(3), length: +p.lengthFt.toFixed(2),
+          flag: p.status
+        });
+      });
+      res.kept.forEach(function (t, i) { t.piles = byTable[i] || null; });
+    }
+
+    sh.terrainAnalysis = {
+      at: res.at,
+      packVersion: VERSION,
+      sampler: res.field.kind,
+      spacingFt: Math.round(res.field.spacingFt),
+      projection: res.projMode,
+      quality: res.projQuality,
+      presetKey: res.presetKey,
+      tablesTotal: res.kept.length + res.rejected.length,
+      buildable: res.screen.keptCount,
+      buildablePct: res.screen.buildablePct,
+      kwFlat: res.kwFlat, kwReal: res.kwReal,
+      reasons: res.screen.reasons,
+      piles: res.piles ? {
+        count: res.piles.count,
+        revealMinFt: res.piles.revealMinFt,
+        revealMaxFt: res.piles.revealMaxFt,
+        outOfRange: res.piles.outOfRange,
+        steelFt: res.piles.totalSteelFt,
+        cutCy: res.piles.cutCy, fillCy: res.piles.fillCy
+      } : null,
+      clearance: res.collisions ? {
+        tablesAffected: res.collisions.tablesAffected,
+        strikes: res.collisions.strikeCount,
+        buried: res.collisions.buriedCount,
+        localRelief: res.collisions.localReliefCount,
+        swept: res.collisions.sweptCount
+      } : null,
+      shading: res.shading && res.shading.ok ? {
+        actualPitchFt: res.shading.actualPitchFt,
+        requiredPitchFt: res.shading.requiredPitchWindowFt,
+        maxGcr: res.shading.maxGcrWindow,
+        clearHours: res.shading.clearHours,
+        verdict: res.shading.verdict
+      } : null,
+      backtrack: res.backtrack && res.backtrack.ok ? {
+        rowPairs: res.backtrack.rowPairs,
+        medianDzFt: res.backtrack.medianDzFt,
+        worstDzFt: res.backtrack.worstDzFt,
+        maxCorrectionDeg: res.backtrack.maxCorrectionDeg
+      } : null,
+      dc: res.strings ? {
+        modules: res.strings.totalModules,
+        strings: res.strings.stringCount,
+        combiners: res.strings.combinerCount,
+        blocks: res.strings.blockCount,
+        cableFt: res.strings.totalDcFt
+      } : null
+    };
+    try { if (typeof pushHist === 'function') pushHist(); } catch (e) {}
+    return true;
   }
 
   /* ══════════════════════════════════════════════════════════════════
@@ -87750,7 +88083,12 @@ window._crmToastModal=_crmToastModal;
     + '#omega-terr .run{width:100%;padding:9px;background:rgba(47,181,74,.16);border:1px solid rgba(47,181,74,.45);'
     + 'color:#2FB54A;border-radius:6px;font-size:10.5px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:4px}'
     + '#omega-terr .warn{background:rgba(200,106,106,.1);border:1px solid rgba(200,106,106,.35);'
-    + 'color:#E0A9A9;padding:7px 8px;border-radius:5px;line-height:1.5;margin:8px 0;font-size:9.5px}';
+    + 'color:#E0A9A9;padding:7px 8px;border-radius:5px;line-height:1.5;margin:8px 0;font-size:9.5px}'
+    + '#omega-terr .modes{display:flex;gap:3px;margin:2px 0 0}'
+    + '#omega-terr .modes button{flex:1;padding:5px 2px;background:#252526;border:1px solid #3C3C3C;'
+    + 'color:#8FA3B8;border-radius:4px;font-size:8.5px;cursor:pointer;font-family:inherit;font-weight:600}'
+    + '#omega-terr .modes button:hover{color:#E2EEF9}'
+    + '#omega-terr .modes button.on{background:rgba(47,181,74,.16);border-color:rgba(47,181,74,.45);color:#2FB54A}';
 
   function ensurePanel() {
     var el = document.getElementById('omega-terr');
@@ -87801,6 +88139,13 @@ window._crmToastModal=_crmToastModal;
       h += '<div class="warn">Canvas is tied to the terrain by bounding-box fit, not by coordinates. '
          + 'Positions are approximate. Sample terrain with the map unlocked for an anchored result.</div>';
     }
+
+    h += '<h4>Colour the canvas by</h4><div class="modes">';
+    PAINT_MODES.forEach(function (m) {
+      h += '<button data-paint="' + m + '"' + (m === _paintMode ? ' class="on"' : '') + '>'
+         + (m === 'off' ? 'none' : m) + '</button>';
+    });
+    h += '</div>' + legendFor(_paintMode, res);
 
     var fld = res.field;
     h += '<h4>Surface</h4>'
@@ -87951,6 +88296,14 @@ window._crmToastModal=_crmToastModal;
   function wire(b) {
     var r = b.querySelector('#ot-run');
     if (r) r.onclick = function () { render(analyze()); };
+    Array.prototype.forEach.call(b.querySelectorAll('[data-paint]'), function (btn) {
+      btn.onclick = function () {
+        var m = btn.getAttribute('data-paint');
+        var n = paintTables(LAST, m);
+        say(m === 'off' ? 'Array colouring off.' : (n + ' tables coloured by ' + m + '.'));
+        render(LAST);
+      };
+    });
     Array.prototype.forEach.call(b.querySelectorAll('[data-x]'), function (btn) {
       btn.onclick = function () {
         var k = btn.getAttribute('data-x');
@@ -88125,6 +88478,7 @@ window._crmToastModal=_crmToastModal;
     addPreset();
     addMenu();
     installTrackerFix();
+    installPainter();
     try {
       var host = document.getElementById('sc');
       if (host && !host.__omegaSecHook) {
@@ -88176,6 +88530,10 @@ window._crmToastModal=_crmToastModal;
     },
 
     /* v2 */
+    paint: paintTables,
+    paintModes: PAINT_MODES,
+    get paintMode() { return _paintMode; },
+    set paintMode(m) { if (PAINT_MODES.indexOf(m) >= 0) paintTables(LAST, m); },
     capacity: capacitySearch,
     section: sectionArm,
     backtrack: backtrackReport,
