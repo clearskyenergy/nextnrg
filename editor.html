@@ -85164,10 +85164,21 @@ window._crmToastModal=_crmToastModal;
 <!-- OMEGA TERRAIN + ELECTRICAL PACK v2.1 BEGIN -->
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
-   OMEGA TERRAIN + ELECTRICAL PACK  ·  v1.0
+   OMEGA TERRAIN + ELECTRICAL PACK  ·  v2.1
    ──────────────────────────────────────────────────────────────────────────
    Closes the gap between the terrain OMEGA already samples and the
    flat-ground layout engine that never reads it.
+
+   INSTALL: paste inside a script element immediately before the closing
+   body tag, AFTER the application's own code. It wraps computeGroundLayout,
+   so loading it before the fix pack assigns computeGroundLayoutV2 would
+   wrap nothing.
+
+   (Written without literal tag characters on purpose: a stray closing
+   script tag anywhere in this file — even inside a comment — would end
+   the block early and truncate the pack. The splice tool refuses to
+   write when the tag count shifts, which is how this very line got
+   caught the first time.)
 
    Installs by wrapping existing globals. Nothing in the base file is
    edited; if a hook is missing the pack reports "unavailable" instead of
@@ -85183,6 +85194,11 @@ window._crmToastModal=_crmToastModal;
      7. Stringing          strings, combiners, DC cable length from geometry
      8. Exports            pile CSV, string CSV, PVsyst geometry, Shapefile
      9. SHP import         polygons from GIS deliverables
+
+   v2.0  grid TIN replaces IDW sampling (3.6x accuracy, 28x speed);
+         tracker axis fix; capacity iteration; cross-section tool
+   v2.1  terrain-aware backtracking; per-pile local relief probe ring;
+         swept-edge clearance at stow rotation
 
    HONESTY NOTE, carried from the base file: the elevation source is a DEM
    (about 10 m posts via 3DEP, 30 m elsewhere), not a survey. Reveals and
