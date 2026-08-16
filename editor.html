@@ -8726,6 +8726,19 @@ function startResize(e,id,corner){
   const cy = e.touches ? e.touches[0].clientY : e.clientY;
   S.resizing=id;S.rsCorner=corner;S.rsX=cx;S.rsY=cy;
   const el=S.elements.find(x=>x.id===id);S.rsW=el?.w||60;
+  /* THE WHOLE STARTING BOX, not just the width.
+     Resizing has to hold the corner OPPOSITE the one being dragged still.
+     That needs the origin and the height as they were when the gesture
+     began -- deriving them from the live element mid-drag reads values the
+     drag itself has already changed, which is how a west-handle drag ended
+     up recomputing its own anchor every mousemove. */
+  if(el){
+    S.rsX0 = +el.x || 0;
+    S.rsY0 = +el.y || 0;
+    const _b = (typeof _elBoxSize==='function') ? _elBoxSize(el)
+             : { w:(+el.w||60), h:(+el.h||+el.w||60) };
+    S.rsH = _b.h;
+  }
   e.stopPropagation();
 }
 
@@ -8820,16 +8833,50 @@ function globalMM(e){
     return;
   }
   if(S.resizing){
-    const dx=cx-S.rsX,dy=cy-S.rsY;
     const el=S.elements.find(x=>x.id===S.resizing);
     const dom=document.querySelector(`[data-elid="${S.resizing}"]`);
     if(!el||!dom)return;
     const scr=document.getElementById('sc').getBoundingClientRect();
+    /* Pointer deltas are CLIENT pixels; el.w/x/y are MODEL pixels. They are
+       equal only while #sc sits at 1:1, so carry the same ratio _scXY uses
+       and a fit-to-page view resizes by the right amount. */
+    const _sc=document.getElementById('sc');
+    const _k=(scr.width>0 && _sc.offsetWidth>0) ? (_sc.offsetWidth/scr.width) : 1;
+    const dx=(cx-S.rsX)*_k, dy=(cy-S.rsY)*_k;
     let newW=S.rsW;
     const c=S.rsCorner;
     if(c==='se'||c==='ne')newW=Math.max(30,S.rsW+dx);
-    if(c==='sw'||c==='nw'){newW=Math.max(30,S.rsW-dx);el.x=scr.left+Math.max(0,(cx-scr.left));dom.style.left=el.x+'px';}
+    if(c==='sw'||c==='nw')newW=Math.max(30,S.rsW-dx);
     el.w=Math.round(newW);
+    /* ── ANCHOR THE CORNER THE USER IS NOT HOLDING ────────────────────
+       The west branch used to read:
+
+           el.x = scr.left + Math.max(0,(cx - scr.left));
+
+       which for any pointer right of the canvas edge simplifies to
+       el.x = cx -- a CLIENT coordinate assigned straight into a MODEL
+       field. Grabbing a west handle therefore teleported the element
+       sideways by the canvas's offset in the window (~110 px in this
+       layout, and a different distance on every screen), and then resized
+       it from wherever it landed.
+
+       North handles had the opposite problem: nothing ever touched el.y,
+       so dragging a top corner grew the box DOWNWARD, away from the
+       pointer. Pin the opposite corner explicitly instead. The height is
+       predicted with the same rules the type branches below apply, so the
+       north edge lands correctly on the first frame rather than a frame
+       late. */
+    let _newH;
+    if(el.type==='evgear')        _newH=Math.max(12, Math.round(el.w*(el.aspect||0.72)));
+    else if(el.type==='bess-asm') _newH=Math.round(el.w*0.55);
+    else if(+el.h>0)              _newH=+el.h;   /* generic eq keeps its height */
+    else                          _newH=el.w;    /* h derives from w (_elRenderSize) */
+    const _rsX0=(typeof S.rsX0==='number')?S.rsX0:(+el.x||0);
+    const _rsY0=(typeof S.rsY0==='number')?S.rsY0:(+el.y||0);
+    const _rsH =(S.rsH>0)?S.rsH:_newH;
+    el.x = (c==='sw'||c==='nw') ? _rsX0+(S.rsW-el.w) : _rsX0;
+    el.y = (c==='nw'||c==='ne') ? _rsY0+(_rsH-_newH) : _rsY0;
+    dom.style.left=el.x+'px'; dom.style.top=el.y+'px';
     /* A hand resize changes the element's REAL size, not just its pixels.
        The stored ground footprint governs every future zoom, so leaving it
        at the old value means the next map settle quietly snaps the element
@@ -8839,6 +8886,23 @@ function globalMM(e){
         el._geoWFt = el.w/S.pxPerFt;
         if(el.h>0) el._geoHFt = el.h/S.pxPerFt;
         el._domW = el.w;
+        /* ── AND TELL THE OTHER SCALER ──────────────────────────────
+           Two independent subsystems resize equipment on zoom and they
+           read different fields:
+
+             OmegaGeo          el.w = el._geoWFt * pxPerFt
+             omegaRescaleElements  el.w = _elFootprintFt(el).lf * pxPerFt
+
+           _elFootprintFt reads el.lf/el.wf (or the catalog entry for
+           el.eqId) and knows nothing about _geoWFt. Updating only the
+           geo fields left the two disagreeing, so the next zoom handed
+           the element back to whichever ran last -- in practice the
+           footprint one, which snapped it straight back to catalog size.
+           That is why a hand resize "didn't take". Write the footprint in
+           FEET as well and both scalers now want the same number. */
+        el.lf = el.w/S.pxPerFt;
+        el.wf = _newH/S.pxPerFt;
+        el._ppfAtPlace = S.pxPerFt;
       }
     }catch(e){}
     const bd=dom.querySelector('.elbody');if(bd){bd.style.width=el.w+'px';bd.style.minWidth=el.w+'px';}
@@ -9094,13 +9158,51 @@ function getCenter(id){
 
    _elCenter() always answers in MODEL space, so both endpoints of any run
    agree. Screen-space geometry is never mixed in. */
+/* ── ONE DEFINITION OF "THE MIDDLE OF AN ELEMENT" ──────────────────────
+   There were two, and they disagreed:
+
+     _elRenderCenter()  el.x + _elRenderSize(el).w/2   <- where the element
+                                                          is DRAWN and where
+                                                          _geoStampElement
+                                                          anchors it
+     _elCenter()        el.x + (el.h || el.hgt || 40)/2
+
+   _elRenderSize derives a missing height from the width (h = w, or w*0.72
+   for evgear, w*0.55 for bess-asm). _elCenter fell back to el.hgt -- a
+   field nothing else in the file writes or reads -- and then to a flat 40.
+   So for any element saved without an explicit .h, the conduit ENDPOINT
+   WELD in _geoReprojectAll snapped runs to a point 10-30 px above where
+   the box actually is.
+
+   Geo scaling is on, so el.w grows with zoom: the gap grows with it, the
+   weld drags the endpoint further off on every zoom-in, and the length
+   re-bake at the end of the reprojector writes the wrong footage into the
+   model. Deriving the centre from the same helper the renderer uses means
+   the weld lands on the box by construction. */
 function _elCenter(id){
   var el=null;
   try{ el=S.elements.find(function(e){return e.id===id;}); }catch(e){}
   if(!el) return null;
-  var w=(+el.w||60), h=(+el.h||el.hgt||40);
-  return { x:(+el.x||0)+w/2, y:(+el.y||0)+h/2 };
+  var s=_elBoxSize(el);
+  return { x:(+el.x||0)+s.w/2, y:(+el.y||0)+s.h/2 };
 }
+
+/* Shared size lookup. _elRenderSize lives in a later script block, so it is
+   resolved off window at CALL time (both are long loaded by the time any
+   conduit is welded); the inline fallback mirrors its rules rather than the
+   old phantom-field ones so the two can never drift apart again. */
+function _elBoxSize(el){
+  try{
+    if(typeof window._elRenderSize==='function') return window._elRenderSize(el);
+  }catch(e){}
+  var w=(+el.w||60), h;
+  if(+el.h) h=+el.h;
+  else if(el.type==='evgear') h=Math.round(w*(el.aspect||0.72));
+  else if(el.type==='bess-asm') h=Math.round(w*0.55);
+  else h=w;
+  return { w:w, h:h };
+}
+window._elBoxSize=_elBoxSize;
 
 /* Endpoint on an element's edge, in MODEL space, biased toward a target.
    Keeps auto-routed runs leaving from the side that faces where they're
@@ -9109,7 +9211,9 @@ function _elPort(id, towardPt){
   var el=null;
   try{ el=S.elements.find(function(e){return e.id===id;}); }catch(e){}
   if(!el) return null;
-  var w=(+el.w||60), h=(+el.h||el.hgt||40);
+  /* Same box as _elCenter, or a run leaves from an edge the equipment does
+     not actually have. */
+  var _b=_elBoxSize(el), w=_b.w, h=_b.h;
   var cx=(+el.x||0)+w/2, cy=(+el.y||0)+h/2;
   if(!towardPt) return {x:cx,y:cy};
   var dx=towardPt.x-cx, dy=towardPt.y-cy;
@@ -10054,7 +10158,14 @@ function _asmElecFromSpec(spec){
 /* Aggregate every placed BESS assembly into fleet totals for cover sheet + rollups.
    Returns { units, totalKwh, totalKw, totalCost, byModel:{model:{qty,kwh,kw,cost}} }. */
 function _ppCollectFleet(){
-  var out={ units:0, totalKwh:0, totalKw:0, totalCost:0, byModel:{}, anyMissingCost:false };
+  var out={ units:0, totalKwh:0, totalKw:0, totalCost:0, byModel:{}, anyMissingCost:false,
+            /* Ids of the ELEMENTS this pass claimed. The legend walks
+               S.elements a second time for placed equipment and had no way
+               to know a battery had already been listed here, so the same
+               physical unit was printed twice under two different names.
+               Publishing the ids lets any later pass skip what this one
+               already counted. Additive: every existing consumer ignores it. */
+            elIds:[] };
 
   /* Patch 25: the guided BESS build does not create an assembly/bespad
      SHAPE. placeBgbAt() commits an ELEMENT via _evAdd('bess', ...) and
@@ -10099,6 +10210,7 @@ function _ppCollectFleet(){
       var _u=+el.bessUnits||1;
       gkw*=_u; gkwh*=_u;
       out.units++;
+      if(el.id!=null) out.elIds.push(el.id);
       out.totalKw+=gkw; out.totalKwh+=gkwh;
       /* A guided element carries no unit cost. Flag it rather than let the
          cost sheet quietly under-total. */
@@ -11296,10 +11408,18 @@ window._canBakeRotation=_canBakeRotation;
 function _bakeShapeRotation(sh){
   if(!sh) return false;
   var rot=+sh.rot||0;
-  if(!rot) return false;
-  if(!_canBakeRotation(sh)) return false;   /* leave bbox-driven shapes alone */
+  /* Every early return below leaves the angle living on sh.rot. The ground
+     stamp has to be told, or it still describes the PREVIOUS angle and
+     anything that reads _geoRot (a save, an export, the anchor audit) sees
+     a shape pointing the wrong way. Squaring an array back up with 0 hits
+     the !rot return, so that case needs it too -- arguably most of all,
+     since "put it back straight" not sticking is the loudest version of
+     this bug. */
+  function _holdAngle(){ try{ sh._geoRot=rot; }catch(e){} }
+  if(!rot){ _holdAngle(); return false; }
+  if(!_canBakeRotation(sh)){ _holdAngle(); return false; }  /* bbox-driven: angle stays live */
   var c=(typeof _shapeCenter==='function') ? _shapeCenter(sh) : null;
-  if(!c) return false;
+  if(!c){ _holdAngle(); return false; }
   var rad=rot*Math.PI/180, cos=Math.cos(rad), sin=Math.sin(rad);
   function spin(p){
     if(!p || typeof p.x!=='number') return;
@@ -15694,10 +15814,24 @@ function renderConduit(c){
 // Insert a new vertex point into a conduit at the clicked position
 // Finds the segment closest to the click, splits it, inserts the new point
 function insertConduitVertex(c, evt) {
-  var sc = document.getElementById('sc');
-  var scRect = sc.getBoundingClientRect();
-  var clickX = Math.round(evt.clientX - scRect.left);
-  var clickY = Math.round(evt.clientY - scRect.top);
+  /* c.pts are #sc MODEL pixels. This used to do its own
+   *     clientX - sc.getBoundingClientRect().left
+   * which is the CLIENT-space transform, missing the offsetWidth/rect
+   * ratio that _scXY applies. The two agree only while #sc is at exactly
+   * 1:1 -- the moment it is CSS-scaled (print preview, fit-to-page, any
+   * zoom-to-fit) the new vertex is placed at the wrong point, and because
+   * the segment-distance search below uses the same bad coordinate it can
+   * also attach the vertex to the wrong SEGMENT of the run. Use the one
+   * shared converter, which is what every other vertex path already uses. */
+  var _m = (typeof _scXY==='function') ? _scXY(evt) : null;
+  if(!_m){
+    var _sc = document.getElementById('sc');
+    if(!_sc) return;
+    var _r = _sc.getBoundingClientRect();
+    _m = { x: evt.clientX - _r.left, y: evt.clientY - _r.top };
+  }
+  var clickX = Math.round(_m.x);
+  var clickY = Math.round(_m.y);
 
   // Find which segment of the conduit is closest to the click
   var bestSeg = 0;
@@ -16005,8 +16139,10 @@ function renderLegend(){
   var eqRows='', eqCount=0;
 
   /* BESS assemblies, grouped by model with kWh/kW where known. */
+  var _fleetElIds = {};
   try{
     var fleet=(typeof _ppCollectFleet==='function')?_ppCollectFleet():null;
+    if(fleet && fleet.elIds) fleet.elIds.forEach(function(_i){ _fleetElIds[_i]=1; });
     if(fleet && fleet.units>0){
       Object.keys(fleet.byModel).forEach(function(mk){
         var b=fleet.byModel[mk];
@@ -16052,6 +16188,23 @@ function renderLegend(){
        with nothing in it but conduit, and nothing for Run to count. */
     S.elements.filter(function(e){ return e.type==='eq' || e.type==='evgear'; })
       .forEach(function(e){
+        /* ── ONE BATTERY, ONE LEGEND ROW ─────────────────────────────
+           _ppCollectFleet() above walks S.elements and claims anything
+           with the 'bess' role, printing it under el.bessModel — for a
+           guided build that is "Generic BESS — make/model TBD". This
+           loop then walks S.elements AGAIN and prints the very same
+           element under its EQ-catalog name, "BESS AC Block". One unit,
+           two rows, both reading 760 kWh / 60 kW, and eqCount stepped
+           twice — so the drawing said BESS 1 while the legend a
+           reviewer signs off on showed two batteries.
+
+           The merge just below was written for exactly this ("listing
+           it twice makes a reviewer think there are two batteries") but
+           it only ever de-duplicated WITHIN this loop, and the fleet
+           pass is a different loop it cannot see. Skip what the fleet
+           already claimed, by element id, so the two passes cannot
+           double-count the same object. */
+        if(e && e.id!=null && _fleetElIds[e.id]) return;
         var id=e.eqId||e.evKind||'jbox';
         counts[id]=(counts[id]||0)+1;
         /* Keep the real unit name and rating so the legend reads
@@ -30907,7 +31060,24 @@ function _o2PlaceBadgeBelowToolbar(){
       setInterval(function(){
         try{
           var s=_o2SoleSelection();
-          var sig=(s?s.kind+':'+s.id:'')+'|'+(S.o2Picked||[]).length+'|'+S.o2Class+'|'+S.o2Multi;
+          /* ── THE COUNTS HAVE TO BE IN THE SIGNATURE ──────────────────
+             This tracked selection state ONLY. o2RenderToolbar() prints
+             o2Count(key) for every class, but nothing re-ran it when the
+             number of objects changed -- and o2Boot() fires 600 ms after
+             DOMContentLoaded, while a project opened by ?id= is still
+             being fetched. So the chips rendered against an empty S and
+             sat at 0 forever: "Trench / Conduit 0" and "BESS 0" in the
+             same header where the status bar said COND 5 and the legend
+             listed the battery. Clicking around masked it, because that
+             changes the selection and forces a redraw -- which is why a
+             project you have been working in looks right and one you
+             just opened does not.
+             The poll is already running; adding the tallies to the
+             signature costs three .length reads. */
+          var sig=(s?s.kind+':'+s.id:'')+'|'+(S.o2Picked||[]).length+'|'+S.o2Class+'|'+S.o2Multi
+                 +'|'+((S.elements||[]).length)
+                 +'|'+((S.shapes||[]).length)
+                 +'|'+((S.conduits||[]).length);
           if(sig!==last){ last=sig; o2RenderToolbar(); }
         }catch(e){}
       }, 400);
@@ -33321,9 +33491,35 @@ function _geoApplyShape(sh, toPx, ppf){
         }
       }
     }
-    /* Restore the stamped angle before the geometry is rebuilt, so a
-       reproject cannot silently square up a rotated array. */
-    if(sh._geoRot!=null && typeof sh.rot==='number') sh.rot=+sh._geoRot||0;
+    /* ── WHO OWNS THE ANGLE ───────────────────────────────────────────
+       This used to read:
+
+           if(sh._geoRot!=null) sh.rot = +sh._geoRot||0;
+
+       i.e. the STAMP overwrote the drawing on every pan, zoom and map
+       idle. _canBakeRotation() rejects a plain rectangular array (it is
+       one point plus wPx/hPx, not a polygon), and its own comment states
+       that such a shape "keeps rotation as sh.rot, which reprojection
+       never touches". That was the assumption; the line above was the
+       code, and the code won.
+
+       So: rotate an array with R / Shift+R, or square it back up with 0.
+       _bakeShapeRotation() bails out on a bbox array and returns false
+       without restamping, sh._geoRot keeps the PREVIOUS angle, and the
+       next time the map settles the array spins back. Only the handle
+       drag survived, because _shapeInteractEnd has its own explicit
+       restamp on the not-baked path.
+
+       Same rule the repair pass already states for position: when the
+       anchor and the drawing disagree, THE DRAWING WINS -- the person
+       set that angle deliberately. So adopt sh.rot into the stamp rather
+       than the other way round, and fall back to the stamp only when the
+       shape has genuinely lost its angle. */
+    if(typeof sh.rot==='number'){
+      if(sh._geoRot==null || (+sh._geoRot||0)!==(+sh.rot||0)) sh._geoRot=+sh.rot||0;
+    } else if(sh._geoRot!=null){
+      sh.rot=+sh._geoRot||0;
+    }
     if(sh._geoTables && sh.tables){
       /* Size in FEET is the invariant; pixels follow the current scale. */
       var tw = (ppf>0 && sh.tableWft>0) ? sh.tableWft*ppf : null;
@@ -33884,6 +34080,38 @@ function _geoReprojectAll(){
           var g2=c._geoPts[j]; if(!g2) continue;
           var px2=toPx(g2.lat,g2.lng); if(px2){ c.pts[j].x=px2.x; c.pts[j].y=px2.y; }
         }
+      } else {
+        /* ── A RUN WITH NO USABLE ANCHOR MUST NOT BE HALF-MOVED ────────
+           Without this branch the code fell straight through to the
+           ENDPOINT WELD below with the interior points still holding raw
+           pixels from whatever zoom the run was last touched at. The
+           welded ends jumped to the equipment's CURRENT position while
+           everything between them stayed behind, so the run stretched
+           across the drawing -- and then the length re-bake at the bottom
+           of this block wrote that stretch into c.ftLen. The conduit
+           schedule is generated from ftLen, so a display glitch became a
+           permanent, saved, quoted number: one zoom turned a 52 ft DC run
+           into 293 ft.
+
+           An anchor mismatch is normally an inserted or removed vertex
+           (pts.length no longer matches _geoPts.length). Nothing here can
+           recover where those points belong on the ground, so re-anchor
+           them where they are actually drawn -- the same "the drawing
+           wins" rule the repair pass uses -- and leave the geometry and
+           the footage alone this pass. From the next map move on, the run
+           tracks properly. */
+        try{
+          var _ng=[], _nok=true;
+          for(var _ni=0;_ni<c.pts.length;_ni++){
+            var _gg=_pxToLatLng(c.pts[_ni].x, c.pts[_ni].y, ms, sz.w, sz.h);
+            if(!_gg){ _nok=false; break; }
+            _ng.push({lat:_gg.lat, lng:_gg.lng});
+          }
+          /* A partial anchor is worse than none: it would pass the
+             length-match guard next pass and reproject half the run. */
+          if(_nok) c._geoPts=_ng; else { try{ delete c._geoPts; }catch(e){} }
+        }catch(e){}
+        return;   /* no weld, no length re-bake, no corruption */
       }
 
       /* ── ENDPOINT WELD ────────────────────────────────────────────────
@@ -34008,6 +34236,36 @@ var _GEO_STALE_PX = 0.5;   /* below this is float noise, not drift */
 /* Does this object's anchor still describe where it is drawn? */
 function _geoAnchorState(o, toPx){
   if(!o) return 'skip';
+  /* ── A SHAPE IS MORE THAN ITS ORIGIN ──────────────────────────────────
+     This checked o.pts against o._geoPts and nothing else. A rectangular
+     solar array has exactly ONE point -- the unrotated top-left corner --
+     so the whole audit reduced to "is that one corner where the anchor
+     says". Size (_geoBR), angle (_geoRot), the traced outline
+     (_geoBoundary) and every table centre (_geoTables) were invisible to
+     it. An array that had been rotated or resized without re-anchoring
+     therefore reported 'ok', the repair pass skipped it, and the console
+     printed a clean bill of health for a drawing the customer can see is
+     wrong. That is the exact failure mode the comment above calls the
+     worse of the two -- it was just never applied to shapes. */
+  if(o._geoRot!=null && typeof o.rot==='number' && (+o._geoRot||0)!==(+o.rot||0)) return 'stale';
+  if(o._geoBR && o.pts && o.pts.length===1 && o.wPx>0 && o.hPx>0){
+    var qbr=toPx(o._geoBR.lat, o._geoBR.lng);
+    if(qbr && (Math.abs(qbr.x-(o.pts[0].x+o.wPx))>_GEO_STALE_PX
+            || Math.abs(qbr.y-(o.pts[0].y+o.hPx))>_GEO_STALE_PX)) return 'stale';
+  }
+  if(o.boundary && o.boundary.length){
+    if(!o._geoBoundary || o._geoBoundary.length!==o.boundary.length) return 'broken';
+    for(var bi=0;bi<o.boundary.length;bi++){
+      var gb=o._geoBoundary[bi];
+      if(!gb || gb.lat==null) return 'broken';
+      var qb=toPx(gb.lat, gb.lng);
+      if(qb && (Math.abs(qb.x-o.boundary[bi].x)>_GEO_STALE_PX
+             || Math.abs(qb.y-o.boundary[bi].y)>_GEO_STALE_PX)) return 'stale';
+    }
+  }
+  if(o.tables && o.tables.length){
+    if(!o._geoTables || o._geoTables.length!==o.tables.length) return 'broken';
+  }
   var pts=o.pts;
   if(pts && pts.length){
     if(!o._geoPts || o._geoPts.length!==pts.length) return 'broken';
@@ -34059,6 +34317,15 @@ function _geoRepairConduits(){
     /* Drop the disputed anchor outright so the restamp cannot merge with
        a partial one, then re-derive from the current pixels. */
     try{ delete o._geoPts; delete o._geoC; }catch(e){}
+    /* The aux anchors carry the parts of a shape the origin point does not:
+       far corner, angle, outline, exclusion rings, table centres. The
+       restamp below rewrites them all (force=true), but clearing them first
+       means a shape whose pts and boundary disagree cannot come out of here
+       half-repaired and half-stale. */
+    try{
+      delete o._geoBR; delete o._geoRot; delete o._geoBoundary;
+      delete o._geoExcl; delete o._geoTables;
+    }catch(e){}
     if(kind==='element'){ try{ delete o._geoLat; delete o._geoLng; }catch(e){} }
     if(typeof _geoRestampOne==='function') _geoRestampOne(o);
     var after=_geoAnchorState(o, toPx);
@@ -90751,6 +91018,126 @@ window._crmToastModal=_crmToastModal;
 
 </script>
 <!-- OMEGA TERRAIN + ELECTRICAL PACK END -->
+
+<!-- ================= OPEN WHERE THE WORK IS =================
+     A project reopened without a usable saved view was falling back to
+     geocoding the saved ADDRESS, which is not the same place as the
+     drawing. On the Fedex Norman Manley file that address ("Port Royal
+     Main Road") sits about 5,200 ft east and 1,800 ft south of the
+     equipment, so the map opened on empty coastline and the site looked
+     lost -- it was not, every object still carried its lat/lng, they were
+     simply all off-screen.
+
+     Two fit-to-drawing routines already existed (the compass panel and the
+     ops-stats panel) but both were manual, buried in panels, and neither
+     ran on load.
+
+     The rule here is deliberately conservative: frame the drawing ONLY
+     when not one anchored object falls inside the viewport the load
+     settled on. A correct saved view always contains the equipment, so
+     this never second-guesses one. It only acts on the case the user
+     actually hit -- opening somewhere the work is not.
+     =========================================================== -->
+<script>
+(function(){
+  var RAN=false;
+
+  function anchors(){
+    var out=[];
+    try{
+      (S.elements||[]).forEach(function(e){
+        if(e && e._geoLat!=null && e._geoLng!=null) out.push({lat:e._geoLat,lng:e._geoLng});
+      });
+      [(S.shapes||[]),(S.conduits||[]),(S._trenches||[])].forEach(function(arr){
+        (arr||[]).forEach(function(o){
+          if(!o) return;
+          (o._geoPts||[]).forEach(function(g){ if(g && g.lat!=null) out.push(g); });
+          (o._geoBoundary||[]).forEach(function(g){ if(g && g.lat!=null) out.push(g); });
+          (o._geoTables||[]).forEach(function(g){ if(g && g.lat!=null) out.push(g); });
+          if(o._geoC && o._geoC.lat!=null) out.push(o._geoC);
+          if(o._geoBR && o._geoBR.lat!=null) out.push(o._geoBR);
+        });
+      });
+    }catch(e){}
+    return out;
+  }
+
+  /* Frame every anchored object. Exposed so View > Recenter and the
+     compass can share one implementation rather than a third copy. */
+  function frame(pad){
+    var m=window._gmap;
+    if(!m || !m.fitBounds || !window.google || !google.maps) return false;
+    var pts=anchors(); if(!pts.length) return false;
+    try{
+      var b=new google.maps.LatLngBounds();
+      pts.forEach(function(p){ b.extend(new google.maps.LatLng(p.lat,p.lng)); });
+      m.fitBounds(b, (pad==null?72:pad));
+      /* A single element gives a zero-area bounds and fitBounds slams to
+         max zoom. Back off to something a site plan is readable at. */
+      if(pts.length===1 || b.getNorthEast().equals(b.getSouthWest())){
+        m.setCenter(b.getCenter());
+        if(m.getZoom()>20) m.setZoom(19);
+      }
+      return true;
+    }catch(e){ return false; }
+  }
+  window._omegaFrameDrawing=frame;
+
+  /* Is any anchored object inside what the map is currently showing? */
+  function drawingInView(){
+    var m=window._gmap; if(!m || !m.getBounds) return true;   /* unknown: leave alone */
+    var vb; try{ vb=m.getBounds(); }catch(e){ return true; }
+    if(!vb) return true;
+    var pts=anchors(); if(!pts.length) return true;           /* nothing to frame */
+    for(var i=0;i<pts.length;i++){
+      try{ if(vb.contains(new google.maps.LatLng(pts[i].lat, pts[i].lng))) return true; }catch(e){}
+    }
+    return false;
+  }
+
+  function attempt(){
+    if(RAN) return true;
+    if(!window._gmap || !window.google || !google.maps) return false;
+    if(!window._loadReadyFlagSeen && !anchors().length) return false;
+    if(drawingInView()){ RAN=true; return true; }             /* saved view was fine */
+    if(!frame()) return false;
+    RAN=true;
+    /* Release the load-time pin and adopt the framed view, or the restore
+       nudges (and the next save) would put the map back on the address. */
+    try{
+      window._viewPinned=false;
+      var c=_gmap.getCenter();
+      if(c){
+        window._restoreView={ lat:c.lat(), lng:c.lng(), zoom:_gmap.getZoom() };
+        window._lastCenter={ lat:c.lat(), lng:c.lng() };
+        window._lastZoom=_gmap.getZoom();
+      }
+    }catch(e){}
+    try{ if(typeof _gmapAutoScale==='function') _gmapAutoScale(); }catch(e){}
+    try{ if(typeof window._geoReprojectAll==='function') window._geoReprojectAll(); }catch(e){}
+    try{
+      if(typeof showBanner==='function')
+        showBanner('wiz','Opened on your saved work. The map centre was missing, so the view was framed to the drawing \u2014 save to keep it.');
+    }catch(e){}
+    if(window.console) console.info('[omega/view] saved view did not contain the drawing \u2014 framed '+anchors().length+' anchored point(s) instead.');
+    return true;
+  }
+
+  /* The load path nudges the view at 300/800/1500 ms and holds a cover
+     until ~1750 ms, so start after all of that has finished and never
+     fight it. Poll rather than hook one event because the map can arrive
+     from several load branches. */
+  function arm(){
+    var tries=0;
+    var t=setInterval(function(){
+      tries++;
+      window._loadReadyFlagSeen = true;
+      if(attempt() || tries>40) clearInterval(t);   /* ~20 s ceiling */
+    }, 500);
+  }
+  setTimeout(arm, 2600);
+})();
+</script>
 
 </body>
 </html>
