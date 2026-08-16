@@ -14991,7 +14991,13 @@ function _cdDragStart(c, ev){
     var hp=(typeof _bankedPts==='function') ? _bankedPts(c) : c.pts;
     for(var vi=0; vi<c.pts.length; vi++){
       var dpv=hp[vi]||c.pts[vi];
-      if(Math.hypot(xy.x-dpv.x, xy.y-dpv.y) <= 8){
+      /* Handles are drawn r=6 (endpoints) / r=5 (interior). An 8 px test
+         was tighter than the endpoint circle you can see, so a press on
+         the visible edge of an end handle fell through to the run drag and
+         moved the whole conduit instead of the point. Match the drawn
+         radius, plus a few px of slop for trackpads and touch. */
+      var _rad=((vi===0||vi===c.pts.length-1)?6:5)+5;
+      if(Math.hypot(xy.x-dpv.x, xy.y-dpv.y) <= _rad){
         var pv=c.pts[vi];
         _cvDrag={ cid:c.id, i:vi, ox:pv.x-xy.x, oy:pv.y-xy.y, moved:false };
         return true;                    /* claim the gesture for the point */
@@ -15084,6 +15090,10 @@ function _cvShow(cid){
   _cvClear();
   var c=(S.conduits||[]).filter(function(x){return x.id===cid;})[0];
   if(!c || !c.pts || !c.pts.length) return;
+  /* Tidy any stacked points left behind by the duplicate-click-handler
+     bug before drawing handles, so you are never presented with two
+     circles on top of each other and no way to tell them apart. */
+  try{ if(typeof _cvCollapseDupes==='function') _cvCollapseDupes(c, 6); }catch(e){}
   _cvSel=cid;
   var svg=document.getElementById('csvg'); if(!svg) return;
   var lay=_mkNS('g'); lay.setAttribute('id','cond-verts');
@@ -15124,8 +15134,34 @@ function _cvShow(cid){
       ev.stopPropagation(); ev.preventDefault();
       _grab(ev);
     });
+    /* ── DOUBLE-CLICK REMOVES A POINT ──────────────────────────────
+       Alt-click was the only way to drop a vertex, which is not a
+       gesture anyone guesses and is awkward on a trackpad. Double-click
+       is what people reach for, so it does the same thing. Alt-click
+       still works.
+
+       This only survives because _cvEnd no longer rebuilds the handle
+       layer on a press that never moved: tearing down and recreating
+       the circle between the two clicks would destroy the element the
+       dblclick is measured against, and the event would never fire. */
+    h.addEventListener('dblclick', function(ev){
+      ev.stopPropagation(); ev.preventDefault();
+      _cvDrag=null;                       /* the second press armed a drag; disarm it */
+      _cvRemove(cid, i);
+    });
+    /* Same gesture on a touch device: two taps on the same handle inside
+       350 ms. Tracked per handle so a tap on one point and a tap on its
+       neighbour is never read as a double-tap. */
+    var _lastTap=0;
     h.addEventListener('touchstart', function(ev){
       ev.stopPropagation(); if(ev.cancelable) ev.preventDefault();
+      var now=Date.now();
+      if(now-_lastTap < 350){
+        _lastTap=0; _cvDrag=null;
+        _cvRemove(cid, i);
+        return;
+      }
+      _lastTap=now;
       _grab(ev);
     }, {passive:false});
     lay.appendChild(h);
@@ -15221,8 +15257,25 @@ function _cvEnd(){
   _cvDrag=null;
   if(!c) return false;
   /* A press that never moved is not an edit — it should not burn an undo
-     step, and it should not restamp the anchor either. */
-  if(!moved){ _cvShow(c.id); return false; }
+     step, and it should not restamp the anchor either.
+
+     It must ALSO not rebuild the handle layer. _cvShow() here destroyed
+     and recreated every circle on the first click of a double-click, so
+     the second click landed on a different DOM node and the browser never
+     fired dblclick — which is why double-click-to-remove could not be
+     added until this line changed. Nothing moved, so the handles are
+     already in the right place; just put the cursor back. */
+  if(!moved){
+    try{
+      var _lay=document.getElementById('cond-verts');
+      if(_lay){
+        var _hs=_lay.childNodes;
+        for(var _k=0;_k<_hs.length;_k++)
+          if(_hs[_k].setAttribute) _hs[_k].setAttribute('style','cursor:grab;pointer-events:all');
+      }
+    }catch(e){}
+    return false;
+  }
   _cvRestamp(c);
   try{ if(window.OmegaReanchor) OmegaReanchor(c.id); }catch(e){}
   try{ if(typeof _updateConduitSchedule==='function') _updateConduitSchedule(); }catch(e){}
@@ -15298,6 +15351,15 @@ function _cvInsert(cid, x, y){
     }
   }
   if(bd>30) return;                      /* click was not on this run */
+  /* ── NEVER STACK A VERTEX ON ANOTHER ───────────────────────────────
+     Two near-coincident points carry no routing information and make the
+     run unusable: the handles overlap so you cannot tell which one you
+     grabbed, and dragging either folds the polyline back on itself. The
+     duplicate-handler bug produced these in bulk; this makes sure no
+     single insert can produce another one. */
+  for(var _z=0;_z<c.pts.length;_z++){
+    if(Math.hypot(px-c.pts[_z].x, py-c.pts[_z].y) < 6) return;
+  }
   c.pts.splice(best, 0, {x:px, y:py});
   _cvInvalidateAnchor(c);                /* point count changed — old anchor is dead */
   _cvRestamp(c); _cvShow(cid);
@@ -15314,6 +15376,43 @@ function _cvRemove(cid, i){
   if(typeof pushHist==='function') pushHist();
 }
 window._cvRemove=_cvRemove;
+
+/* ── CLEAN UP A RUN THE DUPLICATE-HANDLER BUG ALREADY KNOTTED ────────
+   Runs edited before the two-click-handlers fix carry clusters of points
+   a few pixels apart. Nothing above can un-pick those retroactively, so
+   this drops interior vertices that sit within `tolPx` of the point
+   before them. Endpoints are never touched — they are what the run
+   connects to — and a run is never reduced below two points.
+
+   Called from _cvShow, so simply clicking a damaged run tidies it. It is
+   a no-op on a healthy run, and it only reports when it actually removed
+   something, so it cannot become noise. */
+function _cvCollapseDupes(c, tolPx){
+  if(!c || !c.pts || c.pts.length<3) return 0;
+  var tol=(tolPx>0)?tolPx:6, out=[c.pts[0]], dropped=0;
+  for(var i=1;i<c.pts.length-1;i++){
+    var prev=out[out.length-1], p=c.pts[i];
+    if(Math.hypot(p.x-prev.x, p.y-prev.y) < tol){ dropped++; continue; }
+    out.push(p);
+  }
+  out.push(c.pts[c.pts.length-1]);
+  /* Guard the tail: the last interior point kept could still be sitting on
+     the endpoint. Drop it rather than leave a stub. */
+  while(out.length>2){
+    var a=out[out.length-2], b=out[out.length-1];
+    if(Math.hypot(b.x-a.x, b.y-a.y) >= tol) break;
+    out.splice(out.length-2,1); dropped++;
+  }
+  if(!dropped) return 0;
+  c.pts=out;
+  _cvInvalidateAnchor(c);
+  _cvRestamp(c);
+  if(typeof showBanner==='function')
+    showBanner('cond','Removed '+dropped+' stacked point'+(dropped===1?'':'s')+' from this run \u2014 length recomputed.');
+  if(typeof pushHist==='function') try{ pushHist(); }catch(e){}
+  return dropped;
+}
+window._cvCollapseDupes=_cvCollapseDupes;
 
 /* Hook into the existing pointer stream rather than adding a second one. */
 document.addEventListener('mousemove', function(e){
@@ -15473,28 +15572,48 @@ function renderConduit(c){
   hit.addEventListener('dblclick',function(ev){ ev.stopPropagation();
     if(ev.shiftKey){ _cdShowLabel(c); return; }
     _cdHideLabel(c); var gg=document.querySelector('[data-cid="'+c.id+'"]'); if(gg&&gg.parentNode)gg.parentNode.removeChild(gg); renderConduit(c); });
-  // Single click on conduit (in select mode) = insert a vertex at click point.
-  // Shift+click = SELECT this conduit for deletion. Right-click = context menu.
-  hit.addEventListener('click', function(e) {
-    if(S.mode !== 'select') return;
-    if(e.shiftKey){ e.stopPropagation(); if(typeof selectConduit==='function') selectConduit(c.id); return; }
-    if(_cdJustDragged) return;           /* the gesture was a move, not a vertex insert */
-    // Auto-managed conduits (cluster taps/spine, MV trench, EMS chains) are
-    // re-routed programmatically -- don't let stray clicks inject vertices
-    // (that was causing runs to "explode" with bad points).
-    if(c.cluster || c.spine || c.tap || c.mv || c.chainFromEms) return;
-    e.stopPropagation();
-    insertConduitVertex(c, e);
-  });
+  /* ── ONE CLICK HANDLER, NOT TWO ────────────────────────────────────
+     There were two `click` listeners on this same hit-line, and BOTH
+     spliced vertices into the run:
+
+       #1  plain click  -> insertConduitVertex(c, e)   (the old path)
+       #2  alt-click    -> _cvInsert(c.id, x, y)       (the new path)
+
+     stopPropagation() does not stop other listeners on the SAME element
+     — that needs stopImmediatePropagation — so they both ran on every
+     click. Two consequences, and they are the whole complaint:
+
+       - Clicking a run to EDIT it silently added a vertex. Every click.
+         Select the run, look at it, click again: another point. That is
+         why the handles pile up in a knot a few pixels apart.
+       - Alt-clicking a segment added TWO vertices, one from each
+         implementation, at slightly different coordinates.
+
+     Once a run carries a cluster of near-coincident points, dragging any
+     one of them folds the polyline back on itself and the footage
+     explodes — 178 ft to 498 ft in two gestures.
+
+     _cvInsert is the one to keep: it picks the segment by perpendicular
+     distance and drops the new point ON the line. insertConduitVertex
+     picks by the same measure now but splices without those guards, so
+     it is no longer wired to anything. */
   hit.addEventListener('click', function(e){
-    if(e.shiftKey) return;               /* shift-click still selects for delete */
+    if(S.mode !== 'select') return;
+    if(e.shiftKey){
+      e.stopPropagation();
+      if(typeof selectConduit==='function') selectConduit(c.id);
+      return;
+    }
     if(_cdJustDragged){ _cdJustDragged=false; e.stopPropagation(); return; }
     e.stopPropagation();
+    /* Auto-managed runs are re-routed programmatically, so an injected
+       vertex would be discarded on the next reroute. Still selectable. */
+    var _auto = !!(c.cluster || c.spine || c.tap || c.mv || c.chainFromEms);
     var xy=_scXY(e);
-    if(e.altKey && xy){ _cvInsert(c.id, xy.x, xy.y); return; }
+    if(e.altKey && xy && !_auto){ _cvInsert(c.id, xy.x, xy.y); return; }
     _cvShow(c.id);
     if(typeof showBanner==='function')
-      showBanner('cond','Drag a point to re-route \u00b7 Alt-click a segment to add one \u00b7 Alt-click a point to remove \u00b7 Esc to finish');
+      showBanner('cond','Drag a point to re-route \u00b7 Double-click a point to remove it \u00b7 Alt-click a segment to add one \u00b7 Esc to finish');
   });
   hit.addEventListener('contextmenu', function(e){
     e.preventDefault(); e.stopPropagation();
