@@ -15166,6 +15166,54 @@ function _cvShow(cid){
     }, {passive:false});
     lay.appendChild(h);
   });
+
+  /* ── MIDPOINT GHOSTS (Google's editable-polyline gesture) ───────────
+     Google's `editable:true` polyline puts a faint handle at the middle
+     of every segment; drag it and a real vertex is born there. It is the
+     discoverable version of alt-click-a-segment, and it is the one part
+     of that API worth copying wholesale — it needs no map layer, just two
+     more circles.
+
+     Ghosts are skipped on segments under 18 px: a midpoint that close to
+     its neighbours would be unclickable and would land inside the
+     6 px no-stacking guard anyway. */
+  for(var _s=0; _s<c.pts.length-1; _s++){
+    (function(si){
+      var a=_hp[si]||c.pts[si], b=_hp[si+1]||c.pts[si+1];
+      if(!a||!b) return;
+      if(Math.hypot(b.x-a.x, b.y-a.y) < 18) return;
+      var gh=_mkNS('circle');
+      gh.setAttribute('cx',(a.x+b.x)/2); gh.setAttribute('cy',(a.y+b.y)/2);
+      gh.setAttribute('r',4);
+      gh.setAttribute('fill','rgba(255,255,255,.55)');
+      gh.setAttribute('stroke','#08111F'); gh.setAttribute('stroke-width','1');
+      gh.setAttribute('style','cursor:copy;pointer-events:all');
+      gh.setAttribute('data-cvmid', si);
+      var _born=function(ev){
+        var m=_scXY(ev); if(!m) return false;
+        var p0=c.pts[si], p1=c.pts[si+1];
+        if(!p0||!p1) return false;
+        /* Born on the CENTRELINE, not on the banked ghost: c.pts is the
+           centreline, and the bank is a drawing offset only. */
+        var np={ x:(p0.x+p1.x)/2, y:(p0.y+p1.y)/2 };
+        c.pts.splice(si+1, 0, np);
+        _cvInvalidateAnchor(c);
+        try{ if(typeof renderConduit==='function') renderConduit(c); }catch(e){}
+        _cvShow(cid);                       /* rebuild handles at new indices */
+        /* Hand the gesture straight to the new vertex so it drags out of
+           the line in one motion, the way Google's does. */
+        _cvDrag={ cid:cid, i:si+1, ox:np.x-m.x, oy:np.y-m.y, moved:false };
+        return true;
+      };
+      gh.addEventListener('mousedown', function(ev){
+        ev.stopPropagation(); ev.preventDefault(); _born(ev);
+      });
+      gh.addEventListener('touchstart', function(ev){
+        ev.stopPropagation(); if(ev.cancelable) ev.preventDefault(); _born(ev);
+      }, {passive:false});
+      lay.appendChild(gh);
+    })(_s);
+  }
   svg.appendChild(lay);
 }
 window._cvShow=_cvShow;
@@ -15188,6 +15236,20 @@ function _cvSync(c){
     var dp=hp[i]||c.pts[i];
     hs[i].setAttribute('cx', dp.x);
     hs[i].setAttribute('cy', dp.y);
+  }
+  /* The midpoint ghosts sit after the vertex handles in the same layer.
+     Left alone they stayed at the old segment centres while the vertex
+     moved under the cursor, so the line had a stray dot floating beside
+     it for the whole drag. They carry their segment index, so they can be
+     re-centred from it. */
+  for(var m2=c.pts.length; m2<hs.length; m2++){
+    var nd=hs[m2]; if(!nd || !nd.getAttribute) continue;
+    var si=+nd.getAttribute('data-cvmid');
+    if(!(si>=0) || si+1>=c.pts.length) continue;
+    var ga=hp[si]||c.pts[si], gb=hp[si+1]||c.pts[si+1];
+    if(!ga||!gb) continue;
+    nd.setAttribute('cx',(ga.x+gb.x)/2);
+    nd.setAttribute('cy',(ga.y+gb.y)/2);
   }
 }
 window._cvSync=_cvSync;
@@ -15285,6 +15347,29 @@ function _cvEnd(){
   return true;
 }
 
+/* True length of a run, measured between its real coordinates.
+   Independent of zoom, pxPerFt and the projection, because it never looks
+   at a pixel. Returns null when the run has no complete ground anchor or
+   the Maps geometry library is absent, so callers can fall back. */
+function _condGroundFt(c){
+  try{
+    if(!c || !c._geoPts || c._geoPts.length<2) return null;
+    var sph = window.google && google.maps && google.maps.geometry
+            && google.maps.geometry.spherical;
+    if(!sph || typeof sph.computeLength!=='function') return null;
+    var path=[];
+    for(var i=0;i<c._geoPts.length;i++){
+      var g=c._geoPts[i];
+      if(!g || g.lat==null || g.lng==null) return null;
+      path.push(new google.maps.LatLng(g.lat, g.lng));
+    }
+    var m=sph.computeLength(path);
+    if(!isFinite(m)) return null;
+    return +(m*3.280839895).toFixed(1);
+  }catch(e){ return null; }
+}
+window._condGroundFt=_condGroundFt;
+
 /* Re-anchor every point to the ground and recompute the length, so an edited
    run survives zoom exactly like a freshly drawn one. */
 function _cvRestamp(c){
@@ -15312,7 +15397,19 @@ function _cvRestamp(c){
   try{
     if(typeof _polyLen==='function'){
       c.pxLen=_polyLen(c.pts);
-      if(S.pxPerFt>0) c.ftLen=+(c.pxLen/S.pxPerFt).toFixed(1);
+      /* ── FOOTAGE COMES FROM THE GROUND ────────────────────────────
+         pxLen/pxPerFt is the length ACROSS THE SCREEN, and both terms
+         move on zoom without being updated in step — the quotient is
+         whatever the two happen to be at that instant. OmegaGroundLen
+         already corrects this, but it corrects it AFTERWARDS, by
+         wrapping pushHist and updCondStat. Between this line and that
+         wrapper a pixel-derived number exists on the record and anything
+         reading it gets the wrong figure.
+         The run was just re-anchored a few lines above, so the real
+         coordinates are right here. Measure between them. */
+      var _gft=_condGroundFt(c);
+      if(_gft!=null) c.ftLen=_gft;
+      else if(S.pxPerFt>0) c.ftLen=+(c.pxLen/S.pxPerFt).toFixed(1);
     }
     if(typeof _cdStamp==='function') _cdStamp(c);
     if(typeof renderConduit==='function') renderConduit(c);
@@ -33297,7 +33394,106 @@ function _mapMetersPerPx(lat, zoom) {
   return 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   ASK THE MAP WHERE THINGS ARE.                          (Google projection)
+   ----------------------------------------------------------------------
+   _pxToLatLng / _latLngToPx below are a hand-rolled equirectangular
+   approximation built from the map's centre, its integer zoom and a
+   metres-per-pixel formula. It is an exact inverse of ITSELF -- which is
+   why the anchor audit reports "round-trips to 0.00000 px" and passes
+   everything -- but self-consistent is not the same as correct. It is only
+   faithful to what Google actually renders if ALL of these hold:
+
+     - the map's centre pixel is exactly the centre of #sc
+     - #_gmapDiv and #sc are the same box, at the same size, always
+     - getZoom() is the precise zoom being drawn (no fractional zoom)
+     - tilt and heading are zero
+     - one cos(latitude) taken at the centre is right for the whole canvas
+
+   Every one of those is an assumption this file cannot enforce. The map
+   div has already been reparented out of #sc once, the canvas resizes when
+   the ribbon docks left, and zoom is read from a getter. Break any of
+   them and the error is a PIXEL OFFSET APPLIED AT THE CENTRE OF ZOOM, so
+   it does not shift things uniformly -- it multiplies by (2^dz - 1) on
+   every zoom step. Objects with a fresh anchor get re-placed correctly and
+   objects re-anchored from drifted pixels bake the error in permanently.
+   That is the conduit walking off into the grass, and it is why it grew
+   worse the more the view was worked.
+
+   The fix is to stop deriving the projection and ask for it. An invisible
+   OverlayView exposes Google's own MapCanvasProjection, whose
+   fromLatLngToContainerPixel / fromContainerPixelToLatLng are exact
+   inverses OF THE MAP -- correct under fractional zoom, tilt, heading, a
+   moved container and any canvas size, because the map computes them.
+
+   The old math stays as a fallback for the window before the overlay's
+   projection is live (and for a frozen plot, where there is no map).
+   ══════════════════════════════════════════════════════════════════════ */
+var _omegaProjOv=null, _omegaProjMap=null;
+
+function _omegaProjection(){
+  try{
+    var m=(typeof _gmap!=='undefined' && _gmap) ? _gmap : window._gmap;
+    if(!m || !m.getDiv) return null;
+    if(typeof google==='undefined' || !google.maps || !google.maps.OverlayView) return null;
+    /* Rebuild if the map instance was replaced (address reload, GPS path). */
+    if(_omegaProjOv && _omegaProjMap===m){
+      var p=_omegaProjOv.getProjection();
+      return p || null;
+    }
+    _omegaProjMap=m;
+    _omegaProjOv=new google.maps.OverlayView();
+    _omegaProjOv.onAdd=function(){};
+    _omegaProjOv.draw=function(){};
+    _omegaProjOv.onRemove=function(){};
+    _omegaProjOv.setMap(m);
+    var p2=_omegaProjOv.getProjection();
+    return p2 || null;    /* null until the first draw; fallback covers it */
+  }catch(e){ return null; }
+}
+window._omegaProjection=_omegaProjection;
+
+/* Map container pixels <-> #sc model pixels.
+   Rects are cached for ~12 ms: a single reprojection pass converts hundreds
+   of points, and a getBoundingClientRect() per point forces a layout each
+   time. Anything longer than a frame and a mid-gesture resize would be
+   missed. */
+var _omegaRectCache=null, _omegaRectAt=0;
+function _omegaRects(){
+  var now=(typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now();
+  if(_omegaRectCache && (now-_omegaRectAt)<12) return _omegaRectCache;
+  try{
+    var m=(typeof _gmap!=='undefined' && _gmap) ? _gmap : window._gmap;
+    var md=m && m.getDiv ? m.getDiv() : document.getElementById('_gmapDiv');
+    var sc=document.getElementById('sc');
+    if(!md || !sc) return null;
+    var mr=md.getBoundingClientRect(), sr=sc.getBoundingClientRect();
+    if(!mr.width || !sr.width) return null;
+    _omegaRectCache={
+      mrL:mr.left, mrT:mr.top,
+      srL:sr.left, srT:sr.top,
+      /* screen px per map-container px, and model px per screen px, so a
+         CSS-scaled ancestor (print preview, fit-to-page) stays correct. */
+      mS:(mr.width/(md.offsetWidth||mr.width)),
+      sX:((sc.offsetWidth||sr.width)/sr.width),
+      sY:((sc.offsetHeight||sr.height)/sr.height)
+    };
+    _omegaRectAt=now;
+    return _omegaRectCache;
+  }catch(e){ return null; }
+}
+
 function _pxToLatLng(px, py, mapState, canvasW, canvasH) {
+  /* Preferred: ask the map. */
+  try{
+    var proj=_omegaProjection(), R=_omegaRects();
+    if(proj && R && proj.fromContainerPixelToLatLng){
+      var scrX=R.srL + px/R.sX, scrY=R.srT + py/R.sY;
+      var cx=(scrX-R.mrL)/R.mS,  cy=(scrY-R.mrT)/R.mS;
+      var ll=proj.fromContainerPixelToLatLng(new google.maps.Point(cx,cy));
+      if(ll) return { lat:ll.lat(), lng:ll.lng() };
+    }
+  }catch(e){}
   if(!mapState || !mapState.lat) return null;
   const mpp = _mapMetersPerPx(mapState.lat, mapState.zoom||18);
   const dLat = (canvasH/2 - py) * mpp / 111320;
@@ -33306,12 +33502,83 @@ function _pxToLatLng(px, py, mapState, canvasW, canvasH) {
 }
 
 function _latLngToPx(lat, lng, mapState, canvasW, canvasH) {
+  try{
+    var proj=_omegaProjection(), R=_omegaRects();
+    if(proj && R && proj.fromLatLngToContainerPixel){
+      var pt=proj.fromLatLngToContainerPixel(new google.maps.LatLng(lat,lng));
+      if(pt){
+        var scrX=R.mrL + pt.x*R.mS, scrY=R.mrT + pt.y*R.mS;
+        return { x:(scrX-R.srL)*R.sX, y:(scrY-R.srT)*R.sY };
+      }
+    }
+  }catch(e){}
   if(!mapState || !mapState.lat) return null;
   const mpp = _mapMetersPerPx(mapState.lat, mapState.zoom||18);
   const x = canvasW/2  + (lng - mapState.lng) * 111320 * Math.cos(mapState.lat * Math.PI/180) / mpp;
   const y = canvasH/2  - (lat - mapState.lat) * 111320 / mpp;
   return { x, y };
 }
+
+/* How far apart are the two methods, right now, on this view?
+   Prints the disagreement at the canvas centre and at each corner. If the
+   projection is live these should read a few hundredths of a pixel; a
+   large corner number is the drift that was being baked into anchors. */
+window.OmegaProj={
+  check:function(){
+    var proj=_omegaProjection();
+    if(!proj){ console.warn('[proj] Google projection not ready yet - still on the fallback math.'); return null; }
+    var ms=(typeof _liveMapState==='function')?_liveMapState():null;
+    if(!ms){ console.warn('[proj] no live map.'); return null; }
+    var sz=_getCanvasSize(), rows=[];
+    [['centre',sz.w/2,sz.h/2],['top-left',0,0],['top-right',sz.w,0],
+     ['bottom-left',0,sz.h],['bottom-right',sz.w,sz.h]].forEach(function(t){
+      var g=_pxToLatLng(t[1],t[2],ms,sz.w,sz.h);          /* Google */
+      if(!g) return;
+      var mpp=_mapMetersPerPx(ms.lat, ms.zoom||18);
+      var fx=sz.w/2+(g.lng-ms.lng)*111320*Math.cos(ms.lat*Math.PI/180)/mpp;
+      var fy=sz.h/2-(g.lat-ms.lat)*111320/mpp;            /* old math */
+      rows.push({ point:t[0],
+                  'old math is off by (px)':Math.hypot(fx-t[1],fy-t[2]).toFixed(1),
+                  'in feet':(S.pxPerFt>0?(Math.hypot(fx-t[1],fy-t[2])/S.pxPerFt).toFixed(1):'--') });
+    });
+    if(console.table) console.table(rows); else console.log(rows);
+    return rows;
+  },
+  status:function(){
+    return { projectionLive:!!_omegaProjection(), rects:_omegaRects() };
+  },
+  /* ── MIGRATING OFF THE OLD MATH ──────────────────────────────────────
+     Every anchor already in a saved project was stamped with the
+     approximation. If the two methods disagree on this view, applying
+     Google's projection to an anchor written by the old math re-places the
+     object by that disagreement -- so things can shift once, on the first
+     load after this change.
+
+     They were drifting before; the difference is that the drift is now
+     visible in one step instead of accumulating quietly. Run check()
+     first: if the corner numbers are fractions of a pixel, the two agree
+     and nothing will move. If they are large, the old anchors were wrong
+     and this re-derives every one of them from the pixels currently on
+     screen -- the same "the drawing wins" rule used everywhere else.
+
+     Deliberately NOT automatic. It rewrites every anchor in the project,
+     so it should be run with the drawing looking correct in front of you,
+     not silently at load. */
+  rebase:function(){
+    if(!_omegaProjection()){
+      console.warn('[proj] projection not live yet - wait for the map to settle, then run OmegaProj.rebase() again.');
+      return null;
+    }
+    var n=(S.elements||[]).length+(S.shapes||[]).length+(S.conduits||[]).length;
+    try{ if(typeof _geoRestampAll==='function') _geoRestampAll(); }catch(e){
+      console.warn('[proj] rebase failed:', e && e.message); return null;
+    }
+    try{ if(typeof pushHist==='function') pushHist(); }catch(e){}
+    console.info('[proj] re-anchored '+n+' object(s) to Google\'s projection from their current pixels. '
+                +'Nothing moved on screen; the anchors now match what you see. Save to keep it.');
+    return n;
+  }
+};
 
 function _getCanvasSize() {
   const sc = document.getElementById('sc');
