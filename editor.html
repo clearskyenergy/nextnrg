@@ -62940,13 +62940,44 @@ window._elecWorkbookHost = function(){
   return false;
 };
 
-window._elecOpenWorkbook = function(){
-  if(!window._elecWorkbookHost()){
-    alert('The EV Cost Workbook runs on the internal OMEGA portal only.');
-    return;
+/* Footage takeoff straight off the drawing — the same numbers the CONDUIT
+   SCHEDULE shows, so the workbook reports measured lengths instead of
+   deriving conduit from the trench. Underground and above-ground are split
+   by route, because they price at different rates. */
+function _evFeetFromCanvas(){
+  var list=[]; try{ list=(typeof S!=='undefined' && S.conduits)?S.conduits:[]; }catch(e){}
+  var ug=0, ag=0, cable=0, pavedRuns=0, i, c, lf;
+  for(i=0;i<list.length;i++){
+    c=list[i];
+    /* stamp first: _cdEstLf reads the riser allowance it sets */
+    try{ if(typeof _cdStamp==='function') _cdStamp(c); }catch(e){}
+    lf = (typeof _cdEstLf==='function') ? _cdEstLf(c) : (+c.ftLen||0);
+    if(c.route==='trench') ug+=lf; else ag+=lf;
+    cable += (typeof _cdCableLf==='function') ? _cdCableLf(c) : 0;
+    if(c.route==='trench' && (c.trenchIn==='concrete'||c.trenchIn==='asphalt'))
+      pavedRuns += (+c.ftLen||0);
   }
-  var e = _EST; if(!e){ alert('Build the estimate first.'); return; }
-  var lines = [], i, l;
+  /* Trench counts each shared corridor once — never the sum of the conduit
+     lengths in it. trenchTotals() is the same function the schedule uses. */
+  var tt=(typeof trenchTotals==='function')?trenchTotals():{ft:0,corridors:0};
+  var paved=Math.min(pavedRuns, tt.ft);   /* runs share corridors; cap it */
+  return {
+    trench:      Math.round(tt.ft),
+    trenchPaved: Math.round(paved),
+    trenchTurf:  Math.round(Math.max(0, tt.ft-paved)),
+    conduitUG:   Math.round(ug),
+    conduitAG:   Math.round(ag),
+    conduit:     Math.round(ug+ag),
+    cable:       Math.round(cable),
+    trenchDrawn: tt.ft>0
+  };
+}
+
+/* Pack whatever is on the canvas right now into one workbook payload. */
+function _evPackSite(name){
+  var e = (typeof buildEstimate==='function') ? buildEstimate() : _EST;
+  if(!e) return null;
+  var lines=[], i, l;
   for(i=0; i<e.lines.length; i++){
     l = e.lines[i];
     lines.push({ category:l.category, description:l.description, size:l.size,
@@ -62954,11 +62985,6 @@ window._elecOpenWorkbook = function(){
                  mat:Math.round(l.mat*100)/100,
                  lab:Math.round(l.hrs*ELEC_BID.crewRate*100)/100 });
   }
-  /* The workbook derives its port count and charger class from EVSE lines,
-     and prices anything it cannot identify off its own closed-job card
-     ($2,495/port L2). Hand over the actual charger fleet -- model, part
-     number, kW, ports and the price book figure -- so it prices what is on
-     the drawing instead of a generic port. */
   var chargers = [];
   try{
     if(typeof evChargerCosts === 'function'){
@@ -62981,39 +63007,100 @@ window._elecOpenWorkbook = function(){
   }catch(err){}
   var evT = (typeof evChargerTotals==='function') ? evChargerTotals() : null;
 
-  var payload = {
+  return {
     lines: lines,
     crewRate: ELEC_BID.crewRate,
     trenchFt: (e.bom && e.bom.trenchFt) || 0,
+    /* measured geometry — without this the workbook derives conduit from
+       the trench and labels it DERIVED on the utility sheet */
+    feet: _evFeetFromCanvas(),
     chargers: chargers,
     priceBasis: (typeof OMEGA_PRICE_BASIS!=='undefined') ? OMEGA_PRICE_BASIS : 'cost',
     evTotals: evT ? { ports:evT.ports, l2Units:evT.l2Units, dcfcUnits:evT.dcfcUnits,
                       l2Kw:evT.l2Kw, dcfcKw:evT.dcfcKw } : null,
     site: {
+      /* the tab name is how the workbook tells the sites apart and how the
+         Unique Site Name column of the UI application reads */
+      name:      name || '',
       applicant: (document.getElementById('pname')||{}).value || '',
       address:   (document.getElementById('addr-in')||{}).value || ''
     }
   };
+}
 
-  /* The console and the workbook sit on different origins, so localStorage
-     cannot carry this between them. postMessage is the only route, and it
-     needs the workbook to be listening first: it pings us when ready and we
-     reply once, to its origin only. */
-  var w = window.open(_EV_WB_URL, '_blank');
+/* One workbook window, reused. Opening a fresh tab per press is why two
+   presses produced two workbooks each holding one site map. */
+var _EV_WB_WIN = null;
+
+window._elecOpenWorkbook = function(){
+  if(!window._elecWorkbookHost()){
+    alert('The EV Cost Workbook runs on the internal OMEGA portal only.');
+    return;
+  }
+  if(!_EST){ alert('Build the estimate first.'); return; }
+
+  /* Walk every site map tab and build its estimate, then put the canvas
+     back exactly as it was. Each tab holds its own conduits and trenches,
+     so this is the only way to price map 2 without the user opening it. */
+  var payloads=[], keep=_activeDocTab, i, t, p;
+  try{
+    _ensureDocTabs();
+    _docTabs[_activeDocTab].state = _serializeCanvas();
+    for(i=0; i<_docTabs.length && payloads.length<4; i++){
+      t=_docTabs[i];
+      if(t.kind && t.kind!=='sitemap') continue;     /* skip one-lines etc. */
+      _restoreCanvas(t.state);
+      /* pxPerFt comes from the map, not the snapshot — without this the
+         lengths come back in raw pixels */
+      try{ if(typeof _gmapAutoScale==='function') _gmapAutoScale(); }catch(e){}
+      p=_evPackSite(t.name);
+      if(p && p.lines && p.lines.length) payloads.push(p);
+    }
+  }catch(err){
+    payloads=[];
+  }
+  /* Always put the user back on the tab they were on. */
+  try{
+    _restoreCanvas(_docTabs[keep].state);
+    _activeDocTab=keep;
+    if(typeof _gmapAutoScale==='function') _gmapAutoScale();
+    if(typeof renderDocTabs==='function') renderDocTabs();
+  }catch(err){}
+
+  if(!payloads.length){
+    var only=_evPackSite((_docTabs[keep]||{}).name||'');
+    if(!only){ alert('Build the estimate first.'); return; }
+    payloads=[only];
+  }
+
+  var payload = (payloads.length>1)
+    ? { sites:payloads, site:payloads[0].site }
+    : payloads[0];
+
+  /* Reuse the workbook window if it is still open, so a second press
+     updates the sites already there instead of opening another tab. */
+  var reuse = false;
+  try{ reuse = !!(_EV_WB_WIN && !_EV_WB_WIN.closed); }catch(e){ reuse=false; }
+  var w = reuse ? _EV_WB_WIN : window.open(_EV_WB_URL, '_blank');
   if(!w){ alert('Allow pop-ups to open the cost workbook.'); return; }
+  _EV_WB_WIN = w;
+  try{ w.focus(); }catch(e){}
 
   var sent = false;
+  function send(){
+    if(sent) return;
+    try{ w.postMessage({ type:'OMEGA_EV_COST', payload:payload }, _EV_WB_ORIGIN); sent=true; }catch(err){}
+  }
   function onReady(ev){
     if(sent) return;
     if(!ev.data || ev.data.type !== 'OMEGA_EV_COST_READY') return;
     if(ev.origin !== _EV_WB_ORIGIN) return;
-    try{
-      w.postMessage({ type:'OMEGA_EV_COST', payload:payload }, _EV_WB_ORIGIN);
-      sent = true;
-    }catch(err){}
+    send();
     window.removeEventListener('message', onReady, false);
   }
   window.addEventListener('message', onReady, false);
+  /* An already-open workbook is listening, so it needs no handshake. */
+  if(reuse) setTimeout(send, 60);
 
   setTimeout(function(){
     window.removeEventListener('message', onReady, false);
@@ -63022,7 +63109,10 @@ window._elecOpenWorkbook = function(){
     }
   }, 15000);
 
-  if(typeof showBanner==='function') showBanner('cal','Sending the estimate to the EV Cost Workbook…');
+  if(typeof showBanner==='function')
+    showBanner('cal', payloads.length>1
+      ? ('Sending '+payloads.length+' site maps to the EV Cost Workbook…')
+      : 'Sending the estimate to the EV Cost Workbook…');
 };
 
 /* ---- expose entry point ---- */
@@ -66019,6 +66109,61 @@ window._crmToastModal=_crmToastModal;
   }
   body.omega-dock-left .rbtn.home-hero{ min-width:0!important; max-width:none!important; }
   body.omega-dock-left .rsbtn{ width:100%; }
+
+  /* ---- FIX: docked panels collapsed on top of each other ---------------
+     THE PANELS DO NOT FIT, SO THEY COLLIDE. Same class of bug as the
+     Recent Projects strip in OMEGA PATCH 5 — not z-index, not width.
+
+     Once turned on its side, .ribbon-page is a flex COLUMN with height:100%
+     inside a grid cell that has a definite height. The Edit tab puts ten
+     buttons and three captions (~330px) into a ~600px column, but Draw and
+     Home put in far more, and flex items shrink by default. Each .rpanel
+     was squeezed toward zero while its buttons kept the height their text
+     actually needs, so the Scale panel's caption and rows painted straight
+     over the Edit panel's rows: "Delete Conduit" and "Calibrate Scale" on
+     the same pixels.
+
+     Two defaults did the squeezing and both have to go:
+       .rpanel      -> flex-shrink:1 (initial)   panel compressed
+       .rpanel-body -> flex:1 1 0                basis 0, so it starts at
+                       nothing and only grows into space that a horizontal
+                       ribbon has and a vertical column does not
+
+     Fix: let the column be as tall as its content and hand the overflow to
+     #ribbon, which is already overflow-y:auto and just needed min-height:0
+     to be allowed to scroll instead of fighting the grid. ------------- */
+  body.omega-dock-left #ribbon{
+    /* Grid items are min-height:auto, which means "never shrink below your
+       content" — that silently cancels overflow-y:auto. Without this the
+       column tries to grow past 100vh and body's overflow:hidden clips the
+       last panels away instead of scrolling to them. */
+    min-height:0;
+  }
+  body.omega-dock-left .ribbon-page{
+    height:auto!important;        /* was 100% of a definite grid row */
+    justify-content:flex-start;
+  }
+  body.omega-dock-left .rpanel{
+    flex:0 0 auto!important;      /* 1. a panel can never be compressed
+                                        below the buttons it contains */
+    height:auto; justify-content:flex-start;
+  }
+  body.omega-dock-left .rpanel-body{
+    flex:0 0 auto!important;      /* 2. basis 0 collapsed it to nothing */
+    height:auto; min-height:0;
+  }
+  body.omega-dock-left .rpanel-body .rbtn{
+    flex:0 0 auto!important;      /* 3. and a row can never be compressed
+                                        below its own label */
+    height:auto!important;
+    /* max-height is calc(--ribbon-h - 22px): it reserves room for the
+       caption inside a 68px horizontal strip. In a column the caption sits
+       in its own row above, so the cap only clips two-line labels. */
+    max-height:none!important;
+  }
+  /* Labels like "Delete<br>Conduit" keep their break and simply wrap to two
+     lines, which is what "Clear Schematic" was already doing correctly. */
+  body.omega-dock-left .rbtn .rb-lbl{ white-space:normal; }
   /* The .rtab elements are NOT direct children of #tb - they sit in a
      #ribbon-tabs wrapper that is flex-wrap:nowrap. Wrapping #tb alone did
      nothing, so the eleven tabs overflowed the column and rendered across
@@ -85161,10 +85306,10 @@ window._crmToastModal=_crmToastModal;
 </script>
 <!-- OMEGA FIX PACK END -->
 
-<!-- OMEGA TERRAIN + ELECTRICAL PACK v2.7 BEGIN -->
+<!-- OMEGA TERRAIN + ELECTRICAL PACK v2.8 BEGIN -->
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
-   OMEGA TERRAIN + ELECTRICAL PACK  ·  v2.7
+   OMEGA TERRAIN + ELECTRICAL PACK  ·  v2.8
    ──────────────────────────────────────────────────────────────────────────
    Closes the gap between the terrain OMEGA already samples and the
    flat-ground layout engine that never reads it.
@@ -85211,6 +85356,11 @@ window._crmToastModal=_crmToastModal;
          instead of being parsed and then dropped in a variable
    v2.7  PVWatts yield in-tool: real TMY weather instead of the flat
          capacity factors, sized on the BUILDABLE kW
+   v2.8  FIX: the editor's own fix pack overwrites the two globals this
+         pack wraps, so on an unlucky tick the tracker fix and the canvas
+         colouring were silently destroyed. Hooks are now verified and
+         re-applied rather than installed once. Panel drags, resizes and
+         remembers where you put it.
 
    HONESTY NOTE, carried from the base file: the elevation source is a DEM
    (about 10 m posts via 3DEP, 30 m elsewhere), not a survey. Reveals and
@@ -85223,7 +85373,7 @@ window._crmToastModal=_crmToastModal;
   'use strict';
 
   var TAG = '[omega-terrain]';
-  var VERSION = '2.7';
+  var VERSION = '2.8';
 
   /* ══════════════════════════════════════════════════════════════════
      0.  UTILITIES
@@ -89209,6 +89359,9 @@ window._crmToastModal=_crmToastModal;
 
   function analyze(opts) {
     opts = opts || {};
+    /* The wrappers can be overwritten at any time by the editor's own
+       fix pack; check before relying on them rather than after. */
+    try { ensureHooks(); } catch (e) {}
     var sh = opts.shape || pickArray(opts.id);
     if (!sh) return { ok: false, why: 'No auto-layout array on the canvas. Draw a boundary and generate an array first.' };
     if (!sh.tables || !sh.tables.length) return { ok: false, why: 'That array has no tables to analyse.' };
@@ -89420,12 +89573,284 @@ window._crmToastModal=_crmToastModal;
     return true;
   }
 
+
+  /* ══════════════════════════════════════════════════════════════════
+     28.  HOOK WATCHDOG                                     (pack v2.8)
+     ──────────────────────────────────────────────────────────────────
+     This pack WRAPS two of the editor's globals — computeGroundLayout
+     for the tracker axis fix, _derRenderAutoLayout for canvas colouring.
+     The editor's own fix pack REPLACES the same two:
+
+         window.computeGroundLayout   = computeGroundLayoutV2;
+         window._derRenderAutoLayout  = renderAutoLayoutV2;
+
+     Assignment, not wrapping. Both packs install off a 300 ms poll, so
+     whichever lands last wins — and if this one lands first, its
+     wrappers are overwritten and simply stop existing. No error, no
+     warning: the tracker layout silently reverts and the canvas never
+     colours. install() then set `installed = true` and never looked
+     again, so it stayed broken for the rest of the session.
+
+     A one-shot install cannot be correct against a global anyone may
+     reassign at any time. So each hook is verified rather than assumed:
+     the wrapper leaves a flag on the function it installed, and the
+     watchdog re-wraps whenever that flag is missing. It runs on a decaying
+     poll and again on every panel open and every analysis, which covers
+     both the startup race and any later reassignment.
+     ══════════════════════════════════════════════════════════════════ */
+
+  var _hooks = { tracker: false, painter: false, section: false, menu: false, preset: false };
+
+  function ensureHooks() {
+    /* tracker axis fix — re-wrap if the flag is gone */
+    try {
+      var cg = window.computeGroundLayout;
+      _hooks.tracker = !!(typeof cg === 'function' && cg.__omegaAxisFix);
+      if (!_hooks.tracker && typeof cg === 'function') {
+        _hooks.tracker = installTrackerFix();
+      }
+    } catch (e) {}
+
+    /* canvas painter — same */
+    try {
+      var rp = window._derRenderAutoLayout;
+      _hooks.painter = !!(typeof rp === 'function' && rp.__omegaPaint);
+      if (!_hooks.painter && typeof rp === 'function') {
+        _hooks.painter = installPainter();
+      }
+    } catch (e) {}
+
+    /* cross-section click hook */
+    try {
+      var host = document.getElementById('sc');
+      if (host && !host.__omegaSecHook) {
+        host.addEventListener('click', sectionClick, true);
+        host.__omegaSecHook = true;
+      }
+      _hooks.section = !!(host && host.__omegaSecHook);
+    } catch (e) {}
+
+    try { _hooks.menu = addMenu(); } catch (e) {}
+    try { addPreset(); _hooks.preset = true; } catch (e) {}
+
+    return _hooks;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     29.  PANEL: DRAG, RESIZE, POSITION MEMORY              (pack v2.8)
+     ──────────────────────────────────────────────────────────────────
+     The panel was pinned to the top-right corner with no way to move it,
+     which is wrong for a tool whose whole point is comparing what it says
+     against what is under it on the canvas. It now drags by its title
+     bar, resizes from the bottom-left, remembers where it was put, and
+     is clamped back into view on load so a position saved on a wide
+     monitor does not strand it off-screen on a laptop.
+
+     Pointer events rather than mouse events, so it works on a tablet —
+     which is where a site map tool actually gets used.
+     ══════════════════════════════════════════════════════════════════ */
+
+  var PANEL_LS = 'omegaTerrPanel';
+
+  function panelSavePos(el) {
+    try {
+      localStorage.setItem(PANEL_LS, JSON.stringify({
+        left: el.style.left, top: el.style.top,
+        width: el.style.width, height: el.style.height
+      }));
+    } catch (e) {}
+  }
+
+  function panelRestorePos(el) {
+    var s = null;
+    try { s = JSON.parse(localStorage.getItem(PANEL_LS) || 'null'); } catch (e) {}
+    if (!s || !s.left) return;
+    el.style.left = s.left; el.style.top = s.top;
+    el.style.right = 'auto';
+    if (s.width) el.style.width = s.width;
+    if (s.height) { el.style.height = s.height; el.style.maxHeight = 'none'; }
+    panelClamp(el);
+  }
+
+  /* Keep at least a corner of the panel reachable. A saved position from
+     a 2560px monitor puts the whole thing past the right edge of a
+     1280px laptop, and a panel you cannot reach is the same as one that
+     does not open. */
+  function panelClamp(el) {
+    try {
+      var r = el.getBoundingClientRect();
+      var vw = window.innerWidth, vh = window.innerHeight;
+      var L = parseFloat(el.style.left), T = parseFloat(el.style.top);
+      if (!isFinite(L)) L = r.left;
+      if (!isFinite(T)) T = r.top;
+      L = clamp(L, 8 - r.width + 90, vw - 90);
+      T = clamp(T, 0, vh - 44);
+      el.style.left = L + 'px';
+      el.style.top = T + 'px';
+      el.style.right = 'auto';
+      if (r.height > vh - T - 8) el.style.maxHeight = (vh - T - 12) + 'px';
+    } catch (e) {}
+  }
+
+  function panelMakeDraggable(el) {
+    if (el.__omegaDrag) return;
+    el.__omegaDrag = true;
+    var bar = el.querySelector('.tb');
+    if (!bar) return;
+    bar.style.cursor = 'move';
+    bar.style.touchAction = 'none';
+
+    var dx = 0, dy = 0, dragging = false;
+    function down(ev) {
+      if (ev.target && ev.target.tagName === 'BUTTON') return;   /* let × work */
+      var r = el.getBoundingClientRect();
+      el.style.left = r.left + 'px';
+      el.style.top = r.top + 'px';
+      el.style.right = 'auto';
+      dx = ev.clientX - r.left; dy = ev.clientY - r.top;
+      dragging = true;
+      try { bar.setPointerCapture(ev.pointerId); } catch (e) {}
+      ev.preventDefault();
+    }
+    function move(ev) {
+      if (!dragging) return;
+      el.style.left = (ev.clientX - dx) + 'px';
+      el.style.top = (ev.clientY - dy) + 'px';
+      ev.preventDefault();
+    }
+    function up(ev) {
+      if (!dragging) return;
+      dragging = false;
+      try { bar.releasePointerCapture(ev.pointerId); } catch (e) {}
+      panelClamp(el);
+      panelSavePos(el);
+    }
+    bar.addEventListener('pointerdown', down);
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', up);
+    bar.addEventListener('pointercancel', up);
+
+    /* resize grip, bottom-left because the panel usually lives on the right */
+    var grip = document.createElement('div');
+    grip.title = 'Drag to resize';
+    grip.style.cssText = 'position:absolute;left:0;bottom:0;width:16px;height:16px;'
+      + 'cursor:nesw-resize;touch-action:none;'
+      + 'background:linear-gradient(45deg,transparent 40%,#3C3C3C 40%,#3C3C3C 60%,transparent 60%)';
+    el.appendChild(grip);
+    var rz = false, sx = 0, sy = 0, sw = 0, shh = 0, sl = 0;
+    grip.addEventListener('pointerdown', function (ev) {
+      var r = el.getBoundingClientRect();
+      rz = true; sx = ev.clientX; sy = ev.clientY;
+      sw = r.width; shh = r.height; sl = r.left;
+      el.style.left = r.left + 'px'; el.style.top = r.top + 'px'; el.style.right = 'auto';
+      try { grip.setPointerCapture(ev.pointerId); } catch (e) {}
+      ev.preventDefault(); ev.stopPropagation();
+    });
+    grip.addEventListener('pointermove', function (ev) {
+      if (!rz) return;
+      var w = clamp(sw - (ev.clientX - sx), 260, window.innerWidth - 20);
+      var hh = clamp(shh + (ev.clientY - sy), 160, window.innerHeight - 20);
+      el.style.width = w + 'px';
+      el.style.height = hh + 'px';
+      el.style.maxHeight = 'none';
+      el.style.left = (sl + (sw - w)) + 'px';
+      ev.preventDefault();
+    });
+    function rzUp(ev) {
+      if (!rz) return;
+      rz = false;
+      try { grip.releasePointerCapture(ev.pointerId); } catch (e) {}
+      panelClamp(el); panelSavePos(el);
+    }
+    grip.addEventListener('pointerup', rzUp);
+    grip.addEventListener('pointercancel', rzUp);
+
+    /* a viewport change can strand a panel that was fine before */
+    window.addEventListener('resize', function () {
+      if (el.classList.contains('on')) panelClamp(el);
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     30.  GUIDED EMPTY STATES                               (pack v2.8)
+     ──────────────────────────────────────────────────────────────────
+     Opening the panel with nothing set up returned a sentence of prose
+     and a dead end. Every precondition now names itself and carries the
+     button that satisfies it, so the panel is a checklist rather than an
+     error message.
+     ══════════════════════════════════════════════════════════════════ */
+
+  function readiness() {
+    var out = { steps: [], ready: false };
+    var hasScale = false, hasArray = false, hasTerrain = false;
+
+    try { hasScale = (typeof _derScaled === 'function') ? _derScaled() : (S.pxPerFt > 0); } catch (e) {}
+    try { hasArray = arrays().some(function (a) { return a.tables && a.tables.length; }); } catch (e) {}
+    hasTerrain = !!terrain();
+
+    out.steps.push({
+      key: 'scale', done: hasScale,
+      label: 'Set the map scale',
+      why: 'Every figure below is in feet, which needs a pixels-per-foot calibration.',
+      action: hasScale ? null : { label: 'Open scale tools', fn: function () {
+        try { if (typeof openCalibrate === 'function') return openCalibrate(); } catch (e) {}
+        try { if (typeof rbFly === 'function') return say('Use the Scale / Calibrate tool on the ribbon.'); } catch (e) {}
+        say('Set the map scale from the ribbon first.');
+      } }
+    });
+
+    out.steps.push({
+      key: 'array', done: hasArray,
+      label: 'Draw a solar array',
+      why: 'The analysis screens the tables of an auto-layout array against the ground.',
+      action: hasArray ? null : { label: 'Solar \u2014 Custom Area', fn: function () {
+        try { if (typeof omegaSolarCustomArea === 'function') return omegaSolarCustomArea(); } catch (e) {}
+        try { if (typeof derSetSolar === 'function') return derSetSolar('ground'); } catch (e) {}
+        say('Use Solar \u2014 Custom Area from the ribbon.');
+      } }
+    });
+
+    out.steps.push({
+      key: 'terrain', done: hasTerrain,
+      label: 'Sample the terrain',
+      why: 'Slope, piles, clearance and draping all read ground elevation.',
+      action: hasTerrain ? null : { label: 'Open terrain sampler', fn: function () {
+        try { if (typeof e5Open === 'function') return e5Open(); } catch (e) {}
+        say('Use the Terrain tool on the ribbon to sample elevation.');
+      } }
+    });
+
+    out.ready = hasScale && hasArray && hasTerrain;
+    return out;
+  }
+
+  function renderReadiness(rd, why) {
+    var h = '';
+    if (why) h += '<div class="warn">' + esc(why) + '</div>';
+    h += '<h4>Before this can run</h4>';
+    rd.steps.forEach(function (s, i) {
+      h += '<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;'
+        + 'border-bottom:1px solid #242426">'
+        + '<span style="width:14px;color:' + (s.done ? '#2FB54A' : '#8FA3B8') + ';font-weight:700">'
+        + (s.done ? '\u2713' : (i + 1)) + '</span>'
+        + '<span style="flex:1"><b style="color:' + (s.done ? '#7d8a97' : '#E2EEF9') + '">'
+        + s.label + '</b><br><span class="note" style="margin:0">' + s.why + '</span></span>';
+      if (s.action) {
+        h += '<button data-ready="' + s.key + '" style="padding:5px 8px;background:#252526;'
+          + 'border:1px solid #3C3C3C;color:#E2EEF9;border-radius:5px;font-size:9px;'
+          + 'cursor:pointer;font-family:inherit;white-space:nowrap">' + s.action.label + '</button>';
+      }
+      h += '</div>';
+    });
+    return h;
+  }
+
   /* ══════════════════════════════════════════════════════════════════
      15.  PANEL
      ══════════════════════════════════════════════════════════════════ */
 
   var CSS = ''
-    + '#omega-terr{position:fixed;right:14px;top:70px;width:340px;max-height:78vh;overflow:auto;'
+    + '#omega-terr{position:fixed;right:14px;top:70px;width:360px;max-height:78vh;overflow:auto;'
     + 'background:#1b1b1c;border:1px solid #3C3C3C;border-radius:10px;z-index:99999;'
     + 'font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;color:#E2EEF9;'
     + 'box-shadow:0 12px 40px rgba(0,0,0,.6);display:none}'
@@ -89472,10 +89897,18 @@ window._crmToastModal=_crmToastModal;
       + '<button data-act="close" title="Close">\u00d7</button></div>'
       + '<div class="bd" id="omega-terr-bd"></div>';
     document.body.appendChild(el);
-    el.querySelector('[data-act="close"]').onclick = function () { el.classList.remove('on'); };
-    el.querySelector('[data-act="min"]').onclick = function () {
+    try { panelRestorePos(el); } catch (e) {}
+    try { panelMakeDraggable(el); } catch (e) {}
+
+    /* Guarded. A throw here used to take the whole panel with it and
+       leave only a console error, which is indistinguishable from "the
+       tool does not work" for anyone not looking at devtools. */
+    var closeBtn = el.querySelector('[data-act="close"]');
+    if (closeBtn) closeBtn.onclick = function () { el.classList.remove('on'); };
+    var minBtn = el.querySelector('[data-act="min"]');
+    if (minBtn) minBtn.onclick = function () {
       var b = el.querySelector('.bd');
-      b.style.display = (b.style.display === 'none') ? '' : 'none';
+      if (b) b.style.display = (b.style.display === 'none') ? '' : 'none';
     };
     return el;
   }
@@ -89493,12 +89926,19 @@ window._crmToastModal=_crmToastModal;
     var el = ensurePanel();
     el.classList.add('on');
     var b = document.getElementById('omega-terr-bd');
+    if (!b) { if (window.console) console.warn(TAG, 'panel body missing'); return; }
     b.style.display = '';
 
     if (!res || !res.ok) {
+      var rd = readiness();
       b.innerHTML = '<button class="run" id="ot-run">Run analysis</button>'
-        + '<div class="warn">' + esc(res ? res.why : 'Nothing to analyse.') + '</div>';
-      wire(b);
+        + renderReadiness(rd, res ? res.why : 'Nothing to analyse yet.')
+        + (rd.ready ? '' : '<div class="note">Work down the list; the analysis runs as soon as '
+            + 'all three are ticked.</div>')
+        + '<div class="btns"><button class="wide" data-x="dxf">Import survey from .dxf\u2026</button>'
+        + '<button class="wide" data-x="import">Import boundary from .shp</button></div>';
+      wire(b, rd);
+      panelClamp(el);
       return;
     }
 
@@ -89716,9 +90156,18 @@ window._crmToastModal=_crmToastModal;
     wire(b);
   }
 
-  function wire(b) {
+  function wire(b, rd) {
     var r = b.querySelector('#ot-run');
-    if (r) r.onclick = function () { render(analyze()); };
+    if (r) r.onclick = function () { ensureHooks(); render(analyze()); };
+    if (rd) {
+      Array.prototype.forEach.call(b.querySelectorAll('[data-ready]'), function (btn) {
+        btn.onclick = function () {
+          var k = btn.getAttribute('data-ready');
+          var st = rd.steps.filter(function (x) { return x.key === k; })[0];
+          if (st && st.action) { try { st.action.fn(); } catch (e) { say('Could not open that tool.'); } }
+        };
+      });
+    }
     Array.prototype.forEach.call(b.querySelectorAll('[data-paint]'), function (btn) {
       btn.onclick = function () {
         var m = btn.getAttribute('data-paint');
@@ -89763,7 +90212,12 @@ window._crmToastModal=_crmToastModal;
     inp.click();
   }
 
-  function open() { render(LAST && LAST.ok ? LAST : analyze()); }
+  function open() {
+    ensureHooks();
+    render(LAST && LAST.ok ? LAST : analyze());
+    var el = document.getElementById('omega-terr');
+    if (el) panelClamp(el);
+  }
 
 
   /* ---- capacity prompt UI ------------------------------------------ */
@@ -90178,30 +90632,34 @@ window._crmToastModal=_crmToastModal;
     } catch (e) { return false; }
   }
 
-  var installed = false;
+  var announced = false;
   function install() {
-    if (installed) return true;
     if (!document.body) return false;
-    addPreset();
-    addMenu();
-    installTrackerFix();
-    installPainter();
-    try {
-      var host = document.getElementById('sc');
-      if (host && !host.__omegaSecHook) {
-        host.addEventListener('click', sectionClick, true);
-        host.__omegaSecHook = true;
+    var h = ensureHooks();
+    if (!announced && h.menu) {
+      announced = true;
+      if (window.console) {
+        console.info(TAG, 'v' + VERSION + ' ready \u2014 OmegaTerrain.open() or Solar menu '
+          + '\u2192 Terrain & Electrical');
       }
-    } catch (e) {}
-    installed = true;
-    if (window.console) {
-      console.info(TAG, 'v' + VERSION + ' ready \u2014 OmegaTerrain.open() or Solar menu \u2192 Terrain & Electrical');
     }
-    return true;
+    return h.tracker && h.painter && h.menu;
   }
 
+  /* A DECAYING watchdog, not a one-shot install. The editor's own fix
+     pack assigns over computeGroundLayout and _derRenderAutoLayout on its
+     own 300 ms poll, so "installed once" is not the same as "installed".
+     Fast while the page settles, then slow forever, because a reassignment
+     can happen at any point in a session and the cost of checking a flag
+     is nothing. */
   var tries = 0;
-  var iv = setInterval(function () { if (install() || ++tries > 200) clearInterval(iv); }, 300);
+  var ivFast = setInterval(function () {
+    install();
+    if (++tries > 60) {                       /* ~18 s of settling */
+      clearInterval(ivFast);
+      setInterval(ensureHooks, 4000);
+    }
+  }, 300);
 
   /* ══════════════════════════════════════════════════════════════════
      PUBLIC API
@@ -90237,6 +90695,14 @@ window._crmToastModal=_crmToastModal;
     },
 
     /* v2 */
+    hooks: function () { return ensureHooks(); },
+    readiness: readiness,
+    resetPanel: function () {
+      try { localStorage.removeItem(PANEL_LS); } catch (e) {}
+      var el = document.getElementById('omega-terr');
+      if (el) { el.style.cssText = ''; el.classList.add('on'); panelClamp(el); }
+      return true;
+    },
     pvwatts: pvwRun,
     pvwattsPanel: pvwPrompt,
     pvwattsKey: pvwKey,
