@@ -15126,7 +15126,11 @@ function _cvShow(cid){
       if(ev.altKey){ _cvRemove(cid, i); return true; }
       var m=_scXY(ev); if(!m) return false;
       var p=c.pts[i]; if(!p) return false;
-      _cvDrag={ cid:cid, i:i, ox:p.x-m.x, oy:p.y-m.y, moved:false };
+      _cvDrag={ cid:cid, i:i, ox:p.x-m.x, oy:p.y-m.y, moved:false,
+                /* Read the modifier ONCE, here. Reading it per mousemove
+                   would let a key pressed or released mid-drag flip the
+                   gesture between "reposition" and "detach" halfway. */
+                detach: !!(ev && ev.shiftKey) };
       h.setAttribute('style','cursor:grabbing;pointer-events:all');
       return true;
     };
@@ -15294,18 +15298,38 @@ function _cvMove(x,y){
   c.pts[i].x = x + (_cvDrag.ox||0);
   c.pts[i].y = y + (_cvDrag.oy||0);
   _cvDrag.moved=true;
-  /* A dragged point is no longer welded to an element.
+  /* ── DRAGGING A YELLOW POINT DOES NOT UNWELD IT ────────────────────
+     This used to null fromId/fromElId/toId/toElId, so the first time you
+     nudged an endpoint the run forgot which equipment it fed — for good.
+     Nothing ever re-attached it, and the weld pass in _geoReprojectAll
+     skips a point that names nothing, so from then on that end floated
+     free of the gear it was supposed to be bonded to.
 
-     fromId/toId were cleared here, but fromElId/toElId were not — and the
-     ENDPOINT WELD pass in _geoReprojectAll reads BOTH:
-         eid = c.fromId || c.fromElId
-     so a detached endpoint still named an element, and the next pan or zoom
-     snapped it straight back onto that element's centre (anything within
-     ~30 ft). You would re-route the end, let go, nudge the map, and watch it
-     jump home. Renounce every weld the reprojector can see. */
-  if(c.pts[i].elId) delete c.pts[i].elId;
-  if(i===0){ c.fromId=null; c.fromElId=null; }
-  if(i===c.pts.length-1){ c.toId=null; c.toElId=null; }
+     Yellow means anchored. Moving it should move WHERE ON the equipment
+     the run lands, not sever the connection: re-record the displacement
+     from the element's centre in feet, which is what the weld pass reads.
+     The end then follows its element forever after, at the offset you
+     just put it at.
+
+     Shift-drag is the deliberate detach, captured at grab time so the
+     modifier cannot change mid-gesture. */
+  var _lastI=c.pts.length-1;
+  var _slot = (i===0) ? '_fromOff' : (i===_lastI ? '_toOff' : null);
+  var _eid  = (i===0) ? (c.fromId||c.fromElId) : (i===_lastI ? (c.toId||c.toElId) : null);
+  if(_cvDrag.detach){
+    if(c.pts[i].elId) delete c.pts[i].elId;
+    if(i===0){ c.fromId=null; c.fromElId=null; delete c._fromOff; }
+    if(i===_lastI){ c.toId=null; c.toElId=null; delete c._toOff; }
+  } else if(_slot && _eid && typeof _elCenter==='function'){
+    var _ctr=_elCenter(_eid);
+    var _ppf=(S.pxPerFt>0)?S.pxPerFt:0;
+    if(_ctr && _ppf>0){
+      c[_slot]={ fx:(c.pts[i].x-_ctr.x)/_ppf, fy:(c.pts[i].y-_ctr.y)/_ppf };
+    }
+  } else if(c.pts[i].elId){
+    /* An interior point that named an element is a true detachment. */
+    delete c.pts[i].elId;
+  }
   _cvInvalidateAnchor(c);
   if(typeof renderConduit==='function') renderConduit(c);
   _cvSync(c);
@@ -15710,7 +15734,7 @@ function renderConduit(c){
     if(e.altKey && xy && !_auto){ _cvInsert(c.id, xy.x, xy.y); return; }
     _cvShow(c.id);
     if(typeof showBanner==='function')
-      showBanner('cond','Drag a point to re-route \u00b7 Double-click a point to remove it \u00b7 Alt-click a segment to add one \u00b7 Esc to finish');
+      showBanner('cond','Drag a point to re-route \u00b7 Drag a faint midpoint to add one \u00b7 Double-click a point to remove it \u00b7 Yellow ends stay bonded to their equipment \u2014 Shift-drag to detach \u00b7 Esc to finish');
   });
   hit.addEventListener('contextmenu', function(e){
     e.preventDefault(); e.stopPropagation();
@@ -34501,36 +34525,67 @@ function _geoReprojectAll(){
       }
 
       /* ── ENDPOINT WELD ────────────────────────────────────────────────
-         The frozen ground anchor and the equipment's own anchor are stamped
-         at different moments and updated by different handlers, so on zoom a
-         run's end and the box it feeds drift apart. The fix: any point that
-         names an element (pts[i].elId, or the run's fromId/toId for the
-         first/last point) is snapped to that element's CURRENT model-space
-         centre, so the connection is welded by construction at every zoom
-         instead of relying on two anchors agreeing. _elCenter answers in the
-         same coordinate space as c.pts, so no screen/model mixing. */
+         A yellow endpoint names an element and is supposed to travel with
+         it. Two things stopped that.
+
+         (1) IT SNAPPED TO THE CENTRE. A run that legitimately leaves at the
+             element's edge or carries a cluster offset got yanked into the
+             middle of the box. The guard below existed to prevent that — it
+             skipped the weld when the endpoint was more than ~30 ft away —
+             but distance cannot tell "deliberately offset" apart from
+             "drifted". So it was a workaround for not recording the offset.
+
+         (2) THE GUARD WAS A ONE-WAY TRAP. Once an endpoint was more than
+             30 ft out — which is exactly what the old projection math did
+             to it, and it compounds on every zoom — the weld was skipped
+             FOREVER. Nothing pulled it back. That is why the yellow points
+             sit out in the grass and stay there no matter how much of the
+             rest gets fixed: the code had already given up on them.
+
+         Both go away once the offset is a recorded number rather than a
+         guess. The endpoint's position is stored as a displacement from
+         its element's centre IN FEET, so it is a property of the ground
+         and survives zoom. Reprojection then places it at
+         centre + offset x pxPerFt — exact, no tolerance, no snapping.
+
+         Seeding, for runs that predate this: if the endpoint is within
+         30 ft of its element, that displacement is taken to be a genuine
+         port/edge exit and is recorded. Beyond that it is drift, and the
+         endpoint goes home to the centre. The old tolerance is used ONCE,
+         to make that call, instead of every frame forever. */
       if(typeof _elCenter==='function' && c.pts.length){
         var lastI = c.pts.length-1;
+        var _ppfW = (S.pxPerFt>0) ? S.pxPerFt : 0;
         for(var pi=0; pi<c.pts.length; pi++){
           var pt=c.pts[pi];
-          var eid = pt && pt.elId;          /* explicit attachment: always weld */
-          var viaEnd = false;
-          if(!eid && pi===0)      { eid = c.fromId || c.fromElId || null; viaEnd = true; }
-          if(!eid && pi===lastI)  { eid = c.toId   || c.toElId   || null; viaEnd = true; }
+          var eid = pt && pt.elId;          /* explicit attachment */
+          var slot = null;                  /* where the offset is kept */
+          if(!eid && pi===0)      { eid = c.fromId || c.fromElId || null; slot='_fromOff'; }
+          if(!eid && pi===lastI)  { eid = c.toId   || c.toElId   || null; slot='_toOff'; }
           if(!eid) continue;
           var ctr=_elCenter(eid);
           if(!ctr) continue;
-          if(viaEnd){
-            /* No elId on the point itself — this run may exit at the element's
-               EDGE (port) or carry a cluster edge-offset, so only re-weld when
-               the endpoint is already essentially on the element (a true
-               attachment that has merely drifted), not when it is a
-               deliberate edge/offset exit. Tolerance scales with zoom. */
-            var tol=(S.pxPerFt>0? S.pxPerFt:6)*30;  /* ~30 ft */
-            var dx=pt.x-ctr.x, dy=pt.y-ctr.y;
-            if((dx*dx+dy*dy) > tol*tol) continue;
+
+          if(!slot){
+            /* Point carries its own elId: it IS the attachment, no offset. */
+            pt.x=ctr.x; pt.y=ctr.y;
+            continue;
           }
-          pt.x=ctr.x; pt.y=ctr.y;
+
+          var off=c[slot];
+          if(!off || typeof off.fx!=='number'){
+            /* First time we have seen this run. Decide once. */
+            var dxs=pt.x-ctr.x, dys=pt.y-ctr.y;
+            var tol=(_ppfW>0?_ppfW:6)*30;             /* ~30 ft */
+            if(_ppfW>0 && (dxs*dxs+dys*dys) <= tol*tol){
+              off={ fx:dxs/_ppfW, fy:dys/_ppfW };     /* a real port offset */
+            } else {
+              off={ fx:0, fy:0 };                     /* drift — bring it home */
+            }
+            c[slot]=off;
+          }
+          pt.x = ctr.x + (_ppfW>0 ? off.fx*_ppfW : 0);
+          pt.y = ctr.y + (_ppfW>0 ? off.fy*_ppfW : 0);
         }
       }
 
