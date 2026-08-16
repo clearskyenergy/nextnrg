@@ -91580,5 +91580,198 @@ window._crmToastModal=_crmToastModal;
 })();
 </script>
 
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   RE-ATTACHING ENDPOINTS THAT LOST THEIR LINK
+   -----------------------------------------------------------------------
+   The weld now works. This is about the runs it cannot help.
+
+   The old _cvMove deleted EVERY trace of an attachment the moment you
+   nudged an endpoint:
+
+       delete c.pts[i].elId;
+       c.fromId = c.fromElId = null;      // or toId / toElId
+
+   That has been fixed, but it already ran, and the result was saved. A run
+   in that state does not name any equipment at all, so there is nothing
+   for the weld pass to weld TO — it is not being skipped, it has no
+   target. No amount of projection or anchor work reaches it. The link has
+   to be put back.
+
+   Evidence available, in order of trust:
+
+     1. c.runFrom / c.runTo   - the endpoint NAMES, recorded by the BESS
+                                Cable Run picker. An exact label match is
+                                as good as the original link.
+     2. the surviving end     - if one end still names an element, the
+                                other is whatever the run's type implies;
+                                we do not guess that, but we do exclude
+                                the element already in use.
+     3. nearest equipment     - last resort, and only within a stated
+                                radius, because a drifted endpoint can be
+                                hundreds of feet from where it belongs.
+
+   audit() reports what it WOULD do and changes nothing. reattach() applies
+   it. Deliberately two steps: a wrong re-link silently bonds a run to the
+   wrong gear, and that is a worse drawing than an obviously broken one.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+  var TAG='[omega/reattach]';
+
+  function S_(){ try{ return (typeof S!=='undefined'&&S)?S:null; }catch(e){ return null; } }
+  function ppf(){ var s=S_(); return (s&&s.pxPerFt>0)?s.pxPerFt:0; }
+
+  function elLabel(el){
+    if(!el) return '';
+    return String(el.label || el.name || el.evModel || el.eqId || el.type || '').trim();
+  }
+  function norm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+
+  function centre(el){
+    if(!el) return null;
+    var b=(typeof window._elBoxSize==='function')
+        ? window._elBoxSize(el)
+        : { w:(+el.w||60), h:(+el.h||+el.w||60) };
+    return { x:(+el.x||0)+b.w/2, y:(+el.y||0)+b.h/2 };
+  }
+
+  /* Best element for one loose end. Returns {el, how, ft} or null. */
+  function candidate(c, end, excludeId){
+    var s=S_(); if(!s||!s.elements||!s.elements.length) return null;
+    var wantName = (end==='from') ? c.runFrom : c.runTo;
+    var pts=c.pts||[]; if(!pts.length) return null;
+    var pt = (end==='from') ? pts[0] : pts[pts.length-1];
+
+    /* 1. exact name match */
+    if(wantName){
+      var target=norm(wantName);
+      for(var i=0;i<s.elements.length;i++){
+        var e=s.elements[i];
+        if(e.id===excludeId) continue;
+        if(norm(elLabel(e))===target) return { el:e, how:'name match ("'+wantName+'")', ft:null };
+      }
+    }
+    /* 3. nearest, with the distance stated so the caller can judge it */
+    var best=null, bestD=Infinity;
+    for(var j=0;j<s.elements.length;j++){
+      var el=s.elements[j];
+      if(el.id===excludeId) continue;
+      if(el.type==='callout' || el.type==='dimension') continue;
+      var ctr=centre(el); if(!ctr) continue;
+      var d=Math.hypot(pt.x-ctr.x, pt.y-ctr.y);
+      if(d<bestD){ bestD=d; best=el; }
+    }
+    if(!best) return null;
+    var p=ppf();
+    return { el:best, how:'nearest equipment', ft: p>0 ? +(bestD/p).toFixed(1) : null };
+  }
+
+  function loose(c){
+    var out=[];
+    if(!c||!c.pts||c.pts.length<2) return out;
+    var first=c.pts[0], last=c.pts[c.pts.length-1];
+    if(!(c.fromId||c.fromElId||(first&&first.elId))) out.push('from');
+    if(!(c.toId  ||c.toElId  ||(last &&last.elId )))  out.push('to');
+    return out;
+  }
+
+  function rows(){
+    var s=S_(); if(!s||!s.conduits) return [];
+    var r=[];
+    (s.conduits||[]).forEach(function(c){
+      if(!c) return;
+      var ends=loose(c);
+      if(!ends.length) return;
+      ends.forEach(function(end){
+        var other = (end==='from') ? (c.toId||c.toElId) : (c.fromId||c.fromElId);
+        var cand=candidate(c, end, other);
+        r.push({
+          run: c.runLabel || c.label || c.condType || c.id,
+          end: end,
+          currently: 'not attached',
+          suggested: cand ? elLabel(cand.el) : '(no candidate)',
+          basis: cand ? cand.how : '\u2014',
+          distanceFt: (cand && cand.ft!=null) ? cand.ft : '\u2014',
+          _cid: c.id, _elId: cand ? cand.el.id : null, _end: end
+        });
+      });
+    });
+    return r;
+  }
+
+  window.OmegaCond={
+    /* What is broken, and what would be done about it. Changes nothing. */
+    audit:function(){
+      var r=rows();
+      if(!r.length){ console.info(TAG+' every run has both ends attached.'); return []; }
+      var show=r.map(function(x){
+        return { run:x.run, end:x.end, suggested:x.suggested, basis:x.basis, distanceFt:x.distanceFt };
+      });
+      if(console.table) console.table(show); else console.log(show);
+      console.info(TAG+' '+r.length+' loose end(s). Check the "basis" column: a name match is '
+        +'reliable, "nearest equipment" is a guess and the distance tells you how good a one. '
+        +'OmegaCond.reattach() applies these; OmegaCond.reattach({namesOnly:true}) applies only the name matches.');
+      return show;
+    },
+
+    /* Put the links back. namesOnly:true is the cautious pass. */
+    reattach:function(opts){
+      opts=opts||{};
+      var s=S_(); if(!s) return 0;
+      var r=rows(), n=0, skipped=0;
+      r.forEach(function(x){
+        if(!x._elId) return;
+        if(opts.namesOnly && x.basis.indexOf('name match')!==0){ skipped++; return; }
+        var c=(s.conduits||[]).filter(function(z){ return z.id===x._cid; })[0];
+        if(!c) return;
+        if(x._end==='from'){ c.fromId=x._elId; c.fromElId=x._elId; delete c._fromOff; }
+        else               { c.toId  =x._elId; c.toElId  =x._elId; delete c._toOff;  }
+        n++;
+      });
+      if(n){
+        /* Offsets were cleared, so the weld pass re-seeds each end. The
+           endpoints are far from their equipment, so it will read that as
+           drift and bring them home — which is the intent. */
+        try{ if(typeof window._geoReprojectAll==='function') window._geoReprojectAll(); }catch(e){}
+        try{ if(typeof updCondStat==='function') updCondStat(); }catch(e){}
+        try{ if(typeof renderLegend==='function') renderLegend(); }catch(e){}
+        try{ if(typeof pushHist==='function') pushHist(); }catch(e){}
+      }
+      console.info(TAG+' re-attached '+n+' end(s)'
+        +(skipped?(', skipped '+skipped+' that were only a proximity guess'):'')
+        +'. The runs should snap to their equipment now. Check the drawing, then save.');
+      return n;
+    },
+
+    /* Drop the interior vertices of a run, leaving the two ends.
+       For runs whose middle is junk left over from the corruption — a
+       zigzag through a field that nobody drew. Explicit and per-run,
+       because a real dogleg around a building looks the same to code. */
+    straighten:function(cid){
+      var s=S_(); if(!s) return 0;
+      var list = cid ? (s.conduits||[]).filter(function(c){ return c.id===cid; })
+                     : (s.conduits||[]);
+      var n=0;
+      list.forEach(function(c){
+        if(!c||!c.pts||c.pts.length<3) return;
+        var dropped=c.pts.length-2;
+        c.pts=[c.pts[0], c.pts[c.pts.length-1]];
+        try{ if(typeof _cvInvalidateAnchor==='function') _cvInvalidateAnchor(c); }catch(e){}
+        try{ if(typeof _cvRestamp==='function') _cvRestamp(c); }catch(e){}
+        n+=dropped;
+      });
+      if(n){
+        try{ if(typeof updCondStat==='function') updCondStat(); }catch(e){}
+        try{ if(typeof pushHist==='function') pushHist(); }catch(e){}
+      }
+      console.info(TAG+' removed '+n+' interior vertex/vertices'
+        +(cid?'':' across every run')+'. Undo is available if that was not what you wanted.');
+      return n;
+    }
+  };
+})();
+</script>
+
 </body>
 </html>
