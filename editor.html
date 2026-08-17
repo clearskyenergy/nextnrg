@@ -19585,9 +19585,35 @@ function _updateConduitSchedule() {
   var lines = ['CONDUIT SCHEDULE'];
   Object.entries(byType).forEach(function([type, d]) {
     var size = d.ct.size || type;
-    var wireCount = type==='RMC-DC' ? '3 #2 AWG CU + 1 #6 GND' :
-                    type==='RMC-AC' ? '3 #2 AWG CU + 1 #6 GND' :
-                    type==='EMT-BMS' ? 'Cat6 + RS485 (2 pr)' : 'See drawings';
+    /* ── THE PULL COMES FROM THE LOAD, NOT FROM THE TYPE ──────────────
+       These two were fixed strings: every RMC-AC run printed 2" RMC and
+       "3 #2 AWG CU + 1 #6 GND" whether the battery was 50 kW or 1,484.
+       At 1,484 kW that run carries 1,785 A, and a single 600 kcmil does
+       not even fit a 2" RMC. Size it against the configured system. */
+    var wireCount = type==='EMT-BMS' ? 'Cat6 + RS485 (2 pr)' : 'See drawings';
+    try{
+      if(type!=='EMT-BMS' && window.OmegaCable && typeof omegaBessKw==='function'){
+        var _kw=omegaBessKw();
+        if(_kw>0){
+          var _s=OmegaCable.size({
+            kw:_kw, volts:480, phases:3, material:'CU',
+            family:(type==='RMC-AC'||type==='RMC-DC')?'RMC':'PVC40',
+            lengthFt:d.ft||0,
+            multiplier:(type==='RMC-DC')?1.5625:1.25   /* 690.8 on DC */
+          });
+          if(_s){
+            size = _s.oversize ? _s.note
+                 : (_s.runs+' \u00d7 '+_s.conduit+'" '
+                    +(_s.conduitFamily==='RMC'?'RMC':'PVC Sch 40'));
+            wireCount = _s.oversize ? _s.note
+                 : ('('+_s.conductorsPerRun+') '+_s.conductor+' '+_s.material
+                    +' + (1) '+_s.ground+' CU EGC per raceway \u00b7 '
+                    +_s.ocp+'A OCP \u00b7 VD '+_s.vdPct+'%'
+                    +(_s.vdOk?'':' \u26a0 over limit'));
+          }
+        }
+      }
+    }catch(e){}
     lines.push(size + ': ' + d.count + ' run' + (d.count>1?'s':'') + ' × ' + Math.round(d.ft) + ' LF = ' + Math.round(d.ft) + ' total LF');
     lines.push('  Conductors: ' + wireCount);
   });
@@ -39697,7 +39723,7 @@ BESS Systems: ${bessInfo || 'See drawing'}
 Conduit runs: ${condInfo || 'See drawing'}
 
 Analyze this site map image and provide:
-1. GENERAL NOTES (5-7 bullet points about installation requirements, clearances, code compliance for a BESS installation -- reference NEC 706, CFC  1207, and IEEE 1625 as appropriate)
+1. GENERAL NOTES (5-7 bullet points about installation requirements, clearances, code compliance for a BESS installation -- reference NEC 706 for the ESS, NEC 110.16 for arc flash, NFPA 855 for installation and separation, IEEE 1547 for interconnection, and the ADOPTED STATE OR LOCAL FIRE CODE for the project's jurisdiction. Do NOT cite the California Fire Code unless the site is in California, and do NOT cite IEEE 1625 -- that standard covers batteries for portable computing, not stationary storage.)
 2. DRAWING NOTES (2-3 brief notes about what the drawing shows)
 3. A one-sentence PROJECT DESCRIPTION for the title block
 
@@ -43869,7 +43895,7 @@ async function exportPermitPDF() {
         </div>
         <div>
           <label style="font-size:9px;color:var(--sub);display:block;margin-bottom:3px">Applicable Codes</label>
-          <input id="bp-codes" type="text" value="NEC 2023 . CFC §1207 . IEEE 1625" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:6px 10px;font-size:11px;font-family:inherit;box-sizing:border-box">
+          <input id="bp-codes" type="text" value="NEC 2023 . NFPA 855 . IEEE 1547" title="Add the fire code adopted in THIS jurisdiction (CT State Fire Safety Code, IFC, CFC...). The default omits a state fire code because it varies by site. It previously read CFC 1207, which is the California Fire Code, and IEEE 1625, which covers batteries for portable computing - neither applies to a stationary ESS outside California." style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:6px 10px;font-size:11px;font-family:inherit;box-sizing:border-box">
         </div>
       </div>
       <!-- Style options -->
@@ -59661,9 +59687,42 @@ var BGB_PRESETS = {
               acblock:'mainswgr', pvinv:'mainswgr', pv:'pvinv', loads:'mainswgr' },
     legs:{ service:'MV-UG', utilxfmr:'MV-UG', mainswgr:'EV-MAIN',
            acblock:'EV-FEEDER', pvinv:'EV-FEEDER', pv:'RMC-DC', loads:'EV-FEEDER' } },
+  /* ── BTM AND FOM ARE NOT THE SAME CHAIN ──────────────────────────────
+     These two leg maps were identical except for the LAST segment. Every
+     other run — including disco and panel — was typed 'MV-UG', which is
+     "MV Trench - 13.8kV, 4in PVC (MV)". On a behind-the-meter build that
+     is wrong: BTM terminates into the MDP at 480V. There is no medium
+     voltage anywhere on that chain.
+
+     What it produced on the 275 Research Parkway Rev A, with the step-up
+     and disconnect integrated in the container (so 'xfmr' and 'disco'
+     filter out and the run lands straight on 'panel'):
+
+         MV Trench - 13.8kV   1 run . 99.1 ft     <- panel leg, MV-UG
+         EMT - BMS/Data       1 run . 27.0 ft     <- meter leg, correct
+         Feeder (xfmr->panel) 1 run . 41.5 ft     <- service leg
+
+     A 13.8kV trench and a step-up feeding a POI labelled "BTM
+     interconnection" contradict each other, and the sheet says so twice:
+     the general notes call that same 99 ft run "Disco->Switchgear
+     (feeder)" from BGB_LEGNAME while the conduit schedule calls it MV.
+     The two tables were describing different systems.
+
+     BTM power runs are now RMC-AC ("RMC - 480V 3-phase AC"), which is the
+     vocabulary already on the sheet's own legend (DC Power / AC Power /
+     BMS-Data). Segment ROLE still comes from BGB_LEGNAME, so the schedule
+     keeps saying feeder and service where those apply — the type says
+     what the raceway is, the name says what it connects.
+
+     FOM keeps MV, which is where it belongs.
+
+     NOTE FOR REVIEW: which specific raceway each BTM segment should carry
+     is an engineering call, not a code one, and these go out for seal.
+     RMC-AC is correct in that none of it is medium voltage; confirm the
+     sizes against the actual fault duty and voltage drop before Rev B. */
   BTM: { label:'Behind-the-Meter', color:'#60A5FA',
          seq:['bess','xfmr','disco','panel','meter','service'],
-         legs:{ bess:'EV-MAIN', xfmr:'EV-MAIN', disco:'MV-UG', panel:'MV-UG', meter:'EMT-BMS', service:'EV-FEEDER' } },
+         legs:{ bess:'RMC-AC', xfmr:'RMC-AC', disco:'RMC-AC', panel:'RMC-AC', meter:'EMT-BMS', service:'RMC-AC' } },
   FOM: { label:'Front-of-Meter', color:'#F59E0B',
          seq:['bess','xfmr','disco','panel','meter','service'],
          legs:{ bess:'EV-MAIN', xfmr:'EV-MAIN', disco:'MV-UG', panel:'MV-UG', meter:'EMT-BMS', service:'MV-UG' } }
@@ -91810,6 +91869,242 @@ window._crmToastModal=_crmToastModal;
       console.info(TAG+' removed '+n+' interior vertex/vertices'
         +(cid?'':' across every run')+'. Undo is available if that was not what you wanted.');
       return n;
+    }
+  };
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   CONDUCTOR AND RACEWAY SIZING                                (OmegaCable)
+   -----------------------------------------------------------------------
+   The guided build drew the right chain in the right order, but every run
+   carried the SAME raceway and the SAME wire regardless of the battery:
+
+       CTYPES  {id:'RMC-AC', ..., size:'2" RMC'}          <- fixed string
+       schedule wireCount = '3 #2 AWG CU + 1 #6 GND'      <- fixed string
+
+   So a 1,484 kW BESS printed "1 run . 2in RMC . 3 #2 AWG". That run
+   carries 1,785 A. A single 600 kcmil conductor is 0.871 sq in and a 2in
+   RMC holds 0.545 sq in at 40% fill, so not one conductor of the right
+   size physically fits, let alone six parallel sets.
+
+   Sizes each run from the system actually configured, using the rules read
+   off the E2.0 reference schedule and verified against its own rows:
+
+     I      = kVA x 1000 / (V x sqrt3)          three-phase
+     needed = I x multiplier                    1.25 continuous (215.2),
+                                                1.5625 for PV DC (690.8)
+     OCP    = next standard frame >= needed     (240.6)
+     runs   = parallel sets, 1/0 and larger     (310.10(H))
+     EGC    = by OCP (250.122), one per raceway (250.122(F))
+     size   = smallest trade size at 40% fill   (Chapter 9, Table 1/4/5)
+     VD%    = sqrt3 x I x R x L / (runs x V)    checked against the limit
+
+   TABLES ARE THE 75C COLUMN. Anything over 100 A is normally terminated
+   at 75C, the conservative choice. If your standard is 90C throughout,
+   change TERM and the sizes drop.
+
+   OPEN, AND DELIBERATELY NOT GUESSED - the reference sheet prints OCP
+   1200 A against an ampacity of 1205.82 A, where 240.6 gives 1600. That
+   is defensible under 240.4(B) with 4 x 600 kcmil behind it, but it is a
+   judgement call, so OCP_ROUND is a switch, not a decision.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+
+  var TERM = 75;          /* termination rating: 60 | 75 | 90 */
+  var OCP_ROUND = 'up';   /* 'up' = next frame >= needed (240.6, strict)
+                             'nearest-down-if-protected' = allow the next
+                             lower frame when paralleled conductor ampacity
+                             still exceeds it (240.4(B)) - what E2.0 did */
+
+  var FRAMES=[15,20,25,30,35,40,45,50,60,70,80,90,100,110,125,150,175,200,225,250,
+              300,350,400,450,500,600,700,800,1000,1200,1600,2000,2500,3000,4000,5000,6000];
+
+  var AMP={
+    CU:{'14':20,'12':25,'10':35,'8':50,'6':65,'4':85,'3':100,'2':115,'1':130,
+        '1/0':150,'2/0':175,'3/0':200,'4/0':230,'250':255,'300':285,'350':310,
+        '400':335,'500':380,'600':420,'700':460,'750':475},
+    AL:{'6':50,'4':65,'3':75,'2':90,'1':100,'1/0':120,'2/0':135,'3/0':155,
+        '4/0':180,'250':205,'300':230,'350':250,'400':270,'500':310,'600':340,
+        '700':375,'750':385}
+  };
+  var SMALL={'14':15,'12':20,'10':30};          /* 240.4(D) */
+
+  var AREA={'14':0.0097,'12':0.0133,'10':0.0211,'8':0.0366,'6':0.0507,'4':0.0824,
+            '3':0.0973,'2':0.1158,'1':0.1562,'1/0':0.1855,'2/0':0.2223,'3/0':0.2679,
+            '4/0':0.3237,'250':0.3970,'300':0.4608,'350':0.5242,'400':0.5863,
+            '500':0.7073,'600':0.8676,'700':0.9887,'750':1.0496};
+
+  var RES={
+    CU:{'12':1.93,'10':1.21,'8':0.764,'6':0.491,'4':0.308,'3':0.245,'2':0.194,'1':0.154,
+        '1/0':0.122,'2/0':0.0967,'3/0':0.0766,'4/0':0.0608,'250':0.0515,'300':0.0429,
+        '350':0.0367,'400':0.0321,'500':0.0258,'600':0.0214,'700':0.0187,'750':0.0171},
+    AL:{'6':0.808,'4':0.508,'3':0.403,'2':0.319,'1':0.253,'1/0':0.201,'2/0':0.159,
+        '3/0':0.126,'4/0':0.100,'250':0.0847,'300':0.0707,'350':0.0605,'400':0.0529,
+        '500':0.0424,'600':0.0353,'700':0.0303,'750':0.0282}
+  };
+
+  var EGC=[[15,'14'],[20,'12'],[60,'10'],[100,'8'],[200,'6'],[300,'4'],[400,'3'],
+           [500,'2'],[600,'1'],[800,'1/0'],[1000,'2/0'],[1200,'3/0'],[1600,'4/0'],
+           [2000,'250'],[2500,'350'],[3000,'400'],[4000,'500'],[5000,'700'],[6000,'800']];
+
+  var CONDUIT={
+    'PVC40':{'1/2':0.114,'3/4':0.203,'1':0.333,'1-1/4':0.581,'1-1/2':0.794,'2':1.316,
+             '2-1/2':1.878,'3':2.907,'3-1/2':3.895,'4':5.022,'5':7.904,'6':11.427},
+    'RMC':  {'1/2':0.125,'3/4':0.220,'1':0.355,'1-1/4':0.610,'1-1/2':0.829,'2':1.363,
+             '2-1/2':1.946,'3':3.000,'3-1/2':4.004,'4':5.153,'5':8.085,'6':11.663},
+    'EMT':  {'1/2':0.122,'3/4':0.213,'1':0.346,'1-1/4':0.598,'1-1/2':0.814,'2':1.342,
+             '2-1/2':2.343,'3':3.538,'3-1/2':4.618,'4':5.901}
+  };
+
+  var ORDER=['14','12','10','8','6','4','3','2','1','1/0','2/0','3/0','4/0',
+             '250','300','350','400','500','600','700','750'];
+
+  function ampacity(size, mat){
+    var a=(AMP[mat]||AMP.CU)[size];
+    if(a==null) return 0;
+    if(SMALL[size]!=null) a=Math.min(a, SMALL[size]);
+    return a;
+  }
+  function nextFrame(a){ for(var i=0;i<FRAMES.length;i++) if(FRAMES[i]>=a) return FRAMES[i]; return null; }
+  function prevFrame(a){ var p=null; for(var i=0;i<FRAMES.length;i++){ if(FRAMES[i]<=a) p=FRAMES[i]; } return p; }
+  function egcFor(ocp){ for(var i=0;i<EGC.length;i++) if(ocp<=EGC[i][0]) return EGC[i][1]; return '800'; }
+  function tradeSize(family, sqin){
+    var t=CONDUIT[family]||CONDUIT.PVC40, keys=Object.keys(t);
+    for(var i=0;i<keys.length;i++) if(t[keys[i]]>=sqin) return keys[i];
+    return null;
+  }
+
+  function sizeRun(o){
+    o=o||{};
+    var kw=+o.kw||0, volts=+o.volts||480, phases=+o.phases||3;
+    var pf=(o.pf!=null)?+o.pf:1.0;
+    var mat=(o.material||'CU').toUpperCase();
+    var family=o.family||'PVC40';
+    var lengthFt=+o.lengthFt||0;
+    var mult=(o.multiplier!=null)?+o.multiplier:1.25;
+    var vdLimit=(o.vdLimitPct!=null)?+o.vdLimitPct:2.0;
+    var capPerRun=+o.ampsPerRun||0;
+    if(!kw) return null;
+
+    var kva = pf>0 ? kw/pf : kw;
+    var I   = (phases===3) ? kva*1000/(volts*Math.sqrt(3)) : kva*1000/volts;
+    var needed = I*mult;
+
+    var best=null, iMin=ORDER.indexOf('1/0');
+    /* ── FEWEST SETS, NOT SMALLEST WIRE ────────────────────────────────
+       Walking sizes upward and stopping at the first that works picks the
+       THINNEST conductor in the MOST parallel runs - 9 sets of 1/0 for an
+       802 kVA feeder, where the reference sheet pulls 4 sets. Nobody
+       builds it that way: terminations, lugs, pulling and trench width all
+       scale with run count.
+
+       So fix the run count first, from the largest conductor allowed
+       (maxConductor, default 600 kcmil - above that the ampacity gained
+       per unit area falls off and cable bus is the better answer), then
+       take the SMALLEST conductor that still carries the load at that
+       count. Fewest sets, no more copper than needed inside them. */
+    var maxSz=o.maxConductor||'600';
+    var maxA=ampacity(maxSz,mat)||ampacity('600',mat);
+    var runs=Math.max(1, Math.ceil(needed/maxA));
+    if(capPerRun>0) runs=Math.max(runs, Math.ceil(I/capPerRun));
+
+    function pick(nRuns){
+      for(var i=0;i<ORDER.length;i++){
+        if(nRuns>1 && i<iMin) continue;              /* 310.10(H) */
+        var sz=ORDER[i], a=ampacity(sz,mat);
+        if(!a || a*nRuns < needed) continue;
+        var r=(RES[mat]||RES.CU)[sz];
+        var vd=(r==null||!lengthFt) ? 0
+              : ((phases===3?Math.sqrt(3):2)*I*(r/1000)*lengthFt/nRuns)/volts*100;
+        return {size:sz, runs:nRuns, ampacityPerRun:a, vdPct:vd};
+      }
+      return null;
+    }
+    best=pick(runs);
+    /* Voltage drop is fixed by upsizing within the set first, then by
+       adding a set - the same order a designer would try. */
+    var g1=0;
+    while(best && best.vdPct>vdLimit && g1++<20){
+      var ix=ORDER.indexOf(best.size);
+      var up=null;
+      for(var k=ix+1;k<ORDER.length;k++){
+        var a2=ampacity(ORDER[k],mat); if(!a2) continue;
+        if(ORDER.indexOf(ORDER[k])>ORDER.indexOf(maxSz)) break;
+        var r2=(RES[mat]||RES.CU)[ORDER[k]];
+        var vd2=((phases===3?Math.sqrt(3):2)*I*(r2/1000)*lengthFt/best.runs)/volts*100;
+        up={size:ORDER[k], runs:best.runs, ampacityPerRun:a2, vdPct:vd2};
+        break;
+      }
+      if(up && up.vdPct<best.vdPct){ best=up; if(best.vdPct<=vdLimit) break; }
+      else { var nb=pick(best.runs+1); if(!nb) break; best=nb; }
+    }
+    if(!best) best=pick(runs)||null;
+
+    var ocpStrict=nextFrame(needed), ocp=ocpStrict;
+    if(OCP_ROUND==='nearest-down-if-protected'){
+      var down=prevFrame(needed);
+      if(down && (best.ampacityPerRun*best.runs)>=down) ocp=down;
+    }
+
+    var egc=egcFor(ocp);
+    var conductorsPerRun=(phases===3?3:2)+(o.neutral?1:0);
+    var fill=conductorsPerRun*(AREA[best.size]||0)+(AREA[egc]||0);
+    var trade=tradeSize(family, fill);
+
+    return {
+      kw:kw, kva:+kva.toFixed(1), volts:volts, phases:phases, material:mat,
+      amps:+I.toFixed(1), multiplier:mult, ampsRequired:+needed.toFixed(2),
+      ocp:ocp, ocpStrict:ocpStrict,
+      runs:best.runs, conductor:best.size, conductorsPerRun:conductorsPerRun,
+      ground:egc, conduit:trade, conduitFamily:family, fillSqIn:+fill.toFixed(3),
+      vdPct:+best.vdPct.toFixed(2), vdLimitPct:vdLimit, vdOk:(best.vdPct<=vdLimit),
+      oversize:(trade===null),
+      note:(trade===null)?'Fill exceeds 6in trade size - use cable bus, busway or a multi-duct bank.':''
+    };
+  }
+
+  function describe(s){
+    if(!s) return '';
+    if(s.oversize) return s.note;
+    return s.runs+' run'+(s.runs>1?'s':'')+' \u00d7 '+s.conduit+'" '
+         +(s.conduitFamily==='RMC'?'RMC':s.conduitFamily==='EMT'?'EMT':'PVC Sch 40')
+         +' \u00b7 ('+s.conductorsPerRun+') '+s.conductor+' '+s.material
+         +' + (1) '+s.ground+' CU EGC per raceway';
+  }
+
+  window.OmegaCable={
+    size:sizeRun,
+    describe:describe,
+    settings:function(){ return {terminationC:TERM, ocpRounding:OCP_ROUND}; },
+    setOcpRounding:function(m){ OCP_ROUND=m; return OCP_ROUND; },
+    preview:function(opts){
+      opts=opts||{};
+      var kw=opts.kw||(typeof omegaBessKw==='function'?omegaBessKw():0);
+      if(!kw){ console.warn('[cable] no configured BESS kW to size against.'); return null; }
+      var rows=[];
+      try{
+        (S.conduits||[]).forEach(function(c){
+          if(c.condType==='EMT-BMS'){
+            rows.push({run:c.runLabel||c.label||c.condType, lengthFt:c.ftLen,
+                       sizing:'3/4" EMT \u00b7 Cat6 + RS485 (2 pr)'});
+            return;
+          }
+          var fam=(c.condType==='RMC-AC'||c.condType==='RMC-DC')?'RMC':'PVC40';
+          var s=sizeRun({kw:kw, volts:opts.volts||480, phases:3,
+                         material:opts.material||'CU', family:fam,
+                         lengthFt:c.ftLen||0, pf:opts.pf||1.0,
+                         vdLimitPct:opts.vdLimitPct||2.0,
+                         ampsPerRun:opts.ampsPerRun||0});
+          rows.push({run:c.runLabel||c.label||c.condType, lengthFt:c.ftLen,
+                     amps:s&&s.amps, ocp:s&&s.ocp, sizing:describe(s),
+                     vdPct:s&&s.vdPct, vdOk:s&&s.vdOk});
+        });
+      }catch(e){}
+      if(console.table) console.table(rows); else console.log(rows);
+      return rows;
     }
   };
 })();
