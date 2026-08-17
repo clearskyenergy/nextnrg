@@ -12000,7 +12000,11 @@ function updShapeCount(){
 
    _engActive() is the single source of truth for which way to render, so
    the line, dot, leader, label, and legend can never disagree. */
-window.ENG_MODE = true;          /* draw mode: monochrome plan-set style   */
+/* OMEGA PATCH 17. Was `true`, so every project opened in monochrome
+   plan-set style before anyone asked for it. Engineering mode is a review
+   and output choice, not a drawing default -- the Engineering Build still
+   turns it on for its own flow and restores the previous value after. */
+window.ENG_MODE = false;         /* draw mode: colour, opt in to plan-set  */
 window.ENG_FORCE_COLOR = false;  /* set true only while a guide is active  */
 
 /* Is a builder guide currently running? Color is allowed only then. */
@@ -12009,14 +12013,24 @@ function _guideRunning(){
     if(window.ENG_FORCE_COLOR===true) return true;
     /* BESS Guided Build */
     if(typeof BGB!=='undefined' && BGB && BGB.active) return true;
+    /* Compute Guided Build -- was missing, so the sheet flipped to mono
+       mid-build while every other guide stayed in colour. */
+    try{ if(window.OmegaCGB && window.OmegaCGB.state && window.OmegaCGB.state().active) return true; }catch(e){}
     /* Step wizard: active while there are steps left to complete */
     if(typeof S!=='undefined' && typeof WIZARD_STEPS!=='undefined'
        && S.wizActive===true && S.wizStep < WIZARD_STEPS.length) return true;
   }catch(e){}
   return false;
 }
+/* OMEGA PATCH 17.
+   ENG_MODE is undefined on a fresh load, and `undefined !== false` is
+   true -- so every new project opened straight into monochrome plan-set
+   mode without anyone asking for it. Engineering mode is a review/output
+   choice, not a drawing default. Opt in, don't opt out. */
+if(typeof window!=='undefined' && window.ENG_MODE===undefined) window.ENG_MODE=false;  /* belt and braces */
+
 /* True = draw monochrome. Guides override to color. */
-function _engActive(){ return !_guideRunning() && window.ENG_MODE!==false; }
+function _engActive(){ return !_guideRunning() && window.ENG_MODE===true; }
 
 /* Re-render every conduit + the schedule. Called when a guide starts or
    ends so the sheet flips between color and mono at the right moments. */
@@ -93714,7 +93728,8 @@ window._crmToastModal=_crmToastModal;
 
   var CGB={ active:false, phase:null, seq:[], stepIx:0, placed:{}, conds:[],
             subMw:20, genType:'fuelcell_sofc', genMw:6, computeMw:5, incBess:true, incCool:true,
-            incSub:true, incGen:true, incGenset:true, topo:'RADIAL', keyBound:false, fmt:'guided' };
+            incSub:true, incGen:true, incGenset:true, incBldg:true, topo:'RADIAL',
+            bldg:null, bldg0:null, keyBound:false, fmt:'guided' };
 
   function ppf(){ return (typeof S!=='undefined'&&S.pxPerFt>0)?S.pxPerFt:6; }
   function snap(v){ return Math.round(v*2)/2; }
@@ -93775,7 +93790,19 @@ window._crmToastModal=_crmToastModal;
       e.style.cssText='position:fixed;right:22px;top:170px;z-index:100006;width:292px;background:#0F1D30;'
         +'border:1px solid #A78BFA;border-radius:11px;box-shadow:0 16px 50px rgba(0,0,0,.6);'
         +'font-family:inherit;overflow:hidden'; document.body.appendChild(e); }
-    var rows=CGB.seq.map(function(k,ix){
+    var bldgRow='';
+    if(CGB.incBldg){
+      var bdone=!!CGB.bldg, bact=(CGB.phase==='building');
+      bldgRow='<div style="display:flex;align-items:center;gap:8px;padding:5px 0">'
+        +'<div style="flex-shrink:0;width:17px;height:17px;border-radius:50%;background:'
+        +(bdone?'#22C55E':(bact?'#94A3B8':'rgba(255,255,255,.12)'))+';color:'+((!bdone&&!bact)?'#8FA3B8':'#0A1628')
+        +';font-size:9.5px;font-weight:800;display:flex;align-items:center;justify-content:center">'
+        +(bdone?'\u2713':(bact?'\u25b6':'\u25a1'))+'</div>'
+        +'<div style="width:36px;flex-shrink:0;display:flex;align-items:center;opacity:'+((bdone||bact)?'1':'.38')+'">'
+        +'<svg width="34" height="20" viewBox="0 0 34 20"><rect x="1.5" y="2" width="31" height="16" rx="1.5" fill="none" stroke="#94A3B8" stroke-width="1.4" stroke-dasharray="3 2"/></svg></div>'
+        +'<div style="font-size:10px;font-weight:'+(bact?'800':'600')+';color:'+(bact?'#E2EEF9':(bdone?'#8FA3B8':'#64748B'))+'">Building envelope</div></div>';
+    }
+    var rows=bldgRow+CGB.seq.map(function(k,ix){
       var done=!!CGB.placed[k];
       var active=(CGB.phase==='place'&&ix===CGB.stepIx);
       var N=CGB_NODES[k];
@@ -93790,10 +93817,21 @@ window._crmToastModal=_crmToastModal;
         +'<div style="font-size:10px;font-weight:'+(active?'800':'600')+';color:'+tc+';line-height:1.3">'+nodeLabel(k)+'</div></div>';
     }).join('');
     var hint='';
-    if(CGB.phase==='place'){
-      var k=CGB.seq[CGB.stepIx];
-      hint='Click the map to place <strong style="color:'+(CGB_NODES[k]?CGB_NODES[k].color:'#fff')+'">'+(CGB_NODES[k]?CGB_NODES[k].label:k)+'</strong>. Conduit routes back to the previous node automatically.<br><span style="color:#8FA3B8">BACKSPACE undoes \u00b7 ESC cancels</span>';
-    }
+    var k=CGB.seq[CGB.stepIx];
+    var col=(CGB_NODES[k]?CGB_NODES[k].color:'#fff');
+    var nm='<strong style="color:'+col+'">'+(CGB_NODES[k]?CGB_NODES[k].label:k)+'</strong>';
+    if(CGB.phase==='building')
+      hint = CGB.bldg0
+        ? 'Click the <strong>opposite corner</strong> of the building.'
+        : 'Click one <strong>corner of the building</strong> \u2014 the data hall and electrical rooms. Equipment goes inside it.';
+    else if(CGB.phase==='first')
+      hint='Click the map to place '+nm+'.';
+    else if(CGB.phase==='draw')
+      hint='Route the trench to '+nm+': click points, <strong>ENTER</strong> to finish the run.'
+        +'<br><span style="color:#8FA3B8">'+Math.max(0,CGB.run.length-1)+' point(s) \u00b7 BACKSPACE removes one \u00b7 ESC cancels</span>';
+    else if(CGB.phase==='snap')
+      hint='Click <strong>on the run</strong> to drop '+nm+'. Which side you click is which side it lands on.'
+        +'<br><span style="color:#8FA3B8">BACKSPACE re-routes this leg \u00b7 ESC cancels</span>';
     e.innerHTML='<div style="padding:10px 13px;border-bottom:1px solid #26364d;display:flex;align-items:center;justify-content:space-between">'
       +'<div style="font-size:11.5px;font-weight:800;color:#A78BFA">\u25a6 Compute \u2014 Guided Build</div>'
       +'<button onclick="OmegaCGB.cancel()" title="Cancel (ESC)" style="background:none;border:none;color:#64748B;font-size:16px;cursor:pointer;padding:2px 4px">\u00d7</button></div>'
@@ -93801,26 +93839,62 @@ window._crmToastModal=_crmToastModal;
       +'<div style="padding:9px 13px;border-top:1px solid #26364d;background:rgba(0,0,0,.22);font-size:9.5px;color:#B7C6D8;line-height:1.55">'+hint+'</div>';
   }
   function hudOff(){ var e=document.getElementById('cgb-hud'); if(e) e.remove(); }
-  /* ── flow: CLICK AND PLACE, one node per click ────────────────────
-     No trench-drawing phase. The previous version made the user draw a
-     polyline first and then click along it, which produced a stray shape
-     on the canvas, projected drops onto the wrong segment, and committed
-     conduit before any equipment existed. Each click now places the next
-     node in sequence and the conduit to the previous node is routed
-     orthogonally between them, edge to edge -- which is what a trench
-     actually is on a plan. */
+  /* ── flow: PLACE → DRAW THE RUN → PLACE ON IT ─────────────────────
+     Matches the BESS / DCFC guided builds. Auto-routing between clicks
+     took the routing decision away from the user: on a real site the
+     trench follows a road edge, a property line, or an existing duct
+     bank, and no orthogonal shortest path is going to guess that. So the
+     user draws each leg and drops the next node onto it.
+
+       1. click            -> first node lands
+       2. click points     -> route the trench leg
+          ENTER            -> commit the leg
+       3. click on the run -> next node snaps onto it
+       ...repeat until the chain is complete.
+
+     BACKSPACE removes the last trench point while drawing, or undoes the
+     last node while snapping. ESC cancels. */
+  /* ── BUILDING ENVELOPE ────────────────────────────────────────────
+     Most of this plant lives indoors: UPS, PDU, switchgear and the racks
+     are in electrical rooms and data halls, not on a pad in a field. So
+     the envelope is drawn FIRST and the equipment goes inside it. Two
+     clicks for opposite corners. */
+  function placeBuilding(p){
+    if(!CGB.bldg0){ CGB.bldg0={x:p.x,y:p.y}; hud(); return; }
+    var a=CGB.bldg0, b=p;
+    var x=Math.min(a.x,b.x), y=Math.min(a.y,b.y);
+    var w=Math.abs(b.x-a.x), h=Math.abs(b.y-a.y);
+    if(w<20||h<20){ CGB.bldg0=null; hud(); return; }
+    var sh={ id:(typeof uid==='function'?uid():'b'+Date.now()), kind:'rect',
+             pts:[{x:x,y:y},{x:x+w,y:y+h}],
+             stroke:'#94A3B8', color:'#94A3B8', fill:'#94A3B8', fillOpacity:0.06,
+             label:'DATA HALL / ELECTRICAL ROOMS', omegaBuilding:true, omegaCompute:true };
+    S.shapes.push(sh); CGB.bldg=sh; CGB.bldg0=null;
+    try{ if(typeof renderShape==='function') renderShape(sh); }catch(e){}
+    try{ if(typeof updShapeCount==='function') updShapeCount(); }catch(e){}
+    CGB.phase='first'; hud();
+  }
+
   function start(){
-    CGB.active=true; CGB.phase='place'; CGB.seq=seq(); CGB.stepIx=0;
+    CGB.active=true; CGB.phase=(CGB.incBldg?'building':'first'); CGB.seq=seq(); CGB.stepIx=0;
+    CGB.bldg=null; CGB.bldg0=null;
     CGB.placed={}; CGB.conds=[]; CGB.lastEl=null;
+    CGB.run=[]; CGB.legConds=[]; CGB.legOffs=[];
     if(typeof setMode==='function') setMode('cgbplace'); else S.mode='cgbplace';
     bindKeys(); hud();
   }
-  function click(p){ if(CGB.active && CGB.phase==='place') drop(p); }
+  function click(p){
+    if(!CGB.active) return;
+    if(CGB.phase==='building') return placeBuilding(p);
+    if(CGB.phase==='first') return placeFirst(p);
+    if(CGB.phase==='draw')  { CGB.run.push({x:p.x,y:p.y}); preview(); hud(); return; }
+    if(CGB.phase==='snap')  return placeOnRun(p);
+  }
 
   /* Service carried by the leg INTO a given node. MV up to and including
      the leg into the step-down transformer; 480 V after it. On the SST
-     path there is no step-down at all: MV runs to the SST and everything
-     downstream is a DC backbone, not low-voltage AC. */
+     path there is no step-down: MV runs to the SST and everything after
+     it is a DC backbone, not low-voltage AC. */
   function legType(toKey){
     if(CGB.topo==='DC800'){
       var iS=CGB.seq.indexOf('sst'), iT=CGB.seq.indexOf(toKey);
@@ -93831,47 +93905,60 @@ window._crmToastModal=_crmToastModal;
   }
 
   function ctr(el){ return { x:el.x+(el.w||40)/2, y:el.y+(el.h||30)/2 }; }
-  /* Orthogonal route between two elements, leaving each from the face that
-     points at the other and turning once. Endpoints sit ON the enclosure
-     edge, so the run reads as connected rather than floating near it. */
-  function ortho(fromEl, toEl){
-    var a=ctr(fromEl), b=ctr(toEl);
-    var aw=(fromEl.w||40)/2, ah=(fromEl.h||30)/2;
-    var bw=(toEl.w||40)/2,  bh=(toEl.h||30)/2;
-    var dx=b.x-a.x, dy=b.y-a.y;
-    var horizFirst=Math.abs(dx)>=Math.abs(dy);
-    var p0,p1,p2,p3;
-    if(horizFirst){
-      p0={x:a.x+(dx>=0?aw:-aw), y:a.y};
-      p3={x:b.x, y:b.y+(dy>=0?-bh:bh)};
-      p1={x:p3.x, y:p0.y};
-      return dedupe([p0,p1,p3]);
-    }
-    p0={x:a.x, y:a.y+(dy>=0?ah:-ah)};
-    p3={x:b.x+(dx>=0?-bw:bw), y:b.y};
-    p1={x:p0.x, y:p3.y};
-    return dedupe([p0,p1,p3]);
+  /* Where a run leaving `el` toward `to` crosses the enclosure edge, so
+     the trench starts ON the equipment rather than at its centre. */
+  function edgeToward(el, to){
+    var c=ctr(el), hw=(el.w||40)/2, hh=(el.h||30)/2;
+    var dx=to.x-c.x, dy=to.y-c.y;
+    if(!dx && !dy) return c;
+    var sx = dx ? hw/Math.abs(dx) : Infinity;
+    var sy = dy ? hh/Math.abs(dy) : Infinity;
+    var t = Math.min(sx, sy);
+    return { x:c.x+dx*t, y:c.y+dy*t };
   }
-  function dedupe(pts){
-    var out=[{x:snap(pts[0].x),y:snap(pts[0].y)}];
-    for(var i=1;i<pts.length;i++){
-      var q={x:snap(pts[i].x),y:snap(pts[i].y)}, l=out[out.length-1];
-      if(Math.abs(q.x-l.x)>0.4||Math.abs(q.y-l.y)>0.4) out.push(q);
+  function dist(a,b){ return Math.sqrt((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)); }
+  function projectOnRun(run,p){
+    var best=null;
+    for(var i=1;i<run.length;i++){
+      var a=run[i-1],b=run[i],dx=b.x-a.x,dy=b.y-a.y,L2=dx*dx+dy*dy;
+      var t=L2>0?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/L2)):0;
+      var q={x:a.x+t*dx,y:a.y+t*dy};
+      var d=(p.x-q.x)*(p.x-q.x)+(p.y-q.y)*(p.y-q.y);
+      if(!best||d<best.d){ var L=Math.sqrt(L2)||1; best={d:d,q:q,nx:-dy/L,ny:dx/L,seg:i}; }
     }
-    return out.length>1?out:[out[0],{x:out[0].x+1,y:out[0].y}];
+    return best;
   }
 
-  function drop(p){
-    var k=CGB.seq[CGB.stepIx]; if(!k) return;
+  /* Rubber band for the leg being routed. */
+  function preview(){
+    var svg=document.getElementById('csvg'); if(!svg) return;
+    var o=document.getElementById('cgb-prev'); if(o) o.remove();
+    if(CGB.run.length<1) return;
+    var g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.id='cgb-prev'; g.setAttribute('pointer-events','none');
+    var pl=document.createElementNS('http://www.w3.org/2000/svg','polyline');
+    pl.setAttribute('points',CGB.run.map(function(q){return q.x+','+q.y;}).join(' '));
+    pl.setAttribute('fill','none'); pl.setAttribute('stroke','#A78BFA');
+    pl.setAttribute('stroke-width','2.5'); pl.setAttribute('stroke-dasharray','7 5');
+    g.appendChild(pl);
+    CGB.run.forEach(function(q,ix){
+      var c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+      c.setAttribute('cx',q.x); c.setAttribute('cy',q.y); c.setAttribute('r', ix?'3.5':'4.5');
+      c.setAttribute('fill','#A78BFA'); g.appendChild(c);
+    });
+    svg.appendChild(g);
+  }
+  function previewOff(){ var e=document.getElementById('cgb-prev'); if(e) e.remove(); }
+
+  function mkEl(k, p){
     var N=CGB_NODES[k];
     var mk=(typeof _evAdd==='function') ? _evAdd
          : (window && typeof window._evAdd==='function') ? window._evAdd : null;
     if(!mk){
       console.error(TAG,'_evAdd unavailable \u2014 cannot place equipment');
       try{ if(typeof showBanner==='function') showBanner('wiz','Compute build cannot place equipment \u2014 _evAdd is missing.'); }catch(e){}
-      cancel(); return;
+      cancel(); return null;
     }
-
     var label=nodeLabel(k), spec='';
     if(k==='substation') spec=CGB.subMw+' MW available capacity';
     else if(k==='powergen'){ var g=GEN_TYPES[CGB.genType]||{}; label=g.label||N.label; spec=CGB.genMw+' MW on-site generation'; }
@@ -93879,7 +93966,6 @@ window._crmToastModal=_crmToastModal;
     else if(k==='ups'||k==='upsB'||k==='upsC') spec='double conversion, static bypass';
     else if(k==='cooling') spec='chillers / CRAH / heat rejection';
     else if(k==='dcbus') spec='800 VDC backbone';
-
     var evKind=N.ev||'panel';
     if(k==='powergen'){
       evKind = (CGB.genType==='solar') ? 'panel'
@@ -93891,50 +93977,115 @@ window._crmToastModal=_crmToastModal;
     if(k==='powergen')   el.kw=CGB.genMw*1000;
     if(k==='compute')    el.kw=CGB.computeMw*1000;
     try{ if(typeof _reRenderEl==='function') _reRenderEl(el.id); }catch(e){}
+    return el;
+  }
 
-    /* Conduit to the previous node: power at the right service, plus data. */
-    if(CGB.lastEl){
-      var path=ortho(CGB.lastEl, el);
-      CGB.conds.push(pushCond({ condType:legType(k), cluster:true, spine:true,
-        omegaCGB:true, fromElId:CGB.lastEl.id, toElId:el.id,
-        labelDx:44, labelDy:-18, pts:path }));
-      CGB.conds.push(pushCond({ condType:'EMT-BMS', cluster:true, spine:true,
-        omegaCGB:true, fromElId:CGB.lastEl.id, toElId:el.id, labelHidden:true,
-        pts:path.map(function(q){ return {x:q.x+5,y:q.y+5}; }) }));
-    }
-    CGB.lastEl=el;
-    CGB.placed[k]=el.id; CGB.stepIx++;
+  function advance(el, k){
+    CGB.lastEl=el; CGB.placed[k]=el.id; CGB.stepIx++;
     try{ if(typeof updateSummaryPanel==='function') updateSummaryPanel(); }catch(e){}
-    if(CGB.stepIx>=CGB.seq.length){ finish(); return; }
-    hud();
+    if(CGB.stepIx>=CGB.seq.length){ finish(); return false; }
+    CGB.phase='draw'; CGB.run=[ctr(el)]; preview(); hud();
+    return true;
   }
 
-  function enter(){ /* no trench phase -- nothing to commit */ }
-  /* Undo the last placed node and the runs that reached it. */
-  function back(){
-    if(!CGB.active||CGB.stepIx<=0) return;
-    var k=CGB.seq[CGB.stepIx-1], id=CGB.placed[k];
-    if(id!=null){
-      try{ S.conduits=(S.conduits||[]).filter(function(c){
-        if(c.toElId===id||c.fromElId===id){
-          var e=document.querySelector('#csvg [data-cid="'+c.id+'"]');
-          if(e&&e.parentNode) e.parentNode.removeChild(e);
-          return false; }
-        return true; }); }catch(e){}
-      try{ if(typeof delEl==='function') delEl(id);
-           else S.elements=(S.elements||[]).filter(function(x){ return x.id!==id; }); }catch(e){}
-    }
-    delete CGB.placed[k]; CGB.stepIx--;
-    var prevKey=CGB.seq[CGB.stepIx-1];
-    CGB.lastEl=null;
-    if(prevKey!=null && CGB.placed[prevKey]!=null){
-      (S.elements||[]).forEach(function(x){ if(x.id===CGB.placed[prevKey]) CGB.lastEl=x; });
-    }
-    try{ if(typeof updCondStat==='function') updCondStat(); }catch(e){}
-    hud();
+  function placeFirst(p){
+    var k=CGB.seq[CGB.stepIx]; if(!k) return;
+    var el=mkEl(k,p); if(!el) return;
+    advance(el,k);
   }
+
+  /* ENTER: turn the drawn polyline into real conduit for this leg. */
+  function commitLeg(){
+    if(CGB.run.length<2) return false;
+    var pts=CGB.run.map(function(q){ return {x:snap(q.x),y:snap(q.y)}; });
+    if(CGB.lastEl) pts[0]=edgeToward(CGB.lastEl, pts[1]);
+    pts[0]={x:snap(pts[0].x),y:snap(pts[0].y)};
+    var toKey=CGB.seq[CGB.stepIx];
+    CGB.legConds=[]; CGB.legOffs=[];
+    function add(c,ox,oy){ var r=pushCond(c); CGB.conds.push(r); CGB.legConds.push(r); CGB.legOffs.push({x:ox,y:oy}); }
+    add({ condType:legType(toKey), cluster:true, spine:true, omegaCGB:true,
+          fromElId:CGB.lastEl?CGB.lastEl.id:null, labelDx:46, labelDy:-18, pts:pts.slice() },0,0);
+    /* The data run shares the trench but sits in its own lane. Offsetting
+       it at BOTH ends left its terminations touching nothing -- 17 floating
+       endpoints on a 10-node chain. Offset the MIDDLE only, so it starts
+       and ends exactly where the power run does. */
+    var dpts=pts.map(function(q,ix){
+      return (ix===0||ix===pts.length-1) ? {x:q.x,y:q.y} : {x:q.x+5,y:q.y+5};
+    });
+    add({ condType:'EMT-BMS', cluster:true, spine:true, omegaCGB:true, labelHidden:true,
+          fromElId:CGB.lastEl?CGB.lastEl.id:null, pts:dpts },5,5);
+    CGB.runPts=pts; CGB.run=[]; previewOff();
+    CGB.phase='snap'; hud(); return true;
+  }
+
+  /* Click on the committed run to drop the next node onto it. */
+  function placeOnRun(p){
+    var k=CGB.seq[CGB.stepIx]; if(!k) return;
+    var pr=projectOnRun(CGB.runPts,p); if(!pr) return;
+    var N=CGB_NODES[k];
+    var probe=mkEl(k,{x:pr.q.x,y:pr.q.y}); if(!probe) return;
+    /* Push clear of the trench on whichever side was clicked. */
+    var h=probe.h||30;
+    var side=((p.x-pr.q.x)*pr.nx+(p.y-pr.q.y)*pr.ny)>=0?1:-1;
+    var off=(h/2)+12;
+    probe.x=Math.round(pr.q.x+pr.nx*off*side-(probe.w||40)/2);
+    probe.y=Math.round(pr.q.y+pr.ny*off*side-h/2);
+    try{ if(typeof _reRenderEl==='function') _reRenderEl(probe.id); }catch(e){}
+
+    /* Give every conduit on this leg a vertex at the drop point, then a
+       short tap from the enclosure edge to it, so the node shares a node
+       with the run instead of merely sitting near it. */
+    for(var i=0;i<CGB.legConds.length;i++){
+      var c=CGB.legConds[i], o=CGB.legOffs[i]||{x:0,y:0};
+      /* Terminate on the drop point itself, not an offset copy of it. */
+      var v={x:snap(pr.q.x),y:snap(pr.q.y)};
+      var at=Math.max(1,Math.min(c.pts.length-1,pr.seg));
+      var pv=c.pts[at-1], nx=c.pts[at];
+      if(!((Math.abs(pv.x-v.x)<0.6&&Math.abs(pv.y-v.y)<0.6)||(Math.abs(nx.x-v.x)<0.6&&Math.abs(nx.y-v.y)<0.6))){
+        c.pts.splice(at,0,v);
+      }
+      /* The leg ends at the node: drop anything drawn beyond the drop point. */
+      c.pts=c.pts.slice(0, c.pts.indexOf(v)>=0 ? c.pts.indexOf(v)+1 : c.pts.length);
+      c.toElId=probe.id;
+      c.pxLen=len(c.pts); c.ftLen=+(c.pxLen/ppf()).toFixed(1);
+      try{
+        var dom=document.querySelector('#csvg [data-cid="'+c.id+'"]');
+        if(dom&&dom.parentNode) dom.parentNode.removeChild(dom);
+        if(typeof renderConduit==='function') renderConduit(c);
+      }catch(e){}
+    }
+    var edge={x:pr.q.x+pr.nx*side*12, y:pr.q.y+pr.ny*side*12};
+    pushCond({ condType:legType(k), cluster:true, tap:true, labelHidden:true,
+               fromElId:probe.id, omegaCGB:true,
+               pts:[{x:snap(edge.x),y:snap(edge.y)},{x:snap(pr.q.x),y:snap(pr.q.y)}] });
+
+    advance(probe,k);
+  }
+
+  function enter(){ if(CGB.active && CGB.phase==='draw') commitLeg(); }
+
+  /* While routing: drop the last trench point. While snapping: undo the
+     node placed before this leg and re-route it. */
+  function back(){
+    if(!CGB.active) return;
+    if(CGB.phase==='draw'){
+      if(CGB.run.length>1){ CGB.run.pop(); preview(); hud(); }
+      return;
+    }
+    if(CGB.stepIx<=0) return;
+    /* Drop this leg's conduit and step back to the previous node. */
+    var ids={}; CGB.legConds.forEach(function(c){ ids[c.id]=1; });
+    try{ S.conduits=(S.conduits||[]).filter(function(c){
+      if(!ids[c.id]) return true;
+      var e=document.querySelector('#csvg [data-cid="'+c.id+'"]');
+      if(e&&e.parentNode) e.parentNode.removeChild(e);
+      return false; }); }catch(e){}
+    CGB.legConds=[]; CGB.legOffs=[];
+    CGB.phase='draw'; CGB.run=CGB.lastEl?[ctr(CGB.lastEl)]:[]; preview(); hud();
+  }
+
   function finish(){
-    hudOff(); unbindKeys(); CGB.active=false; CGB.phase=null;
+    previewOff(); hudOff(); unbindKeys(); CGB.active=false; CGB.phase=null;
     if(typeof setMode==='function') setMode('select'); else S.mode='select';
     ['updCondStat','renderLegend','pushHist','updateSummaryPanel'].forEach(function(f){
       try{ if(typeof window[f]==='function') window[f](); }catch(e){} });
@@ -93944,7 +94095,7 @@ window._crmToastModal=_crmToastModal;
       +(CGB.incSub?(', substation '+CGB.subMw+' MW'):'')+', compute '+CGB.computeMw+' MW.';
     try{ if(typeof showBanner==='function') showBanner('cal',msg); }catch(e){}
   }
-  function cancel(){ hudOff(); unbindKeys(); CGB.active=false; CGB.phase=null;
+  function cancel(){ previewOff(); hudOff(); unbindKeys(); CGB.active=false; CGB.phase=null;
     if(typeof setMode==='function') setMode('select'); else S.mode='select'; }
   function onKey(e){ if(!CGB.active) return;
     if(e.key==='Enter'){ e.preventDefault(); enter(); }
@@ -93967,7 +94118,10 @@ window._crmToastModal=_crmToastModal;
     m.innerHTML=
       '<div style="background:#0F1D30;border:1px solid #A78BFA;border-radius:14px;max-width:640px;width:100%;max-height:92vh;overflow:auto;box-shadow:0 30px 80px rgba(0,0,0,.6)">'
       +'<div style="padding:16px 20px;border-bottom:1px solid #26364d;display:flex;align-items:center;justify-content:space-between">'
-        +'<div style="font-size:17px;font-weight:800;color:#C4B5FD">\u25a6 Compute Site \u2014 Guided Build</div>'
+        +'<div style="display:flex;align-items:center;gap:9px">'
+          +'<div style="font-size:17px;font-weight:800;color:#C4B5FD">\u25a6 Compute Site \u2014 Guided Build</div>'
+          +'<button onclick="OmegaCGB.help()" title="How to design this" style="-webkit-appearance:none;appearance:none;width:21px;height:21px;border-radius:50%;background:#A78BFA;color:#131033;border:none;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit;line-height:1;padding:0">!</button>'
+        +'</div>'
         +'<button onclick="document.getElementById(\'cgb-modal\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button></div>'
       +'<div style="padding:16px 20px">'
 
@@ -94015,8 +94169,10 @@ window._crmToastModal=_crmToastModal;
           +'<input type="checkbox" id="cgb-bess" checked onchange="OmegaCGB.sync()" style="width:13px;height:13px"> Battery energy storage</label>'
         +'<label style="display:flex;align-items:center;gap:8px;font-size:11px;color:#CBD5E1;cursor:pointer;margin-bottom:6px">'
           +'<input type="checkbox" id="cgb-cool" checked onchange="OmegaCGB.sync()" style="width:13px;height:13px"> Cooling plant (chillers / CRAH / heat rejection)</label>'
-        +'<label style="display:flex;align-items:center;gap:8px;font-size:11px;color:#CBD5E1;cursor:pointer">'
+        +'<label style="display:flex;align-items:center;gap:8px;font-size:11px;color:#CBD5E1;cursor:pointer;margin-bottom:6px">'
           +'<input type="checkbox" id="cgb-genset" checked onchange="OmegaCGB.sync()" style="width:13px;height:13px"> Standby generator</label>'
+        +'<label style="display:flex;align-items:center;gap:8px;font-size:11px;color:#CBD5E1;cursor:pointer">'
+          +'<input type="checkbox" id="cgb-bldg" checked onchange="OmegaCGB.sync()" style="width:13px;height:13px"> Draw the building envelope first</label>'
       +'</div>'
 
       +'<div style="'+sec+'">6 \u00b7 Placement plan</div>'
@@ -94039,6 +94195,7 @@ window._crmToastModal=_crmToastModal;
     if((e=g('cgb-bess')))  CGB.incBess=e.checked;
     if((e=g('cgb-cool')))  CGB.incCool=e.checked;
     if((e=g('cgb-genset'))) CGB.incGenset=e.checked;
+    if((e=g('cgb-bldg')))   CGB.incBldg=e.checked;
     if((e=g('cgb-topo')))  CGB.topo=e.value;
     var tn=g('cgb-toponote'), T=TOPOS[CGB.topo];
     if(tn&&T) tn.innerHTML=T.note;
@@ -94097,7 +94254,47 @@ window._crmToastModal=_crmToastModal;
     start();
   }
 
-  window.OmegaCGB={ open:open, go:go, fmt:fmt, sync:sync, start:start, click:click,
+  /* ── HOW TO DESIGN THIS ───────────────────────────────────────────
+     Opened from the "!" beside the dialog title. Written for someone who
+     has not laid out a data centre before: what order to work in, and the
+     handful of decisions that are expensive to change later. */
+  function help(){
+    var m=document.getElementById('cgb-help'); if(m) m.remove();
+    m=document.createElement('div'); m.id='cgb-help';
+    m.style.cssText='position:fixed;inset:0;background:rgba(4,10,20,.86);z-index:100010;display:flex;align-items:center;justify-content:center;padding:16px';
+    m.onclick=function(e){ if(e.target===m) m.remove(); };
+    function step(nn,t,b){ return '<div style="display:flex;gap:11px;margin-bottom:13px">'
+      +'<div style="flex-shrink:0;width:21px;height:21px;border-radius:50%;background:#A78BFA;color:#131033;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center">'+nn+'</div>'
+      +'<div><div style="font-size:12px;font-weight:700;color:#E2EEF9;margin-bottom:3px">'+t+'</div>'
+      +'<div style="font-size:10.5px;color:#94A3B8;line-height:1.6">'+b+'</div></div></div>'; }
+    m.innerHTML=
+      '<div style="background:#0F1D30;border:1px solid #A78BFA;border-radius:14px;max-width:620px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 30px 80px rgba(0,0,0,.6)">'
+      +'<div style="padding:16px 20px;border-bottom:1px solid #26364d;display:flex;align-items:center;justify-content:space-between">'
+        +'<div style="font-size:16px;font-weight:800;color:#C4B5FD">How to design a compute site</div>'
+        +'<button onclick="document.getElementById(\'cgb-help\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button></div>'
+      +'<div style="padding:18px 20px">'
+      +'<div style="font-size:11px;color:#CBD5E1;line-height:1.65;margin-bottom:16px;padding:11px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.28);border-radius:8px">'
+        +'Work from the <strong>load backwards</strong>, not from the grid forwards. The IT load is the one number you are given; everything upstream is sized to serve it. Get the two decisions in step 2 right \u2014 they are the expensive ones to change later.</div>'
+      +step(1,'Establish what the grid can give you',
+        'Run <strong>Analyze \u203a Find Substation</strong> first. Its rating is the ceiling the whole facility fits under. If the facility exceeds it, on-site generation has to cover the gap \u2014 and that changes the equipment list, the gas service, and the permit path. Without it this build conservatively assumes zero grid capacity.')
+      +step(2,'Pick the redundancy topology and the format',
+        'Topology decides the node chain, not just a number: <strong>N</strong> is one path, <strong>N+1</strong> adds a spare on a common bus, <strong>2N</strong> is two paths sharing nothing, <strong>distributed redundant</strong> is three feeds serving through multiple PDUs, and <strong>800&nbsp;VDC/SST</strong> deletes the UPS and PDU entirely. Retrofitting from N+1 to 2N usually needs a second distribution path and is close to impossible without demolition \u2014 buy the tier you need up front.')
+      +step(3,'Draw the building envelope',
+        'UPS, PDU, switchgear and the racks live in electrical rooms and data halls, not on pads in a field. Draw the building first so the indoor equipment lands inside it. The substation, generation, gensets and the cooling plant sit outside.')
+      +step(4,'Place, route, place',
+        'Click to drop a node. Then click points to route the trench to the next one and press <strong>ENTER</strong>. Then click <strong>on that run</strong> to drop the next node. You are routing every leg by hand on purpose \u2014 real trenches follow road edges, property lines and existing duct banks, and nothing can guess that for you.')
+      +step(5,'Watch the service change along the chain',
+        'Everything up to and including the leg into the step-down transformer is <strong style="color:#EF4444">MV</strong>. After it, <strong style="color:#F59E0B">480&nbsp;V AC</strong>. On the 800&nbsp;VDC path there is no step-down at all \u2014 MV runs to the SST and everything after is a <strong style="color:#F472B6">DC backbone</strong>. The conduit schedule builds itself from these runs, so route them the way they will actually be dug.')
+      +step(6,'Then check the drawing',
+        'Press <strong>Run</strong> to recompute. Engineering mode (monochrome plan-set style with keyed callouts) is a review and output choice \u2014 turn it on when you are ready to issue, not while you are laying out.')
+      +'<div style="font-size:10px;color:#8FA3B8;line-height:1.6;padding-top:12px;border-top:1px solid #1A2A3E">'
+        +'<strong style="color:#CBD5E1">Keys:</strong> ENTER finishes a trench run \u00b7 BACKSPACE removes the last point, or re-routes the current leg \u00b7 ESC cancels the build.<br>'
+        +'<strong style="color:#CBD5E1">Note:</strong> sizing here is for layout and take-off. It is not an interconnection study, a load flow, or a coordination study.</div>'
+      +'</div></div>';
+    document.body.appendChild(m);
+  }
+
+  window.OmegaCGB={ open:open, go:go, fmt:fmt, sync:sync, start:start, click:click, help:help,
                     cancel:cancel, enter:enter, back:back, seq:seq,
                     nodes:CGB_NODES, genTypes:GEN_TYPES, state:function(){ return CGB; } };
   window.openComputeGuidedPlace=open;
