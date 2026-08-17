@@ -19593,7 +19593,15 @@ function _updateConduitSchedule() {
     var wireCount = type==='EMT-BMS' ? 'Cat6 + RS485 (2 pr)' : 'See drawings';
     try{
       if(type!=='EMT-BMS' && window.OmegaCable && typeof omegaBessKw==='function'){
-        var _kw=omegaBessKw();
+        /* Prefer the load THIS run was drawn to carry (recorded by the
+           guided build). Falls back to the whole battery for runs drawn
+           before that existed, or drawn by hand. */
+        var _kw=0;
+        try{
+          var _mine=(S.conduits||[]).filter(function(z){ return z.condType===type && z._sizeKw>0; });
+          if(_mine.length) _kw=Math.max.apply(null,_mine.map(function(z){ return +z._sizeKw; }));
+        }catch(e){}
+        if(!_kw) _kw=omegaBessKw();
         if(_kw>0){
           var _s=OmegaCable.size({
             kw:_kw, volts:480, phases:3, material:'CU',
@@ -59314,6 +59322,27 @@ function _dcfcConduitAlongRun(el, run, snap, condType, label){
           ftLen:+(_polyLen(pts)/((typeof S!=='undefined'&&S.pxPerFt)||6)).toFixed(1),
           fromId:el.id, toId:null, route:'trench', trenchIn:run.in||'soil',
           evRun:run.id, evRole:condType, label:label||'', labelDx:50, labelDy:-28 };
+  /* ── EACH BRANCH CARRIES ITS OWN LOAD ──────────────────────────────
+     On a Solar + BESS build the switchgear feeds three very different
+     things - a 2,350 kW AC block, a solar inverter, and 250 kW of
+     building load - and every one of them was drawn with the same
+     conduit, because size came from the TYPE. Record what this
+     particular run actually carries so the schedule can size the three
+     branches separately instead of averaging them into one string. */
+  try{
+    var _kw=null;
+    if(typeof BGB!=='undefined' && BGB.active){
+      var _k=(typeof _bgbCurKind==='function')?_bgbCurKind():null;
+      if(_k==='acblock' || _k==='bess')      _kw=+BGB.kw||null;
+      else if(_k==='pvinv' || _k==='pv')     _kw=+BGB.pvKw||null;
+      else if(_k==='loads')                  _kw=+BGB.loadKw||null;
+      else if(_k==='mainswgr' || _k==='utilxfmr' || _k==='service' ||
+              _k==='panel'    || _k==='xfmr' || _k==='disco')
+        /* Upstream of the branch point: everything the bus can pass. */
+        _kw=(+BGB.kw||0)+(+BGB.pvKw||0) || null;
+      if(_kw) { c._sizeKw=_kw; c._sizeKind=_k; }
+    }
+  }catch(e){}
   S.conduits.push(c);
   if(typeof renderConduit==='function') renderConduit(c);
   if(typeof updCondStat==='function') updCondStat();
@@ -59685,8 +59714,26 @@ var BGB_PRESETS = {
     seq:['service','utilxfmr','mainswgr','acblock','pvinv','pv','loads'],
     parents:{ utilxfmr:'service', mainswgr:'utilxfmr',
               acblock:'mainswgr', pvinv:'mainswgr', pv:'pvinv', loads:'mainswgr' },
-    legs:{ service:'MV-UG', utilxfmr:'MV-UG', mainswgr:'EV-MAIN',
-           acblock:'EV-FEEDER', pvinv:'EV-FEEDER', pv:'RMC-DC', loads:'EV-FEEDER' } },
+    legs:{ service:'MV-UG', utilxfmr:'MV-UG', mainswgr:'RMC-AC',
+           acblock:'RMC-AC', pvinv:'RMC-AC', pv:'RMC-DC', loads:'RMC-AC' } },
+  /* ── WHY NOT EV-MAIN / EV-FEEDER HERE ────────────────────────────────
+     Those two ids belong to the DC-fast-charger legend. Their labels are
+     literally "Main (service->xfmr)" and "Feeder (xfmr->panel)", and the
+     schedule prints the TYPE label, so a Solar+BESS sheet read:
+
+       Feeder (xfmr->panel)   3 runs . 302.9 ft
+
+     for three runs that are switchgear->BESS AC block, switchgear->solar
+     inverter and switchgear->building loads. Not one of them goes from a
+     transformer to a panel. The transformer->switchgear run was typed
+     EV-MAIN and printed "Main (service->xfmr)", which is a different pair
+     of devices again.
+
+     The voltages and the topology were right the whole time - POI -> MV ->
+     service transformer -> 480V switchgear, branching to the AC block, the
+     inverter and the loads, with DC only from inverter to array. It was
+     the naming that came from another drawing type. RMC-AC says what the
+     raceway is; BGB_LEGNAME already says what each run connects. */
   /* ── BTM AND FOM ARE NOT THE SAME CHAIN ──────────────────────────────
      These two leg maps were identical except for the LAST segment. Every
      other run — including disco and panel — was typed 'MV-UG', which is
@@ -59918,6 +59965,21 @@ function _bgbSync(){
   _bgbLoadConfig();
   var kw=BGB.kw, kwh=BGB.kwh;
   var svcA=Math.round(kw*1000/(480*1.732)/0.95*1.25);
+  /* ── EQUIPMENT COMES IN FRAMES ─────────────────────────────────────
+     svcA is the raw calculated demand, and it was printed straight onto
+     the drawing: "601A 480V switchgear/distribution", "2349A", "3719A".
+     None of those are devices anyone can order. Switchgear, disconnects
+     and breakers are built in the NEC 240.6 frame sizes, so the label has
+     to name the frame you would actually buy while the calculation stays
+     available for the notes. 601A -> 700A, 2349A -> 2500A. */
+  BGB.svcCalcA=svcA;
+  BGB.svcA=(function(a){
+    var F=[15,20,25,30,35,40,45,50,60,70,80,90,100,110,125,150,175,200,225,250,
+           300,350,400,450,500,600,700,800,1000,1200,1600,2000,2500,3000,4000,5000,6000];
+    for(var i=0;i<F.length;i++) if(F[i]>=a) return F[i];
+    return a;
+  })(svcA);
+  svcA=BGB.svcA;
   var kva=Math.round(kw/0.95/50)*50;
   BGB.svcA=svcA; BGB.kva=kva;
 
@@ -60233,7 +60295,8 @@ function placeBgbAt(p){
     var n=BGB_NODES[kind]; var spec='';
     if(kind==='xfmr'){ var _lv=(BGB.cfg&&BGB.cfg.gridConnectV)?String(BGB.cfg.gridConnectV).replace(/\s.*$/,''):'480V'; spec=BGB.kva+' kVA pad-mount \u00b7 '+_lv+'\u2192MV step-up'; }
     else if(kind==='disco'){ spec='Service-rated AC disconnect \u00b7 '+BGB.svcA+'A / 480V \u00b7 NEMA 3R'; }
-    else if(kind==='panel'){ spec=BGB.svcA+'A 480V switchgear/distribution'; }
+    else if(kind==='panel'){ spec=BGB.svcA+'A 480V switchgear/distribution'
+        +(BGB.svcCalcA&&BGB.svcCalcA!==BGB.svcA?(' \u00b7 '+BGB.svcCalcA+'A calc'):''); }
     else if(kind==='meter'){ spec='Revenue meter \u00b7 CT/PT set'; }
     else if(kind==='service'){ spec='Utility POI \u00b7 '+BGB.mode+' interconnection'; }
     else if(kind==='loads' || kind==='datacenter' || kind==='datactr'){
