@@ -93905,18 +93905,7 @@ window._crmToastModal=_crmToastModal;
   }
 
   function ctr(el){ return { x:el.x+(el.w||40)/2, y:el.y+(el.h||30)/2 }; }
-  /* Where a run leaving `el` toward `to` crosses the enclosure edge, so
-     the trench starts ON the equipment rather than at its centre. */
-  function edgeToward(el, to){
-    var c=ctr(el), hw=(el.w||40)/2, hh=(el.h||30)/2;
-    var dx=to.x-c.x, dy=to.y-c.y;
-    if(!dx && !dy) return c;
-    var sx = dx ? hw/Math.abs(dx) : Infinity;
-    var sy = dy ? hh/Math.abs(dy) : Infinity;
-    var t = Math.min(sx, sy);
-    return { x:c.x+dx*t, y:c.y+dy*t };
-  }
-  function dist(a,b){ return Math.sqrt((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)); }
+function dist(a,b){ return Math.sqrt((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)); }
   function projectOnRun(run,p){
     var best=null;
     for(var i=1;i<run.length;i++){
@@ -93998,8 +93987,13 @@ window._crmToastModal=_crmToastModal;
   function commitLeg(){
     if(CGB.run.length<2) return false;
     var pts=CGB.run.map(function(q){ return {x:snap(q.x),y:snap(q.y)}; });
-    if(CGB.lastEl) pts[0]=edgeToward(CGB.lastEl, pts[1]);
-    pts[0]={x:snap(pts[0].x),y:snap(pts[0].y)};
+    /* Anchor the run at the previous node's CENTRE, not its edge.
+       The drag handler re-snaps a conduit endpoint to the element centre
+       whenever that element moves, so an edge anchor would jump the first
+       time anything was nudged. Matching the handler up front means the
+       geometry is identical before and after a move -- and the element
+       (z-index 10) covers the stub over the conduit layer (z-index 4). */
+    if(CGB.lastEl){ var c0=ctr(CGB.lastEl); pts[0]={x:snap(c0.x),y:snap(c0.y)}; }
     var toKey=CGB.seq[CGB.stepIx];
     CGB.legConds=[]; CGB.legOffs=[];
     function add(c,ox,oy){ var r=pushCond(c); CGB.conds.push(r); CGB.legConds.push(r); CGB.legOffs.push({x:ox,y:oy}); }
@@ -94018,35 +94012,47 @@ window._crmToastModal=_crmToastModal;
     CGB.phase='snap'; hud(); return true;
   }
 
-  /* Click on the committed run to drop the next node onto it. */
+  /* Click on the committed run to drop the next node onto it.
+     ------------------------------------------------------------------
+     THE LEFTOVER LINE. This used to place the node offset from the run
+     and then draw a short "tap" from the enclosure edge back to the drop
+     point. Two problems. The tap is a second run the user never asked
+     for, and -- worse -- the drag handler re-snaps a conduit endpoint to
+     the ELEMENT CENTRE when its element moves. The tap carried only a
+     fromElId, so moving the node dragged one end to the new centre and
+     left the other stranded at the old drop point: the stray line.
+
+     There is no tap now. The leg terminates ON the node, which is what
+     every other guided build does. Elements are z-index 10 and conduits
+     z-index 4, so the last few pixels sit under the glyph and read as a
+     clean termination. Both fromElId and toElId are set, so the whole
+     run moves with the equipment. */
   function placeOnRun(p){
     var k=CGB.seq[CGB.stepIx]; if(!k) return;
     var pr=projectOnRun(CGB.runPts,p); if(!pr) return;
-    var N=CGB_NODES[k];
-    var probe=mkEl(k,{x:pr.q.x,y:pr.q.y}); if(!probe) return;
-    /* Push clear of the trench on whichever side was clicked. */
-    var h=probe.h||30;
-    var side=((p.x-pr.q.x)*pr.nx+(p.y-pr.q.y)*pr.ny)>=0?1:-1;
-    var off=(h/2)+12;
-    probe.x=Math.round(pr.q.x+pr.nx*off*side-(probe.w||40)/2);
-    probe.y=Math.round(pr.q.y+pr.ny*off*side-h/2);
-    try{ if(typeof _reRenderEl==='function') _reRenderEl(probe.id); }catch(e){}
 
-    /* Give every conduit on this leg a vertex at the drop point, then a
-       short tap from the enclosure edge to it, so the node shares a node
-       with the run instead of merely sitting near it. */
+    var el=mkEl(k,{x:pr.q.x,y:pr.q.y}); if(!el) return;
+    /* Stand the equipment clear of the trench on the side that was
+       clicked, so the enclosure does not straddle the run. */
+    var hh=(el.h||30)/2;
+    var side=((p.x-pr.q.x)*pr.nx+(p.y-pr.q.y)*pr.ny)>=0?1:-1;
+    var off=hh+10;
+    var cx=pr.q.x+pr.nx*off*side, cy=pr.q.y+pr.ny*off*side;
+    el.x=Math.round(cx-(el.w||40)/2); el.y=Math.round(cy-hh);
+    try{ if(typeof _reRenderEl==='function') _reRenderEl(el.id); }catch(e){}
+
+    /* Truncate each run of this leg at the drop point, then carry it the
+       last short distance into the node centre. */
     for(var i=0;i<CGB.legConds.length;i++){
       var c=CGB.legConds[i], o=CGB.legOffs[i]||{x:0,y:0};
-      /* Terminate on the drop point itself, not an offset copy of it. */
-      var v={x:snap(pr.q.x),y:snap(pr.q.y)};
       var at=Math.max(1,Math.min(c.pts.length-1,pr.seg));
-      var pv=c.pts[at-1], nx=c.pts[at];
-      if(!((Math.abs(pv.x-v.x)<0.6&&Math.abs(pv.y-v.y)<0.6)||(Math.abs(nx.x-v.x)<0.6&&Math.abs(nx.y-v.y)<0.6))){
-        c.pts.splice(at,0,v);
-      }
-      /* The leg ends at the node: drop anything drawn beyond the drop point. */
-      c.pts=c.pts.slice(0, c.pts.indexOf(v)>=0 ? c.pts.indexOf(v)+1 : c.pts.length);
-      c.toElId=probe.id;
+      var kept=c.pts.slice(0,at);
+      var join={x:snap(pr.q.x+o.x), y:snap(pr.q.y+o.y)};
+      var last=kept[kept.length-1];
+      if(!last || Math.abs(last.x-join.x)>0.6 || Math.abs(last.y-join.y)>0.6) kept.push(join);
+      kept.push({x:snap(cx), y:snap(cy)});          /* terminate on the node */
+      c.pts=kept;
+      c.toElId=el.id;
       c.pxLen=len(c.pts); c.ftLen=+(c.pxLen/ppf()).toFixed(1);
       try{
         var dom=document.querySelector('#csvg [data-cid="'+c.id+'"]');
@@ -94054,12 +94060,8 @@ window._crmToastModal=_crmToastModal;
         if(typeof renderConduit==='function') renderConduit(c);
       }catch(e){}
     }
-    var edge={x:pr.q.x+pr.nx*side*12, y:pr.q.y+pr.ny*side*12};
-    pushCond({ condType:legType(k), cluster:true, tap:true, labelHidden:true,
-               fromElId:probe.id, omegaCGB:true,
-               pts:[{x:snap(edge.x),y:snap(edge.y)},{x:snap(pr.q.x),y:snap(pr.q.y)}] });
 
-    advance(probe,k);
+    advance(el,k);
   }
 
   function enter(){ if(CGB.active && CGB.phase==='draw') commitLeg(); }

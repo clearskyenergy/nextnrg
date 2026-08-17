@@ -247,6 +247,24 @@ setTimeout(() => {
   chk('every run is attached at both ends', floating === 0,
     floating ? floating + ' floating endpoints of ' + (conds.length * 2) : conds.length * 2 + ' endpoints landed');
 
+  /* A run must reference the equipment at BOTH ends, or the drag handler
+     re-snaps one end to the element and strands the other where it was --
+     the stray line left behind when a node is moved. */
+  const noIds = conds.filter(c => !(c.fromElId && c.toElId));
+  chk('every run references equipment at both ends', noIds.length === 0,
+    noIds.length ? noIds.length + ' of ' + conds.length + ' runs missing an element id' : conds.length + ' runs');
+
+  const centre = e => ({ x: e.x + (e.w || 40) / 2, y: e.y + (e.h || 30) / 2 });
+  const near = (a, b) => Math.abs(a.x - b.x) <= 2 && Math.abs(a.y - b.y) <= 2;
+  let offNode = 0;
+  conds.forEach(c => {
+    const f = els.find(e => e.id === c.fromElId), t = els.find(e => e.id === c.toElId);
+    if (f && !near(c.pts[0], centre(f))) offNode++;
+    if (t && !near(c.pts[c.pts.length - 1], centre(t))) offNode++;
+  });
+  chk('run endpoints sit on their node centres (survives a drag)', offNode === 0,
+    offNode ? offNode + ' endpoints off-centre' : '');
+
   /* ── 4. SAVED PROJECTS STILL LOAD ─────────────────────────────────
      A deploy that changes the state shape breaks every existing project.
      Round-trip the state the app itself would persist. */
