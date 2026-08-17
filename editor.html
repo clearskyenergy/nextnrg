@@ -19322,6 +19322,13 @@ function applyBMCatalog() {
     Cost: ${hasCost ? '<strong>$'+m.eqcost.toLocaleString()+'</strong>' : '<span style="color:var(--amber)">!! Quote Required -- enter manually</span>'}<br>
     <span style="font-size:9px;color:var(--sub)">${m.notes}</span>`;
   preview.style.display = 'block';
+  /* Choosing from the catalog fills THIS FORM and nothing else — only
+     saveBess() writes to S.bessList. That is reasonable, but it is
+     invisible: the sizer shows SolBank 3.0 while the guided build still
+     offers the last saved system, with no indication that the two are
+     talking about different things. Record that a pick is pending so the
+     guide can say so out loud. */
+  try{ S._bmDirty=true; }catch(e){}
   // Auto-run pre-qual if we have an address and valid kW
   if(m.kw) {
     const addr = document.getElementById('bm-pq-addr')?.value?.trim()
@@ -19373,6 +19380,10 @@ function saveBess(){
   const autoAssemble = !fromGuide && document.getElementById('bm-auto-assemble').checked && !S.editBessId;
   if(S.editBessId){const i=S.bessList.findIndex(x=>x.id===S.editBessId);if(i>=0)S.bessList[i]=b;}
   else S.bessList.push(b);
+  /* The system the user just pressed Save on is the one every downstream
+     surface should mean by "the configured BESS". Without this the guided
+     build fell back to whichever entry happened to be first in the list. */
+  try{ S.activeBessId=b.id; S._bmDirty=false; }catch(e){}
   // Update any placed assemblies
   S.elements.filter(e=>e.type==='bess-asm'&&e.bessId===b.id).forEach(el=>{
     el.label=b.name;el.spec=`${b.kwh}kWh . ${b.kw}kW`;
@@ -59733,6 +59744,29 @@ function _bgbGenericCfg(kw, kwh){
 }
 window._bgbGenericCfg=_bgbGenericCfg;
 
+/* Which configured system does the guided build mean?
+   ---------------------------------------------------------------------
+   Everything read S.bessList[0]. saveBess() PUSHES a new config rather
+   than replacing (S.editBessId is only set when editing an existing row),
+   so [0] is the first battery ever configured on the project and stays
+   that way forever. Pick a different system in the sizer, save it, and the
+   guide still offers the original — which is exactly the "I selected it
+   and it didn't update" report.
+
+   The results rail already stopped doing this (see omegaBessFleet, which
+   reads the whole fleet); the guided build was never brought along. */
+function _bgbActiveCfg(){
+  try{
+    var L=(typeof S!=='undefined' && S.bessList) ? S.bessList : null;
+    if(!L || !L.length) return null;
+    if(S.activeBessId){
+      for(var i=0;i<L.length;i++) if(L[i] && L[i].id===S.activeBessId) return L[i];
+    }
+    return L[L.length-1];      /* most recently saved */
+  }catch(e){ return null; }
+}
+window._bgbActiveCfg=_bgbActiveCfg;
+
 function _bgbLoadConfig(){
   /* The Solar + Storage dialog is an explicit choice — the user picked a
      battery and a unit count seconds ago. This function used to overwrite
@@ -59743,7 +59777,7 @@ function _bgbLoadConfig(){
     if(!BGB.cfg) BGB.cfg=_bgbGenericCfg(BGB.kw, BGB.kwh);
     return BGB.cfg;
   }
-  var b=(typeof S!=='undefined' && S.bessList && S.bessList[0]) ? S.bessList[0] : null;
+  var b=_bgbActiveCfg();
   /* No unit configured -> use the sized placeholder rather than nothing, so
      the guided build always has a standard offering to place and print. */
   BGB.cfg = b || _bgbGenericCfg(BGB.kw, BGB.kwh);
@@ -59846,6 +59880,14 @@ function _bgbSync(){
           +'</div>'
           +'<div style="font-size:9px;color:#8FA3B8;margin-top:4px;line-height:1.5">'+(kwh/1000).toFixed(2)+' MWh / '+(kw/1000).toFixed(2)+' MW \u00b7 '+(b.chem||'LFP')+(b.inv?(' \u00b7 '+b.inv):'')+'</div>'
           +'<div style="font-size:9px;color:#8FA3B8;margin-top:3px">Container integrates: <span style="color:#E2EEF9">'+intbits.join(' \u00b7 ')+'</span></div>'
+          /* Two ways the guide can be talking about a different battery
+             than the person thinks, both previously silent. Say which. */
+          +((typeof S!=='undefined' && S._bmDirty)
+            ? '<div style="font-size:9px;color:#FBBF24;margin-top:6px;line-height:1.5">\u26a0 A different model is selected in the BESS Config dialog but has not been saved. Press <strong>Save</strong> there and this will place that one instead.</div>'
+            : '')
+          +((typeof S!=='undefined' && S.bessList && S.bessList.length>1)
+            ? '<div style="font-size:9px;color:#8FA3B8;margin-top:6px;line-height:1.5">'+S.bessList.length+' systems are configured on this project. This guide places the one shown above \u2014 the most recently saved. Use <strong>Edit config</strong> to switch.</div>'
+            : '')
         +'</div>';
     } else {
       cfgEl.innerHTML=''
