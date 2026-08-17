@@ -63071,6 +63071,28 @@ function _nnZoneWrap(){
         e.stopPropagation(); return;
       }
     }
+    /* OMEGA PATCH 18 -- BESS pad / assembly.
+       Every other placeable shape had a double-click editor except the one
+       carrying the electrical spec. A pad stores catalogKey / unitKwh /
+       unitKw / unitCost directly on the shape and nothing in the UI could
+       reach them, so a placed unit could not be corrected without deleting
+       and re-placing it. Tested before zonebox/substation because an
+       assembly is usually drawn on top of a pad. */
+    for(var bi=S.shapes.length-1;bi>=0;bi--){
+      var bs=S.shapes[bi];
+      if(bs.kind!=='bespad' && bs.kind!=='assembly') continue;
+      var bppf=(typeof S!=='undefined' && S.pxPerFt && S.pxPerFt>0) ? S.pxPerFt : 6;
+      var bw=Math.max(20,(bs.lf||20)*bppf), bh=Math.max(20,(bs.wf||8)*bppf);
+      var bx0,by0;
+      if(bs.kind==='assembly'){ bx0=(bs.cx||0)-bw/2+(bs.tx||0); by0=(bs.cy||0)-bh/2+(bs.ty||0); }
+      else { if(!bs.pts||!bs.pts[0]) continue; bx0=bs.pts[0].x; by0=bs.pts[0].y; }
+      if(x>=bx0 && x<=bx0+bw && y>=by0 && y<=by0+bh){
+        if(typeof selectShape==='function') selectShape(bs.id);
+        if(typeof _besPadProps==='function') _besPadProps(bs.id);
+        e.stopPropagation(); return;
+      }
+    }
+
     for(var i=S.shapes.length-1;i>=0;i--){
       var s=S.shapes[i];
       if(s.kind!=='zonebox' && s.kind!=='substation') continue;
@@ -93778,11 +93800,16 @@ window._crmToastModal=_crmToastModal;
     c.id=(typeof uid==='function'?uid():'c'+Math.random().toString(36).slice(2));
     c.pxLen=len(c.pts); c.ftLen=+(c.pxLen/ppf()).toFixed(1);
     S.conduits=S.conduits||[]; S.conduits.push(c);
-    try{ if(typeof renderConduit==='function') renderConduit(c); }catch(e){}
+    /* GROUND ANCHOR. Every other conduit factory in this file stamps
+       _geoPts here; this one did not, so compute-build runs had no anchor
+       at all. Two consequences: they drift against the satellite on zoom
+       and pan, and _geoStampAll fills the anchor in later from whatever
+       geometry happens to exist at that moment -- which, for a leg
+       committed and then truncated on placement, is the FULL-LENGTH run.
+       The next map idle reprojects to it. That is the leftover line. */
+    try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
     return c;
   }
-  /* Give every spine a vertex at the drop point so the tap shares a node
-     rather than merely crossing the line. */
   /* ── HUD: step list with real equipment icons ───────────────────── */
   function hud(){
     var e=document.getElementById('cgb-hud');
@@ -94054,6 +94081,16 @@ function dist(a,b){ return Math.sqrt((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)); }
       c.pts=kept;
       c.toElId=el.id;
       c.pxLen=len(c.pts); c.ftLen=+(c.pxLen/ppf()).toFixed(1);
+      /* RE-STAMP THE GROUND ANCHOR.
+         pushCond() stamps _geoPts from the polyline as it was when the leg
+         was committed -- the full-length run out to wherever the user
+         stopped drawing. Truncating c.pts here without re-stamping left
+         that anchor describing the OLD geometry, so the next map idle
+         reprojected the run straight back to its original length. That is
+         the leftover line: it appears on placement and disappears the
+         moment the element is dragged, because the drag handler happens to
+         re-stamp. Every mutation of c.pts has to re-anchor. */
+      try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
       try{
         var dom=document.querySelector('#csvg [data-cid="'+c.id+'"]');
         if(dom&&dom.parentNode) dom.parentNode.removeChild(dom);
@@ -94302,6 +94339,172 @@ function dist(a,b){ return Math.sqrt((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)); }
   window.openComputeGuidedPlace=open;
   window.placeCgbAt=click;
   if(window.console) console.info(TAG+' ready \u2014 OmegaCGB.open()');
+})();
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   OMEGA PATCH 18 — BESS PAD / ASSEMBLY PROPERTIES
+   ----------------------------------------------------------------------
+   A placed pad carries its own electrical spec on the shape:
+   catalogKey, unitKwh, unitKw, unitCost, model, lf/wf. Those values feed
+   the POWER rollup, the cost sheet and the BOM -- and nothing in the UI
+   could reach them. Double-clicking a pad did nothing at all, because the
+   canvas dblclick handler only tested callouts, wind/fuel-cell symbols,
+   zoneboxes and substations. Correcting a unit meant deleting it and
+   placing it again.
+
+   This is the missing editor. It edits the SHAPE, not S.bessList: the
+   BESS Config dialog owns catalogue units, this owns the placed instance.
+   Swapping the catalogue model re-stamps the spec and resizes the
+   footprint; the numbers stay editable afterwards for a unit that does
+   not match its catalogue entry.
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  var TAG='[omega-bespad]';
+
+  function shp(id){
+    try{ for(var i=0;i<S.shapes.length;i++) if(S.shapes[i].id===id) return S.shapes[i]; }catch(e){}
+    return null;
+  }
+  function num(v){ var f=parseFloat(v); return isFinite(f)?f:null; }
+  function esc(t){ return String(t==null?'':t).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function catalogOptions(sel){
+    var out='<option value="">\u2014 keep current \u2014</option>';
+    try{
+      if(typeof BESS_CATALOG==='undefined') return out;
+      Object.keys(BESS_CATALOG).forEach(function(k){
+        var c=BESS_CATALOG[k]||{};
+        var lbl=(c.model||k)+(c.kwh?(' \u00b7 '+Math.round(c.kwh).toLocaleString()+' kWh'):'')
+              +(c.kw?(' / '+Math.round(c.kw).toLocaleString()+' kW'):'');
+        out+='<option value="'+esc(k)+'"'+(k===sel?' selected':'')+'>'+esc(lbl)+'</option>';
+      });
+    }catch(e){}
+    return out;
+  }
+
+  function open(id){
+    var sh=shp(id); if(!sh) return;
+    var m=document.getElementById('bpp-modal'); if(m) m.remove();
+    m=document.createElement('div'); m.id='bpp-modal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(4,10,20,.82);z-index:100005;display:flex;align-items:center;justify-content:center;padding:16px';
+    m.onclick=function(e){ if(e.target===m) m.remove(); };
+    var inp='width:100%;background:#0B1626;border:1px solid #26364d;color:#E2EEF9;border-radius:6px;padding:7px 9px;font-size:11px;font-family:inherit';
+    var lbl='font-size:9.5px;color:#8FA3B8;display:block;margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px';
+    var isAsm=(sh.kind==='assembly');
+    m.innerHTML=
+      '<div style="background:#0F1D30;border:1px solid #22C55E;border-radius:12px;max-width:520px;width:100%;max-height:92vh;overflow:auto;box-shadow:0 30px 80px rgba(0,0,0,.55)">'
+      +'<div style="padding:15px 18px;border-bottom:1px solid #26364d;display:flex;align-items:center;justify-content:space-between">'
+        +'<div><div style="font-size:15px;font-weight:800;color:#4ADE80">\u25a4 '+(isAsm?'BESS Assembly':'BESS Pad')+'</div>'
+        +'<div style="font-size:9.5px;color:#8FA3B8;margin-top:3px">Edits this placed unit \u2014 not the catalogue</div></div>'
+        +'<button onclick="document.getElementById(\'bpp-modal\').remove()" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button></div>'
+      +'<div style="padding:15px 18px">'
+        +'<div style="margin-bottom:13px"><label style="'+lbl+'">Swap catalogue model</label>'
+          +'<select id="bpp-cat" style="'+inp+'">'+catalogOptions(sh.catalogKey)+'</select>'
+          +'<div style="font-size:8.5px;color:#6B7280;margin-top:4px">Selecting one re-stamps kWh, kW, cost and footprint below. Leave on \u201ckeep current\u201d to edit by hand.</div></div>'
+        +'<div style="margin-bottom:11px"><label style="'+lbl+'">Model / label</label>'
+          +'<input id="bpp-model" value="'+esc(sh.model||'')+'" style="'+inp+'"></div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:11px">'
+          +'<div><label style="'+lbl+'">Energy (kWh)</label><input id="bpp-kwh" type="number" step="1" value="'+(sh.unitKwh!=null?sh.unitKwh:'')+'" style="'+inp+'"></div>'
+          +'<div><label style="'+lbl+'">Power (kW)</label><input id="bpp-kw" type="number" step="1" value="'+(sh.unitKw!=null?sh.unitKw:'')+'" style="'+inp+'"></div>'
+        +'</div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:11px">'
+          +'<div><label style="'+lbl+'">Length (ft)</label><input id="bpp-lf" type="number" step="0.5" value="'+(sh.lf!=null?sh.lf:'')+'" style="'+inp+'"></div>'
+          +'<div><label style="'+lbl+'">Width (ft)</label><input id="bpp-wf" type="number" step="0.5" value="'+(sh.wf!=null?sh.wf:'')+'" style="'+inp+'"></div>'
+          +'<div><label style="'+lbl+'">Cost ($)</label><input id="bpp-cost" type="number" step="1" value="'+(sh.unitCost!=null?sh.unitCost:'')+'" style="'+inp+'"></div>'
+        +'</div>'
+        +'<div id="bpp-derived" style="background:rgba(0,0,0,.24);border:1px solid #26364d;border-radius:8px;padding:10px 12px;font-size:10px;color:#CBD5E1;line-height:1.7"></div>'
+      +'</div>'
+      +'<div style="padding:12px 18px;border-top:1px solid #26364d;display:flex;gap:8px">'
+        +'<button onclick="document.getElementById(\'bpp-modal\').remove()" style="flex:0 0 78px;padding:10px;-webkit-appearance:none;appearance:none;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);color:#8FA3B8;border-radius:7px;cursor:pointer;font-family:inherit;font-size:11px">Cancel</button>'
+        +'<button onclick="OmegaBesPad.save(\''+id+'\')" style="flex:1;padding:10px;-webkit-appearance:none;appearance:none;background:#22C55E;background-image:linear-gradient(135deg,#4ADE80,#22C55E);color:#06240F;font-weight:800;font-size:11.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Apply to this unit</button>'
+      +'</div></div>';
+    document.body.appendChild(m);
+
+    var cat=document.getElementById('bpp-cat');
+    if(cat) cat.onchange=function(){
+      var k=cat.value; if(!k) return;
+      try{
+        var c=BESS_CATALOG[k]; if(!c) return;
+        if(c.model!=null) document.getElementById('bpp-model').value=c.model;
+        if(c.kwh!=null)   document.getElementById('bpp-kwh').value=c.kwh;
+        if(c.kw!=null)    document.getElementById('bpp-kw').value=c.kw;
+        if(c.lf!=null)    document.getElementById('bpp-lf').value=c.lf;
+        if(c.wf!=null)    document.getElementById('bpp-wf').value=c.wf;
+        if(c.cost!=null)  document.getElementById('bpp-cost').value=c.cost;
+      }catch(e){}
+      derive();
+    };
+    ['bpp-kwh','bpp-kw','bpp-lf','bpp-wf','bpp-cost'].forEach(function(f){
+      var e=document.getElementById(f); if(e){ e.oninput=derive; }
+    });
+    derive();
+  }
+
+  /* Duration and C-rate are the two numbers a reviewer checks first, and
+     they are derived, so show them live rather than making the user work
+     them out. */
+  function derive(){
+    var d=document.getElementById('bpp-derived'); if(!d) return;
+    var kwh=num((document.getElementById('bpp-kwh')||{}).value);
+    var kw =num((document.getElementById('bpp-kw')||{}).value);
+    var lf =num((document.getElementById('bpp-lf')||{}).value);
+    var wf =num((document.getElementById('bpp-wf')||{}).value);
+    var cost=num((document.getElementById('bpp-cost')||{}).value);
+    var rows='';
+    function row(l,v,c){ return '<div style="display:flex;justify-content:space-between">'
+      +'<span style="color:#8FA3B8">'+l+'</span><strong style="font-family:\'IBM Plex Mono\',monospace;color:'+(c||'#E2EEF9')+'">'+v+'</strong></div>'; }
+    if(kwh&&kw){
+      var hrs=kwh/kw, crate=kw/kwh;
+      rows+=row('Duration', hrs.toFixed(2)+' h');
+      rows+=row('C-rate', crate.toFixed(3)+' C');
+      if(crate>2) rows+='<div style="color:#F59E0B;font-size:9px;margin-top:4px">C-rate above 2C is unusual for a stationary unit \u2014 check kW and kWh are not swapped.</div>';
+    }
+    if(lf&&wf) rows+=row('Footprint', lf+'\u2032 \u00d7 '+wf+'\u2032 = '+Math.round(lf*wf).toLocaleString()+' sq ft');
+    if(cost&&kwh) rows+=row('Cost', '$'+Math.round(cost/kwh).toLocaleString()+' / kWh');
+    d.innerHTML=rows||'<span style="color:#6B7280">Enter kWh and kW to see duration and C-rate.</span>';
+  }
+
+  function save(id){
+    var sh=shp(id); if(!sh) return;
+    var g=function(f){ var e=document.getElementById(f); return e?e.value:''; };
+    var model=String(g('bpp-model')||'').trim();
+    var kwh=num(g('bpp-kwh')), kw=num(g('bpp-kw'));
+    var lf=num(g('bpp-lf')), wf=num(g('bpp-wf')), cost=num(g('bpp-cost'));
+    var cat=g('bpp-cat');
+
+    if(model) sh.model=model;
+    if(cat)   sh.catalogKey=cat;
+    if(kwh!=null) sh.unitKwh=kwh;
+    if(kw!=null)  sh.unitKw=kw;
+    sh.unitCost=(cost!=null?cost:null);
+    if(lf!=null && lf>0) sh.lf=lf;
+    if(wf!=null && wf>0) sh.wf=wf;
+
+    /* A resized pad must re-anchor: its footprint changed, so the geo
+       stamp taken at placement no longer describes it. */
+    try{ if(typeof _geoRestampOne==='function') _geoRestampOne(sh); }catch(e){}
+    try{
+      var dom=document.querySelector('#csvg [data-shid="'+sh.id+'"]');
+      if(dom&&dom.parentNode) dom.parentNode.removeChild(dom);
+      if(typeof renderShape==='function') renderShape(sh);
+    }catch(e){}
+    ['updShapeCount','renderLegend','updateSummaryPanel','pushHist'].forEach(function(f){
+      try{ if(typeof window[f]==='function') window[f](); }catch(e){}
+    });
+    var m=document.getElementById('bpp-modal'); if(m) m.remove();
+    try{ if(typeof showBanner==='function')
+      showBanner('shape',' '+(sh.model||'BESS unit')+' updated \u2014 '
+        +(sh.unitKwh?Math.round(sh.unitKwh).toLocaleString()+' kWh':'')
+        +(sh.unitKw?(' / '+Math.round(sh.unitKw).toLocaleString()+' kW'):'')); }catch(e){}
+  }
+
+  window.OmegaBesPad={ open:open, save:save };
+  /* The canvas dblclick handler calls this name. */
+  window._besPadProps=open;
+  if(window.console) console.info(TAG+' ready \u2014 double-click a BESS pad or assembly');
 })();
 </script>
 
