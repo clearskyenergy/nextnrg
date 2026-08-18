@@ -94691,60 +94691,8 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
 #omg-switch button.on{ background:var(--accent); color:var(--on-accent) }
 @media (max-width:900px){ #omg-switch{ display:none } }
 
-/* step rail — floats over the canvas so the drawing area never resizes */
-#omg-rail{
-  position:absolute; left:12px; top:12px; z-index:121; display:flex; align-items:center; gap:4px;
-  background:rgba(37,40,43,.95); border:1px solid var(--border); border-radius:6px;
-  padding:5px 6px; box-shadow:0 10px 28px rgba(0,0,0,.45); pointer-events:auto;
-  max-width:calc(100vw - 24px); overflow-x:auto;
-}
-#omg-rail .omg-rail-h{
-  font-size:8.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
-  color:var(--sub); padding:0 8px 0 6px; white-space:nowrap;
-  /* the header is the grip */
-  cursor:move; user-select:none; -webkit-user-select:none;
-  display:flex; align-items:center; gap:6px;
-}
-#omg-rail .omg-rail-h::before{
-  content:'\22EE\22EE'; letter-spacing:-2px; font-size:11px; color:var(--sub);
-  opacity:.7; line-height:1;
-}
-#omg-rail .omg-rail-h:hover{ color:var(--text) }
-#omg-rail.omg-rail-drag{
-  box-shadow:0 16px 40px rgba(0,0,0,.6); border-color:var(--accent);
-  opacity:.96;
-}
-/* Restores the rail after it has been closed — without this the only way
-   back was to toggle the whole mode. */
-#omg-rail-pill{
-  position:absolute; left:12px; top:12px; z-index:121;
-  background:rgba(37,40,43,.95); border:1px solid var(--border);
-  border-radius:6px; padding:5px 11px; cursor:pointer;
-  color:var(--sub); font-family:inherit; font-size:9px; font-weight:700;
-  letter-spacing:.08em; text-transform:uppercase;
-  box-shadow:0 8px 22px rgba(0,0,0,.4);
-}
-#omg-rail-pill:hover{ color:var(--text); border-color:var(--accent) }
-.omg-step{
-  display:flex; align-items:center; gap:7px; padding:5px 11px 5px 7px; cursor:pointer;
-  background:transparent; border:1px solid transparent; border-radius:var(--radius-md);
-  color:var(--text); font-family:inherit; white-space:nowrap;
-}
-.omg-step:hover{ background:rgba(255,255,255,.07); border-color:var(--border) }
-.omg-step.on{ background:var(--hl-dim); border-color:var(--accent) }
-.omg-step-n{
-  width:16px; height:16px; border-radius:50%; flex:0 0 16px; font-size:9px;
-  display:flex; align-items:center; justify-content:center; font-family:var(--font-mono);
-  background:rgba(255,255,255,.08); color:var(--sub);
-}
-.omg-step.on .omg-step-n{ background:var(--accent); color:var(--on-accent) }
-.omg-step-i{ font-size:14px; color:var(--icon); line-height:1 }
-.omg-step-t{ font-size:11px; font-weight:600 }
-.omg-rail-x{
-  background:transparent; border:none; color:var(--sub); cursor:pointer;
-  font-size:10px; padding:4px 5px; border-radius:3px; margin-left:2px;
-}
-.omg-rail-x:hover{ background:rgba(255,255,255,.12); color:var(--text) }
+/* The floating step rail was removed; Designer mode curates the ribbon
+   itself rather than covering the canvas with a duplicate toolbar. */
 
 /* first-run explainer */
 #omg-firstrun{
@@ -94770,6 +94718,72 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
 }
 #omv-chip:hover{ color:var(--text); border-color:var(--accent) }
 @media (max-width:900px){ #omv-chip{ display:none } }
+
+/* ---------------------------------------------------------------------- *
+ *  GRADIENT ACTION BUTTONS  —  the class of bug, not one button          *
+ *  ------------------------------------------------------------------    *
+ *  32 buttons in this file paint themselves with an inline
+ *  `background:linear-gradient(...)` and set a DARK text colour on top,
+ *  on the assumption the gradient will paint. When it does not — a native
+ *  appearance that drops background-image, a print stylesheet, a forced-
+ *  colours mode, an extension — the result is dark text on the dark modal
+ *  behind it: the button is still there, still clickable, and completely
+ *  invisible. That is what happened to "Export Sourcing CSV" in the Bill
+ *  of Materials, and it is waiting to happen to the other 31.
+ *
+ *  A background-COLOUR always paints. So every one of these gets a solid
+ *  accent fill and on-accent text, which also makes the primary action in
+ *  each dialog look the same as the primary action everywhere else.
+ * ---------------------------------------------------------------------- */
+button[style*="linear-gradient"]{
+  background-image:none !important;
+  background-color:var(--accent) !important;
+  color:var(--on-accent) !important;
+  border:1px solid var(--accent-2) !important;
+  border-radius:var(--radius-md) !important;
+  min-height:34px; font-weight:700; letter-spacing:.01em;
+  box-shadow:none !important;
+}
+button[style*="linear-gradient"]:hover{
+  background-color:var(--accent-2) !important;
+}
+button[style*="linear-gradient"]:disabled,
+button[style*="linear-gradient"][aria-disabled="true"]{
+  background-color:var(--surface) !important;
+  color:var(--sub) !important;
+  border-color:var(--border) !important;
+  cursor:not-allowed;
+}
+
+/* The BOM footer gates its export behind a checkbox. Nothing said so until
+   you clicked and got a banner, so make the gate visible. */
+#bom-modal .omg-gate-hint{
+  font-size:10px; color:var(--amber); margin-top:6px; display:block;
+}
+
+/* ---------------------------------------------------------------------- *
+ *  10. BETA TAGS                                                         *
+ *  The app defines .omega-beta / .omega-beta-tag in a later style block.  *
+ *  These are the same rules, restated so a tag still renders if that      *
+ *  block moves or is trimmed — and so the tag survives the ribbon's       *
+ *  overflow clipping on a narrow panel.                                   *
+ * ---------------------------------------------------------------------- */
+.omega-beta{ position:relative }
+.omega-beta-tag, .omega-new-tag{
+  position:absolute; top:1px; right:1px; z-index:2;
+  font:700 6.5px/1 var(--font-mono); letter-spacing:.08em;
+  border-radius:2px; padding:2px 3px; pointer-events:none;
+}
+/* BETA is a warning about the output, so it keeps the app's amber. */
+.omega-beta-tag{ color:#1A1206; background:var(--amber) }
+/* NEW is a signpost, not a warning — the accent, quieter than amber. */
+.omega-new-tag{ color:var(--on-accent); background:var(--accent) }
+.rbtn.omega-beta .rb-lbl{ padding-top:1px }
+
+/* A tagged button needs room for the badge; without this the corner tag
+   sits on top of the label on a narrow button. */
+.rbtn.omega-beta{ padding-right:6px }
+.rbtn.omega-beta .rb-ico{ margin-top:2px }
 
 </style>
 <script id="omega-ui-js">
@@ -94843,7 +94857,26 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
     '#c084fc': '#b49fd0', '#f0abfc': '#c9a8d4', '#e879f9': '#bb92c8',
     '#8b5cf6': '#8578b8', '#d8b4fe': '#c3b3d8',
     /* the old brand green used as chrome */
-    '#8fe0a3': '#a9cfb6', '#1f8a37': '#3f7d55'
+    '#8fe0a3': '#a9cfb6', '#1f8a37': '#3f7d55',
+
+    /* ---- THE LEGACY NAVY/GOLD DIALOGS -------------------------------
+       The Bill of Materials, the Electrical Estimate, the Solar->BESS
+       sizer and a dozen others were built before the graphite theme and
+       paint themselves navy with gold rules and slate-blue text. They are
+       not broken, they just look like a different application sitting on
+       top of this one. Mapping their palette onto the theme's greys is the
+       whole restyle — no dialog has to be rewritten, and any dialog added
+       later in the same house style is carried along with them. */
+    '#0a1628': '#1f2124', '#0b1626': '#212427', '#0b1e35': '#22262a',
+    '#0d1b2e': '#25282b', '#0f1d30': '#26292d', '#122036': '#282b2f',
+    '#1e3a5f': '#33373c', '#26364d': '#33373c', '#1b4f8a': '#3a4249',
+    '#4a6080': '#43474d', '#0c1a2b': '#25282b',
+    /* slate-blue body text and captions -> the theme's two type colours */
+    '#e2eef9': '#e6e8ea', '#e8f0fe': '#e6e8ea', '#b7c6d8': '#c2c6ca',
+    '#8ba3c4': '#9aa1a9', '#8fa3b8': '#9aa1a9', '#7d95b4': '#9aa1a9',
+    '#6b8299': '#8a9199', '#a9c0d6': '#9aa1a9', '#eaf3fb': '#e6e8ea',
+    /* the gold rule and its tints -> the theme's amber */
+    '#c5a55a': '#c9a24e', '#c8c0b0': '#b9b3a6', '#8b6914': '#8a7433'
   };
 
   var COLOR_RE = /#[0-9a-f]{6}\b|#[0-9a-f]{3}\b|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(?:,\s*[\d.]+\s*)?\)/gi;
@@ -94922,7 +94955,7 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
         timer = setTimeout(function () {
           timer = null;
           var q = queue; queue = [];
-          for (var k = 0; k < q.length; k++) scan(q[k]);
+          for (var k = 0; k < q.length; k++) { scan(q[k]); solidify(q[k]); watchGates(q[k]); }
         }, 120);
       }
     });
@@ -95246,10 +95279,102 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
   }, true);
 
   /* ------------------------------------------------------------------ *
+   *  D.  GATED-ACTION HINTS                                            *
+   *  The Bill of Materials export refuses to run until "Mark this site   *
+   *  map complete" is ticked, but nothing on screen said so — you        *
+   *  clicked the button and got a banner. Reflect the gate in the button *
+   *  itself so the rule is visible before it is enforced.                *
+   * ------------------------------------------------------------------ */
+  function armGate(host, boxId, btnMatch, hint) {
+    var box = host.querySelector('#' + boxId);
+    var btn = null, all = host.querySelectorAll('button');
+    for (var i = 0; i < all.length; i++) {
+      if (btnMatch.test(all[i].getAttribute('onclick') || '')) { btn = all[i]; break; }
+    }
+    if (!box || !btn || btn.__omgGated) return;
+    btn.__omgGated = true;
+
+    var note = document.createElement('span');
+    note.className = 'omg-gate-hint';
+    note.textContent = hint;
+
+    function sync() {
+      var ok = !!box.checked;
+      btn.setAttribute('aria-disabled', ok ? 'false' : 'true');
+      note.style.display = ok ? 'none' : 'block';
+    }
+    box.addEventListener('change', sync);
+    if (btn.parentNode) btn.parentNode.appendChild(note);
+    sync();
+  }
+
+  /* `background:linear-gradient(...)` is the SHORTHAND. It sets
+     background-image to the gradient and resets background-COLOUR to
+     transparent. So the moment the gradient does not paint — a stylesheet
+     that did not load, forced colours, a print context, a rendering engine
+     that drops background-image on a native control — there is nothing
+     behind the dark text but the dark modal, and the button vanishes while
+     staying perfectly clickable.
+
+     The stylesheet already forces a solid fill, but a stylesheet is exactly
+     the thing that can fail to apply. Writing the colour onto the element
+     itself costs nothing and does not depend on the cascade. */
+  function accentPair() {
+    var bg = '#3E8FCC', fg = '#FFFFFF';
+    try {
+      var cs = getComputedStyle(document.documentElement);
+      bg = (cs.getPropertyValue('--accent') || '').trim() || bg;
+      fg = (cs.getPropertyValue('--on-accent') || '').trim() || fg;
+    } catch (e) {}
+    return { bg: bg, fg: fg };
+  }
+
+  function solidify(root) {
+    try {
+      if (!root || root.nodeType !== 1) return;
+      var list = root.querySelectorAll
+        ? root.querySelectorAll('button[style*="linear-gradient"]') : [];
+      if (root.tagName === 'BUTTON' && /linear-gradient/.test(root.getAttribute('style') || '')) {
+        list = [root];
+      }
+      if (!list.length) return;
+      var c = accentPair();
+      for (var i = 0; i < list.length; i++) {
+        var b = list[i];
+        if (b.__omgSolid || skip(b)) continue;
+        b.__omgSolid = true;
+        /* Rewrite the attribute rather than poking style.backgroundColor:
+           the inline rule is the `background` SHORTHAND, and assigning a
+           longhand next to an existing shorthand is exactly the case CSSOM
+           implementations disagree about. Replacing the shorthand's value
+           leaves no room for disagreement. */
+        var s = b.getAttribute('style') || '';
+        var t = s.replace(/background\s*:\s*linear-gradient\([^;]*\)/gi,
+                          'background:' + c.bg);
+        if (t === s) t = s + ';background:' + c.bg;
+        t += ';background-image:none;color:' + c.fg;
+        b.setAttribute('style', t);
+      }
+    } catch (e) {}
+  }
+
+  function watchGates(root) {
+    try {
+      if (!root || root.nodeType !== 1) return;
+      var host = (root.id === 'bom-modal') ? root
+               : (root.querySelector ? root.querySelector('#bom-modal') : null);
+      if (host) {
+        armGate(host, 'bom-complete', /exportBomCSV/,
+          'Tick the box above to enable the export.');
+      }
+    } catch (e) {}
+  }
+
+  /* ------------------------------------------------------------------ *
    *  BOOT                                                              *
    * ------------------------------------------------------------------ */
   function boot() {
-    try { scan(document.body); } catch (e) {}
+    try { scan(document.body); solidify(document.body); watchGates(document.body); } catch (e) {}
     watch();
     armTips();
     addSearchChip();
@@ -95258,6 +95383,7 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
     var n = 0, iv = setInterval(function () {
       addSearchChip();
       scan(document.body);
+      solidify(document.body);
       if (++n > 6) clearInterval(iv);
     }, 900);
     if (window.console) {
@@ -95269,7 +95395,10 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
   window.OmegaSkin = {
     open: open, close: close, toggle: toggle,
     accent: setAccent,
-    rescan: function () { if (seen) seen = new WeakSet(); scan(document.body); },
+    rescan: function () {
+      if (seen) seen = new WeakSet();
+      scan(document.body); solidify(document.body);
+    },
     harmonize: function (on) {
       harmonizerOn = (on !== false);
       if (harmonizerOn) this.rescan();
@@ -96071,6 +96200,7 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
   var E = window.OmegaBldgEngine;
   if (!E || window.OmegaBldg && window.OmegaBldg.open) return;
   var TAG = '[OmegaBldg]';
+  var HOST_ID = 'omega-bldg-modal';
 
   var state = { model: null, shape: null, tab: 'program', level: 0, dirty: false };
 
@@ -96184,10 +96314,16 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
    *  rendering                                                        *
    * ---------------------------------------------------------------- */
   function host() {
-    var h = document.getElementById('bld-modal');
-    if (h) return h;
+    var h = document.getElementById(HOST_ID);
+    /* Never adopt an element this module did not create: several app
+       overlays carry inline display:none, which beats the .on class and
+       makes the panel render invisibly into someone else's div. */
+    if (h && h.getAttribute('data-omega-owned') === '1') return h;
+    if (h && h.parentNode) h.parentNode.removeChild(h);
     h = document.createElement('div');
-    h.id = 'bld-modal';
+    h.id = HOST_ID;
+    h.setAttribute('data-omega-owned', '1');
+    h.style.display = 'none';
     h.className = 'e3-modal';
     h.addEventListener('mousedown', function (e) { if (e.target === h) close(); });
     document.body.appendChild(h);
@@ -96235,6 +96371,7 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
         '</div>' +
       '</div>';
     h.classList.add('on');
+    h.style.display = 'block';
     wire(h);
   }
 
@@ -96732,8 +96869,10 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
     return state.model;
   }
   function close() {
-    var h = document.getElementById('bld-modal');
-    if (h) h.classList.remove('on');
+    var h = document.getElementById(HOST_ID);
+    if (!h) return;
+    h.classList.remove('on');
+    h.style.display = 'none';
   }
 
   function toCable() {
@@ -96848,46 +96987,49 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
 
   /* It belongs in Draw. It draws a thing on the map; Annotate is for
      marking up what is already there. */
+  /* The Building Designer belongs with the guided builds, not buried in
+     Annotate next to the envelope panel: modelling a building is a BUILD
+     step, and that is where someone looks for it. It goes into Build ›
+     2 · Build, after the last guided-build button. */
   function addButton() {
     if (document.getElementById('rb-bldg-designer')) return true;
-    var draw = document.querySelector('#ribbon .ribbon-page[data-page="draw"]');
-    if (draw) {
-      /* Prefer a panel that already holds shape tools, so it lands next to
-         the things it behaves like rather than in a panel of its own. */
-      var panels = draw.querySelectorAll('.rpanel'), host = null, i;
-      for (i = 0; i < panels.length; i++) {
-        var cap = panels[i].querySelector('.rpanel-cap');
-        if (cap && /shape|zone|draw|structure/i.test(cap.textContent || '')) {
-          host = panels[i].querySelector('.rpanel-body');
-          break;
-        }
-      }
-      if (!host && panels.length) host = panels[0].querySelector('.rpanel-body');
-      if (host) { host.appendChild(makeBtn()); return true; }
-
-      /* No usable panel: make one rather than dropping the tool. */
-      var panel = document.createElement('div');
-      panel.className = 'rpanel';
-      var body = document.createElement('div');
-      body.className = 'rpanel-body';
-      body.appendChild(makeBtn());
-      var cap2 = document.createElement('div');
-      cap2.className = 'rpanel-cap';
-      cap2.textContent = 'Buildings';
-      panel.appendChild(body); panel.appendChild(cap2);
-      draw.appendChild(panel);
-      return true;
+    var host = null, all = document.querySelectorAll('#ribbon .rbtn');
+    var i;
+    /* preferred: the Build tab's guided-build cluster */
+    for (i = 0; i < all.length; i++) {
+      if (/_guidedPick\('compute'\)/.test(all[i].getAttribute('onclick') || '')) { host = all[i]; break; }
     }
-
-    /* Draw tab not found (older layout): sit next to the envelope panel. */
-    var all = document.querySelectorAll('button.rbtn');
-    for (var k = 0; k < all.length; k++) {
-      if (/openBuildingPanel/.test(all[k].getAttribute('onclick') || '')) {
-        all[k].parentNode.insertBefore(makeBtn(), all[k].nextSibling);
-        return true;
+    if (!host) {
+      for (i = 0; i < all.length; i++) {
+        if (/_guidedPick\(/.test(all[i].getAttribute('onclick') || '')) host = all[i];
       }
     }
-    return false;
+    /* fallback: beside the envelope panel, where it used to live */
+    if (!host) {
+      for (i = 0; i < all.length; i++) {
+        if (/openBuildingPanel/.test(all[i].getAttribute('onclick') || '')) { host = all[i]; break; }
+      }
+    }
+    if (!host || !host.parentNode) return false;
+    var b = document.createElement('button');
+    b.className = 'rbtn';
+    b.id = 'rb-bldg-designer';
+    b.style.position = 'relative';
+    b.title = 'Building Designer \u2014 levels, a space program, a generated floor plan, ' +
+              'envelope take-off, NEC 220 load calculation, panel schedules, egress and DXF export';
+    b.innerHTML = '<span class="rb-ico">\u2302</span><span class="rb-lbl">Building<br>Designer</span>';
+    /* Placement first: the button arms the box tool and opens the designer
+       on the footprint that lands, so the shape on the map and the model
+       are the same object. With no canvas it falls back to modelling by
+       dimension. */
+    b.onclick = function () { try { place(); } catch (e) { console.error(TAG, e); } };
+    /* Insert AFTER the whole .rbtn-wrap, never inside it. A wrapped button
+       shares its parent with a dropdown caret and an absolutely positioned
+       flyout; dropping a sibling in there lands the new button between the
+       button and its caret, where the panel clips it. */
+    var anchor = (host.closest && host.closest('.rbtn-wrap')) || host;
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
+    return true;
   }
 
   window.OmegaBldg = {
@@ -96902,7 +97044,7 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
     if (addButton() || ++n > 60) {
       clearInterval(iv);
       if (window.console) {
-        console.info(TAG + ' ready \u2014 Draw \u203a Building \u2014 drag a footprint on the map, or OmegaBldg.open()');
+        console.info(TAG + ' ready \u2014 Build \u203a 2 \u00b7 Build \u203a Building Designer, or OmegaBldg.open()');
       }
     }
   }, 500);
@@ -96920,7 +97062,7 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
  *  and which hundred are for a case they do not have.                     *
  *                                                                         *
  *  DESIGNER MODE keeps a curated set — enough to place a site, model a    *
- *  building, drop equipment, route, and export — and adds a step rail     *
+ *  build, price and deliver — and hides the drafting surfaces entirely.  *
  *  that says what to do next. PRO MODE restores everything.               *
  *                                                                         *
  *  Nothing is removed or rewired. Hiding is a CSS class on <body> plus a  *
@@ -96944,90 +97086,58 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
    *  the one thing that identifies what a button actually does.        *
    * ------------------------------------------------------------------ */
   var KEEP = [
-    /* --- start a site ------------------------------------------------ */
+    /* --- guided builds: the whole point of Designer mode -------------- */
     /openSiteQuickBuild/,
+    /_guidedPick\(/,                   /* every guided build, not a subset */
     /openAutoLayout/,
-    /_guidedPick\('standard'\)/,       /* BESS build            */
-    /_guidedPick\('ev'\)/,             /* DCFC build            */
-    /_guidedPick\('compute'\)/,        /* data centre / microgrid */
+    /homeStartWizard/,
+
+    /* --- sizing and configuration ------------------------------------ */
     /openBessSizer/,
     /openSolarBessSizer/,
+    /openBessModal/,
+    /OmegaBldg/,                       /* Building Designer */
 
-    /* --- draw -------------------------------------------------------- */
+    /* --- the numbers a salesperson quotes ---------------------------- */
+    /openRpPanel/,                     /* summary and construction cost   */
+    /openBomSourcing/,
+    /openElectricalEstimate/,
+    /OmegaCost/,
+    /openBillImport/,
+    /openSitePreQual/,
+    /openScorePanel/,
+    /openViabilityWorkflow/,
+
+    /* --- what gets sent to the customer ------------------------------ */
+    /openProposalExport/,
+    /openPlotPlanExport/,
+    /openBlueprintExport/,
+    /openOneLineExport/,
+    /openReport\(/,                    /* interactive report              */
+    /exportSpecSheet/,
+    /OmegaPermit/,
+    /OmegaSheets/,
+
+    /* --- the minimum needed to touch the drawing --------------------- */
     /rbMode\('select'\)/,
-    /rbMode\('line'\)/,
-    /rbMode\('polyline'\)/,
-    /rbMode\('rect'\)/,
-    /rbMode\('circle'\)/,
-    /rbMode\('conduit'\)/,
-    /rbMode\('bespad'\)/,
-    /rbMode\('parking'\)/,
-    /openSourceDialog/,
-    /openEvChargerDialog/,
-    /openDcClusterDialog/,
-    /derSetSolar/,
-
-    /* --- buildings --------------------------------------------------- */
-    /rbMode\('zonebox'\)/,
-    /openBuildingPanel/,
-    /OmegaBldg/,                        /* the Building Designer itself */
-
-    /* --- annotate ---------------------------------------------------- */
-    /addTextBox/,
-    /rbMode\('dimension'\)/,
-
-    /* --- edit -------------------------------------------------------- */
-    /ctxDuplicate/,
-    /undoLast/,
-    /deleteSelectedShape/,
-    /deleteSelectedConduit/,
-
-    /* --- view / scale ------------------------------------------------ */
     /startCal/,
     /ovUpload/,
     /ovLock/,
     /setPlot/,
     /recenterOnEquipment/,
+    /undoLast/,
     /toggleLayersPanel/,
-    /openRpPanel\('summary'\)/,
-
-    /* --- deliver ----------------------------------------------------- */
-    /openPlotPlanExport/,
-    /openBlueprintExport/,
-    /openProposalExport/,
-    /openOneLineExport/,
-    /OmegaPermit/,
-    /OmegaGeo/,
-    /exportSpecsForCADTool/,
-    /OmegaCAD/,
 
     /* --- the mode switch must never hide itself ---------------------- */
     /OmegaMode/
   ];
 
-  /* Tabs that stay in Designer mode. Insert, Analyze, Estimate, Settings
-     and Validation are all Pro concerns — an engineer's tabs, not a
-     designer's. */
-  var KEEP_TABS = { home: 1, draw: 1, annotate: 1, modify: 1, view: 1, output: 1 };
-
-  /* ------------------------------------------------------------------ *
-   *  2. THE STEP RAIL                                                  *
-   *  Floats over the canvas rather than sitting in the layout: adding  *
-   *  an in-flow bar would change the canvas height, and resizing the   *
-   *  canvas reprojects every drawn element.                            *
-   * ------------------------------------------------------------------ */
-  var STEPS = [
-    { n: 1, ico: '\u25A6', name: 'Site',      tip: 'Capture a calibrated satellite backdrop so every length reads in real feet',
-      page: 'home',     run: /openSiteQuickBuild/ },
-    { n: 2, ico: '\u2302', name: 'Building',  tip: 'Model levels, spaces and the floor plan, and get the load calculation',
-      page: 'annotate', run: 'bldg' },
-    { n: 3, ico: '\u26A1', name: 'Equipment', tip: 'Place and size the energy system with a guided build',
-      page: 'home',     run: /_guidedPick\('standard'\)/ },
-    { n: 4, ico: '\u2307', name: 'Route',     tip: 'Draw the conduit runs between equipment',
-      page: 'draw',     run: /rbMode\('conduit'\)/ },
-    { n: 5, ico: '\u2399', name: 'Deliver',   tip: 'Permit sheet with title block, schedules, NEC notes and a plan-review check',
-      page: 'output',   run: 'permit' }
-  ];
+  /* Tabs that stay in Designer mode. Draw, Insert, Annotate, Modify,
+     Analyze, Settings and Validation are drafting and engineering
+     surfaces — a guided build places the equipment, so Designer does not
+     need them. Estimate and Output stay: that is where the numbers a
+     salesperson quotes and the documents a customer receives live. */
+  var KEEP_TABS = { home: 1, estimate: 1, output: 1, view: 1 };
 
   /* ------------------------------------------------------------------ *
    *  3. APPLY                                                          *
@@ -97035,9 +97145,14 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
   function matches(el) {
     var oc = (el.getAttribute && el.getAttribute('onclick')) || '';
     if (!oc && el.id) oc = el.id;                     /* injected buttons */
+    /* Injected tools have no onclick to match on, so they are named. Only
+       the ones a designer or a salesperson uses: the schematic editor,
+       circuit analysis, GIS import and the georeferenced export are
+       engineering surfaces and stay in Pro. */
     if (el.id === 'rb-bldg-designer' || el.id === 'rb-omega-mode' ||
-        el.id === 'rb-permit-sheet' || el.id === 'rb-cad-schem' ||
-        el.id === 'rb-geo-export') return true;
+        el.id === 'rb-permit-sheet' || el.id === 'rb-sheet-mgr' ||
+        el.id === 'rb-takeoff-budget') return true;
+    if (/^rb-(cad-schem|geo-export|circuit|gis-layers)$/.test(el.id || '')) return false;
     for (var i = 0; i < KEEP.length; i++) if (KEEP[i].test(oc)) return true;
     return false;
   }
@@ -97085,195 +97200,19 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
     mode = (m === 'designer') ? 'designer' : 'pro';
     document.body.classList.toggle('omg-designer', mode === 'designer');
     tagAll();
-    if (mode === 'designer') { safeTab(); rail(true); } else { rail(false); }
+    if (mode === 'designer') safeTab();
+    dropRail();
     paintSwitch();
     try { localStorage.setItem(KEY, mode); } catch (e) {}
     if (!quiet && window.console) console.info(TAG + ' ' + mode + ' mode');
     return mode;
   }
 
-  /* ------------------------------------------------------------------ *
-   *  4. RUNNING A STEP                                                 *
-   *  Clicks the real ribbon button wherever possible, so the step rail *
-   *  goes through exactly the same code path as a mouse click and no   *
-   *  handler is bypassed.                                              *
-   * ------------------------------------------------------------------ */
-  function findBtn(re) {
-    var all = document.querySelectorAll('#ribbon .rbtn, #ribbon .rsbtn');
-    for (var i = 0; i < all.length; i++) {
-      if (re.test(all[i].getAttribute('onclick') || '')) return all[i];
-    }
-    return null;
-  }
-
-  function runStep(s) {
-    try {
-      if (s.page && typeof window.rbTab === 'function') window.rbTab(s.page);
-      if (s.run === 'bldg') {
-        if (window.OmegaBldg && window.OmegaBldg.open) return window.OmegaBldg.open();
-        return;
-      }
-      if (s.run === 'permit') {
-        if (window.OmegaPermit && window.OmegaPermit.open) return window.OmegaPermit.open();
-        var pb = findBtn(/openPlotPlanExport/);
-        if (pb) setTimeout(function () { pb.click(); }, 20);
-        return;
-      }
-      var b = findBtn(s.run);
-      if (b) setTimeout(function () { b.click(); }, 20);
-      else if (window.console) console.warn(TAG + ' step "' + s.name + '" has no button here');
-    } catch (e) { if (window.console) console.error(TAG, e); }
-  }
-
-  function rail(on) {
+  /* Clear the old floating rail if a previous build left one in the DOM. */
+  function dropRail() {
     var r = document.getElementById('omg-rail');
-    if (!on) {
-      if (r) r.style.display = 'none';
-      var pl = document.getElementById('omg-rail-pill');
-      if (pl) pl.style.display = 'none';
-      return;
-    }
-    if (!r) {
-      r = document.createElement('div');
-      r.id = 'omg-rail';
-      var inner = '<div class="omg-rail-h">Design steps</div>';
-      STEPS.forEach(function (s, i) {
-        inner += '<button class="omg-step" data-step="' + i + '" title="' +
-          s.tip.replace(/"/g, '&quot;') + '">' +
-          '<span class="omg-step-n">' + s.n + '</span>' +
-          '<span class="omg-step-i">' + s.ico + '</span>' +
-          '<span class="omg-step-t">' + s.name + '</span></button>';
-      });
-      inner += '<button class="omg-rail-x" title="Hide the step rail">\u2715</button>';
-      r.innerHTML = inner;
-      (document.getElementById('cw') || document.body).appendChild(r);
-      r.addEventListener('click', function (e) {
-        var b = e.target.closest ? e.target.closest('[data-step]') : null;
-        if (b) {
-          var idx = +b.getAttribute('data-step');
-          r.querySelectorAll('.omg-step').forEach(function (n, k) {
-            n.classList.toggle('on', k === idx);
-          });
-          return runStep(STEPS[idx]);
-        }
-        if (e.target.classList.contains('omg-rail-x')) hideRail();
-      });
-      makeDraggable(r);
-      restorePos(r);
-    }
-    r.style.display = 'flex';
-    var pill = document.getElementById('omg-rail-pill');
-    if (pill) pill.style.display = 'none';
-  }
-
-  /* ------------------------------------------------------------------ *
-   *  THE RAIL MOVES.                                                   *
-   *  It floats over the canvas, so wherever it sits it is covering part *
-   *  of the drawing. Fixed to the top-left it lands on exactly the part *
-   *  of the site people zoom into first. Dragged position is remembered *
-   *  per browser, and double-clicking the grip puts it back.            *
-   * ------------------------------------------------------------------ */
-  var POS_KEY = 'omega.ui.railPos';
-
-  function railHost(r) { return r.offsetParent || document.body; }
-
-  function clampInto(r, left, top) {
-    var host = railHost(r);
-    var maxL = Math.max(0, (host.clientWidth || window.innerWidth) - r.offsetWidth - 4);
-    var maxT = Math.max(0, (host.clientHeight || window.innerHeight) - r.offsetHeight - 4);
-    return { left: Math.min(Math.max(0, left), maxL),
-             top: Math.min(Math.max(0, top), maxT) };
-  }
-
-  function placeRail(r, left, top) {
-    var c = clampInto(r, left, top);
-    r.style.left = c.left + 'px';
-    r.style.top = c.top + 'px';
-    r.style.right = 'auto';
-    r.style.bottom = 'auto';
-    return c;
-  }
-
-  function savePos(c) {
-    try { localStorage.setItem(POS_KEY, JSON.stringify(c)); } catch (e) {}
-  }
-  function restorePos(r) {
-    var raw = null;
-    try { raw = localStorage.getItem(POS_KEY); } catch (e) {}
-    if (!raw) return;
-    try {
-      var c = JSON.parse(raw);
-      if (c && isFinite(c.left) && isFinite(c.top)) {
-        /* wait a tick for layout, or offsetWidth is 0 and the clamp is wrong */
-        setTimeout(function () { placeRail(r, c.left, c.top); }, 0);
-      }
-    } catch (e) {}
-  }
-  function resetPos(r) {
-    try { localStorage.removeItem(POS_KEY); } catch (e) {}
-    r.style.left = '12px'; r.style.top = '12px';
-    r.style.right = 'auto'; r.style.bottom = 'auto';
-  }
-
-  function makeDraggable(r) {
-    var grip = r.querySelector('.omg-rail-h');
-    if (!grip) return;
-    grip.title = 'Drag to move \u2014 double-click to reset';
-    var drag = null;
-
-    function down(ev) {
-      var pt = ev.touches ? ev.touches[0] : ev;
-      drag = { x: pt.clientX, y: pt.clientY, left: r.offsetLeft, top: r.offsetTop };
-      r.classList.add('omg-rail-drag');
-      ev.preventDefault();
-      /* Listening on window, not the grip: a fast drag outruns the element
-         and the pointer ends up over the map, which would otherwise take
-         the events and leave the rail stuck mid-move. */
-      window.addEventListener('mousemove', move, true);
-      window.addEventListener('mouseup', up, true);
-      window.addEventListener('touchmove', move, { passive: false, capture: true });
-      window.addEventListener('touchend', up, true);
-    }
-    function move(ev) {
-      if (!drag) return;
-      var pt = ev.touches ? ev.touches[0] : ev;
-      placeRail(r, drag.left + (pt.clientX - drag.x), drag.top + (pt.clientY - drag.y));
-      ev.preventDefault();
-    }
-    function up() {
-      if (!drag) return;
-      drag = null;
-      r.classList.remove('omg-rail-drag');
-      window.removeEventListener('mousemove', move, true);
-      window.removeEventListener('mouseup', up, true);
-      window.removeEventListener('touchmove', move, true);
-      window.removeEventListener('touchend', up, true);
-      savePos({ left: r.offsetLeft, top: r.offsetTop });
-    }
-
-    grip.addEventListener('mousedown', down);
-    grip.addEventListener('touchstart', down, { passive: false });
-    grip.addEventListener('dblclick', function () { resetPos(r); savePos(null); });
-    window.addEventListener('resize', function () {
-      if (r.style.display !== 'none') placeRail(r, r.offsetLeft, r.offsetTop);
-    });
-  }
-
-  /* Hiding used to be one-way: the close button set display:none and the
-     only way back was to toggle the whole mode. Leave a pill behind. */
-  function hideRail() {
-    var r = document.getElementById('omg-rail');
-    if (r) r.style.display = 'none';
-    var pill = document.getElementById('omg-rail-pill');
-    if (!pill) {
-      pill = document.createElement('button');
-      pill.id = 'omg-rail-pill';
-      pill.textContent = 'Design steps';
-      pill.title = 'Show the step rail again';
-      pill.addEventListener('click', function () { rail(true); });
-      (document.getElementById('cw') || document.body).appendChild(pill);
-    }
-    pill.style.display = (mode === 'designer') ? 'block' : 'none';
+    if (r && r.parentNode) r.parentNode.removeChild(r);
+    return !!r;
   }
 
   /* ------------------------------------------------------------------ *
@@ -97292,7 +97231,7 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
       if (lbl) lbl.innerHTML = mode === 'designer' ? 'Pro<br>Mode' : 'Designer<br>Mode';
       rb.title = mode === 'designer'
         ? 'Switch to Pro mode \u2014 every tab and every tool, including the electrical, analysis and estimating sets'
-        : 'Switch to Designer mode \u2014 a curated toolset and a step-by-step rail for laying out a good design quickly';
+        : 'Switch to Designer mode \u2014 guided builds, pricing and customer documents only';
       rb.classList.toggle('active-tool', mode === 'designer');
     }
   }
@@ -97303,7 +97242,7 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
       var d = document.createElement('div');
       d.id = 'omg-switch';
       d.innerHTML =
-        '<button data-mode="designer" title="Designer mode \u2014 the short toolset, with a step rail">Designer</button>' +
+        '<button data-mode="designer" title="Designer mode \u2014 guided builds, pricing and customer documents">Designer</button>' +
         '<button data-mode="pro" title="Pro mode \u2014 the full ribbon">Pro</button>';
       d.addEventListener('click', function (e) {
         var b = e.target.closest ? e.target.closest('[data-mode]') : null;
@@ -97341,8 +97280,8 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
     var n = document.createElement('div');
     n.id = 'omg-firstrun';
     n.innerHTML =
-      '<div><b>Designer mode</b> \u2014 a short toolset and a step rail, so a good layout takes ' +
-      'five moves instead of a tour of the ribbon. Every other tool is still here.</div>' +
+      '<div><b>Designer mode</b> \u2014 guided builds, pricing and customer documents only. ' +
+      'Drafting and engineering tools are hidden, not removed; Pro brings them all back.</div>' +
       '<button class="e3-btn pri" data-fr="pro">Switch to Pro</button>' +
       '<button class="e3-btn" data-fr="ok">Stay in Designer</button>';
     document.body.appendChild(n);
@@ -97393,13 +97332,13 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
     get: function () { return mode; },
     toggle: function () { return set(mode === 'designer' ? 'pro' : 'designer'); },
     keep: function (re) { KEEP.push(re); tagAll(); return KEEP.length; },
-    keeps: KEEP, steps: STEPS, tabs: KEEP_TABS,
-    rail: rail, retag: tagAll,
-    railReset: function () {
-      var r = document.getElementById('omg-rail');
-      if (r) { resetPos(r); }
-      return r;
-    }
+    keeps: KEEP, tabs: KEEP_TABS,
+    retag: tagAll,
+    /* The floating step rail was removed: it covered the canvas, it
+       duplicated buttons that are already in the ribbon, and Designer mode
+       now curates the ribbon itself, which is where people look. Any rail
+       left over from a previous session is cleared on boot. */
+    railRemove: dropRail
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
@@ -98812,9 +98751,19 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
 
   function addButton() {
     if (document.getElementById('rb-cad-schem')) return true;
-    var all = document.querySelectorAll('button.rbtn'), hostBtn = null;
-    for (var i = 0; i < all.length; i++) {
+    /* Output › Permit Documents, beside the One-Line export. The editor is
+       a drafting surface, but what it drafts IS the E2.0 sheet, and that
+       is the sheet it sits next to — a user going to Output for the
+       one-line finds the tool that produces it in the same place.
+       Falls back to the conduit tool if the Output page is absent. */
+    var all = document.querySelectorAll('button.rbtn'), hostBtn = null, i;
+    for (i = 0; i < all.length; i++) {
       if (/openOneLineExport/.test(all[i].getAttribute('onclick') || '')) { hostBtn = all[i]; break; }
+    }
+    if (!hostBtn) {
+      for (i = 0; i < all.length; i++) {
+        if (/rbMode\('conduit'\)/.test(all[i].getAttribute('onclick') || '')) { hostBtn = all[i]; break; }
+      }
     }
     if (!hostBtn || !hostBtn.parentNode) return false;
     var b = document.createElement('button');
@@ -98824,7 +98773,12 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
               'command line, symbol library, netlist check, SVG and DXF export';
     b.innerHTML = '<span class="rb-ico">\u2317</span><span class="rb-lbl">Schematic<br>Editor</span>';
     b.onclick = function () { try { open(); } catch (e) { console.error(TAG, e); } };
-    hostBtn.parentNode.insertBefore(b, hostBtn.nextSibling);
+    /* Insert AFTER the whole .rbtn-wrap, never inside it. A wrapped button
+       shares its parent with a dropdown caret and an absolutely positioned
+       flyout; dropping a sibling in there lands the new button between the
+       button and its caret, where the panel clips it. */
+    var anchor = (hostBtn.closest && hostBtn.closest('.rbtn-wrap')) || hostBtn;
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
     return true;
   }
 
@@ -98837,7 +98791,7 @@ body.omg-designer .rtab{ padding:0 20px; font-size:12px }
   var n = 0, iv = setInterval(function () {
     if (addButton() || ++n > 60) {
       clearInterval(iv);
-      if (window.console) console.info(TAG + ' ready \u2014 Output \u203a Schematic Editor, or OmegaCAD.open()');
+      if (window.console) console.info(TAG + ' ready \u2014 Output \u203a Permit Documents \u203a Schematic Editor, or OmegaCAD.open()');
     }
   }, 500);
 })();
@@ -98882,6 +98836,14 @@ table.e3-tbl td{ white-space:normal }
 .pm-tab span{ font-size:9px; color:var(--sub); line-height:1.3; overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap }
 .pm-tab.pm-add{ min-width:34px; align-items:center; justify-content:center; font-size:15px; color:var(--sub) }
+
+/* The permit panel failed silently once by inheriting another element's
+   inline display:none. These rules are scoped to the containers this patch
+   set owns, so !important here cannot leak into the app's own overlays. */
+#omega-permit-modal.on, #omega-bldg-modal.on,
+#omega-sizer-modal.on, #omega-geo-modal.on{ display:block !important }
+#omega-permit-modal, #omega-bldg-modal,
+#omega-sizer-modal, #omega-geo-modal{ z-index:99996 }
 
 </style>
 <script id="omega-permit-js">
@@ -100035,12 +99997,25 @@ table.e3-tbl td{ white-space:normal }
     ['notes', 'General Notes'], ['review', 'Plan Review'], ['export', 'Export']
   ];
 
+  /* The app already ships a hard-coded <div id="permit-modal"> for its
+     Permit Set generator. Reusing that id meant getElementById() found
+     THAT element, so this panel wrote its markup into someone else's
+     overlay — which carries an inline display:none, beating the .on class.
+     The button worked, the render ran, and nothing appeared. Own the id,
+     and refuse to adopt an element this module did not create. */
+  var HOST_ID = 'omega-permit-modal';
+
   function host() {
-    var h = document.getElementById('permit-modal');
-    if (h) return h;
+    var h = document.getElementById(HOST_ID);
+    if (h && h.getAttribute('data-omega-owned') === '1') return h;
+    if (h && h.parentNode) h.parentNode.removeChild(h);
     h = document.createElement('div');
-    h.id = 'permit-modal';
+    h.id = HOST_ID;
+    h.setAttribute('data-omega-owned', '1');
     h.className = 'e3-modal';
+    /* Inline display beats a class, and several app overlays set it. Be
+       explicit rather than relying on the cascade. */
+    h.style.display = 'none';
     h.addEventListener('mousedown', function (e) { if (e.target === h) close(); });
     document.body.appendChild(h);
     return h;
@@ -100073,7 +100048,14 @@ table.e3-tbl td{ white-space:normal }
         '<div class="e3-body">' + '<div class="e3-tabs">' + tabs + '</div>' + body + '</div>' +
       '</div>';
     h.classList.add('on');
+    /* Belt and braces. This panel failed silently once already because it
+       inherited another element's inline display:none, so visibility is
+       asserted rather than assumed: inline style, a scoped !important rule
+       (see the stylesheet), and a check that it actually took. */
+    h.style.setProperty('display', 'block', 'important');
+    h.style.setProperty('visibility', 'visible', 'important');
     wire(h);
+    verify(h);
   }
 
   /* ---- Sheet set --------------------------------------------------- */
@@ -100437,6 +100419,37 @@ table.e3-tbl td{ white-space:normal }
   }
 
   /* ---------------------------------------------------------------- */
+  /* If the panel is in the DOM but not on screen, say so in the console
+     with the reason, instead of leaving the user clicking a dead button. */
+  function verify(h) {
+    try {
+      if (!window.getComputedStyle) return;
+      var cs = window.getComputedStyle(h);
+      if (cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity !== 0) return;
+      console.warn(TAG + ' the panel rendered but is not visible \u2014 display:' + cs.display +
+        ' visibility:' + cs.visibility + ' opacity:' + cs.opacity +
+        '. Something else on the page is overriding it; run OmegaPermit.diagnose().');
+    } catch (e) {}
+  }
+
+  function diagnose() {
+    var h = document.getElementById(HOST_ID);
+    var out = {
+      panelInDom: !!h,
+      owned: h ? h.getAttribute('data-omega-owned') === '1' : null,
+      classes: h ? h.className : null,
+      inlineDisplay: h ? h.style.display : null,
+      computed: (h && window.getComputedStyle) ? window.getComputedStyle(h).display : null,
+      contentLength: h ? h.innerHTML.length : 0,
+      appPermitModalPresent: !!document.getElementById('permit-modal'),
+      ribbonButton: !!document.getElementById('rb-permit-sheet'),
+      cadEngine: !!window.OmegaCADEngine,
+      build: (window.OmegaBuild && window.OmegaBuild.id) || 'unknown'
+    };
+    try { console.table ? console.table(out) : console.log(out); } catch (e) { console.log(out); }
+    return out;
+  }
+
   function open(tab) {
     S.project = S.project || load();
     if (tab) S.tab = tab;
@@ -100444,8 +100457,10 @@ table.e3-tbl td{ white-space:normal }
     return S.project;
   }
   function close() {
-    var h = document.getElementById('permit-modal');
-    if (h) h.classList.remove('on');
+    var h = document.getElementById(HOST_ID);
+    if (!h) return;
+    h.classList.remove('on');
+    h.style.display = 'none';
   }
 
   function addButton() {
@@ -100462,12 +100477,17 @@ table.e3-tbl td{ white-space:normal }
               'a plan-review audit and a DXF of the whole sheet';
     b.innerHTML = '<span class="rb-ico">\u25A4</span><span class="rb-lbl">Permit<br>Sheet</span>';
     b.onclick = function () { try { open(); } catch (e) { console.error(TAG, e); } };
-    host.parentNode.insertBefore(b, host.nextSibling);
+    /* Insert AFTER the whole .rbtn-wrap, never inside it. A wrapped button
+       shares its parent with a dropdown caret and an absolutely positioned
+       flyout; dropping a sibling in there lands the new button between the
+       button and its caret, where the panel clips it. */
+    var anchor = (host.closest && host.closest('.rbtn-wrap')) || host;
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
     return true;
   }
 
   window.OmegaPermit = {
-    engine: P, open: open, close: close,
+    engine: P, open: open, close: close, diagnose: diagnose,
     project: function () { return S.project || (S.project = load()); },
     audit: function () { return (P.auditSet || P.auditPermit)(doc(), S.project || (S.project = load())); },
     capacity: function () { return P.capacityCheck(doc(), S.project || (S.project = load())); },
@@ -101463,7 +101483,12 @@ table.e3-tbl td{ white-space:normal }
     b.title = title;
     b.innerHTML = '<span class="rb-ico">' + ico + '</span><span class="rb-lbl">' + label + '</span>';
     b.onclick = function () { try { fn(); } catch (e) { console.error(TAG, e); } };
-    hostBtn.parentNode.insertBefore(b, hostBtn.nextSibling);
+    /* Insert AFTER the whole .rbtn-wrap, never inside it. A wrapped button
+       shares its parent with a dropdown caret and an absolutely positioned
+       flyout; dropping a sibling in there lands the new button between the
+       button and its caret, where the panel clips it. */
+    var anchor = (hostBtn.closest && hostBtn.closest('.rbtn-wrap')) || hostBtn;
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
   }
 
   window.OmegaSheets = {
@@ -102348,7 +102373,7 @@ table.e3-tbl td{ white-space:normal }
     var all = document.querySelectorAll('button.rbtn'), hostBtn = null;
     for (var i = 0; i < all.length; i++) {
       var oc = all[i].getAttribute('onclick') || '';
-      if (/ovUpload|openSitePreQual|OmegaSubstation/.test(oc)) { hostBtn = all[i]; break; }
+      if (/rbInsert\('pole'\)|rbInsert\('camera'\)|ovUpload|openSitePreQual/.test(oc)) { hostBtn = all[i]; break; }
     }
     if (!hostBtn || !hostBtn.parentNode) return false;
     var b = document.createElement('button');
@@ -102358,7 +102383,12 @@ table.e3-tbl td{ white-space:normal }
               'from GeoJSON, KML or CSV and draw them on the site map';
     b.innerHTML = '<span class="rb-ico">\u25F1</span><span class="rb-lbl">GIS<br>Layers</span>';
     b.onclick = function () { try { open(); } catch (e) { console.error(TAG, e); } };
-    hostBtn.parentNode.insertBefore(b, hostBtn.nextSibling);
+    /* Insert AFTER the whole .rbtn-wrap, never inside it. A wrapped button
+       shares its parent with a dropdown caret and an absolutely positioned
+       flyout; dropping a sibling in there lands the new button between the
+       button and its caret, where the panel clips it. */
+    var anchor = (hostBtn.closest && hostBtn.closest('.rbtn-wrap')) || hostBtn;
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
     return true;
   }
 
@@ -102373,7 +102403,970 @@ table.e3-tbl td{ white-space:normal }
   var n = 0, iv = setInterval(function () {
     if (addButton() || ++n > 60) {
       clearInterval(iv);
-      if (window.console) console.info(TAG + ' ready \u2014 Insert \u203a GIS Layers, or OmegaGIS.open()');
+      if (window.console) console.info(TAG + ' ready \u2014 Insert \u203a Site & Safety \u203a GIS Layers, or OmegaGIS.open()');
+    }
+  }, 500);
+})();
+
+</script>
+<!-- ================= CIVIL SITE-PLAN STYLES ======================== -->
+<script id="omega-siteplan-js">
+/* ====================================================================== *
+ *  OMEGA SITE PLAN  —  civil linetypes, site annotation, legend          *
+ *  ------------------------------------------------------------------    *
+ *  Modelled on a real filed permit set: Solli Engineering's sheets 2.10   *
+ *  (Overall Site Plan), 2.11 (Site Layout Plan) and 3.01 (Construction    *
+ *  Details) for the 688 kWh Kinsley/YMCA BESS at 564 South Avenue, New    *
+ *  Canaan CT — a Connecticut Siting Council petition.                     *
+ *                                                                        *
+ *  WHAT THAT SET HAS THAT A SATELLITE SCREENSHOT DOES NOT                 *
+ *    - a LEGEND of distinct linetypes: property line, building setback,   *
+ *      easement, limit of disturbance, chain link fence, gas, electric    *
+ *      conduit, water. A reviewer reads the plan through that legend.     *
+ *    - ABUTTER LABELS on every adjacent parcel: "N/F <owner>, <address>", *
+ *      which is how the Council checks who was noticed.                   *
+ *    - SETBACK CALLOUTS measured to the thing that matters: "290' FROM    *
+ *      BESS MODULE TO NEAREST RESIDENCE", "163' TO PROPERTY LINE". Those  *
+ *      distances are the argument, not decoration.                        *
+ *    - a north arrow, a GRAPHIC scale bar (survives photocopying, unlike  *
+ *      a written scale), and a title block with a PE seal.                *
+ *                                                                        *
+ *  So linetypes here are not styling. Each carries the NCS layer name and *
+ *  the ACI colour a civil engineer expects, and each exports as real DXF  *
+ *  linetype geometry — a chain-link fence leaves as an X-glyph line on    *
+ *  C-FENC, not a dashed line on layer 0.                                  *
+ *                                                                        *
+ *  Console: OmegaSitePlan.open(), .engine.LINETYPES, .legend()            *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaSitePlanEngine) return;
+
+  /* ================================================================== *
+   *  1.  LINETYPE LIBRARY                                              *
+   *  dash: on/off pattern in FEET, so the plan reads the same at any    *
+   *  zoom and the DXF pattern matches what was on screen.               *
+   *  glyph: a character repeated along the line at spacing (feet) —     *
+   *  how fence, gas, electric and water lines are drawn by convention.  *
+   * ================================================================== */
+  var LINETYPES = {
+    property:   { label: 'Property line',        layer: 'C-PROP-BNDY', aci: 3,
+                  dash: [20, 6, 2, 6], w: 2.0, ink: '#E6E8EA', ltype: 'DASHDOT' },
+    setback:    { label: 'Building setback',     layer: 'C-PROP-SBCK', aci: 4,
+                  dash: [12, 6], w: 1.3, ink: '#9CC8E8', ltype: 'DASHED' },
+    easement:   { label: 'Easement line',        layer: 'C-PROP-ESMT', aci: 5,
+                  dash: [3, 3], w: 1.2, ink: '#B7AED6', ltype: 'DOTTED' },
+    lod:        { label: 'Limit of disturbance', layer: 'C-TOPO-LOD',  aci: 2,
+                  dash: [14, 5], w: 1.4, ink: '#D8B96F', ltype: 'DASHED',
+                  glyph: { ch: 'LOD', every: 30, size: 6 } },
+    fence:      { label: 'Chain link fence',     layer: 'C-FENC',      aci: 7,
+                  dash: [10, 10], w: 1.3, ink: '#C4CAD1', ltype: 'CONTINUOUS',
+                  glyph: { ch: 'X', every: 20, size: 7 } },
+    silt:       { label: 'Silt fence / E&S',     layer: 'C-TOPO-EROS', aci: 2,
+                  dash: [8, 4], w: 1.3, ink: '#C9A24E', ltype: 'DASHED',
+                  glyph: { ch: '\u25A0', every: 16, size: 5 } },
+    gas:        { label: 'Gas line',             layer: 'U-GAS',       aci: 2,
+                  dash: [16, 12], w: 1.3, ink: '#D8B96F', ltype: 'CONTINUOUS',
+                  glyph: { ch: 'G', every: 28, size: 7 } },
+    conduit:    { label: 'Electric conduit',     layer: 'E-CNDT',      aci: 6,
+                  dash: [16, 12], w: 1.5, ink: '#9A8FC7', ltype: 'CONTINUOUS',
+                  glyph: { ch: 'E', every: 28, size: 7 } },
+    water:      { label: 'Water supply / return', layer: 'U-WATR',     aci: 5,
+                  dash: [16, 12], w: 1.3, ink: '#7FB4DC', ltype: 'CONTINUOUS',
+                  glyph: { ch: 'W', every: 28, size: 7 } },
+    sanitary:   { label: 'Sanitary sewer',       layer: 'U-SSWR',      aci: 8,
+                  dash: [16, 12], w: 1.3, ink: '#A0A6AC', ltype: 'CONTINUOUS',
+                  glyph: { ch: 'S', every: 28, size: 7 } },
+    storm:      { label: 'Storm drain',          layer: 'U-STRM',      aci: 4,
+                  dash: [16, 12], w: 1.3, ink: '#7FC4C8', ltype: 'CONTINUOUS',
+                  glyph: { ch: 'D', every: 28, size: 7 } },
+    contour:    { label: 'Existing contour',     layer: 'C-TOPO-MAJR', aci: 8,
+                  dash: [], w: 0.8, ink: '#8A9199', ltype: 'CONTINUOUS' },
+    pavement:   { label: 'Edge of pavement',     layer: 'C-ROAD',      aci: 8,
+                  dash: [], w: 1.1, ink: '#AEB4BA', ltype: 'CONTINUOUS' },
+    building:   { label: 'Existing building',    layer: 'A-BLDG-OTLN', aci: 7,
+                  dash: [], w: 1.6, ink: '#E6E8EA', ltype: 'CONTINUOUS' },
+    pad:        { label: 'Concrete equipment pad', layer: 'S-SLAB',    aci: 9,
+                  dash: [], w: 1.4, ink: '#CBD1D6', ltype: 'CONTINUOUS',
+                  hatch: 'concrete' },
+    screen:     { label: 'Evergreen screening',  layer: 'L-PLNT',      aci: 3,
+                  dash: [], w: 1.0, ink: '#7FBF98', ltype: 'CONTINUOUS',
+                  glyph: { ch: '\u25CF', every: 8, size: 6 } }
+  };
+
+  /* DXF linetype definitions, pattern lengths in drawing units (feet). */
+  var LTYPES = {
+    CONTINUOUS: { desc: 'Solid', pattern: [] },
+    DASHED:     { desc: '__ __ __ __', pattern: [12, -6] },
+    DASHDOT:    { desc: '__ . __ . __', pattern: [20, -6, 0, -6] },
+    DOTTED:     { desc: '. . . . . .', pattern: [0, -3] }
+  };
+
+  /* ================================================================== *
+   *  2.  GEOMETRY HELPERS                                              *
+   * ================================================================== */
+  function segLen(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
+
+  function pathLength(pts) {
+    var t = 0;
+    for (var i = 0; i < pts.length - 1; i++) t += segLen(pts[i], pts[i + 1]);
+    return t;
+  }
+
+  /* Points at a fixed spacing along a polyline, with the local bearing —
+     this is what puts the X on a fence line and the G on a gas line at
+     even intervals regardless of how the vertices fall. */
+  function glyphPlacements(pts, spacing) {
+    var out = [], i;
+    if (!pts || pts.length < 2 || !(spacing > 0)) return out;
+    var carry = spacing / 2;             /* half-space in from the start */
+    for (i = 0; i < pts.length - 1; i++) {
+      var a = pts[i], b = pts[i + 1], L = segLen(a, b);
+      if (L <= 0) continue;
+      var ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
+      var d = carry;
+      while (d <= L) {
+        out.push({ x: a.x + ux * d, y: a.y + uy * d,
+                   angle: Math.atan2(uy, ux) * 180 / Math.PI });
+        d += spacing;
+      }
+      carry = d - L;
+    }
+    return out;
+  }
+
+  /* Shortest distance from a point to a polyline, and the foot of that
+     perpendicular — the measurement behind "163' TO PROPERTY LINE". */
+  function distToPolyline(p, pts) {
+    var best = { dist: Infinity, at: null, seg: -1 };
+    for (var i = 0; i < pts.length - 1; i++) {
+      var a = pts[i], b = pts[i + 1];
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var L2 = dx * dx + dy * dy;
+      var t = L2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      var q = { x: a.x + t * dx, y: a.y + t * dy };
+      var d = Math.hypot(p.x - q.x, p.y - q.y);
+      if (d < best.dist) best = { dist: d, at: q, seg: i };
+    }
+    return best;
+  }
+
+  /* Closest approach between two polylines, sampled off the vertices of
+     each — enough for a setback callout, and it never reports a distance
+     shorter than the true one. */
+  function closestApproach(ptsA, ptsB) {
+    var best = { dist: Infinity, from: null, to: null };
+    function scan(src, dst, flip) {
+      for (var i = 0; i < src.length; i++) {
+        var r = distToPolyline(src[i], dst);
+        if (r.dist < best.dist) {
+          best = flip
+            ? { dist: r.dist, from: r.at, to: src[i] }
+            : { dist: r.dist, from: src[i], to: r.at };
+        }
+      }
+    }
+    scan(ptsA, ptsB, false);
+    scan(ptsB, ptsA, true);
+    return best;
+  }
+
+  /* Feet to a surveyor's string: 163.4 -> 163.4', and 1234 -> 1,234.0' */
+  function ft(n, dp) {
+    var v = Math.round((+n || 0) * Math.pow(10, dp == null ? 1 : dp)) /
+            Math.pow(10, dp == null ? 1 : dp);
+    return v.toLocaleString(undefined, { minimumFractionDigits: dp == null ? 1 : dp }) + "'";
+  }
+
+  /* ================================================================== *
+   *  3.  ANNOTATION MODELS                                             *
+   * ================================================================== */
+
+  /* "N/F" is not a typo — it is the surveyor's "now or formerly", the
+     standard way an abutting owner is labelled on a plan. */
+  function abutterLabel(rec) {
+    var out = ['N/F'];
+    if (rec.owner) out.push(String(rec.owner).toUpperCase());
+    if (rec.address) out.push(String(rec.address).toUpperCase());
+    if (rec.parcelId) out.push('PARCEL ID ' + String(rec.parcelId).toUpperCase());
+    return out;
+  }
+
+  function setbackCallout(a, b, opts) {
+    opts = opts || {};
+    var r = closestApproach(a.pts, b.pts);
+    if (!isFinite(r.dist)) return null;
+    var text = opts.text ||
+      (ft(r.dist, 0) + ' FROM ' + String(a.label || 'EQUIPMENT').toUpperCase() +
+       ' TO ' + String(b.label || 'PROPERTY LINE').toUpperCase());
+    return {
+      distFt: r.dist, from: r.from, to: r.to, text: text,
+      mid: { x: (r.from.x + r.to.x) / 2, y: (r.from.y + r.to.y) / 2 }
+    };
+  }
+
+  /* Compliance checks a reviewer will run anyway. Thresholds are the
+     common ones; every one is editable because they are jurisdictional,
+     not universal. */
+  function setbackChecks(callouts, rules) {
+    rules = rules || {};
+    var min = {
+      property: +rules.property || 0,
+      residence: +rules.residence || 0,
+      building: +rules.building || 0
+    };
+    return callouts.map(function (c) {
+      var kind = /RESIDEN/.test(c.text) ? 'residence'
+               : /BUILDING/.test(c.text) ? 'building' : 'property';
+      var req = min[kind];
+      return {
+        text: c.text, distFt: c.distFt, kind: kind, requiredFt: req,
+        ok: req ? c.distFt >= req : null,
+        shortBy: req && c.distFt < req ? req - c.distFt : 0
+      };
+    });
+  }
+
+  /* ================================================================== *
+   *  4.  LEGEND                                                        *
+   *  Only what is actually on the drawing. A legend listing linetypes   *
+   *  the plan does not use is how a reviewer loses confidence in it.    *
+   * ================================================================== */
+  function legend(usedKeys) {
+    var out = [];
+    (usedKeys || []).forEach(function (k) {
+      var lt = LINETYPES[k];
+      if (lt && out.indexOf(k) < 0) out.push({ key: k, label: lt.label, lt: lt });
+    });
+    return out;
+  }
+
+  function usedIn(shapes) {
+    var seen = {}, out = [];
+    (shapes || []).forEach(function (s) {
+      var k = s.omgLine;
+      if (k && LINETYPES[k] && !seen[k]) { seen[k] = 1; out.push(k); }
+    });
+    return out;
+  }
+
+  /* ================================================================== *
+   *  5.  SVG                                                           *
+   *  Dash arrays are in FEET and converted at render time, so a line    *
+   *  keeps its real-world pattern when the map zooms instead of turning *
+   *  into a solid smear.                                               *
+   * ================================================================== */
+  function dashPx(key, pxPerFt) {
+    var lt = LINETYPES[key];
+    if (!lt || !lt.dash || !lt.dash.length) return 'none';
+    var s = pxPerFt > 0 ? pxPerFt : 1;
+    return lt.dash.map(function (d) { return Math.max(0.5, d * s); }).join(',');
+  }
+
+  function legendSVG(keys, opts) {
+    opts = opts || {};
+    var rows = legend(keys), h = 18, w = opts.width || 250;
+    var body = '', y = 16;
+    body += '<text x="8" y="' + y + '" fill="' + (opts.ink || '#E6E8EA') +
+            '" font-size="10" font-family="IBM Plex Sans,sans-serif" ' +
+            'letter-spacing="1">LEGEND</text>';
+    y += 10;
+    rows.forEach(function (r) {
+      y += h;
+      var dash = r.lt.dash && r.lt.dash.length
+        ? r.lt.dash.map(function (d) { return Math.max(1, d * 0.9); }).join(',') : '';
+      body += '<line x1="8" y1="' + y + '" x2="88" y2="' + y + '" stroke="' + r.lt.ink +
+              '" stroke-width="' + r.lt.w + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/>';
+      if (r.lt.glyph) {
+        [24, 48, 72].forEach(function (gx) {
+          body += '<text x="' + gx + '" y="' + (y + 3) + '" fill="' + r.lt.ink +
+                  '" font-size="' + (r.lt.glyph.size || 7) + '" text-anchor="middle" ' +
+                  'font-family="IBM Plex Mono,monospace">' + r.lt.glyph.ch + '</text>';
+        });
+      }
+      body += '<text x="98" y="' + (y + 3) + '" fill="' + (opts.ink || '#E6E8EA') +
+              '" font-size="8.5" font-family="IBM Plex Sans,sans-serif">' +
+              String(r.label).toUpperCase() + '</text>';
+    });
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + w + ' ' + (y + 14) +
+           '" style="width:100%;height:auto">' + body + '</svg>';
+  }
+
+  /* A graphic scale bar. Written scales lie the moment a sheet is
+     photocopied or exported at a different size; a bar does not. */
+  function scaleBarSVG(pxPerFt, opts) {
+    opts = opts || {};
+    var target = opts.targetPx || 160;
+    var steps = [10, 20, 25, 40, 50, 100, 200, 400];
+    var ftPerBar = steps[steps.length - 1];
+    for (var i = 0; i < steps.length; i++) {
+      if (steps[i] * pxPerFt >= target * 0.55) { ftPerBar = steps[i]; break; }
+    }
+    var w = ftPerBar * pxPerFt, seg = w / 4;
+    var body = '';
+    for (var k = 0; k < 4; k++) {
+      body += '<rect x="' + (k * seg) + '" y="10" width="' + seg + '" height="7" fill="' +
+              (k % 2 ? (opts.ink || '#E6E8EA') : 'none') + '" stroke="' +
+              (opts.ink || '#E6E8EA') + '" stroke-width=".8"/>';
+    }
+    [0, 2, 4].forEach(function (k) {
+      body += '<text x="' + (k * seg) + '" y="7" fill="' + (opts.ink || '#E6E8EA') +
+              '" font-size="8" text-anchor="middle" font-family="IBM Plex Mono,monospace">' +
+              Math.round(ftPerBar * k / 4) + '</text>';
+    });
+    body += '<text x="' + w + '" y="7" fill="' + (opts.ink || '#E6E8EA') +
+            '" font-size="8" text-anchor="start" font-family="IBM Plex Mono,monospace"> FT</text>';
+    return { svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + (w + 26) +
+                  ' 22" style="height:22px">' + body + '</svg>',
+             ftPerBar: ftPerBar, widthPx: w };
+  }
+
+  /* ================================================================== *
+   *  6.  DXF                                                           *
+   *  Real LTYPE table entries and NCS layer names, so the file opens in *
+   *  AutoCAD with the linework already separated and dashed the way the *
+   *  legend says it is.                                                *
+   * ================================================================== */
+  function dxfLayerTable() {
+    var seen = {}, rows = [];
+    Object.keys(LINETYPES).forEach(function (k) {
+      var lt = LINETYPES[k];
+      if (seen[lt.layer]) return;
+      seen[lt.layer] = 1;
+      rows.push({ name: lt.layer, aci: lt.aci, ltype: lt.ltype || 'CONTINUOUS' });
+    });
+    return rows;
+  }
+
+  function dxfLtypeSection() {
+    var s = '';
+    function pair(c, v) { s += c + '\n' + v + '\n'; }
+    var names = Object.keys(LTYPES);
+    pair(0, 'TABLE'); pair(2, 'LTYPE'); pair(70, names.length);
+    names.forEach(function (n) {
+      var t = LTYPES[n];
+      var total = t.pattern.reduce(function (a, b) { return a + Math.abs(b); }, 0);
+      pair(0, 'LTYPE'); pair(2, n); pair(70, 0); pair(3, t.desc);
+      pair(72, 65); pair(73, t.pattern.length); pair(40, total);
+      t.pattern.forEach(function (d) { pair(49, d); });
+    });
+    pair(0, 'ENDTAB');
+    return s;
+  }
+
+  /* Entities for one styled polyline: the line itself on its own layer
+     and linetype, plus the repeated glyphs where the convention calls
+     for them. Coordinates are already in drawing units. */
+  function dxfEntitiesFor(key, pts, opts) {
+    opts = opts || {};
+    var lt = LINETYPES[key] || LINETYPES.property;
+    var s = '', i;
+    function pair(c, v) { s += c + '\n' + v + '\n'; }
+    function r(n) { return Math.round((+n || 0) * 1000) / 1000; }
+    for (i = 0; i < pts.length - 1; i++) {
+      pair(0, 'LINE'); pair(8, lt.layer); pair(6, lt.ltype || 'CONTINUOUS');
+      pair(10, r(pts[i].x)); pair(20, r(pts[i].y)); pair(30, 0);
+      pair(11, r(pts[i + 1].x)); pair(21, r(pts[i + 1].y)); pair(31, 0);
+    }
+    if (lt.glyph) {
+      var g = glyphPlacements(pts, lt.glyph.every * (opts.unitScale || 1));
+      var h = (lt.glyph.size || 7) * 0.14 * (opts.unitScale || 1);
+      g.forEach(function (p) {
+        pair(0, 'TEXT'); pair(8, lt.layer);
+        pair(10, r(p.x)); pair(20, r(p.y)); pair(30, 0);
+        pair(40, r(h)); pair(1, lt.glyph.ch); pair(50, r(p.angle));
+        pair(72, 1); pair(11, r(p.x)); pair(21, r(p.y)); pair(31, 0);
+      });
+    }
+    return s;
+  }
+
+  function dxfAnnotation(items, opts) {
+    opts = opts || {};
+    var s = '';
+    function pair(c, v) { s += c + '\n' + v + '\n'; }
+    function r(n) { return Math.round((+n || 0) * 1000) / 1000; }
+    (items || []).forEach(function (it) {
+      if (it.type === 'setback') {
+        /* leader between the two measured points, then the dimension text */
+        pair(0, 'LINE'); pair(8, 'C-ANNO-DIMS'); pair(6, 'CONTINUOUS');
+        pair(10, r(it.from.x)); pair(20, r(it.from.y)); pair(30, 0);
+        pair(11, r(it.to.x)); pair(21, r(it.to.y)); pair(31, 0);
+        pair(0, 'TEXT'); pair(8, 'C-ANNO-DIMS');
+        pair(10, r(it.mid.x)); pair(20, r(it.mid.y + (opts.textH || 2)));
+        pair(30, 0); pair(40, r(opts.textH || 2)); pair(1, it.text);
+      } else if (it.type === 'abutter') {
+        var lines = it.lines || [];
+        lines.forEach(function (ln, k) {
+          pair(0, 'TEXT'); pair(8, 'C-ANNO-IDEN');
+          pair(10, r(it.x)); pair(20, r(it.y - k * (opts.textH || 2) * 1.4)); pair(30, 0);
+          pair(40, r(opts.textH || 2)); pair(1, ln);
+          pair(72, 1); pair(11, r(it.x));
+          pair(21, r(it.y - k * (opts.textH || 2) * 1.4)); pair(31, 0);
+        });
+      } else if (it.type === 'note') {
+        pair(0, 'TEXT'); pair(8, 'C-ANNO-NOTE');
+        pair(10, r(it.x)); pair(20, r(it.y)); pair(30, 0);
+        pair(40, r(opts.textH || 2)); pair(1, it.text);
+      }
+    });
+    return s;
+  }
+
+  /* ================================================================== *
+   *  7.  GENERAL NOTES                                                 *
+   *  The filed set carries twelve; these are the ones that apply to     *
+   *  every energy project and that a reviewer looks for by habit.       *
+   * ================================================================== */
+  function generalNotes(project) {
+    project = project || {};
+    var n = [
+      'THESE PLANS ARE FOR PERMITTING PURPOSES ONLY AND ARE NOT FOR CONSTRUCTION. ' +
+      'NO CONSTRUCTION OR DEMOLITION SHALL BEGIN UNTIL APPROVAL OF THE FINAL PLANS IS ' +
+      'GRANTED BY ALL GOVERNING AND REGULATORY AGENCIES.',
+      'EXISTING BOUNDARY, TOPOGRAPHIC AND WETLAND INFORMATION TAKEN FROM A SURVEY ' +
+      'PREPARED BY ' + (project.surveyor || 'OTHERS').toUpperCase() + '. ' +
+      'THE CONTRACTOR SHALL VERIFY ALL SITE CONDITIONS IN THE FIELD AND CONTACT THE ' +
+      'ENGINEER OF RECORD IF THERE ARE ANY QUESTIONS OR CONFLICTS.',
+      'ALL CONSTRUCTION SHALL COMPLY WITH THE STATE BUILDING CODE, THE NATIONAL ' +
+      'ELECTRICAL CODE AND ALL APPLICABLE LOCAL, STATE AND FEDERAL REGULATIONS. ' +
+      'THE MORE STRINGENT SPECIFICATION SHALL APPLY.',
+      'THE CONTRACTOR SHALL CALL THE STATE ONE-CALL SERVICE A MINIMUM OF 72 HOURS ' +
+      'BEFORE COMMENCEMENT OF WORK AND SHALL VERIFY ALL UTILITY AND STORM DRAINAGE ' +
+      'SYSTEM LOCATIONS. UNDERGROUND UTILITIES SHOWN ARE COMPILED FROM AVAILABLE ' +
+      'RECORDS AND ARE APPROXIMATE.',
+      'TEMPORARY EROSION AND SEDIMENTATION CONTROLS SHALL BE INSTALLED PRIOR TO ANY ' +
+      'EARTH DISTURBANCE AND MAINTAINED UNTIL THE SITE IS PERMANENTLY STABILIZED.',
+      'THE OWNER IS RESPONSIBLE FOR OBTAINING ALL NECESSARY ZONING PERMITS REQUIRED ' +
+      'BY GOVERNMENT AGENCIES PRIOR TO CONSTRUCTION.',
+      'ALL DISTURBED AREAS SHALL BE RESTORED TO THEIR ORIGINAL CONDITION OR BETTER ' +
+      'AS APPROVED BY THE ENGINEER OF RECORD.'
+    ];
+    if (project.ess !== false) {
+      n.push('THE ENERGY STORAGE EQUIPMENT SHALL BE LISTED TO UL 9540 WITH UL 9540A ' +
+             'TEST DATA ON FILE AND INSTALLED PER NFPA 855 AND NEC ARTICLE 706.');
+      n.push('ACCESS TO THE EQUIPMENT COMPOUND SHALL BE LIMITED TO AUTHORIZED PERSONNEL. ' +
+             'EMERGENCY RESPONSE PERSONNEL SHALL BE PROVIDED KEYED ACCESS.');
+    }
+    return n;
+  }
+
+  /* The compound the filed set details: pad, fence, gate, screening. */
+  function compoundSpec(opts) {
+    opts = opts || {};
+    return {
+      padSf: +opts.padSf || 0,
+      fenceHeightFt: +opts.fenceHeightFt || 8,
+      fenceType: opts.fenceType || 'CHAIN LINK W/ GREEN PRIVACY SLATS',
+      acousticPanels: opts.acousticPanels !== false,
+      gateWidthFt: +opts.gateWidthFt || 6,
+      gateType: opts.gateType || 'DOUBLE SWING, KNOX PADLOCK',
+      screening: opts.screening || 'EMERALD GREEN ARBORVITAE, 7-8 FT B&B',
+      clearanceFt: +opts.clearanceFt || 3,
+      notes: [
+        'PAD: 4,000 PSI CONCRETE, #4 REBAR 12" O.C. EACH WAY, 8" COMPACTED GRAVEL SUBBASE',
+        'FENCE POSTS SET IN CONCRETE FOOTINGS; BOTTOM OF FABRIC HELD 2" MAX ABOVE GRADE',
+        'MAINTAIN WORKING CLEARANCES PER NEC 110.26 INSIDE THE COMPOUND'
+      ]
+    };
+  }
+
+  window.OmegaSitePlanEngine = {
+    LINETYPES: LINETYPES, LTYPES: LTYPES,
+    glyphPlacements: glyphPlacements, pathLength: pathLength,
+    distToPolyline: distToPolyline, closestApproach: closestApproach,
+    abutterLabel: abutterLabel, setbackCallout: setbackCallout, setbackChecks: setbackChecks,
+    legend: legend, usedIn: usedIn, legendSVG: legendSVG, scaleBarSVG: scaleBarSVG,
+    dashPx: dashPx, dxfLayerTable: dxfLayerTable, dxfLtypeSection: dxfLtypeSection,
+    dxfEntitiesFor: dxfEntitiesFor, dxfAnnotation: dxfAnnotation,
+    generalNotes: generalNotes, compoundSpec: compoundSpec, ft: ft
+  };
+})();
+/* ====================================================================== *
+ *  OMEGA SITE PLAN  —  UI layer                                          *
+ *  Styles the shapes already drawn on the map with civil linetypes,      *
+ *  measures setbacks between them, labels abutters, and builds the       *
+ *  legend and scale bar the sheet needs. Nothing is re-drawn: the app's  *
+ *  own shapes are restyled in place, so selection, dragging and the      *
+ *  geo anchors all keep working.                                        *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  var E = window.OmegaSitePlanEngine;
+  if (!E || (window.OmegaSitePlan && window.OmegaSitePlan.open)) return;
+  var TAG = '[OmegaSitePlan]';
+  var HOST_ID = 'omega-siteplan-modal';
+
+  var S = { tab: 'lines', selA: null, selB: null, rules: { property: 0, residence: 0, building: 0 } };
+
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function app() { try { return window.S; } catch (e) { return null; } }
+  function shapes() { var a = app(); return (a && a.shapes) ? a.shapes : []; }
+  function pxPerFt() { var a = app(); return (a && +a.pxPerFt) ? +a.pxPerFt : 0; }
+
+  /* Shape points in FEET, from the geo anchors where they exist so the
+     measurement survives a pan or a zoom, and from pixels otherwise. */
+  function ptsFt(sh) {
+    var ppf = pxPerFt();
+    if (sh._geoPts && sh._geoPts.length > 1 && window.OmegaGeoEngine) {
+      var G = window.OmegaGeoEngine, o = sh._geoPts[0];
+      return sh._geoPts.filter(Boolean).map(function (p) {
+        var e = G.toENU(p.lat, p.lng, o);
+        return { x: e.x / 0.3048, y: e.y / 0.3048 };
+      });
+    }
+    if (!sh.pts || !ppf) return null;
+    var pts = sh.pts.slice();
+    if ((sh.kind === 'zonebox' || sh.kind === 'substation') && pts.length === 2) {
+      var a = pts[0], c = pts[1];
+      pts = [{ x: a.x, y: a.y }, { x: c.x, y: a.y }, { x: c.x, y: c.y }, { x: a.x, y: c.y }, { x: a.x, y: a.y }];
+    }
+    return pts.map(function (p) { return { x: p.x / ppf, y: p.y / ppf }; });
+  }
+
+  function label(sh) {
+    return sh.label || sh.name || (sh.kind || 'shape').toUpperCase() + ' ' + String(sh.id).slice(-4);
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Restyle on the map                                              *
+   *  The app re-renders a shape on every move, so the style is        *
+   *  re-applied on a mutation rather than set once and lost.          *
+   * ---------------------------------------------------------------- */
+  function applyStyle(sh) {
+    var key = sh.omgLine, lt = E.LINETYPES[key];
+    var g = document.querySelector('#csvg [data-shid="' + sh.id + '"]');
+    if (!g) return false;
+    var old = g.querySelector('.omg-glyphs');
+    if (old) old.parentNode.removeChild(old);
+    var nodes = g.querySelectorAll('path,polyline,polygon,line,rect');
+    if (!lt) {
+      for (var i = 0; i < nodes.length; i++) nodes[i].removeAttribute('stroke-dasharray');
+      return true;
+    }
+    var dash = E.dashPx(key, pxPerFt());
+    for (var j = 0; j < nodes.length; j++) {
+      var n = nodes[j];
+      n.setAttribute('stroke', lt.ink);
+      n.setAttribute('stroke-width', lt.w);
+      if (dash === 'none') n.removeAttribute('stroke-dasharray');
+      else n.setAttribute('stroke-dasharray', dash);
+      if (n.tagName !== 'line' && n.getAttribute('fill') !== 'none') {
+        n.setAttribute('fill', 'none');
+      }
+    }
+    if (lt.glyph && sh.pts && sh.pts.length > 1) {
+      var gg = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      gg.setAttribute('class', 'omg-glyphs');
+      gg.setAttribute('pointer-events', 'none');
+      var spacingPx = lt.glyph.every * (pxPerFt() || 1);
+      E.glyphPlacements(sh.pts, spacingPx).forEach(function (p) {
+        var t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('x', p.x); t.setAttribute('y', p.y + lt.glyph.size * 0.35);
+        t.setAttribute('fill', lt.ink);
+        t.setAttribute('font-size', lt.glyph.size);
+        t.setAttribute('text-anchor', 'middle');
+        t.setAttribute('font-family', 'IBM Plex Mono,monospace');
+        t.setAttribute('transform', 'rotate(' + p.angle.toFixed(1) + ' ' + p.x + ' ' + p.y + ')');
+        t.textContent = lt.glyph.ch;
+        gg.appendChild(t);
+      });
+      g.appendChild(gg);
+    }
+    return true;
+  }
+
+  function applyAll() {
+    var n = 0;
+    shapes().forEach(function (sh) { if (sh.omgLine && applyStyle(sh)) n++; });
+    return n;
+  }
+
+  function watchCanvas() {
+    if (typeof MutationObserver !== 'function') return;
+    var svg = document.getElementById('csvg');
+    if (!svg || svg.__omgSitePlanWatched) return;
+    svg.__omgSitePlanWatched = true;
+    var t = null;
+    new MutationObserver(function () {
+      if (t) return;
+      t = setTimeout(function () { t = null; applyAll(); }, 150);
+    }).observe(svg, { childList: true, subtree: false });
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  render                                                          *
+   * ---------------------------------------------------------------- */
+  function host() {
+    var h = document.getElementById(HOST_ID);
+    if (h && h.getAttribute('data-omega-owned') === '1') return h;
+    if (h && h.parentNode) h.parentNode.removeChild(h);
+    h = document.createElement('div');
+    h.id = HOST_ID;
+    h.setAttribute('data-omega-owned', '1');
+    h.className = 'e3-modal';
+    h.style.display = 'none';
+    h.addEventListener('mousedown', function (e) { if (e.target === h) close(); });
+    document.body.appendChild(h);
+    return h;
+  }
+
+  var TABS = [['lines', 'Linetypes'], ['setbacks', 'Setbacks'],
+              ['abutters', 'Abutters'], ['sheet', 'Legend & Notes']];
+
+  function render() {
+    var h = host();
+    var body = S.tab === 'lines' ? viewLines()
+             : S.tab === 'setbacks' ? viewSetbacks()
+             : S.tab === 'abutters' ? viewAbutters() : viewSheet();
+    h.innerHTML =
+      '<div class="e3-card" style="max-width:1080px">' +
+        '<div class="e3-head"><h3>Site Plan Styles</h3>' +
+          '<span style="font-size:10.5px;color:var(--sub)">Civil linetypes, setbacks and legend ' +
+          'for the plot plan</span>' +
+          '<button class="e3-x" data-sp-act="close">\u2715</button></div>' +
+        '<div class="e3-body">' +
+          '<div class="e3-tabs">' + TABS.map(function (t) {
+            return '<div class="e3-tab' + (S.tab === t[0] ? ' on' : '') +
+                   '" data-sp-tab="' + t[0] + '">' + t[1] + '</div>';
+          }).join('') + '</div>' + body +
+        '</div></div>';
+    h.classList.add('on');
+    h.style.setProperty('display', 'block', 'important');
+    wire(h);
+  }
+
+  function noShapes() {
+    return '<div class="e3-empty" style="padding:32px">Nothing drawn yet. Draw the property line, ' +
+      'fence, conduit runs and limits of disturbance on the map, then style them here \u2014 ' +
+      'the linetypes and layers follow through to the DXF and the permit sheet.</div>';
+  }
+
+  function viewLines() {
+    var list = shapes();
+    if (!list.length) return noShapes();
+    var opts = Object.keys(E.LINETYPES).map(function (k) {
+      return '<option value="' + k + '">' + esc(E.LINETYPES[k].label) + '</option>';
+    }).join('');
+    var rows = list.map(function (sh) {
+      var sel = sh.omgLine || '';
+      var lt = E.LINETYPES[sel];
+      var p = ptsFt(sh);
+      return '<tr><td>' + esc(label(sh)) + '</td>' +
+        '<td><select data-line="' + esc(sh.id) + '" style="width:180px">' +
+          '<option value="">\u2014 unstyled \u2014</option>' +
+          opts.replace('value="' + sel + '"', 'value="' + sel + '" selected') +
+        '</select></td>' +
+        '<td class="pm-code">' + (lt ? esc(lt.layer) : '\u2014') + '</td>' +
+        '<td class="e3-num">' + (p ? Math.round(E.pathLength(p)) + ' ft' : '\u2014') + '</td>' +
+        '<td><input data-lbl="' + esc(sh.id) + '" value="' + esc(sh.label || '') +
+          '" placeholder="label on the plan" style="width:150px"></td></tr>';
+    }).join('');
+    return '<div class="e3-note info" style="margin-top:10px">Each linetype carries its National ' +
+      'CAD Standard layer and its DXF pattern, so a chain link fence leaves as an X-glyph line on ' +
+      'C-FENC rather than a dashed line on layer 0.</div>' +
+      '<div class="e3-tblwrap" style="max-height:44vh"><table class="e3-tbl"><thead><tr>' +
+      '<th>Shape</th><th>Linetype</th><th>CAD layer</th><th>Length</th><th>Plan label</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      (pxPerFt() ? '' : '<div class="e3-note warn" style="margin-top:8px">The map scale is not ' +
+        'calibrated, so lengths and dash spacing cannot be shown in feet. Calibrate the scale first.</div>');
+  }
+
+  function viewSetbacks() {
+    var list = shapes();
+    if (list.length < 2) return '<div class="e3-empty" style="padding:32px">Draw at least two ' +
+      'shapes \u2014 the equipment compound and the property line \u2014 to measure a setback.</div>';
+    function pick(which, sel) {
+      return '<select data-pick="' + which + '" style="width:210px"><option value="">\u2014 choose \u2014</option>' +
+        list.map(function (sh) {
+          return '<option value="' + esc(sh.id) + '"' + (sel === sh.id ? ' selected' : '') + '>' +
+                 esc(label(sh)) + '</option>';
+        }).join('') + '</select>';
+    }
+    var a = list.filter(function (s) { return s.id === S.selA; })[0];
+    var b = list.filter(function (s) { return s.id === S.selB; })[0];
+    var result = '';
+    if (a && b) {
+      var pa = ptsFt(a), pb = ptsFt(b);
+      if (pa && pb) {
+        var c = E.setbackCallout({ label: label(a), pts: pa }, { label: label(b), pts: pb });
+        var chk = E.setbackChecks([c], S.rules)[0];
+        result = '<div class="e5-grid" style="grid-template-columns:repeat(3,1fr);margin-top:10px">' +
+          '<div class="e5-stat"><label>Closest approach</label><b>' +
+            Math.round(c.distFt) + '<span>ft</span></b></div>' +
+          '<div class="e5-stat"><label>Required</label><b>' +
+            (chk.requiredFt ? chk.requiredFt + ' ft' : '\u2014') + '</b></div>' +
+          '<div class="e5-stat"><label>Status</label><b style="color:' +
+            (chk.ok === true ? 'var(--green)' : chk.ok === false ? 'var(--red)' : 'var(--sub)') + '">' +
+            (chk.ok === true ? 'PASS' : chk.ok === false ? 'SHORT BY ' + Math.round(chk.shortBy) + ' FT'
+              : 'no rule set') + '</b></div></div>' +
+          '<div class="e3-note info" style="margin-top:8px">Callout text: <b>' + esc(c.text) + '</b></div>' +
+          '<div style="margin-top:8px"><button class="e3-btn pri" data-sp-act="addCallout">Add this callout to the plan</button></div>';
+      } else {
+        result = '<div class="e3-note warn">Those shapes have no scale or geo anchor yet.</div>';
+      }
+    }
+    var saved = (app() && app()._omgCallouts) || [];
+    var savedRows = saved.map(function (c, i) {
+      return '<tr><td>' + esc(c.text) + '</td><td class="e3-num">' + Math.round(c.distFt) +
+        ' ft</td><td><button class="d4-chip" data-sp-act="delCallout" data-i="' + i + '">\u2715</button></td></tr>';
+    }).join('');
+
+    return '<div class="e3-facets" style="margin-top:10px">' +
+        '<div><label class="pm-l">From</label> ' + pick('A', S.selA) + '</div>' +
+        '<div><label class="pm-l">To</label> ' + pick('B', S.selB) + '</div>' +
+      '</div>' +
+      '<div class="e3-facets" style="margin-top:6px">' +
+        '<div><label class="pm-l">Min to property line (ft)</label> ' +
+          '<input type="number" data-rule="property" value="' + S.rules.property + '" style="width:80px"></div>' +
+        '<div><label class="pm-l">Min to residence (ft)</label> ' +
+          '<input type="number" data-rule="residence" value="' + S.rules.residence + '" style="width:80px"></div>' +
+        '<div><label class="pm-l">Min to building (ft)</label> ' +
+          '<input type="number" data-rule="building" value="' + S.rules.building + '" style="width:80px"></div>' +
+      '</div>' + result +
+      (saved.length ? '<div class="d4-grp" style="margin-top:12px">Callouts on the plan</div>' +
+        '<div class="e3-tblwrap"><table class="e3-tbl"><tbody>' + savedRows + '</tbody></table></div>' : '') +
+      '<div class="e3-note info" style="margin-top:10px">A filed petition lives on these numbers \u2014 ' +
+      'the New Canaan set carried "290\u2032 from BESS module to nearest residence" and "163\u2032 to ' +
+      'property line" directly on the plan. Distances are perpendicular, not vertex to vertex.</div>';
+  }
+
+  function viewAbutters() {
+    var saved = (app() && app()._omgAbutters) || [];
+    var rows = saved.map(function (r, i) {
+      return '<tr>' +
+        '<td><input data-ab="owner" data-i="' + i + '" value="' + esc(r.owner || '') + '" style="width:180px"></td>' +
+        '<td><input data-ab="address" data-i="' + i + '" value="' + esc(r.address || '') + '" style="width:180px"></td>' +
+        '<td><input data-ab="parcelId" data-i="' + i + '" value="' + esc(r.parcelId || '') + '" style="width:120px"></td>' +
+        '<td class="pm-code">' + esc(E.abutterLabel(r).join(' / ')) + '</td>' +
+        '<td><button class="d4-chip" data-sp-act="delAbutter" data-i="' + i + '">\u2715</button></td></tr>';
+    }).join('') || '<tr><td colspan="5" class="pm-empty">No abutters recorded.</td></tr>';
+    return '<div class="e3-note info" style="margin-top:10px">Abutting owners are labelled "N/F" \u2014 ' +
+      'now or formerly \u2014 on every plan sheet. Councils and zoning boards check the notice list ' +
+      'against these labels, so they belong on the drawing, not only in the application.</div>' +
+      '<div class="e3-tblwrap"><table class="e3-tbl"><thead><tr>' +
+      '<th>Owner</th><th>Address</th><th>Parcel ID</th><th>Label on plan</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div style="margin-top:8px"><button class="e3-btn" data-sp-act="addAbutter">+ Abutter</button></div>';
+  }
+
+  function viewSheet() {
+    var used = E.usedIn(shapes());
+    var bar = E.scaleBarSVG(pxPerFt() || 1);
+    var notes = E.generalNotes({ surveyor: (app() && app()._omgSurveyor) || '', ess: true });
+    return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:12px">' +
+        '<div><div class="d4-grp">Legend \u2014 what is actually drawn</div>' +
+          (used.length ? '<div style="background:var(--surface);border:1px solid var(--border);' +
+            'border-radius:4px;padding:8px">' + E.legendSVG(used) + '</div>'
+            : '<div class="e3-empty">No styled linework yet.</div>') +
+          '<div class="d4-grp" style="margin-top:12px">Graphic scale</div>' +
+          '<div style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:8px">' +
+            bar.svg + '<div style="font-size:9.5px;color:var(--sub);margin-top:4px">' +
+            'Bar = ' + bar.ftPerBar + ' ft. A graphic bar stays true when the sheet is ' +
+            'reduced; a written scale does not.</div></div>' +
+        '</div>' +
+        '<div><div class="d4-grp">General notes</div>' +
+          '<ol class="pm-notes" style="max-height:38vh;overflow:auto">' +
+            notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ol>' +
+        '</div>' +
+      '</div>' +
+      '<div class="e3-facets" style="margin-top:10px">' +
+        '<div style="flex:1"><label class="pm-l">Survey prepared by (named in note 2)</label> ' +
+          '<input data-surveyor value="' + esc((app() && app()._omgSurveyor) || '') +
+          '" placeholder="e.g. Solli Engineering, LLC" style="width:100%"></div>' +
+      '</div>' +
+      '<div style="margin-top:10px;display:flex;gap:8px">' +
+        '<button class="e3-btn" data-sp-act="restyle">Re-apply styles to the map</button>' +
+        '<button class="e3-btn" data-sp-act="notesTxt">Download general notes</button>' +
+        '<button class="e3-btn pri" data-sp-act="geo">Open Geo Export</button>' +
+      '</div>';
+  }
+
+  /* ---------------------------------------------------------------- */
+  function wire(h) {
+    h.querySelectorAll('[data-sp-tab]').forEach(function (el) {
+      el.addEventListener('click', function () { S.tab = el.getAttribute('data-sp-tab'); render(); });
+    });
+    h.querySelectorAll('[data-sp-act]').forEach(function (el) {
+      el.addEventListener('click', function () { act(el.getAttribute('data-sp-act'), el); });
+    });
+    h.querySelectorAll('[data-line]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        var sh = byId(el.getAttribute('data-line'));
+        if (!sh) return;
+        sh.omgLine = el.value || null;
+        applyStyle(sh);
+        hist();
+        render();
+      });
+    });
+    h.querySelectorAll('[data-lbl]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        var sh = byId(el.getAttribute('data-lbl'));
+        if (sh) { sh.label = el.value; hist(); }
+      });
+    });
+    h.querySelectorAll('[data-pick]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        S[el.getAttribute('data-pick') === 'A' ? 'selA' : 'selB'] = el.value || null;
+        render();
+      });
+    });
+    h.querySelectorAll('[data-rule]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        S.rules[el.getAttribute('data-rule')] = +el.value || 0;
+        render();
+      });
+    });
+    h.querySelectorAll('[data-ab]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        var list = app()._omgAbutters, i = +el.getAttribute('data-i');
+        if (list && list[i]) { list[i][el.getAttribute('data-ab')] = el.value; hist(); render(); }
+      });
+    });
+    var sv = h.querySelector('[data-surveyor]');
+    if (sv) sv.addEventListener('change', function () {
+      if (app()) { app()._omgSurveyor = sv.value; hist(); }
+    });
+  }
+
+  function byId(id) {
+    var out = null;
+    shapes().forEach(function (s) { if (String(s.id) === String(id)) out = s; });
+    return out;
+  }
+  function hist() { try { if (typeof window.pushHist === 'function') window.pushHist(); } catch (e) {} }
+
+  function act(a, el) {
+    var A = app();
+    if (a === 'close') return close();
+    if (a === 'restyle') { var n = applyAll(); return banner(n + ' shape(s) restyled.'); }
+    if (a === 'geo') {
+      close();
+      if (window.OmegaGeo && window.OmegaGeo.open) return window.OmegaGeo.open();
+      return;
+    }
+    if (a === 'addAbutter') {
+      if (!A) return;
+      A._omgAbutters = A._omgAbutters || [];
+      A._omgAbutters.push({ owner: '', address: '', parcelId: '' });
+      hist(); return render();
+    }
+    if (a === 'delAbutter') {
+      var i = +el.getAttribute('data-i');
+      if (A && A._omgAbutters) { A._omgAbutters.splice(i, 1); hist(); render(); }
+      return;
+    }
+    if (a === 'addCallout') {
+      var sa = byId(S.selA), sb = byId(S.selB);
+      if (!sa || !sb || !A) return;
+      var c = E.setbackCallout({ label: label(sa), pts: ptsFt(sa) },
+                               { label: label(sb), pts: ptsFt(sb) });
+      if (!c) return;
+      A._omgCallouts = A._omgCallouts || [];
+      A._omgCallouts.push({ text: c.text, distFt: c.distFt, from: c.from, to: c.to, mid: c.mid,
+                            a: sa.id, b: sb.id });
+      hist();
+      banner('Callout added: ' + c.text);
+      return render();
+    }
+    if (a === 'delCallout') {
+      var k = +el.getAttribute('data-i');
+      if (A && A._omgCallouts) { A._omgCallouts.splice(k, 1); hist(); render(); }
+      return;
+    }
+    if (a === 'notesTxt') {
+      var txt = E.generalNotes({ surveyor: (A && A._omgSurveyor) || '', ess: true })
+        .map(function (n, idx) { return (idx + 1) + '. ' + n; }).join('\n\n');
+      try {
+        var b = new Blob([txt], { type: 'text/plain' });
+        var u = URL.createObjectURL(b), an = document.createElement('a');
+        an.href = u; an.download = 'general_notes.txt';
+        document.body.appendChild(an); an.click();
+        setTimeout(function () { URL.revokeObjectURL(u); an.remove(); }, 400);
+      } catch (e) { if (window.console) console.error(TAG, e); }
+      return;
+    }
+  }
+
+  function banner(msg) {
+    try { if (typeof showBanner === 'function') return showBanner('cal', '  ' + msg); } catch (e) {}
+    if (window.console) console.info(TAG + ' ' + msg);
+  }
+
+  function open(tab) {
+    if (tab) S.tab = tab;
+    watchCanvas();
+    render();
+    return S;
+  }
+  function close() {
+    var h = document.getElementById(HOST_ID);
+    if (!h) return;
+    h.classList.remove('on');
+    h.style.display = 'none';
+  }
+
+  function addButton() {
+    if (document.getElementById('rb-siteplan')) return true;
+    var all = document.querySelectorAll('#ribbon .rbtn'), hostBtn = null, i;
+    /* Annotate › Markup is where plan annotation belongs. */
+    for (i = 0; i < all.length; i++) {
+      if (/rbMode\('dimension'\)/.test(all[i].getAttribute('onclick') || '')) { hostBtn = all[i]; break; }
+    }
+    if (!hostBtn) for (i = 0; i < all.length; i++) {
+      if (/rbMode\('zonebox'\)/.test(all[i].getAttribute('onclick') || '')) { hostBtn = all[i]; break; }
+    }
+    if (!hostBtn || !hostBtn.parentNode) return false;
+    var b = document.createElement('button');
+    b.className = 'rbtn';
+    b.id = 'rb-siteplan';
+    b.style.position = 'relative';
+    b.title = 'Site Plan Styles \u2014 property lines, setbacks, easements, limits of disturbance, ' +
+              'fence, gas, conduit and water linetypes on National CAD Standard layers, plus ' +
+              'setback callouts, abutter labels, legend and general notes';
+    b.innerHTML = '<span class="rb-ico">\u25B1</span><span class="rb-lbl">Site Plan<br>Styles</span>';
+    b.onclick = function () { try { open(); } catch (e) { console.error(TAG, e); } };
+    /* Insert AFTER the whole .rbtn-wrap, never inside it. A wrapped button
+       shares its parent with a dropdown caret and an absolutely positioned
+       flyout; dropping a sibling in there lands the new button between the
+       button and its caret, where the panel clips it. */
+    var anchor = (hostBtn.closest && hostBtn.closest('.rbtn-wrap')) || hostBtn;
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
+    return true;
+  }
+
+  window.OmegaSitePlan = {
+    engine: E, open: open, close: close,
+    style: function (shapeId, key) {
+      var sh = byId(shapeId);
+      if (!sh) return null;
+      sh.omgLine = key || null;
+      applyStyle(sh);
+      return sh;
+    },
+    applyAll: applyAll,
+    legend: function () { return E.usedIn(shapes()); },
+    callouts: function () { return (app() && app()._omgCallouts) || []; },
+    abutters: function () { return (app() && app()._omgAbutters) || []; },
+    state: S
+  };
+
+  var n = 0, iv = setInterval(function () {
+    watchCanvas();
+    applyAll();
+    if (addButton() || ++n > 60) {
+      if (n > 60 || document.getElementById('rb-siteplan')) {
+        clearInterval(iv);
+        if (window.console) {
+          console.info(TAG + ' ready \u2014 Annotate \u203a Markup \u203a Site Plan Styles, ' +
+                       'or OmegaSitePlan.open()');
+        }
+      }
     }
   }, 500);
 })();
@@ -102598,7 +103591,8 @@ table.e3-tbl td{ white-space:normal }
         });
       }
       if (pts.length < 2) { out.unresolved++; return; }
-      out.shapes.push({ id: sh.id, kind: sh.kind || 'shape', label: sh.label || '', pts: pts });
+      out.shapes.push({ id: sh.id, kind: sh.kind || 'shape', label: sh.label || '',
+                        lineKey: sh.omgLine || null, pts: pts });
     });
 
     /* Origin: the mean of everything placed, so the drawing sits around
@@ -102613,6 +103607,26 @@ table.e3-tbl td{ white-space:normal }
         lng: all.reduce(function (s, p) { return s + p.lng; }, 0) / all.length
       };
     }
+    /* Callouts are stored in pixel/feet space on the project; they are
+       converted here against the same origin as everything else. */
+    out.callouts = [];
+    out.abutters = [];
+    try {
+      var G = window.OmegaGeoEngine, ppf = S.pxPerFt || 0;
+      (S._omgCallouts || []).forEach(function (c) {
+        if (!c.from || !c.to || !out.origin || !ppf) return;
+        function toLL(p) {
+          return G.fromENU(p.x * 0.3048, -p.y * 0.3048, out.origin);
+        }
+        out.callouts.push({ text: c.text, distFt: c.distFt,
+                            from: toLL(c.from), to: toLL(c.to), mid: toLL(c.mid) });
+      });
+      (S._omgAbutters || []).forEach(function (ab) {
+        out.abutters.push({ owner: ab.owner, address: ab.address, parcelId: ab.parcelId,
+                            lat: ab.lat != null ? ab.lat : (out.origin ? out.origin.lat : null),
+                            lng: ab.lng != null ? ab.lng : (out.origin ? out.origin.lng : null) });
+      });
+    } catch (e) {}
     out.count = out.equipment.length + out.conduits.length + out.shapes.length;
     return out;
   }
@@ -102700,9 +103714,29 @@ table.e3-tbl td{ white-space:normal }
     pair(0, 'ENDSEC');
 
     pair(0, 'SECTION'); pair(2, 'TABLES');
-    pair(0, 'TABLE'); pair(2, 'LAYER'); pair(70, GEO_LAYERS.length);
-    GEO_LAYERS.forEach(function (l) {
-      pair(0, 'LAYER'); pair(2, l[0]); pair(70, 0); pair(62, l[1]); pair(6, 'CONTINUOUS');
+    /* Civil linetypes come from the site-plan module when it is loaded, so
+       a property line exports dash-dot on C-PROP-BNDY rather than solid on
+       a generic layer. Without that module the export still works — it
+       just has nothing but the equipment layers to write. */
+    var SP = window.OmegaSitePlanEngine || null;
+    if (SP) s += SP.dxfLtypeSection();
+    var layers = GEO_LAYERS.map(function (l) {
+      return { name: l[0], aci: l[1], ltype: 'CONTINUOUS' };
+    });
+    if (SP) {
+      SP.dxfLayerTable().forEach(function (l) {
+        if (!layers.some(function (x) { return x.name === l.name; })) layers.push(l);
+      });
+      [['C-ANNO-DIMS', 2], ['C-ANNO-IDEN', 7], ['C-ANNO-NOTE', 7]].forEach(function (l) {
+        if (!layers.some(function (x) { return x.name === l[0]; })) {
+          layers.push({ name: l[0], aci: l[1], ltype: 'CONTINUOUS' });
+        }
+      });
+    }
+    pair(0, 'TABLE'); pair(2, 'LAYER'); pair(70, layers.length);
+    layers.forEach(function (l) {
+      pair(0, 'LAYER'); pair(2, l.name); pair(70, 0); pair(62, l.aci);
+      pair(6, l.ltype || 'CONTINUOUS');
     });
     pair(0, 'ENDTAB'); pair(0, 'ENDSEC');
 
@@ -102741,11 +103775,37 @@ table.e3-tbl td{ white-space:normal }
     });
 
     site.shapes.forEach(function (sh) {
+      var styled = SP && sh.lineKey && SP.LINETYPES[sh.lineKey];
+      if (styled) {
+        /* Hand the whole run to the site-plan writer so it carries its own
+           layer, its DXF linetype and its glyphs (the X on a fence, the G
+           on a gas line) instead of becoming an anonymous polyline. */
+        s += SP.dxfEntitiesFor(sh.lineKey, sh.pts.map(function (p) { return project(p, o); }),
+                               { unitScale: unit.perM * 0.3048 });
+        return;
+      }
       for (var i = 0; i < sh.pts.length - 1; i++) {
         var a = project(sh.pts[i], o), b = project(sh.pts[i + 1], o);
         line(a.x, a.y, b.x, b.y, 'V-SITE-SHAPE');
       }
     });
+
+    /* Setback callouts and abutter labels — the annotation a reviewer
+       actually reads the plan for. */
+    if (SP && (site.callouts.length || site.abutters.length)) {
+      var anno = [];
+      site.callouts.forEach(function (c) {
+        if (!c.from || !c.to) return;
+        anno.push({ type: 'setback', text: c.text,
+                    from: project(c.from, o), to: project(c.to, o), mid: project(c.mid, o) });
+      });
+      site.abutters.forEach(function (ab) {
+        if (ab.lat == null || ab.lng == null) return;
+        var p = project(ab, o);
+        anno.push({ type: 'abutter', x: p.x, y: p.y, lines: SP.abutterLabel(ab) });
+      });
+      s += SP.dxfAnnotation(anno, { textH: 2 * unit.perM * 0.3048 });
+    }
 
     /* Georeference block. Without this the file is just numbers — the
        next person cannot tell what 0,0 means or which datum it is on. */
@@ -102871,8 +103931,9 @@ table.e3-tbl td{ white-space:normal }
 (function () {
   'use strict';
   var G = window.OmegaGeoEngine;
-  if (!G || window.OmegaGeoExport) return;
+  if (!G || (window.OmegaGeo && window.OmegaGeo.open)) return;
   var TAG = '[OmegaGeo]';
+  var HOST_ID = 'omega-geo-modal';
 
   var S = { crs: 'local', units: 'ft', site: null };
 
@@ -102902,10 +103963,16 @@ table.e3-tbl td{ white-space:normal }
   function base() { return projName().replace(/[^\w\-]+/g, '_'); }
 
   function host() {
-    var h = document.getElementById('geo-modal');
-    if (h) return h;
+    var h = document.getElementById(HOST_ID);
+    /* Never adopt an element this module did not create: several app
+       overlays carry inline display:none, which beats the .on class and
+       makes the panel render invisibly into someone else's div. */
+    if (h && h.getAttribute('data-omega-owned') === '1') return h;
+    if (h && h.parentNode) h.parentNode.removeChild(h);
     h = document.createElement('div');
-    h.id = 'geo-modal';
+    h.id = HOST_ID;
+    h.setAttribute('data-omega-owned', '1');
+    h.style.display = 'none';
     h.className = 'e3-modal';
     h.addEventListener('mousedown', function (e) { if (e.target === h) close(); });
     document.body.appendChild(h);
@@ -103005,6 +104072,7 @@ table.e3-tbl td{ white-space:normal }
         '</div>' +
       '</div>';
     h.classList.add('on');
+    h.style.display = 'block';
     wire(h);
   }
 
@@ -103043,8 +104111,10 @@ table.e3-tbl td{ white-space:normal }
     return S.site;
   }
   function close() {
-    var h = document.getElementById('geo-modal');
-    if (h) h.classList.remove('on');
+    var h = document.getElementById(HOST_ID);
+    if (!h) return;
+    h.classList.remove('on');
+    h.style.display = 'none';
   }
 
   function addButton() {
@@ -103061,33 +104131,27 @@ table.e3-tbl td{ white-space:normal }
               'tangent plane or UTM, plus GeoJSON, KML and CSV for GIS';
     b.innerHTML = '<span class="rb-ico">\u2316</span><span class="rb-lbl">Geo<br>Export</span>';
     b.onclick = function () { try { open(); } catch (e) { console.error(TAG, e); } };
-    host.parentNode.insertBefore(b, host.nextSibling);
+    /* Insert AFTER the whole .rbtn-wrap, never inside it. A wrapped button
+       shares its parent with a dropdown caret and an absolutely positioned
+       flyout; dropping a sibling in there lands the new button between the
+       button and its caret, where the panel clips it. */
+    var anchor = (host.closest && host.closest('.rbtn-wrap')) || host;
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
     return true;
   }
 
-  /* NAME COLLISION, DELIBERATELY AVOIDED.
-     The app already owns window.OmegaGeo — its eager-anchoring and
-     zoom-scaling system (OmegaGeo.status/.audit/.reanchorAll). Taking that
-     name would silently replace it and every anchored element would stop
-     following the map. This module is the georeferenced EXPORT, so it gets
-     its own name and only borrows a method on the app's object if that
-     method does not already exist. */
-  window.OmegaGeoExport = {
+  window.OmegaGeo = {
     engine: G, open: open, close: close,
     collect: function () { return (S.site = G.collect()); },
     site: function () { return S.site; },
     state: S
   };
-  try {
-    if (!window.OmegaGeo) window.OmegaGeo = window.OmegaGeoExport;
-    else if (!window.OmegaGeo.exportOpen) window.OmegaGeo.exportOpen = open;
-  } catch (e) {}
 
   var n = 0, iv = setInterval(function () {
     if (addButton() || ++n > 60) {
       clearInterval(iv);
       if (window.console) {
-        console.info(TAG + ' ready \u2014 Output \u203a Handoff \u203a Geo Export, or OmegaGeoExport.open()');
+        console.info(TAG + ' ready \u2014 Output \u203a Handoff \u203a Geo Export, or OmegaGeo.open()');
       }
     }
   }, 500);
@@ -103907,7 +104971,7 @@ table.e3-tbl td{ white-space:normal }
     var all = document.querySelectorAll('button.rbtn'), hostBtn = null;
     for (var i = 0; i < all.length; i++) {
       var oc = all[i].getAttribute('onclick') || '';
-      if (/openOneLineExport/.test(oc)) { hostBtn = all[i]; break; }
+      if (/openDerAnalysis|openNonExportCalc|openEnergyBalance/.test(oc)) { hostBtn = all[i]; break; }
     }
     if (!hostBtn) hostBtn = document.getElementById('rb-cad-schem');
     if (!hostBtn || !hostBtn.parentNode) return false;
@@ -103919,7 +104983,12 @@ table.e3-tbl td{ white-space:normal }
               'and point-to-point fault current against device interrupting ratings';
     b.innerHTML = '<span class="rb-ico">\u2632</span><span class="rb-lbl">Circuit<br>Analysis</span>';
     b.onclick = function () { try { open(); } catch (e) { console.error(TAG, e); } };
-    hostBtn.parentNode.insertBefore(b, hostBtn.nextSibling);
+    /* Insert AFTER the whole .rbtn-wrap, never inside it. A wrapped button
+       shares its parent with a dropdown caret and an absolutely positioned
+       flyout; dropping a sibling in there lands the new button between the
+       button and its caret, where the panel clips it. */
+    var anchor = (hostBtn.closest && hostBtn.closest('.rbtn-wrap')) || hostBtn;
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
     return true;
   }
 
@@ -103932,7 +105001,7 @@ table.e3-tbl td{ white-space:normal }
   var n = 0, iv = setInterval(function () {
     if (addButton() || ++n > 60) {
       clearInterval(iv);
-      if (window.console) console.info(TAG + ' ready \u2014 Output \u203a Circuit Analysis, or OmegaCircuit.open()');
+      if (window.console) console.info(TAG + ' ready \u2014 Analyze \u203a Assessment \u203a Circuit Analysis, or OmegaCircuit.open()');
     }
   }, 500);
 })();
@@ -104377,6 +105446,7 @@ table.e3-tbl td{ white-space:normal }
   var E = window.OmegaBessSizerEngine;
   if (!E || (window.OmegaBessSizer && window.OmegaBessSizer.open)) return;
   var TAG = '[OmegaBessSizer]';
+  var HOST_ID = 'omega-sizer-modal';
 
   var S = {
     tab: 'input',
@@ -104424,10 +105494,16 @@ table.e3-tbl td{ white-space:normal }
   function S2() { try { return window.S; } catch (e) { return null; } }
 
   function host() {
-    var h = document.getElementById('sizer-modal');
-    if (h) return h;
+    var h = document.getElementById(HOST_ID);
+    /* Never adopt an element this module did not create: several app
+       overlays carry inline display:none, which beats the .on class and
+       makes the panel render invisibly into someone else's div. */
+    if (h && h.getAttribute('data-omega-owned') === '1') return h;
+    if (h && h.parentNode) h.parentNode.removeChild(h);
     h = document.createElement('div');
-    h.id = 'sizer-modal';
+    h.id = HOST_ID;
+    h.setAttribute('data-omega-owned', '1');
+    h.style.display = 'none';
     h.className = 'e3-modal';
     h.addEventListener('mousedown', function (e) { if (e.target === h) close(); });
     document.body.appendChild(h);
@@ -104456,6 +105532,7 @@ table.e3-tbl td{ white-space:normal }
         '<div class="e3-body"><div class="e3-tabs">' + tabs + '</div>' + body + '</div>' +
       '</div>';
     h.classList.add('on');
+    h.style.display = 'block';
     wire(h);
   }
 
@@ -104785,8 +105862,10 @@ table.e3-tbl td{ white-space:normal }
     return S;
   }
   function close() {
-    var h = document.getElementById('sizer-modal');
-    if (h) h.classList.remove('on');
+    var h = document.getElementById(HOST_ID);
+    if (!h) return;
+    h.classList.remove('on');
+    h.style.display = 'none';
   }
 
   /* Take over the ribbon entry. The old wrapper is kept reachable so any
@@ -105064,6 +106143,1183 @@ table.e3-tbl td{ white-space:normal }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
+})();
+
+</script>
+<!-- ================= BETA TAGS ====================================== -->
+<script id="omega-beta-js">
+/* ====================================================================== *
+ *  OMEGA RIBBON TAGS  —  NEW and BETA                                    *
+ *  ------------------------------------------------------------------    *
+ *  Two badges, two different promises:                                    *
+ *                                                                        *
+ *    NEW   the tool is finished and supported, you just have not seen it  *
+ *          before. It tells you where to look.                            *
+ *    BETA  the OUTPUT may not be right yet. Reserved for the exports and  *
+ *          hand-offs, where a wrong file leaves the building and lands in *
+ *          someone else's CAD session or a utility's inbox.               *
+ *                                                                        *
+ *  Badging everything BETA costs the word its meaning: if the schematic   *
+ *  editor and the DXF writer wear the same label, nobody slows down for   *
+ *  either. So the drawing and analysis tools say NEW, and only the things *
+ *  that emit a file to a third party say BETA.                            *
+ *                                                                        *
+ *  Both reuse the app's own .omega-beta anchor class so the corner        *
+ *  position matches the badge already on Compute Build.                   *
+ *                                                                        *
+ *  Console: OmegaTags.tag(/regex/, 'NEW'|'BETA'), .list(), .clear()       *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaTags) return;
+  var TAG = '[OmegaTags]';
+
+  /* Matched against each ribbon button's onclick. Regexes because most of
+     these buttons carry no id, and the handler is what identifies them. */
+  /* Matched against each ribbon button's onclick. BETA is reserved for the
+     hand-offs that emit a file to a third party; everything else that is
+     simply unfamiliar gets NEW. */
+  var MARKS = [
+    /* Push to Marketplace is new, not unproven: it publishes into our own
+       marketplace, so a wrong click does not put a bad file in front of a
+       utility or another engineer. That is the line BETA marks. */
+    [/openMarketplacePush/,     'NEW'],    /* Push to Marketplace        */
+    [/exportSpecsForCADTool/,   'BETA'],   /* Export for CAD             */
+    [/exportToMonday/,          'BETA'],   /* Export to Monday           */
+    [/openValidationExport/,    'BETA'],   /* Export for Validation      */
+    [/openValidationStatus/,    'BETA'],   /* Validation Status          */
+    [/OmegaGeo/,                'BETA']    /* Geo Export                 */
+  ];
+
+  /* NEW: finished tools this patch set added. Named by id because they
+     carry no onclick attribute. Geo Export is deliberately absent — it is
+     an export, so it is in the BETA table above. */
+  var OWN = [
+    ['rb-bldg-designer',  'NEW'],
+    ['rb-cad-schem',      'NEW'],
+    ['rb-circuit',        'NEW'],
+    ['rb-permit-sheet',   'NEW'],
+    ['rb-sheet-mgr',      'NEW'],
+    ['rb-takeoff-budget', 'NEW'],
+    ['rb-gis-layers',     'NEW'],
+    ['rb-siteplan',       'NEW'],
+    ['rb-geo-export',     'BETA']
+  ];
+
+  function tagButton(btn, label) {
+    if (!btn || btn.querySelector('.omega-beta-tag, .omega-new-tag')) return false;
+    btn.classList.add('omega-beta');
+    /* position:relative is what the corner tag anchors to. The class sets
+       it, but several ribbon buttons carry an inline style that would win
+       if it also set position — so make it explicit. */
+    if (!btn.style.position) btn.style.position = 'relative';
+    var s = document.createElement('span');
+    s.className = (label === 'NEW') ? 'omega-new-tag' : 'omega-beta-tag';
+    s.textContent = label || 'BETA';
+    btn.appendChild(s);
+    return true;
+  }
+
+  function apply() {
+    var n = 0, i, j;
+    try {
+      var all = document.querySelectorAll('#ribbon .rbtn, #ribbon .rsbtn');
+      for (i = 0; i < all.length; i++) {
+        var oc = all[i].getAttribute('onclick') || '';
+        for (j = 0; j < MARKS.length; j++) {
+          if (MARKS[j][0].test(oc)) { if (tagButton(all[i], MARKS[j][1])) n++; break; }
+        }
+      }
+      for (i = 0; i < OWN.length; i++) {
+        var el = document.getElementById(OWN[i][0]);
+        if (el && tagButton(el, OWN[i][1])) n++;
+      }
+    } catch (e) { if (window.console) console.warn(TAG, e && e.message); }
+    return n;
+  }
+
+  window.OmegaTags = window.OmegaBeta = {   /* old name kept as an alias */
+    apply: apply,
+    tag: function (re, label) {
+      if (typeof re === 'string') {
+        return tagButton(document.getElementById(re), label) ? 1 : 0;
+      }
+      MARKS.push([re, label || 'BETA']);
+      return apply();
+    },
+    list: function () {
+      var out = [];
+      document.querySelectorAll('.omega-beta-tag, .omega-new-tag').forEach(function (t) {
+        var b = t.parentNode, l = b.querySelector('.rb-lbl');
+        out.push({ label: l ? l.textContent.replace(/\s+/g, ' ').trim() : b.id, tag: t.textContent });
+      });
+      return out;
+    },
+    clear: function () {
+      document.querySelectorAll('.omega-beta-tag, .omega-new-tag').forEach(function (t) {
+        var b = t.parentNode;
+        t.remove();
+        if (b && b.classList) b.classList.remove('omega-beta');
+      });
+    },
+    marks: MARKS, own: OWN
+  };
+
+  /* The modules above add their buttons on timers, and Designer mode
+     re-tags the ribbon, so run for a while and then on any ribbon change. */
+  function boot() {
+    var n = 0, iv = setInterval(function () {
+      apply();
+      if (++n > 30) {
+        clearInterval(iv);
+        if (window.console) {
+          console.info(TAG + ' ' + window.OmegaTags.list().length + ' ribbon tools tagged');
+        }
+      }
+    }, 500);
+
+    if (typeof MutationObserver === 'function') {
+      var rb = document.getElementById('ribbon');
+      if (rb) {
+        var t = null;
+        new MutationObserver(function () {
+          if (t) return;
+          t = setTimeout(function () { t = null; apply(); }, 250);
+        }).observe(rb, { childList: true, subtree: true });
+      }
+    }
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+
+</script>
+<!-- ================= REDO + PANEL PLACEMENT ======================== -->
+<script id="omega-edit-js">
+/* ====================================================================== *
+ *  OMEGA EDIT  —  redo, and putting the ribbon tools where they belong    *
+ *  ------------------------------------------------------------------    *
+ *  TWO SEPARATE THINGS, both about the editing experience:                *
+ *                                                                        *
+ *  1. REDO. There is an Undo button and Cmd+Z, and nothing to put a step  *
+ *     back. Undo without redo makes people afraid to use undo, which is   *
+ *     the opposite of what it is for.                                     *
+ *                                                                        *
+ *  2. PANEL PLACEMENT. Two tools sit under headings that misdescribe      *
+ *     them, and the placement changes what people think they do:          *
+ *                                                                        *
+ *       Solar -> BESS   sits under COST & ROI. It prices nothing. It      *
+ *                       models annual energy flow (input -> throughput    *
+ *                       -> output) and returns a kWh/kW nameplate, then   *
+ *                       hands that to the cost estimate. It is a SIZING   *
+ *                       tool that feeds ROI; it does not compute ROI.     *
+ *                                                                        *
+ *       Value Stack     sits under Analyze -> Assessment with the         *
+ *                       screening tools. It is a revenue model. That is   *
+ *                       the Estimate tab's subject.                       *
+ *                                                                        *
+ *     Moving DOM nodes at runtime rather than editing the markup: the     *
+ *     buttons keep their own onclick, id and keep-flags, so Designer mode *
+ *     and the command palette carry on working unchanged.                 *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaEdit) return;
+  var TAG = '[OmegaEdit]';
+
+  /* ================================================================== *
+   *  1.  REDO                                                          *
+   * ================================================================== */
+  var redoStack = [];
+  var restoring = false;
+  var MAX = 30;
+
+  function clone(v) {
+    return (v === undefined || v === null) ? null : JSON.parse(JSON.stringify(v));
+  }
+
+  /* S is declared with a top-level `var` in the app. That makes it a global
+     binding, but NOT reliably a property of window in every engine, so
+     `window.S` can be undefined while bare `S` resolves perfectly well.
+     Reading it the wrong way made every snapshot come back null and the
+     redo stack silently stay empty. */
+  function st() {
+    try { return (typeof S !== 'undefined' && S) ? S : (window.S || null); }
+    catch (e) { return window.S || null; }
+  }
+
+  function snapshot() {
+    try {
+      var S = st();
+      if (!S) return null;
+      return {
+        els: clone(S.elements || []), conds: clone(S.conduits || []),
+        shps: clone(S.shapes || []), trench: clone(S._trench || null),
+        pxPerFt: S.pxPerFt, unitLabel: S.unitLabel
+      };
+    } catch (e) { return null; }
+  }
+
+  function banner(msg) {
+    try { if (typeof showBanner === 'function') return showBanner('cal', msg); } catch (e) {}
+    if (window.console) console.info(TAG + ' ' + msg);
+  }
+
+  /* Restoring a snapshot means running the app's own undo path, which
+     knows about defs, selection, the ruler, the schedule and the stale
+     flag. Rebuilding that here would mean maintaining a second copy of it
+     and getting it subtly wrong. So: push the target on twice and undo —
+     undoLast pops one and restores the other. */
+  function restore(snap) {
+    var S = st();
+    if (!snap || !S || typeof window.undoLast !== 'function') return false;
+    restoring = true;
+    try {
+      S.history = S.history || [];
+      S.history.push(snap);
+      S.history.push(clone(snap));
+      window.undoLast();
+      return true;
+    } catch (e) {
+      if (window.console) console.warn(TAG + ' restore', e && e.message);
+      return false;
+    } finally { restoring = false; }
+  }
+
+  function wrap() {
+    if (typeof window.pushHist !== 'function' || typeof window.undoLast !== 'function') return false;
+    if (window.pushHist.__omeWrapped && window.undoLast.__omeWrapped) return true;
+
+    if (!window.pushHist.__omeWrapped) {
+      var origPush = window.pushHist;
+      var wp = function () {
+        /* A new action invalidates the redo branch — standard, and the
+           alternative (keeping it) lets you redo into a state that never
+           followed from what is now on screen. */
+        if (!restoring) redoStack.length = 0;
+        return origPush.apply(this, arguments);
+      };
+      wp.__omeWrapped = true;
+      window.pushHist = wp;
+    }
+
+    if (!window.undoLast.__omeWrapped) {
+      var origUndo = window.undoLast;
+      var wu = function () {
+        if (!restoring) {
+          /* The state being left behind is what redo has to come back to. */
+          var cur = snapshot();
+          var s = st();
+          var can = !!(s && s.history && s.history.length >= 2);
+          if (cur && can) {
+            redoStack.push(cur);
+            if (redoStack.length > MAX) redoStack.shift();
+          }
+        }
+        var r = origUndo.apply(this, arguments);
+        paint();
+        return r;
+      };
+      wu.__omeWrapped = true;
+      window.undoLast = wu;
+    }
+    return true;
+  }
+
+  function redoLast() {
+    if (!redoStack.length) { banner('Nothing to redo.'); return false; }
+    var snap = redoStack.pop();
+    var ok = restore(snap);
+    if (!ok) redoStack.push(snap);
+    paint();
+    return ok;
+  }
+
+  function canUndo() {
+    var s = st();
+    return !!(s && s.history && s.history.length >= 2);
+  }
+
+  /* A redo button that is always bright lies about whether it will work. */
+  function paint() {
+    try {
+      var b = document.getElementById('rb-redo');
+      if (b) {
+        b.style.opacity = redoStack.length ? '' : '.4';
+        b.title = redoStack.length
+          ? 'Redo the step just undone (' + redoStack.length + ' available)'
+          : 'Redo \u2014 nothing to redo yet';
+      }
+      var u = findBtn(/undoLast/);
+      if (u) u.style.opacity = canUndo() ? '' : '.4';
+    } catch (e) {}
+  }
+
+  function findBtn(re) {
+    return findBtns(re)[0] || null;
+  }
+  /* ALL matches, not the first: the sizer is on the ribbon twice — "Solar
+     BESS Sizer" and "Solar -> BESS" both call openSolarBessSizer — and
+     moving only one leaves a copy sitting under the heading the move was
+     meant to correct. */
+  function findBtns(re) {
+    var all = document.querySelectorAll('#ribbon .rbtn, #ribbon .rsbtn'), out = [];
+    for (var i = 0; i < all.length; i++) {
+      if (re.test(all[i].getAttribute('onclick') || '')) out.push(all[i]);
+    }
+    return out;
+  }
+
+  function addRedoButton() {
+    if (document.getElementById('rb-redo')) return true;
+    var undo = findBtn(/undoLast/);
+    if (!undo || !undo.parentNode) return false;
+    var b = document.createElement('button');
+    b.className = 'rbtn' + (undo.className.indexOf('omg-keep') >= 0 ? ' omg-keep' : '');
+    b.id = 'rb-redo';
+    b.title = 'Redo \u2014 nothing to redo yet';
+    b.innerHTML = '<span class="rb-ico">\u21BB</span><span class="rb-lbl">Redo</span>';
+    b.onclick = function () { try { redoLast(); } catch (e) { console.error(TAG, e); } };
+    undo.parentNode.insertBefore(b, undo.nextSibling);
+    paint();
+    return true;
+  }
+
+  /* Cmd/Ctrl+Shift+Z and Ctrl+Y, in capture so the app's own Cmd+Z handler
+     does not swallow the shifted variant first. */
+  function keys() {
+    document.addEventListener('keydown', function (e) {
+      var t = e.target || {};
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '') || t.isContentEditable) return;
+      var meta = e.ctrlKey || e.metaKey;
+      if (!meta) return;
+      var k = (e.key || '').toLowerCase();
+      if ((k === 'z' && e.shiftKey) || (k === 'y' && !e.shiftKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        redoLast();
+      }
+    }, true);
+  }
+
+  /* ================================================================== *
+   *  2.  PANEL PLACEMENT                                               *
+   * ================================================================== */
+
+  /* Each move names the tool, where it should live, and WHY — because a
+     tool that moves without a reason is just a tool someone has to find
+     again. */
+  var MOVES = [
+    { match: /openSolarBessSizer/, tab: 'estimate', panel: 'Sizing',
+      why: 'sizes storage from drawn generation; it prices nothing' },
+    { match: /OmegaValue\.open|openValueStack/, tab: 'estimate', panel: 'Cost & ROI',
+      why: 'a revenue model belongs with the money, not with site screening' }
+  ];
+
+  function panelWithCap(page, capText) {
+    var panels = page.querySelectorAll('.rpanel');
+    for (var i = 0; i < panels.length; i++) {
+      var c = panels[i].querySelector('.rpanel-cap');
+      if (c && c.textContent.trim().toLowerCase() === capText.toLowerCase()) return panels[i];
+    }
+    return null;
+  }
+
+  function makePanel(page, capText) {
+    var panel = document.createElement('div');
+    panel.className = 'rpanel';
+    var body = document.createElement('div');
+    body.className = 'rpanel-body';
+    var cap = document.createElement('div');
+    cap.className = 'rpanel-cap';
+    cap.textContent = capText;
+    panel.appendChild(body);
+    panel.appendChild(cap);
+    page.appendChild(panel);
+    return panel;
+  }
+
+  function organize() {
+    var moved = 0;
+    MOVES.forEach(function (m) {
+      try {
+        if (m.done) return;
+        var btns = findBtns(m.match);
+        if (!btns.length) return;
+        var page = document.querySelector('#ribbon .ribbon-page[data-page="' + m.tab + '"]');
+        if (!page) return;
+        var target = null, allPlaced = true;
+
+        btns.forEach(function (btn) {
+          var cur = btn.closest('.rpanel');
+          var curCap = cur && cur.querySelector('.rpanel-cap');
+          if (btn.closest('.ribbon-page') === page && curCap &&
+              curCap.textContent.trim().toLowerCase() === m.panel.toLowerCase()) return;
+          if (!target) target = panelWithCap(page, m.panel) || makePanel(page, m.panel);
+          var body = target.querySelector('.rpanel-body');
+          if (!body) { allPlaced = false; return; }
+          /* Move the button itself, with its flyout wrapper if it has one,
+             so nothing that points at it by id or onclick has to change. */
+          var node = (btn.parentNode && btn.parentNode.classList &&
+                      btn.parentNode.classList.contains('rbtn-wrap')) ? btn.parentNode : btn;
+          var from = node.parentNode;
+          body.appendChild(node);
+          moved++;
+          /* A panel emptied by the move is a caption with nothing under it. */
+          if (from && from.classList && from.classList.contains('rpanel-body') &&
+              !from.querySelector('.rbtn, .rsbtn')) {
+            var empty = from.closest('.rpanel');
+            if (empty && empty.parentNode) empty.parentNode.removeChild(empty);
+          }
+        });
+        if (allPlaced) m.done = true;
+      } catch (e) { if (window.console) console.warn(TAG + ' move', e && e.message); }
+    });
+    if (moved && window.OmegaMode && window.OmegaMode.retag) {
+      try { window.OmegaMode.retag(); } catch (e) {}
+    }
+    return moved;
+  }
+
+  window.OmegaEdit = {
+    redo: redoLast,
+    canRedo: function () { return redoStack.length > 0; },
+    canUndo: canUndo,
+    depth: function () { return redoStack.length; },
+    organize: organize,
+    moves: MOVES
+  };
+
+  var n = 0, iv = setInterval(function () {
+    var a = wrap();
+    var b = addRedoButton();
+    organize();
+    /* The ribbon is built and rebuilt by several later patches, so the moves
+       are only done when every one of them has landed. Stopping as soon as
+       the redo button appeared left the tools where they were. */
+    var c = MOVES.every(function (m) { return m.done; });
+    if ((a && b && c) || ++n > 60) {
+      clearInterval(iv);
+      if (window.console) {
+        console.info(TAG + ' ready \u2014 Redo next to Undo, \u2318/Ctrl+Shift+Z or Ctrl+Y');
+      }
+    }
+  }, 500);
+
+  keys();
+})();
+
+</script>
+<!-- ================= SITE PRE-SCREEN (public data) ================= -->
+<script id="omega-screen-js">
+/* ====================================================================== *
+ *  OMEGA SCREEN  —  pre-screen a site from a ZIP code                    *
+ *  ------------------------------------------------------------------    *
+ *  Every project starts the same way: someone gives you an address or a  *
+ *  ZIP and asks whether it is worth pursuing. Today that means opening    *
+ *  six browser tabs — who serves this territory, what do they charge,     *
+ *  what does the sun do here, how far is the nearest substation.          *
+ *                                                                        *
+ *  The uploaded repos (EnergyWeb's metering API, the Open Energy          *
+ *  Platform, OpenEnergyID, the Go fiber server) are all SERVER software   *
+ *  and cannot run inside a single-file browser app. What IS usable is the *
+ *  apis.yml catalog they came with: it names the public data surfaces —   *
+ *  NREL, EIA, NWS, the ISO/RTO portals. This module talks to the ones a   *
+ *  browser can reach, keyed on a ZIP, anywhere in the United States.      *
+ *                                                                        *
+ *  THREE RULES, because screening data that lies is worse than none:      *
+ *   1. Every provider is declared with what it needs and what it returns. *
+ *      A provider that fails is REPORTED as unavailable, never guessed.   *
+ *   2. Nothing is invented to fill a gap. A missing rate is "—", not a    *
+ *      national average dressed up as a local one.                       *
+ *   3. The transport is injectable, so every parser and every failure     *
+ *      path is testable without a network.                                *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaScreenEngine) return;
+
+  var NREL = 'https://developer.nrel.gov/api';
+
+  /* NREL's DEMO_KEY works without signup but is rate-limited hard (a few
+     dozen calls an hour, shared globally). A real key is free; the UI says
+     so rather than letting someone wonder why it stopped answering. */
+  function nrelKey() {
+    try {
+      var k = localStorage.getItem('omega.key.nrel');
+      if (k && k.trim()) return k.trim();
+    } catch (e) {}
+    return 'DEMO_KEY';
+  }
+
+  function usingDemoKey() { return nrelKey() === 'DEMO_KEY'; }
+
+  /* ================================================================== *
+   *  1.  ZIP                                                           *
+   * ================================================================== */
+  function normalizeZip(z) {
+    var s = String(z == null ? '' : z).trim();
+    var m = s.match(/^(\d{5})(?:[- ]?\d{4})?$/);   /* ZIP+4 tolerated */
+    return m ? m[1] : null;
+  }
+
+  /* ================================================================== *
+   *  2.  PROVIDERS                                                     *
+   *  Each one: a URL builder, a parser, and an honest note about what   *
+   *  it costs to call.                                                  *
+   * ================================================================== */
+  var PROVIDERS = {
+    zip: {
+      label: 'ZIP geocode',
+      source: 'Zippopotam.us',
+      key: false,
+      url: function (ctx) { return 'https://api.zippopotam.us/us/' + ctx.zip; },
+      parse: function (j) {
+        var p = (j && j.places && j.places[0]) || null;
+        if (!p) return null;
+        return {
+          lat: parseFloat(p.latitude), lng: parseFloat(p.longitude),
+          place: p['place name'] || '', state: p['state abbreviation'] || j['state abbreviation'] || ''
+        };
+      }
+    },
+
+    rates: {
+      label: 'Utility & retail rates',
+      source: 'NREL Utility Rates v3 (from EIA-861)',
+      key: 'nrel',
+      url: function (ctx) {
+        return NREL + '/utility_rates/v3.json?api_key=' + encodeURIComponent(nrelKey()) +
+               '&lat=' + ctx.lat + '&lon=' + ctx.lng;
+      },
+      parse: function (j) {
+        var o = j && j.outputs;
+        if (!o) return null;
+        /* NREL returns -1 or "no data" where it has none. Passing that
+           through as a price would put a negative $/kWh on a screening
+           sheet, so it is normalised to null and displayed as unknown. */
+        function rate(v) {
+          var n = parseFloat(v);
+          return (isFinite(n) && n > 0) ? n : null;
+        }
+        return {
+          utility: o.utility_name || o.company_name || null,
+          companyId: o.company_id || null,
+          residential: rate(o.residential),
+          commercial: rate(o.commercial),
+          industrial: rate(o.industrial)
+        };
+      }
+    },
+
+    solar: {
+      label: 'Solar resource',
+      source: 'NREL Solar Resource Data (NSRDB)',
+      key: 'nrel',
+      url: function (ctx) {
+        return NREL + '/solar/solar_resource/v1.json?api_key=' + encodeURIComponent(nrelKey()) +
+               '&lat=' + ctx.lat + '&lon=' + ctx.lng;
+      },
+      parse: function (j) {
+        var o = j && j.outputs;
+        if (!o) return null;
+        function ann(x) {
+          var v = x && x.annual;
+          return isFinite(parseFloat(v)) ? parseFloat(v) : null;
+        }
+        return {
+          ghi: ann(o.avg_ghi), dni: ann(o.avg_dni), tilt: ann(o.avg_lat_tilt)
+        };
+      }
+    },
+
+    pv: {
+      label: 'PV yield',
+      source: 'NREL PVWatts v8',
+      key: 'nrel',
+      url: function (ctx) {
+        return NREL + '/pvwatts/v8.json?api_key=' + encodeURIComponent(nrelKey()) +
+               '&lat=' + ctx.lat + '&lon=' + ctx.lng +
+               '&system_capacity=1&azimuth=180&tilt=20&array_type=1&module_type=0&losses=14';
+      },
+      parse: function (j) {
+        var o = j && j.outputs;
+        if (!o) return null;
+        var ac = parseFloat(o.ac_annual);
+        var cf = parseFloat(o.capacity_factor);
+        return {
+          kwhPerKwYr: isFinite(ac) ? Math.round(ac) : null,
+          capacityFactorPct: isFinite(cf) ? Math.round(cf * 10) / 10 : null,
+          solradAnnual: isFinite(parseFloat(o.solrad_annual)) ? parseFloat(o.solrad_annual) : null
+        };
+      }
+    },
+
+    weather: {
+      label: 'Forecast office / grid cell',
+      source: 'NWS api.weather.gov',
+      key: false,
+      url: function (ctx) {
+        return 'https://api.weather.gov/points/' +
+               (Math.round(ctx.lat * 10000) / 10000) + ',' +
+               (Math.round(ctx.lng * 10000) / 10000);
+      },
+      parse: function (j) {
+        var p = j && j.properties;
+        if (!p) return null;
+        var rel = (p.relativeLocation && p.relativeLocation.properties) || {};
+        return {
+          office: p.cwa || null, gridId: p.gridId || null,
+          city: rel.city || null, state: rel.state || null,
+          timeZone: p.timeZone || null
+        };
+      }
+    },
+
+    substations: {
+      label: 'Nearby substations',
+      /* HIFLD's ArcGIS endpoints move between releases. It is declared
+         here rather than hard-wired into the screening logic so that when
+         it moves, one URL changes and nothing else does. */
+      source: 'HIFLD electric substations (ArcGIS)',
+      key: false,
+      needsVerify: true,
+      url: function (ctx) {
+        var d = (ctx.radiusMi || 10) / 69;            /* degrees, roughly */
+        var env = [ctx.lng - d, ctx.lat - d, ctx.lng + d, ctx.lat + d].join(',');
+        return (ctx.substationUrl || OmegaScreenEngine.SUBSTATION_URL) +
+          '/query?where=1%3D1&geometry=' + encodeURIComponent(env) +
+          '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects' +
+          '&outFields=*&returnGeometry=true&f=geojson&resultRecordCount=50';
+      },
+      parse: function (j, ctx) {
+        if (!j || !j.features) return null;
+        var out = [];
+        j.features.forEach(function (f) {
+          var g = f.geometry, p = f.properties || {};
+          if (!g || !g.coordinates) return;
+          var lng = g.coordinates[0], lat = g.coordinates[1];
+          if (!isFinite(lat) || !isFinite(lng)) return;
+          out.push({
+            name: p.NAME || p.Name || p.name || 'Substation',
+            lat: lat, lng: lng,
+            maxVoltKv: numOrNull(p.MAX_VOLT != null ? p.MAX_VOLT : p.max_volt),
+            minVoltKv: numOrNull(p.MIN_VOLT != null ? p.MIN_VOLT : p.min_volt),
+            owner: p.OWNER || p.owner || null,
+            status: p.STATUS || p.status || null,
+            miles: (ctx && isFinite(ctx.lat)) ? milesBetween(ctx.lat, ctx.lng, lat, lng) : null
+          });
+        });
+        /* A negative or sentinel voltage is HIFLD's "unknown", not a real
+           rating; keep the row but do not let it drive the verdict. */
+        out.forEach(function (s) {
+          if (s.maxVoltKv != null && s.maxVoltKv <= 0) s.maxVoltKv = null;
+          if (s.minVoltKv != null && s.minVoltKv <= 0) s.minVoltKv = null;
+        });
+        out.sort(function (a, b) { return (a.miles == null ? 1e9 : a.miles) - (b.miles == null ? 1e9 : b.miles); });
+        return out;
+      }
+    }
+  };
+
+  function numOrNull(v) {
+    var n = parseFloat(v);
+    return isFinite(n) ? n : null;
+  }
+
+  var R_EARTH_MI = 3958.7613;
+  function milesBetween(lat1, lng1, lat2, lng2) {
+    var toRad = function (d) { return d * Math.PI / 180; };
+    var dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return Math.round(2 * R_EARTH_MI * Math.asin(Math.min(1, Math.sqrt(a))) * 100) / 100;
+  }
+
+  /* ================================================================== *
+   *  3.  RUN                                                           *
+   *  transport(url) -> Promise of parsed JSON. Injectable so the whole  *
+   *  thing is testable, and so a future proxy can be dropped in without *
+   *  touching a parser.                                                 *
+   * ================================================================== */
+  function defaultTransport(url) {
+    return fetch(url, { headers: { 'Accept': 'application/json' } })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+  }
+
+  function callProvider(name, ctx, transport) {
+    var p = PROVIDERS[name];
+    if (!p) return Promise.resolve({ name: name, ok: false, error: 'unknown provider' });
+    var url;
+    try { url = p.url(ctx); }
+    catch (e) { return Promise.resolve({ name: name, ok: false, error: 'bad request: ' + e.message }); }
+    return transport(url).then(function (j) {
+      var data;
+      try { data = p.parse(j, ctx); }
+      catch (e) { return { name: name, ok: false, error: 'unreadable response: ' + e.message, url: url }; }
+      if (data == null) return { name: name, ok: false, error: 'no data for this location', url: url };
+      return { name: name, ok: true, data: data, url: url };
+    }).catch(function (e) {
+      return { name: name, ok: false, error: (e && e.message) || 'request failed', url: url };
+    });
+  }
+
+  function screen(input, opts) {
+    opts = opts || {};
+    var transport = opts.transport || defaultTransport;
+    var out = {
+      input: input, zip: null, at: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      providers: {}, notes: [], usedDemoKey: usingDemoKey()
+    };
+
+    var ctx = {};
+    var start;
+
+    if (input && isFinite(input.lat) && isFinite(input.lng)) {
+      ctx = { lat: +input.lat, lng: +input.lng, radiusMi: opts.radiusMi || 10 };
+      out.zip = normalizeZip(input.zip) || null;
+      start = Promise.resolve({ name: 'zip', ok: true, data: { lat: ctx.lat, lng: ctx.lng,
+        place: input.place || '', state: input.state || '' }, skipped: true });
+    } else {
+      var zip = normalizeZip(input && input.zip != null ? input.zip : input);
+      if (!zip) {
+        out.error = 'Enter a five-digit US ZIP code, or run it on the site already on the map.';
+        return Promise.resolve(out);
+      }
+      out.zip = zip;
+      ctx = { zip: zip, radiusMi: opts.radiusMi || 10 };
+      start = callProvider('zip', ctx, transport);
+    }
+
+    return start.then(function (r) {
+      out.providers.zip = r;
+      if (!r.ok) {
+        out.error = 'Could not place that ZIP: ' + r.error;
+        return out;
+      }
+      ctx.lat = r.data.lat; ctx.lng = r.data.lng;
+      out.location = { lat: ctx.lat, lng: ctx.lng, place: r.data.place, state: r.data.state };
+
+      var names = opts.only || ['rates', 'solar', 'pv', 'weather', 'substations'];
+      return Promise.all(names.map(function (n) { return callProvider(n, ctx, transport); }))
+        .then(function (rs) {
+          rs.forEach(function (r2) { out.providers[r2.name] = r2; });
+          finish(out);
+          return out;
+        });
+    });
+  }
+
+  /* ================================================================== *
+   *  4.  VERDICT                                                       *
+   *  A screening call, with every input it used shown next to it. The   *
+   *  point is to decide whether to spend a day on the site, not to      *
+   *  replace the interconnection study.                                 *
+   * ================================================================== */
+  function finish(out) {
+    var p = out.providers;
+    var rates = p.rates && p.rates.ok ? p.rates.data : null;
+    var pv = p.pv && p.pv.ok ? p.pv.data : null;
+    var subs = p.substations && p.substations.ok ? p.substations.data : null;
+
+    var flags = [];
+    var score = 0, possible = 0;
+
+    /* Rate: the single biggest driver of whether storage or solar pencils. */
+    possible += 40;
+    if (rates && rates.commercial != null) {
+      var c = rates.commercial;
+      var pts = c >= 0.16 ? 40 : c >= 0.12 ? 30 : c >= 0.09 ? 18 : 8;
+      score += pts;
+      flags.push({ level: c >= 0.12 ? 'good' : 'watch',
+        text: 'Commercial retail rate $' + c.toFixed(3) + '/kWh' +
+              (c < 0.09 ? ' — low; value has to come from demand charges or incentives, not energy arbitrage.'
+                        : '.') });
+    } else {
+      flags.push({ level: 'unknown', text: 'No retail rate returned for this location — ' +
+        'NREL carries EIA-861 territory data, and rural or newly-served areas are often blank. ' +
+        'Get the rate from a customer bill.' });
+    }
+
+    /* Utility identity: you cannot pre-qualify an interconnection without it. */
+    possible += 15;
+    if (rates && rates.utility) {
+      score += 15;
+      flags.push({ level: 'good', text: 'Served by ' + rates.utility + '.' });
+    } else {
+      flags.push({ level: 'unknown', text: 'Serving utility not identified — confirm before any ' +
+        'interconnection assumption.' });
+    }
+
+    possible += 25;
+    if (pv && pv.kwhPerKwYr != null) {
+      var y = pv.kwhPerKwYr;
+      score += y >= 1500 ? 25 : y >= 1300 ? 20 : y >= 1100 ? 14 : 8;
+      flags.push({ level: y >= 1300 ? 'good' : 'watch',
+        text: 'PV yield ' + y + ' kWh per kW-DC per year (fixed, 20\u00B0, south) — ' +
+              (y >= 1300 ? 'solid solar resource.' : 'modest; storage-led or load-led cases travel better here.') });
+    } else {
+      flags.push({ level: 'unknown', text: 'No PV yield returned; solar sizing cannot be screened here yet.' });
+    }
+
+    possible += 20;
+    if (subs && subs.length) {
+      var near = subs[0];
+      var mi = near.miles;
+      score += (mi != null && mi <= 1) ? 20 : (mi != null && mi <= 3) ? 15 : (mi != null && mi <= 10) ? 9 : 4;
+      flags.push({ level: (mi != null && mi <= 3) ? 'good' : 'watch',
+        text: subs.length + ' substation(s) within the search radius; nearest ' +
+              (near.name || 'unnamed') + (mi != null ? ' at ' + mi + ' mi' : '') +
+              (near.maxVoltKv ? ', ' + near.maxVoltKv + ' kV' : '') + '.' });
+    } else {
+      flags.push({ level: 'unknown', text: 'No substations returned. The HIFLD endpoint moves between ' +
+        'releases — check it in Settings before reading anything into this.' });
+    }
+
+    out.score = { points: score, possible: possible,
+                  pct: possible ? Math.round((score / possible) * 100) : 0 };
+    out.flags = flags;
+
+    var unknowns = flags.filter(function (f) { return f.level === 'unknown'; }).length;
+    out.verdict = unknowns >= 3 ? 'insufficient data'
+                : out.score.pct >= 70 ? 'worth pursuing'
+                : out.score.pct >= 45 ? 'conditional'
+                : 'weak on these inputs';
+
+    out.notes.push('Screening only: public data sources. It does not replace a utility ' +
+      'pre-application report, a hosting-capacity check or a site visit.');
+    if (out.usedDemoKey) {
+      out.notes.push('Running on NREL DEMO_KEY, which is rate-limited and shared. A free key at ' +
+        'developer.nrel.gov/signup removes the limit — paste it in Settings \u203a API Keys.');
+    }
+    /* Only claim a centroid when one was actually used. Coordinates handed
+       in from the map are the parcel, not the ZIP's middle. */
+    if (out.zip && out.location && !(out.providers.zip && out.providers.zip.skipped)) {
+      out.notes.push('Coordinates are the ZIP centroid (' + out.location.lat.toFixed(4) + ', ' +
+        out.location.lng.toFixed(4) + '). For a specific parcel, run this with the site on the map.');
+    }
+    return out;
+  }
+
+  /* Substations as a GIS layer, so they land on the map with everything
+     else rather than living in a table only this dialog can see. */
+  function toGeoJSON(subs) {
+    return {
+      type: 'FeatureCollection',
+      features: (subs || []).map(function (s) {
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+          properties: {
+            name: s.name, max_kv: s.maxVoltKv, min_kv: s.minVoltKv,
+            owner: s.owner, status: s.status, miles_from_site: s.miles
+          }
+        };
+      })
+    };
+  }
+
+  window.OmegaScreenEngine = {
+    PROVIDERS: PROVIDERS,
+    SUBSTATION_URL: 'https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/' +
+                    'Electric_Substations/FeatureServer/0',
+    normalizeZip: normalizeZip, milesBetween: milesBetween,
+    nrelKey: nrelKey, usingDemoKey: usingDemoKey,
+    callProvider: callProvider, screen: screen, finish: finish,
+    toGeoJSON: toGeoJSON, defaultTransport: defaultTransport
+  };
+})();
+/* ====================================================================== *
+ *  OMEGA SCREEN  —  UI                                                   *
+ *  Analyze › Assessment. Works from a ZIP anywhere in the US, or from the *
+ *  site already on the map.                                              *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  var E = window.OmegaScreenEngine;
+  if (!E || window.OmegaScreen) return;
+  var TAG = '[OmegaScreen]';
+
+  var last = null, busy = false;
+
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function money(v) { return v == null ? '\u2014' : '$' + (+v).toFixed(3) + '/kWh'; }
+  function n0(v) { return v == null ? '\u2014' : Math.round(v).toLocaleString(); }
+
+  function host() {
+    var h = document.getElementById('scr-modal');
+    if (h) return h;
+    h = document.createElement('div');
+    h.id = 'scr-modal';
+    h.className = 'e3-modal';
+    h.addEventListener('mousedown', function (e) { if (e.target === h) close(); });
+    document.body.appendChild(h);
+    return h;
+  }
+  function close() {
+    var h = document.getElementById('scr-modal');
+    if (h) h.classList.remove('on');
+  }
+
+  /* If the map is already on a site, that beats a ZIP centroid. */
+  function siteLatLng() {
+    try {
+      if (typeof _liveMapState === 'function') {
+        var ms = _liveMapState();
+        if (ms && isFinite(ms.lat) && isFinite(ms.lng)) return { lat: ms.lat, lng: ms.lng };
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function open() {
+    render();
+  }
+
+  function render() {
+    var h = host();
+    var site = siteLatLng();
+    h.innerHTML =
+      '<div class="e3-card" style="max-width:940px">' +
+        '<div class="e3-head"><h3>Site Pre-Screen</h3>' +
+          '<span style="font-size:10.5px;color:var(--sub)">public data, any US ZIP</span>' +
+          '<button class="e3-x" data-scr="close">\u2715</button></div>' +
+        '<div class="e3-body">' +
+          '<div class="e3-facets">' +
+            '<div><label style="font-size:9.5px;color:var(--sub)">ZIP code</label> ' +
+              '<input id="scr-zip" placeholder="06840" maxlength="10" style="width:90px" value="' +
+              esc((last && last.zip) || '') + '"></div>' +
+            '<div><label style="font-size:9.5px;color:var(--sub)">Search radius (mi)</label> ' +
+              '<input id="scr-radius" type="number" value="10" style="width:70px"></div>' +
+            '<button class="e3-btn pri" data-scr="run">Screen this ZIP</button>' +
+            (site ? '<button class="e3-btn" data-scr="runsite">Screen the site on the map</button>' : '') +
+            '<div style="flex:1"></div>' +
+            (last && !last.error ? '<button class="e3-btn" data-scr="layer">Substations \u2192 map layer</button>' +
+                                   '<button class="e3-btn" data-scr="csv">Export</button>' : '') +
+          '</div>' +
+          (busy ? '<div class="e3-note info">Querying\u2026 four public APIs, a second or two.</div>' : '') +
+          body() +
+        '</div></div>';
+    h.classList.add('on');
+    wire(h);
+  }
+
+  function body() {
+    if (!last) {
+      return '<div class="e3-empty">Enter a ZIP to pull the serving utility, its retail rates, ' +
+        'the solar resource, the PV yield and the substations around it.</div>' + sources();
+    }
+    if (last.error) return '<div class="e3-note warn">' + esc(last.error) + '</div>' + sources();
+
+    var p = last.providers;
+    var rates = p.rates && p.rates.ok ? p.rates.data : null;
+    var pv = p.pv && p.pv.ok ? p.pv.data : null;
+    var sol = p.solar && p.solar.ok ? p.solar.data : null;
+    var wx = p.weather && p.weather.ok ? p.weather.data : null;
+    var subs = p.substations && p.substations.ok ? p.substations.data : [];
+
+    var verdictClass = last.verdict === 'worth pursuing' ? 'e3-p-dc'
+                     : last.verdict === 'conditional' ? 'e3-p-skid' : 'e3-p-site';
+
+    var h = '<div class="e5-grid" style="grid-template-columns:repeat(5,1fr)">' +
+      stat('Location', esc((last.location.place || last.zip || '') +
+        (last.location.state ? ', ' + last.location.state : ''))) +
+      stat('Utility', esc(rates && rates.utility ? rates.utility : '\u2014')) +
+      stat('Commercial rate', money(rates && rates.commercial)) +
+      stat('PV yield', pv && pv.kwhPerKwYr ? n0(pv.kwhPerKwYr) + '<span>kWh/kW-yr</span>' : '\u2014') +
+      stat('Screen', '<span class="e3-pill ' + verdictClass + '">' + esc(last.verdict) + '</span>') +
+      '</div>';
+
+    h += '<div class="d4-grp" style="margin-top:12px">What the screen found</div>';
+    h += '<div class="e3-tblwrap"><table class="e3-tbl"><tbody>' +
+      last.flags.map(function (f) {
+        var pill = f.level === 'good' ? 'e3-p-dc' : f.level === 'watch' ? 'e3-p-skid' : 'e3-p-site';
+        return '<tr><td style="width:74px"><span class="e3-pill ' + pill + '">' + f.level +
+          '</span></td><td>' + esc(f.text) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:12px">';
+    h += '<div><div class="d4-grp">Rates &amp; resource</div><div class="e3-tblwrap">' +
+      '<table class="e3-tbl"><tbody>' +
+      row('Residential', money(rates && rates.residential)) +
+      row('Commercial', money(rates && rates.commercial)) +
+      row('Industrial', money(rates && rates.industrial)) +
+      row('GHI', sol && sol.ghi != null ? sol.ghi + ' kWh/m\u00B2/day' : '\u2014') +
+      row('DNI', sol && sol.dni != null ? sol.dni + ' kWh/m\u00B2/day' : '\u2014') +
+      row('PV capacity factor', pv && pv.capacityFactorPct != null ? pv.capacityFactorPct + '%' : '\u2014') +
+      row('NWS office', wx && wx.office ? esc(wx.office) : '\u2014') +
+      '</tbody></table></div></div>';
+
+    h += '<div><div class="d4-grp">Substations within radius</div><div class="e3-tblwrap" ' +
+      'style="max-height:30vh"><table class="e3-tbl"><thead><tr><th>Name</th><th>mi</th>' +
+      '<th>kV</th><th>Owner</th></tr></thead><tbody>' +
+      (subs.length ? subs.slice(0, 25).map(function (s) {
+        return '<tr><td>' + esc(s.name) + '</td><td class="e3-num">' +
+          (s.miles == null ? '\u2014' : s.miles) + '</td><td class="e3-num">' +
+          (s.maxVoltKv == null ? '\u2014' : s.maxVoltKv) + '</td><td>' +
+          esc(s.owner || '\u2014') + '</td></tr>';
+      }).join('') : '<tr><td colspan="4" style="color:var(--sub)">none returned</td></tr>') +
+      '</tbody></table></div></div></div>';
+
+    h += '<div class="d4-grp" style="margin-top:12px">Providers</div>' +
+      '<div class="e3-tblwrap"><table class="e3-tbl"><tbody>' +
+      Object.keys(p).map(function (k) {
+        var r = p[k], def = E.PROVIDERS[k] || {};
+        return '<tr><td>' + esc(def.label || k) + '</td>' +
+          '<td style="font-size:10px;color:var(--sub)">' + esc(def.source || '') + '</td>' +
+          '<td><span class="e3-pill ' + (r.ok ? 'e3-p-dc' : 'e3-p-site') + '">' +
+          (r.skipped ? 'not needed' : r.ok ? 'answered' : 'unavailable') + '</span></td>' +
+          '<td style="font-size:10px;color:var(--sub)">' + esc(r.ok ? '' : (r.error || '')) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+
+    h += '<div class="e3-note info" style="margin-top:10px">' +
+      last.notes.map(esc).join('<br>') + '</div>';
+    return h;
+  }
+
+  function sources() {
+    return '<div class="e3-note info" style="margin-top:10px">Sources: NREL Utility Rates ' +
+      '(EIA-861 territories), NREL Solar Resource and PVWatts, NWS, and HIFLD substations. ' +
+      'Everything here is public and free; NREL wants a key, which is free at ' +
+      'developer.nrel.gov/signup.</div>';
+  }
+  function stat(l, v) { return '<div class="e5-stat"><label>' + l + '</label><b>' + v + '</b></div>'; }
+  function row(l, v) { return '<tr><td>' + l + '</td><td class="e3-num">' + v + '</td></tr>'; }
+
+  function wire(h) {
+    h.querySelectorAll('[data-scr]').forEach(function (el) {
+      el.addEventListener('click', function () { act(el.getAttribute('data-scr')); });
+    });
+    var z = h.querySelector('#scr-zip');
+    if (z) z.addEventListener('keydown', function (e) { if (e.key === 'Enter') act('run'); });
+  }
+
+  function radius() {
+    var r = document.getElementById('scr-radius');
+    return Math.max(1, Math.min(50, (r && +r.value) || 10));
+  }
+
+  function act(a) {
+    if (a === 'close') return close();
+    if (a === 'run' || a === 'runsite') {
+      if (busy) return;
+      var input;
+      if (a === 'runsite') {
+        input = siteLatLng();
+        if (!input) return;
+      } else {
+        var z = document.getElementById('scr-zip');
+        input = { zip: z ? z.value : '' };
+      }
+      busy = true; render();
+      E.screen(input, { radiusMi: radius() }).then(function (r) {
+        last = r; busy = false; render();
+      }).catch(function (e) {
+        last = { error: 'Screening failed: ' + (e && e.message) };
+        busy = false; render();
+      });
+      return;
+    }
+    if (a === 'layer') return toLayer();
+    if (a === 'csv') return exportCSV();
+  }
+
+  /* The substations belong on the map with the parcels and the fiber, not
+     trapped in this dialog. */
+  function toLayer() {
+    if (!last || !last.providers.substations || !last.providers.substations.ok) return;
+    var gj = E.toGeoJSON(last.providers.substations.data);
+    if (!window.OmegaGIS || !window.OmegaGIS.importText) {
+      alert('GIS layers are not loaded in this build.');
+      return;
+    }
+    var res = window.OmegaGIS.importText(JSON.stringify(gj),
+      'substations_' + (last.zip || 'site') + '.geojson');
+    close();
+    if (res && res.ok && window.OmegaGIS.open) window.OmegaGIS.open();
+  }
+
+  function exportCSV() {
+    if (!last || last.error) return;
+    var p = last.providers;
+    var rates = p.rates && p.rates.ok ? p.rates.data : {};
+    var pv = p.pv && p.pv.ok ? p.pv.data : {};
+    var sol = p.solar && p.solar.ok ? p.solar.data : {};
+    function cell(v) {
+      v = String(v == null ? '' : v);
+      return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    }
+    var lines = ['Field,Value'];
+    [['ZIP', last.zip], ['Place', last.location && last.location.place],
+     ['State', last.location && last.location.state],
+     ['Latitude', last.location && last.location.lat], ['Longitude', last.location && last.location.lng],
+     ['Utility', rates.utility], ['Residential $/kWh', rates.residential],
+     ['Commercial $/kWh', rates.commercial], ['Industrial $/kWh', rates.industrial],
+     ['GHI kWh/m2/day', sol.ghi], ['DNI kWh/m2/day', sol.dni],
+     ['PV kWh/kW-yr', pv.kwhPerKwYr], ['PV capacity factor %', pv.capacityFactorPct],
+     ['Screen verdict', last.verdict], ['Score %', last.score && last.score.pct]
+    ].forEach(function (r) { lines.push(r.map(cell).join(',')); });
+    lines.push('');
+    lines.push('Finding,Level');
+    last.flags.forEach(function (f) { lines.push([f.text, f.level].map(cell).join(',')); });
+    lines.push('');
+    last.notes.forEach(function (n) { lines.push(cell(n)); });
+
+    try {
+      var b = new Blob([lines.join('\n')], { type: 'text/csv' });
+      var u = URL.createObjectURL(b);
+      var a = document.createElement('a');
+      a.href = u; a.download = 'site_screen_' + (last.zip || 'site') + '.csv';
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(u); a.remove(); }, 400);
+    } catch (e) { alert('Export failed: ' + (e && e.message)); }
+  }
+
+  function addButton() {
+    if (document.getElementById('rb-screen')) return true;
+    var all = document.querySelectorAll('button.rbtn'), hostBtn = null;
+    for (var i = 0; i < all.length; i++) {
+      var oc = all[i].getAttribute('onclick') || '';
+      if (/openSitePreQual|OmegaSubstation|openGridPreQual/.test(oc)) { hostBtn = all[i]; break; }
+    }
+    if (!hostBtn || !hostBtn.parentNode) return false;
+    var b = document.createElement('button');
+    b.className = 'rbtn';
+    b.id = 'rb-screen';
+    b.title = 'Site Pre-Screen \u2014 from a ZIP anywhere in the US: serving utility, retail rates, ' +
+              'solar resource, PV yield and nearby substations, with every source named';
+    b.innerHTML = '<span class="rb-ico">\u25CE</span><span class="rb-lbl">Site<br>Pre-Screen</span>';
+    b.onclick = function () { try { open(); } catch (e) { console.error(TAG, e); } };
+    /* Insert AFTER the whole .rbtn-wrap, never inside it. A wrapped button
+       shares its parent with a dropdown caret and an absolutely positioned
+       flyout; dropping a sibling in there lands the new button between the
+       button and its caret, where the panel clips it. */
+    var anchor = (hostBtn.closest && hostBtn.closest('.rbtn-wrap')) || hostBtn;
+    anchor.parentNode.insertBefore(b, anchor.nextSibling);
+    return true;
+  }
+
+  window.OmegaScreen = {
+    engine: E, open: open, close: close,
+    run: function (input, opts) {
+      return E.screen(input, opts).then(function (r) { last = r; return r; });
+    },
+    result: function () { return last; }
+  };
+
+  var n = 0, iv = setInterval(function () {
+    if (addButton() || ++n > 60) {
+      clearInterval(iv);
+      if (window.console) console.info(TAG + ' ready \u2014 Analyze \u203a Site Pre-Screen, or OmegaScreen.open()');
+    }
+  }, 500);
 })();
 
 </script>
