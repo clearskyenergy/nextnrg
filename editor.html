@@ -2061,6 +2061,7 @@ window.onerror = function(msg, src, line, col, err) {
         <button class="rbtn" onclick="openScorePanel()" title="Interconnection-Ease site score — utility, capacity, permitting, queue, land"><span class="rb-ico">◎</span><span class="rb-lbl">Site<br>Score</span></button>
         <button class="rbtn" onclick="rbRun(openDerAnalysis)" title="DER generation + revenue waterfall (solar/wind/gen → data center → PJM value stack)"><span class="rb-ico">⚡</span><span class="rb-lbl">DER<br>Generation</span></button>
         <button class="rbtn" onclick="rbRun(openNonExportCalc)" title="How much additional solar fits under a never-export ceiling for a given BESS size, simulated hour-by-hour against your 8760 load"><span class="rb-ico" style="color:#4ADE80">☀</span><span class="rb-lbl">Non-Export<br>Headroom</span></button>
+        <button class="rbtn" onclick="rbRun(openPriceDecks)" title="Price Decks &mdash; import nodal DA/RT energy and ancillary (RegUp/RegDn/RRS/ECRS/Non-Spin) price series, bound to a settlement point. Reusable across scenarios."><span class="rb-ico" style="color:#60A5FA">&#9783;</span><span class="rb-lbl">Price<br>Decks</span></button>
         <button class="rbtn" onclick="rbRun(openEnergyBalance)" title="Site energy balance: generation vs. consumption vs. grid reliance across all placed systems"><span class="rb-ico">⚖</span><span class="rb-lbl">Energy<br>Balance</span></button>
       </div>
       <div class="rpanel-cap">Assessment</div>
@@ -6397,6 +6398,9 @@ const S={
   /* --- Patch 3: meteo + equipment ----------------------------------- */
   meteo:null,             /* {source,lat,lng,ghi,poa,acAnnual,pr,...}  */
   eqSel:{},               /* picker: {container, pcs} keys             */
+  /* Named nodal / ancillary price series, keyed by deck id. Project data:
+     a deck is referenced by scenarios and must survive a reload.         */
+  priceDecks:{},
   /* Per-unit price the user typed on the cost sheet, keyed by model.
      This lived on window._ceVendorOverride, which is not project data:
      it survived neither a reload nor a project switch, so an entered
@@ -23519,6 +23523,11 @@ async function saveProject(){
       /* Entered equipment prices are project data. Without this the cost
          sheet reverted to the $/kWh benchmark on every reload. */
       vendorOverride: S.vendorOverride || null,
+      /* Price decks are project data. An 8760 x 7 products is large, so
+         only the metadata and series descriptors are guaranteed here --
+         see _pdStripForSave for what is dropped when it will not fit. */
+      priceDecks: (typeof _pdStripForSave==='function')
+                    ? _pdStripForSave(S.priceDecks) : (S.priceDecks || null),
       // Geo-anchor every placed element/conduit to real lat/lng so that on
       // reload they land back on the exact same spot of the satellite image
       // regardless of window/canvas size. Only possible when we have a map
@@ -23653,6 +23662,9 @@ async function _loadProject(id){
     S.vendorOverride = (d.vendorOverride && typeof d.vendorOverride==='object')
                          ? d.vendorOverride : {};
     window._ceVendorOverride = S.vendorOverride;
+    /* Same reasoning as vendorOverride: reset to {} when the project has
+       none, so decks cannot leak from the previously open project. */
+    S.priceDecks = (d.priceDecks && typeof d.priceDecks==='object') ? d.priceDecks : {};
     if(d.wizMode && typeof _wizMode !== 'undefined') {
       _wizMode = d.wizMode;
       _wizModeConfirmed = d.wizMode === 'BTM' || d.wizMode === 'FOM' ||
@@ -33164,11 +33176,55 @@ function buildBOM() {
     'EV-FEEDER':{ condSize:'3" PVC Sch40', label:'EV Feeder (xfmr→panel)',  conductors:3, condWire:'4/0 AL',      gnd:'4 AWG', wireType:'XHHW-2 AL (wet-rated)', trench:true },
     'EV-BRANCH':{ condSize:'2" PVC Sch40', label:'EV Branch (panel→charger)',conductors:3, condWire:'3/0 CU',      gnd:'6 AWG', wireType:'THWN-2 CU (wet-rated)', trench:true },
     'EV-SPARE': { condSize:'3" PVC Sch40', label:'EV Spare / future-proof',    conductors:0, condWire:'',            gnd:'',      wireType:'(capped — no conductors)', trench:true, spare:true },
+
+    /* ── Level 2 legend ──────────────────────────────────────────────
+       The L2 drawing tools create these two, and neither was in this
+       table, so every conduit run on a Level 2 job was skipped and the
+       utility sheet went out with empty Conduit & Cable rows.
+       240V single phase pulls two current-carrying conductors plus a
+       ground, not the three a 3-phase feeder needs. */
+    'L2-INT':    { condSize:'3/4" EMT',      label:'L2 Interior (240V 1\u00D8)',
+                   conductors:2, condWire:'8 AWG',  gnd:'10 AWG', wireType:'THHN CU', trench:false },
+    'L2-TRENCH': { condSize:'2" PVC Sch40',  label:'L2 Trench (panel\u2192EVSE)',
+                   conductors:2, condWire:'8 AWG',  gnd:'10 AWG', wireType:'THWN-2 CU (wet-rated)', trench:true },
+
+    /* ── DCFC legend, short ids ──────────────────────────────────────
+       _extendCtypes() adds MAIN / FEEDER / BRANCH / FP / FP-SPARE
+       alongside the EV-* ids. Same runs, different key. */
+    'MAIN':      { condSize:'3" PVC Sch40',  label:'Main (pole\u2192transformer)',
+                   conductors:3, condWire:'350 kcmil AL', gnd:'4 AWG', wireType:'XHHW-2 AL (wet-rated)', trench:true },
+    'FEEDER':    { condSize:'3" PVC Sch40',  label:'Feeder (xfmr\u2192panel)',
+                   conductors:3, condWire:'4/0 AL',       gnd:'4 AWG', wireType:'XHHW-2 AL (wet-rated)', trench:true },
+    'BRANCH':    { condSize:'2" PVC Sch40',  label:'Branch (panel\u2192charger)',
+                   conductors:3, condWire:'3/0 CU',       gnd:'6 AWG', wireType:'THWN-2 CU (wet-rated)', trench:true },
+    'FP':        { condSize:'3" PVC Sch40',  label:'Future proofing (charger\u2192future)',
+                   conductors:0, condWire:'', gnd:'', wireType:'(capped \u2014 no conductors)', trench:true, spare:true },
+    'FP-SPARE':  { condSize:'2" PVC Sch40',  label:'Future proofing spare',
+                   conductors:0, condWire:'', gnd:'', wireType:'(capped \u2014 no conductors)', trench:true, spare:true },
+
+    /* Anything drawn with the Custom tool still gets priced. */
+    'custom':    { condSize:'2" PVC Sch40',  label:'Custom conduit run',
+                   conductors:3, condWire:wg.gauge, gnd:'6 AWG', wireType:'THWN-2 CU (wet-rated)', trench:false },
   };
 
+  /* A run whose type isn't in the table above used to be dropped without
+     a word. Price it on a generic plan instead: a run costed on a
+     fallback rate is a rounding error, a run that silently isn't there
+     is a submission with no conduit in it. */
+  function _planFor(type){
+    if(CONDUIT_PLAN[type]) return CONDUIT_PLAN[type];
+    var t = String(type||'').toUpperCase();
+    var buried = /UG|TRENCH|MAIN|FEEDER|BRANCH|FP|MV/.test(t);
+    var spare  = /SPARE|FP/.test(t);
+    return { condSize:'2" PVC Sch40', label:(type||'Conduit')+' run',
+             conductors:(spare?0:3), condWire:(spare?'':wg.gauge),
+             gnd:(spare?'':'6 AWG'),
+             wireType:(spare?'(capped \u2014 no conductors)':'THWN-2 CU'),
+             trench:buried, spare:spare, _fallback:true };
+  }
+
   Object.keys(byType).forEach(function(type){
-    var plan = CONDUIT_PLAN[type];
-    if(!plan) return;
+    var plan = _planFor(type);
     var ft = byType[type].ft;
     var runs = byType[type].runs;
     if(ft <= 0) return;
@@ -47104,10 +47160,13 @@ window.renderFreqReg = renderFreqReg;
       <div id="vw-pills" style="display:flex;gap:3px"></div>
       <button onclick="closeViabilityWorkflow()" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#fff;border-radius:5px;padding:4px 11px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit">✕ Close</button>
     </div>
+    <!-- SCENARIO BAR -->
+    <div id="vw-scenario-bar" style="background:#0B1E35;border-bottom:1px solid #243B55;display:flex;align-items:center;gap:6px;padding:7px 14px;flex-shrink:0;overflow-x:auto"></div>
     <!-- PHASE TABS -->
     <div id="vw-tabs" style="background:#0D1B2A;border-bottom:1px solid #243B55;display:flex;overflow-x:auto;flex-shrink:0;padding:0 4px"></div>
     <!-- BODY -->
-    <div style="display:flex;flex:1;overflow:hidden">
+    <div id="vw-body-wrap" style="display:flex;flex:1;overflow:hidden;position:relative">
+    <div id="vw-compare" style="display:none"></div>
       <div id="vw-panel" style="flex:1;overflow-y:auto;padding:18px 22px"></div>
       <!-- SIDEBAR -->
       <div style="width:210px;background:#0D1B2A;border-left:1px solid #243B55;overflow-y:auto;padding:12px;flex-shrink:0">
@@ -47202,8 +47261,348 @@ var ST={
 function st(s){return ST[s]||ST.pending;}
 
 // ── Persist ──────────────────────────────────────────────────
-function save(){try{localStorage.setItem('vw_d',JSON.stringify(VW.data));localStorage.setItem('vw_s',JSON.stringify(VW.scores));localStorage.setItem('vw_f',JSON.stringify(VW.fin));}catch(e){}}
-function load(){try{var d=localStorage.getItem('vw_d');if(d)VW.data=JSON.parse(d);var s=localStorage.getItem('vw_s');if(s)VW.scores=JSON.parse(s);var f=localStorage.getItem('vw_f');if(f)VW.fin=JSON.parse(f);}catch(e){}}
+/* ══════════════════════════════════════════════════════════════════════
+   SCENARIO STORE
+
+   This was three fixed localStorage keys -- 'vw_d', 'vw_s', 'vw_f' -- with
+   no scenario id AND no project id. Two consequences, one of them silent
+   and worse than the reported symptom:
+
+     1. Every run overwrote the last, so a project could hold exactly one
+        financial case. Comparing a tolling deal against merchant meant
+        re-typing the whole workflow and losing the first.
+
+     2. The record was per-BROWSER, not per-project. Opening a second
+        project inherited the first project's CapEx, revenue and gate
+        decisions, with nothing on screen to say so. That is data
+        corruption, not a missing feature, and it is why this is keyed by
+        project even though only scenarios were asked for.
+
+   Layout:
+     omega.vw.<projectId> = {
+       activeId,
+       scenarios: { <id>: { name, createdAt, updatedAt, locked,
+                            phase, data, scores, fin } }
+     }
+
+   `locked` exists because a scenario that has been sent to a customer
+   must not drift silently afterwards. Locked scenarios reject writes and
+   say so rather than failing quietly.
+   ══════════════════════════════════════════════════════════════════════ */
+var VW_ROOT = 'omega.vw';
+var VW_LEGACY = ['vw_d','vw_s','vw_f'];
+
+/* Unsaved projects still need somewhere to work. They get their own bucket
+   rather than a shared one, so an unsaved sketch cannot contaminate a real
+   project -- which is the bug being fixed, not a new instance of it. */
+function _vwProjKey(){
+  var pid = (typeof _projectId !== 'undefined' && _projectId) ? _projectId : '__unsaved__';
+  return VW_ROOT + '.' + pid;
+}
+function _vwNewId(){ return 'sc_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+function _vwBlankScenario(name){
+  var now = Date.now();
+  return { name: name || 'Base Case', createdAt: now, updatedAt: now,
+           locked: false, phase: 0, data: {}, scores: {}, fin: {} };
+}
+
+/* Read the whole project record, migrating the legacy flat keys on first
+   touch. Migration runs once and only into a project that has no record
+   yet, so it cannot overwrite scenarios created after the upgrade. */
+function _vwReadStore(){
+  var store = null;
+  try{ store = JSON.parse(localStorage.getItem(_vwProjKey()) || 'null'); }catch(e){ store = null; }
+  if(store && store.scenarios && Object.keys(store.scenarios).length) return store;
+
+  store = { activeId:null, scenarios:{} };
+  /* Legacy migration: fold the old single record into a first scenario so
+     nobody loses the workflow they had open before this shipped. */
+  var legacy = null;
+  try{
+    var d = localStorage.getItem('vw_d'), sc = localStorage.getItem('vw_s'), f = localStorage.getItem('vw_f');
+    if(d || sc || f){
+      legacy = _vwBlankScenario('Base Case');
+      if(d)  legacy.data   = JSON.parse(d)  || {};
+      if(sc) legacy.scores = JSON.parse(sc) || {};
+      if(f)  legacy.fin    = JSON.parse(f)  || {};
+      legacy.migratedFrom = 'pre-scenario single record';
+    }
+  }catch(e){ legacy = null; }
+
+  var first = legacy || _vwBlankScenario('Base Case');
+  var id = _vwNewId();
+  store.scenarios[id] = first;
+  store.activeId = id;
+  _vwWriteStore(store);
+  /* Legacy keys are left in place deliberately: if this build is rolled
+     back, the old workflow still opens. They are read only when a project
+     has no scenarios at all, so they cannot resurrect later. */
+  return store;
+}
+
+function _vwWriteStore(store){
+  try{ localStorage.setItem(_vwProjKey(), JSON.stringify(store)); }catch(e){}
+}
+
+function vwStore(){ return _vwReadStore(); }
+function vwActiveId(){ var st=_vwReadStore(); return st.activeId; }
+function vwActive(){
+  var st=_vwReadStore();
+  return st.scenarios[st.activeId] || null;
+}
+function vwScenarioList(){
+  var st=_vwReadStore();
+  return Object.keys(st.scenarios).map(function(id){
+    var sc=st.scenarios[id];
+    return { id:id, name:sc.name, locked:!!sc.locked,
+             updatedAt:sc.updatedAt, active:(id===st.activeId) };
+  }).sort(function(a,b){ return (a.createdAt||0)-(b.createdAt||0) || a.name.localeCompare(b.name); });
+}
+
+/* Persist the in-memory VW into the active scenario. A locked scenario is
+   read-only: the write is refused and the caller is told once, rather than
+   the edit vanishing on the next reload. */
+var _vwLockWarned = false;
+function save(){
+  var st = _vwReadStore();
+  var sc = st.scenarios[st.activeId];
+  if(!sc) return;
+  if(sc.locked){
+    if(!_vwLockWarned){
+      _vwLockWarned = true;
+      try{ alert('"' + sc.name + '" is locked, so this change was not saved.\n\n'
+        + 'Unlock it, or duplicate it to a new scenario to keep editing.'); }catch(e){}
+    }
+    return;
+  }
+  sc.phase  = VW.phase;
+  sc.data   = VW.data;
+  sc.scores = VW.scores;
+  sc.fin    = VW.fin;
+  sc.updatedAt = Date.now();
+  _vwWriteStore(st);
+}
+
+function load(){
+  var st = _vwReadStore();
+  var sc = st.scenarios[st.activeId];
+  if(!sc) return;
+  VW.data   = sc.data   || {};
+  VW.scores = sc.scores || {};
+  VW.fin    = sc.fin    || {};
+  VW.phase  = sc.phase  || 0;
+  _vwLockWarned = false;
+}
+
+/* ---- scenario operations ------------------------------------------- */
+
+function vwScenarioSwitch(id){
+  var st=_vwReadStore();
+  if(!st.scenarios[id]) return;
+  if(st.activeId && st.scenarios[st.activeId] && !st.scenarios[st.activeId].locked){
+    /* Flush the current one before leaving it. */
+    var cur=st.scenarios[st.activeId];
+    cur.phase=VW.phase; cur.data=VW.data; cur.scores=VW.scores; cur.fin=VW.fin;
+    cur.updatedAt=Date.now();
+  }
+  st.activeId=id; _vwWriteStore(st);
+  load(); vwRerenderAll();
+}
+
+function vwScenarioNew(name){
+  var st=_vwReadStore();
+  var nm = name || window.prompt('Name the new scenario:', 'Scenario ' + (Object.keys(st.scenarios).length+1));
+  if(nm===null) return;
+  nm = String(nm).trim() || 'Untitled';
+  var id=_vwNewId();
+  st.scenarios[id]=_vwBlankScenario(nm);
+  st.activeId=id; _vwWriteStore(st);
+  load(); vwRerenderAll();
+}
+
+/* Duplicate is how you branch a case -- take the shipped one, copy it,
+   change the assumption. Always unlocked, because the point is to edit it. */
+function vwScenarioDuplicate(id){
+  var st=_vwReadStore();
+  var srcId = id || st.activeId;
+  var src = st.scenarios[srcId]; if(!src) return;
+  var nm = window.prompt('Name for the copy:', src.name + ' (copy)');
+  if(nm===null) return;
+  var copy = JSON.parse(JSON.stringify(src));
+  copy.name = String(nm).trim() || (src.name + ' (copy)');
+  copy.createdAt = copy.updatedAt = Date.now();
+  copy.locked = false;
+  copy.copiedFrom = src.name;
+  var nid=_vwNewId();
+  st.scenarios[nid]=copy; st.activeId=nid; _vwWriteStore(st);
+  load(); vwRerenderAll();
+}
+
+function vwScenarioRename(id){
+  var st=_vwReadStore();
+  var sid = id || st.activeId;
+  var sc = st.scenarios[sid]; if(!sc) return;
+  var nm = window.prompt('Rename scenario:', sc.name);
+  if(nm===null) return;
+  sc.name = String(nm).trim() || sc.name;
+  sc.updatedAt = Date.now();
+  _vwWriteStore(st); vwRerenderAll();
+}
+
+function vwScenarioDelete(id){
+  var st=_vwReadStore();
+  var sid = id || st.activeId;
+  var sc = st.scenarios[sid]; if(!sc) return;
+  if(Object.keys(st.scenarios).length<=1){
+    alert('This is the only scenario. Create another before deleting this one.');
+    return;
+  }
+  if(sc.locked){ alert('"'+sc.name+'" is locked. Unlock it first if you really mean to delete it.'); return; }
+  if(!confirm('Delete scenario "'+sc.name+'"? This cannot be undone.')) return;
+  delete st.scenarios[sid];
+  if(st.activeId===sid) st.activeId=Object.keys(st.scenarios)[0];
+  _vwWriteStore(st); load(); vwRerenderAll();
+}
+
+function vwScenarioLock(id){
+  var st=_vwReadStore();
+  var sid = id || st.activeId;
+  var sc = st.scenarios[sid]; if(!sc) return;
+  sc.locked = !sc.locked; sc.updatedAt=Date.now();
+  _vwLockWarned = false;
+  _vwWriteStore(st); vwRerenderAll();
+}
+
+function vwRerenderAll(){
+  try{ if(typeof renderScenarioBar==='function') renderScenarioBar(); }catch(e){}
+  try{ if(typeof renderTabs==='function') renderTabs(); }catch(e){}
+  try{ if(typeof renderPhase==='function') renderPhase(VW.phase); }catch(e){}
+  try{ if(typeof renderScores==='function') renderScores(); }catch(e){}
+  try{ if(typeof renderDecision==='function') renderDecision(); }catch(e){}
+}
+
+window.vwScenarioSwitch=vwScenarioSwitch; window.vwScenarioNew=vwScenarioNew;
+window.vwScenarioDuplicate=vwScenarioDuplicate; window.vwScenarioRename=vwScenarioRename;
+window.vwScenarioDelete=vwScenarioDelete; window.vwScenarioLock=vwScenarioLock;
+window.vwScenarioList=vwScenarioList; window.vwActive=vwActive; window.vwStore=vwStore;
+
+/* ---- scenario bar -------------------------------------------------- */
+function renderScenarioBar(){
+  var bar=document.getElementById('vw-scenario-bar'); if(!bar) return;
+  var list=vwScenarioList(); var act=vwActive();
+  var pid=(typeof _projectId!=='undefined' && _projectId) ? _projectId : null;
+  var opts=list.map(function(x){
+    return '<option value="'+x.id+'"'+(x.active?' selected':'')+'>'
+      + (x.locked?'\u25a0 ':'') + _vwEsc(x.name) + '</option>';
+  }).join('');
+  var btn=function(lbl,fn,title,extra){
+    return '<button onclick="'+fn+'" title="'+title+'" style="background:rgba(255,255,255,.06);'
+      +'border:1px solid rgba(255,255,255,.14);color:#8BA3C4;border-radius:5px;padding:4px 8px;'
+      +'cursor:pointer;font-size:10px;font-weight:700;font-family:inherit;white-space:nowrap;'
+      +(extra||'')+'">'+lbl+'</button>';
+  };
+  bar.innerHTML =
+     '<span style="font-size:9px;font-weight:700;color:#C5A55A;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Scenario</span>'
+    +'<select onchange="vwScenarioSwitch(this.value)" style="background:#0B1E35;border:1px solid #243B55;'
+      +'color:#E8F0FE;border-radius:5px;padding:4px 8px;font-size:11px;font-family:inherit;min-width:180px">'+opts+'</select>'
+    +btn('+ New','vwScenarioNew()','Start a new, empty scenario')
+    +btn('\u29c9 Duplicate','vwScenarioDuplicate()','Copy this scenario and edit the copy')
+    +btn('\u270e Rename','vwScenarioRename()','Rename this scenario')
+    +(act && act.locked
+        ? btn('\ud83d\udd12 Locked','vwScenarioLock()','Unlock to allow edits',
+              'color:#F59E0B;border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.10)')
+        : btn('\ud83d\udd13 Lock','vwScenarioLock()','Lock so this case cannot change after it is sent out'))
+    +btn('\u2696 Compare','vwCompare()','Compare every scenario side by side')
+    +btn('\u2715','vwScenarioDelete()','Delete this scenario','color:#EF4444;border-color:rgba(239,68,68,.3)')
+    +'<span style="flex:1"></span>'
+    +'<span style="font-size:8.5px;color:'+(pid?'#6B7280':'#F59E0B')+';white-space:nowrap" title="'
+      +(pid?'Scenarios are stored against this project':'Save the project to bind these scenarios to it')+'">'
+      +(pid?('project '+_vwEsc(String(pid).slice(0,10))):'unsaved project')+'</span>';
+}
+function _vwEsc(t){ return String(t==null?'':t).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+window.renderScenarioBar=renderScenarioBar;
+
+/* ---- side-by-side compare ------------------------------------------ */
+/* Reads each scenario's stored fin block. calcFin() writes gross/net/pb/npv/
+   irr there on every edit, so a scenario that has been opened once already
+   carries its numbers and does not need recomputing here. */
+function vwCompare(){
+  var st=_vwReadStore();
+  var ids=Object.keys(st.scenarios);
+  var host=document.getElementById('vw-compare');
+  if(!host) return;
+  var fmt=function(n){ return (n==null||!isFinite(n))?'\u2014':'$'+Math.round(n).toLocaleString(); };
+  var fyr=function(n){ return (n==null||!isFinite(n)||n>=99)?'\u2014':n.toFixed(1)+' yr'; };
+  var fpc=function(n){ return (n==null||!isFinite(n))?'\u2014':(n*100).toFixed(1)+'%'; };
+
+  var ROWS=[
+    ['Mode',        function(sc){ var m=(sc.data||{}).p2_path_final; return m||'\u2014'; }],
+    ['Market',      function(sc){ return (sc.data||{}).p4_market||'\u2014'; }],
+    ['TSP / DSP',   function(sc){ var k=(sc.data||{}).p4_tsp;
+                      return (k && typeof TX_TSP!=='undefined' && TX_TSP[k]) ? TX_TSP[k].name : (k||'\u2014'); }],
+    ['Settlement pt',function(sc){ return (sc.data||{}).p4_node||'\u2014'; }],
+    ['BESS kW',     function(sc){ var v=+(sc.data||{}).p3_kw; return v?v.toLocaleString():'\u2014'; }],
+    ['BESS kWh',    function(sc){ var v=+(sc.data||{}).p3_kwh; return v?v.toLocaleString():'\u2014'; }],
+    ['Gross CapEx', function(sc){ return fmt((sc.fin||{}).gross); }],
+    ['Net CapEx',   function(sc){ return fmt((sc.fin||{}).net); }],
+    ['Annual rev',  function(sc){ return fmt((sc.fin||{}).rev); }],
+    ['Annual OpEx', function(sc){ return fmt((sc.fin||{}).opex); }],
+    ['Net annual',  function(sc){ return fmt((sc.fin||{}).netAnn); }],
+    ['Payback',     function(sc){ return fyr((sc.fin||{}).pb); }],
+    ['NPV',         function(sc){ return fmt((sc.fin||{}).npv); }],
+    ['IRR',         function(sc){ return fpc((sc.fin||{}).irr); }],
+    ['Decision',    function(sc){ var d=(sc.fin||{}).decision;
+                      return d ? (typeof st!=='undefined' && ST[d] ? ST[d].l : d) : '\u2014'; }],
+  ];
+
+  var head='<th style="text-align:left;padding:7px 9px;font-size:9px;color:#C5A55A;'
+    +'text-transform:uppercase;letter-spacing:.5px;position:sticky;left:0;background:#0D1B2A">Metric</th>'
+    + ids.map(function(id){
+        var sc=st.scenarios[id];
+        return '<th style="padding:7px 9px;font-size:10px;color:'+(id===st.activeId?'#fff':'#8BA3C4')
+          +';white-space:nowrap;border-bottom:2px solid '+(id===st.activeId?'#C5A55A':'transparent')+'">'
+          +(sc.locked?'\ud83d\udd12 ':'')+_vwEsc(sc.name)+'</th>';
+      }).join('');
+
+  var body=ROWS.map(function(r,ri){
+    var cells=ids.map(function(id){
+      return '<td style="padding:6px 9px;font-size:10.5px;color:#E8F0FE;white-space:nowrap;'
+        +'font-family:\'IBM Plex Mono\',monospace">'+r[1](st.scenarios[id])+'</td>';
+    }).join('');
+    return '<tr style="background:'+(ri%2?'rgba(255,255,255,.02)':'transparent')+'">'
+      +'<td style="padding:6px 9px;font-size:10px;color:#8BA3C4;position:sticky;left:0;'
+      +'background:'+(ri%2?'#101E2E':'#0D1B2A')+'">'+r[0]+'</td>'+cells+'</tr>';
+  }).join('');
+
+  host.innerHTML =
+     '<div style="position:absolute;inset:0;background:rgba(7,14,26,.96);z-index:20;'
+      +'display:flex;flex-direction:column;padding:18px 22px;overflow:hidden">'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-shrink:0">'
+      +'<div style="flex:1"><div style="font-size:13px;font-weight:800;color:#fff">Scenario Comparison</div>'
+      +'<div style="font-size:9.5px;color:#8BA3C4">'+ids.length+' scenario'+(ids.length===1?'':'s')
+      +' \u00b7 figures are as last computed in each scenario, not recomputed here</div></div>'
+      +'<button onclick="vwCompareClose()" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);'
+      +'color:#fff;border-radius:5px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit">\u2715 Close</button>'
+    +'</div>'
+    +'<div style="flex:1;overflow:auto;border:1px solid #243B55;border-radius:8px">'
+      +'<table style="border-collapse:collapse;width:100%"><thead><tr style="background:#0D1B2A">'+head+'</tr></thead>'
+      +'<tbody>'+body+'</tbody></table>'
+    +'</div>'
+    +(ids.length===1 ? '<div style="font-size:9.5px;color:#F59E0B;margin-top:9px;flex-shrink:0">'
+        +'Only one scenario exists \u2014 duplicate it and change an assumption to get a comparison.</div>' : '')
+    +'<div style="font-size:8.5px;color:#6B7280;margin-top:9px;flex-shrink:0;line-height:1.5">'
+      +'A scenario shows \u2014 for a metric it has not computed yet. Open that scenario and visit '
+      +'Phase 7 to populate it.</div>'
+    +'</div>';
+  host.style.display='block';
+}
+function vwCompareClose(){
+  var host=document.getElementById('vw-compare');
+  if(host){ host.style.display='none'; host.innerHTML=''; }
+}
+window.vwCompare=vwCompare; window.vwCompareClose=vwCompareClose;
 function gv(k){return VW.data[k]||'';}
 function sv(k,v){VW.data[k]=v;save();renderScores();renderDecision();}
 
@@ -47381,10 +47780,27 @@ window.vwAutoFillFromAddress=vwAutoFillFromAddress;
 // ── Open/Close ───────────────────────────────────────────────
 window.openViabilityWorkflow=function(){
   document.getElementById('viability-modal').style.display='block';
-  load();renderTabs();renderPhase(VW.phase);renderScores();renderDecision();
+  /* load() resolves the active scenario for THIS project. Before scenarios
+     existed it read a browser-global record, so opening the workflow on a
+     second project showed the first project's numbers. */
+  load();
+  if(typeof vwCompareClose==='function') vwCompareClose();
+  if(typeof renderScenarioBar==='function') renderScenarioBar();
+  renderTabs();renderPhase(VW.phase);renderScores();renderDecision();
 };
 window.closeViabilityWorkflow=function(){document.getElementById('viability-modal').style.display='none';};
-window.vwReset=function(){if(!confirm('Reset all viability data?'))return;VW={phase:0,data:{},scores:{},fin:{}};save();renderTabs();renderPhase(0);renderScores();renderDecision();};
+/* Reset clears THIS scenario, not every scenario in the project -- the old
+   behaviour would have wiped the whole comparison set from one button. */
+window.vwReset=function(){
+  var act=(typeof vwActive==='function')?vwActive():null;
+  var nm=act?act.name:'this scenario';
+  if(act && act.locked){ alert('"'+nm+'" is locked. Unlock it before resetting.'); return; }
+  if(!confirm('Reset "'+nm+'"?\n\nOther scenarios in this project are not affected.')) return;
+  VW.phase=0; VW.data={}; VW.scores={}; VW.fin={};
+  save();
+  if(typeof renderScenarioBar==='function') renderScenarioBar();
+  renderTabs();renderPhase(0);renderScores();renderDecision();
+};
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getElementById('viability-modal').style.display==='block')closeViabilityWorkflow();});
 
 // ── Nav ──────────────────────────────────────────────────────
@@ -107756,5 +108172,562 @@ table.e3-tbl td{ white-space:normal }
 
 </script>
 
+<input type="file" id="pd-file" accept=".csv,.txt,.tsv" style="display:none"
+       onchange="pdImportFile(this.files[0], this.getAttribute('data-deck'))">
+<div id="pd-mapper" style="display:none"></div>
+<div id="pd-modal" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(7,14,26,.93);backdrop-filter:blur(6px);overflow:hidden">
+  <div style="display:flex;flex-direction:column;height:100vh;max-width:900px;margin:0 auto">
+    <div style="background:linear-gradient(135deg,#0B1E35,#1B4F8A);border-bottom:2px solid #60A5FA;padding:11px 18px;display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <div style="font-size:20px">&#9783;</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:800;color:#fff;letter-spacing:.3px">Price Decks</div>
+        <div style="font-size:9px;color:#60A5FA;letter-spacing:.5px;margin-top:1px">Nodal energy &amp; ancillary price series by settlement point</div>
+      </div>
+      <button onclick="closePriceDecks()" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#fff;border-radius:5px;padding:4px 11px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit">&#10005; Close</button>
+    </div>
+    <div id="pd-body" style="flex:1;overflow-y:auto;padding:16px 20px"></div>
+  </div>
+</div>
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   PRICE DECKS  --  nodal energy + ancillary price series
+
+   The tool already had a price importer: DER_8760_KINDS.rtp, with a column
+   picker that scores candidate columns and makes the user confirm which one
+   is the price rather than grabbing the column next to it. That picker is
+   the right idea and this reuses its parser wholesale. What it could not do
+   is the thing an ERCOT project needs:
+
+     - it read ONE series ($/kWh), where a market model needs seven
+       (DA, RT, RegUp, RegDown, RRS, ECRS, Non-Spin);
+     - it was retail-shaped -- a flat $/kWh rate, not a price AT A NAMED
+       SETTLEMENT POINT;
+     - it wrote to a window global, so nothing was reusable across
+       scenarios and nothing survived a reload.
+
+   A deck is therefore a NAMED, project-stored object bound to a settlement
+   point, holding one series per product, referenced by id from a scenario.
+
+   Two decisions worth stating because they are the ones that bite:
+
+   1. UNITS ARE ASKED, NEVER INFERRED. $/MWh and $/kWh differ by 1000x and
+      both appear in real exports. A wrong guess here does not look wrong --
+      it produces a revenue number that is off by three orders of magnitude
+      and still plausible in a spreadsheet. The importer refuses to pick for
+      you, and warns when the magnitude disagrees with the declared unit.
+
+   2. NEGATIVE PRICES ARE PRESERVED. ERCOT goes deeply negative in West
+      Texas during high-wind, low-load hours, and those hours are exactly
+      when a battery earns by charging. Clamping at zero would delete the
+      charging economics. Any importer that "cleans" negatives is wrong.
+   ══════════════════════════════════════════════════════════════════════ */
+
+var PRICE_PRODUCTS = {
+  da:      {label:'Day-Ahead Energy',   short:'DA',      kind:'energy',    unit:'$/MWh', color:'#60A5FA',
+            hint:'Day-ahead LMP at the settlement point.'},
+  rt:      {label:'Real-Time Energy',   short:'RT',      kind:'energy',    unit:'$/MWh', color:'#38BDF8',
+            hint:'Real-time / SCED LMP at the settlement point.'},
+  regup:   {label:'Reg Up',             short:'RegUp',   kind:'ancillary', unit:'$/MW-h', color:'#4ADE80',
+            hint:'Regulation Up clearing price (MCPC).'},
+  regdn:   {label:'Reg Down',           short:'RegDn',   kind:'ancillary', unit:'$/MW-h', color:'#22C55E',
+            hint:'Regulation Down clearing price (MCPC).'},
+  rrs:     {label:'RRS',                short:'RRS',     kind:'ancillary', unit:'$/MW-h', color:'#F59E0B',
+            hint:'Responsive Reserve Service clearing price.'},
+  ecrs:    {label:'ECRS',               short:'ECRS',    kind:'ancillary', unit:'$/MW-h', color:'#FB923C',
+            hint:'ERCOT Contingency Reserve Service clearing price.'},
+  nonspin: {label:'Non-Spin',           short:'NonSpin', kind:'ancillary', unit:'$/MW-h', color:'#A78BFA',
+            hint:'Non-Spinning Reserve clearing price.'},
+};
+var PRICE_PRODUCT_ORDER = ['da','rt','regup','regdn','rrs','ecrs','nonspin'];
+window.PRICE_PRODUCTS = PRICE_PRODUCTS;
+window.PRICE_PRODUCT_ORDER = PRICE_PRODUCT_ORDER;
+
+/* A full deck is up to 7 x 8,760 numbers, which can exceed the 1 MB
+   Firestore document limit on its own. Rather than fail the whole project
+   save -- which would lose the drawing too -- drop the raw series and keep
+   the deck's identity, metadata and computed statistics. The deck then
+   reloads as a described-but-unloaded deck that says so and offers re-import,
+   which is honest; a half-written series that looked complete would not be. */
+var PD_SAVE_BUDGET = 700000;   /* chars of JSON, well inside the 1 MB doc cap */
+
+function _pdStripForSave(decks){
+  if(!decks) return null;
+  var out={}, budget=PD_SAVE_BUDGET;
+  Object.keys(decks).forEach(function(id){
+    var d=decks[id];
+    var meta={ name:d.name, node:d.node, nodeType:d.nodeType, provider:d.provider,
+               vintage:d.vintage, locked:!!d.locked,
+               createdAt:d.createdAt, updatedAt:d.updatedAt, series:{} };
+    Object.keys(d.series||{}).forEach(function(k){
+      var sr=d.series[k];
+      var descriptor={ unit:sr.unit, rows:sr.rows, intervalMin:sr.intervalMin,
+                       colName:sr.colName, source:sr.source, stats:sr.stats,
+                       importedAt:sr.importedAt };
+      var cost = (sr.hourly ? sr.hourly.length*8 : 0);
+      if(cost <= budget && sr.hourly){
+        descriptor.hourly = sr.hourly; budget -= cost;
+      } else {
+        descriptor.hourly = null;
+        descriptor.dropped = 'series too large to store with the project — re-import to use';
+      }
+      meta.series[k]=descriptor;
+    });
+    out[id]=meta;
+  });
+  return out;
+}
+window._pdStripForSave=_pdStripForSave;
+
+/* Is every assigned series actually loaded? A deck restored past the size
+   budget describes itself correctly but cannot price anything, and the
+   market model must be able to tell the difference. */
+function priceDeckReady(id){
+  var d=priceDeckGet(id); if(!d) return false;
+  var keys=Object.keys(d.series||{});
+  if(!keys.length) return false;
+  return keys.every(function(k){ return d.series[k] && d.series[k].hourly && d.series[k].hourly.length; });
+}
+function priceDeckMissing(id){
+  var d=priceDeckGet(id); if(!d) return [];
+  return Object.keys(d.series||{}).filter(function(k){
+    return !(d.series[k] && d.series[k].hourly && d.series[k].hourly.length); });
+}
+window.priceDeckReady=priceDeckReady; window.priceDeckMissing=priceDeckMissing;
+
+function _pdNewId(){ return 'pd_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function _pdDecks(){ if(!S.priceDecks) S.priceDecks = {}; return S.priceDecks; }
+window._pdDecks = _pdDecks;
+
+function priceDeckList(){
+  var d=_pdDecks();
+  return Object.keys(d).map(function(id){
+    var k=d[id];
+    return { id:id, name:k.name, node:k.node||'', provider:k.provider||'',
+             vintage:k.vintage||'', locked:!!k.locked,
+             products:Object.keys(k.series||{}) };
+  }).sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
+}
+function priceDeckGet(id){ return _pdDecks()[id] || null; }
+window.priceDeckList=priceDeckList; window.priceDeckGet=priceDeckGet;
+
+function priceDeckNew(name){
+  var decks=_pdDecks();
+  var nm = (name!=null) ? name
+         : window.prompt('Name this price deck:',
+             'ERCOT ' + new Date().getFullYear() + ' deck');
+  if(nm===null) return null;
+  var id=_pdNewId();
+  decks[id] = { name:String(nm).trim()||'Untitled deck',
+                node:'', nodeType:'', provider:'', vintage:'',
+                locked:false, createdAt:Date.now(), updatedAt:Date.now(),
+                series:{} };
+  _pdTouch();
+  return id;
+}
+function priceDeckDelete(id){
+  var decks=_pdDecks(); var d=decks[id]; if(!d) return;
+  if(d.locked){ alert('"'+d.name+'" is locked. Unlock it before deleting.'); return; }
+  if(!confirm('Delete price deck "'+d.name+'"?\n\nAny scenario referencing it will fall back to no deck.')) return;
+  delete decks[id]; _pdTouch();
+}
+/* A deck that has been used to price a scenario sent to a customer must not
+   be re-baselined underneath it -- same reasoning as scenario locks. */
+function priceDeckLock(id){
+  var d=priceDeckGet(id); if(!d) return;
+  d.locked=!d.locked; d.updatedAt=Date.now(); _pdTouch();
+}
+function priceDeckRename(id){
+  var d=priceDeckGet(id); if(!d) return;
+  var nm=window.prompt('Rename price deck:', d.name); if(nm===null) return;
+  d.name=String(nm).trim()||d.name; d.updatedAt=Date.now(); _pdTouch();
+}
+function priceDeckSetMeta(id, field, val){
+  var d=priceDeckGet(id); if(!d) return;
+  if(d.locked){ alert('"'+d.name+'" is locked.'); return; }
+  d[field]=val; d.updatedAt=Date.now(); _pdTouch(true);
+}
+function _pdTouch(quiet){
+  try{ if(typeof omegaSetStale==='function') omegaSetStale(true); }catch(e){}
+  if(!quiet){ try{ if(typeof renderPriceDecks==='function') renderPriceDecks(); }catch(e){} }
+}
+window.priceDeckNew=priceDeckNew; window.priceDeckDelete=priceDeckDelete;
+window.priceDeckLock=priceDeckLock; window.priceDeckRename=priceDeckRename;
+window.priceDeckSetMeta=priceDeckSetMeta;
+
+/* ---- validation ----------------------------------------------------
+   Reports rather than repairs. A deck that silently "fixed" itself would
+   hide exactly the problems that matter (wrong unit, wrong year, a load
+   column picked as a price). Severity: 'error' blocks import, 'warn' is
+   shown and can be accepted. */
+function pdValidateSeries(vals, productKey, unit){
+  var P = PRICE_PRODUCTS[productKey] || {};
+  var out = { errors:[], warnings:[], stats:null };
+  var finite = vals.filter(function(x){ return isFinite(x); });
+  if(!finite.length){ out.errors.push('No numeric values in that column.'); return out; }
+
+  var n = vals.length;
+  var sum=0, min=Infinity, max=-Infinity, neg=0, zero=0;
+  for(var i=0;i<finite.length;i++){
+    var v=finite[i]; sum+=v;
+    if(v<min) min=v; if(v>max) max=v;
+    if(v<0) neg++; if(v===0) zero++;
+  }
+  var avg=sum/finite.length;
+  var interval = (typeof _detect8760Interval==='function') ? _detect8760Interval(n) : 60;
+  var perHour = 60/interval;
+  var expectHours = n/perHour;
+
+  out.stats = { rows:n, finite:finite.length, avg:avg, min:min, max:max,
+                negatives:neg, zeros:zero, intervalMin:interval,
+                hours:expectHours };
+
+  /* Row count vs a year. 8760 / 8784 (leap) / 8736 (52w) are all seen. */
+  if(Math.abs(expectHours-8760) > 48 && Math.abs(expectHours-8784) > 48){
+    if(expectHours < 720){
+      out.errors.push('Only ' + Math.round(expectHours) + ' hours of data — too short to price a year.');
+    } else {
+      out.warnings.push('Series covers ~' + Math.round(expectHours)
+        + ' hours, not a full year (8,760). Partial years will understate annual revenue.');
+    }
+  }
+  if(interval !== 60){
+    out.warnings.push('Detected ' + interval + '-minute intervals. Values are kept at native '
+      + 'resolution; the dispatch model will aggregate rather than assume hourly.');
+  }
+  /* DST: a local-time export loses/gains an hour. Flag it; do not patch it. */
+  if(Math.abs(expectHours-8759)<1 || Math.abs(expectHours-8761)<1){
+    out.warnings.push('Row count is one hour off a standard year — this usually means a '
+      + 'local-time export across a DST boundary. Confirm whether the series is in local '
+      + 'or market time before relying on hour-of-day results.');
+  }
+
+  /* Magnitude vs declared unit. This is the 1000x trap. */
+  var absAvg = Math.abs(avg);
+  if(unit === '$/kWh' && absAvg > 5){
+    out.warnings.push('Average is ' + avg.toFixed(2) + ', which is very high for $/kWh — '
+      + 'this column looks like $/MWh. Check the unit before importing.');
+  }
+  if((unit === '$/MWh' || unit === '$/MW-h') && absAvg > 0 && absAvg < 0.5){
+    out.warnings.push('Average is ' + avg.toFixed(4) + ', which is very low for '
+      + unit + ' — this column looks like $/kWh. Check the unit before importing.');
+  }
+  /* A price column that never goes negative in ERCOT is possible but worth
+     noting; a column that is never negative AND monotonic is a meter read. */
+  if(P.kind === 'energy' && neg === 0){
+    out.warnings.push('No negative prices in this series. ERCOT energy prices do go negative; '
+      + 'if this export was clamped at zero the charging economics will be overstated.');
+  }
+  /* Ancillary MCPCs are non-negative by construction; negatives mean the
+     wrong column was picked. */
+  if(P.kind === 'ancillary' && neg > 0){
+    out.warnings.push(neg.toLocaleString() + ' negative values in an ancillary clearing price. '
+      + 'MCPCs are non-negative — this may be the wrong column.');
+  }
+  if(zero > finite.length*0.9){
+    out.warnings.push('Over 90% of values are zero — likely the wrong column.');
+  }
+  return out;
+}
+window.pdValidateSeries = pdValidateSeries;
+
+/* ---- import: map many columns in one pass --------------------------- */
+var _pdImport = null;   /* {deckId, parsed, fname} */
+
+function pdImportClick(deckId){
+  var d=priceDeckGet(deckId); if(!d) return;
+  if(d.locked){ alert('"'+d.name+'" is locked. Unlock it to import.'); return; }
+  var inp=document.getElementById('pd-file');
+  if(inp){ inp.setAttribute('data-deck', deckId); inp.value=''; inp.click(); }
+}
+function pdImportFile(file, deckId){
+  if(!file) return;
+  var rd=new FileReader();
+  rd.onload=function(ev){
+    var txt=String(ev.target.result||'');
+    var parsed = (typeof _parse8760Candidates==='function')
+                 ? _parse8760Candidates(txt) : {cols:[]};
+    if(!parsed || !parsed.cols.length){
+      alert('No usable numeric column found in that file.');
+      return;
+    }
+    _pdImport = { deckId:deckId, parsed:parsed, fname:file.name };
+    pdRenderMapper();
+  };
+  rd.readAsText(file);
+}
+window.pdImportClick=pdImportClick; window.pdImportFile=pdImportFile;
+
+/* One row per product, each with a column select and a unit select. A wide
+   export maps in a single pass; a single-column file just maps one row and
+   leaves the rest unassigned. */
+function pdRenderMapper(){
+  var host=document.getElementById('pd-mapper'); if(!host||!_pdImport) return;
+  var cols=_pdImport.parsed.cols;
+  var esc=(typeof _omEsc==='function')?_omEsc:function(x){return String(x==null?'':x);};
+
+  var colOpts=function(sel){
+    var o='<option value="">— not in this file —</option>';
+    for(var i=0;i<cols.length;i++){
+      var c=cols[i];
+      o+='<option value="'+c.index+'"'+(String(sel)===String(c.index)?' selected':'')+'>'
+        + esc(c.header) + '  (avg ' + c.avg.toFixed(3) + ', ' + c.count.toLocaleString() + ' rows)</option>';
+    }
+    return o;
+  };
+  /* Pre-select by header text where it is unambiguous. Only a suggestion --
+     the select is still the user's to change, same principle as the
+     existing single-column picker. */
+  var guess={};
+  var PAT={ da:/day.?ahead|\bda\b|dam/i, rt:/real.?time|\brt\b|sced/i,
+            regup:/reg.?up|regulation up/i, regdn:/reg.?d(ow)?n|regulation down/i,
+            rrs:/\brrs\b|responsive/i, ecrs:/\becrs\b|contingency reserve/i,
+            nonspin:/non.?spin|\bnspin\b|\bns\b/i };
+  PRICE_PRODUCT_ORDER.forEach(function(k){
+    for(var i=0;i<cols.length;i++){
+      if(PAT[k] && PAT[k].test(cols[i].header)){ guess[k]=cols[i].index; break; }
+    }
+  });
+
+  var rows=PRICE_PRODUCT_ORDER.map(function(k){
+    var P=PRICE_PRODUCTS[k];
+    var units = P.kind==='energy' ? ['$/MWh','$/kWh'] : ['$/MW-h','$/kW-h'];
+    var uo=units.map(function(u){ return '<option value="'+u+'">'+u+'</option>'; }).join('');
+    return '<tr>'
+      +'<td style="padding:6px 8px;font-size:11px;color:'+P.color+';font-weight:700;white-space:nowrap">'+P.label+'</td>'
+      +'<td style="padding:6px 8px"><select id="pd-col-'+k+'" style="width:100%;background:#0B1626;'
+        +'border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:5px 7px;font-size:11px;'
+        +'font-family:inherit">'+colOpts(guess[k])+'</select></td>'
+      +'<td style="padding:6px 8px"><select id="pd-unit-'+k+'" style="background:#0B1626;'
+        +'border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:5px 7px;font-size:11px;'
+        +'font-family:inherit">'+uo+'</select></td>'
+      +'</tr>';
+  }).join('');
+
+  host.innerHTML =
+     '<div style="position:fixed;inset:0;background:rgba(6,12,22,.85);z-index:100003;display:flex;'
+      +'align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)pdMapperClose()">'
+    +'<div style="background:#0F1D30;border:1px solid #60A5FA;border-radius:12px;max-width:640px;width:100%;'
+      +'max-height:88vh;overflow:auto;padding:18px 20px">'
+    +'<div style="font-size:14px;font-weight:800;color:#60A5FA;margin-bottom:3px">Map columns to products</div>'
+    +'<div style="font-size:10.5px;color:#8FA3B8;margin-bottom:6px">"'+esc(_pdImport.fname)+'" \u2014 '
+      + cols.length + ' numeric column' + (cols.length===1?'':'s') + ' found. '
+      + 'Assign only the products present in this file; the rest stay unassigned and can be '
+      + 'imported later from another file.</div>'
+    +'<div style="font-size:10px;color:#F59E0B;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);'
+      +'border-radius:6px;padding:7px 10px;margin-bottom:12px;line-height:1.5">'
+      +'Set the unit deliberately. $/MWh and $/kWh differ by 1000\u00d7 and both appear in real exports \u2014 '
+      +'a wrong unit here produces a revenue figure that is wrong by three orders of magnitude and still looks plausible.'
+      +'</div>'
+    +'<table style="width:100%;border-collapse:collapse"><thead><tr>'
+      +'<th style="text-align:left;padding:4px 8px;font-size:9px;color:#C5A55A;text-transform:uppercase;letter-spacing:.5px">Product</th>'
+      +'<th style="text-align:left;padding:4px 8px;font-size:9px;color:#C5A55A;text-transform:uppercase;letter-spacing:.5px">Column</th>'
+      +'<th style="text-align:left;padding:4px 8px;font-size:9px;color:#C5A55A;text-transform:uppercase;letter-spacing:.5px">Unit</th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    +'<div id="pd-map-msg" style="margin-top:10px"></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">'
+      +'<button onclick="pdMapperClose()" style="background:none;border:1px solid #1E3A5F;color:#94A3B8;'
+        +'border-radius:6px;padding:8px 14px;font-size:11px;cursor:pointer;font-family:inherit">Cancel</button>'
+      +'<button onclick="pdApplyMapping()" style="background:#1DB954;border:none;color:#052e16;'
+        +'border-radius:6px;padding:8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Import</button>'
+    +'</div></div></div>';
+  host.style.display='block';
+}
+function pdMapperClose(){
+  var h=document.getElementById('pd-mapper');
+  if(h){ h.style.display='none'; h.innerHTML=''; }
+  _pdImport=null;
+}
+window.pdRenderMapper=pdRenderMapper; window.pdMapperClose=pdMapperClose;
+
+function pdApplyMapping(){
+  if(!_pdImport) return;
+  var deck=priceDeckGet(_pdImport.deckId); if(!deck) return;
+  var cols=_pdImport.parsed.cols;
+  var byIndex={}; cols.forEach(function(c){ byIndex[c.index]=c; });
+
+  var staged=[], errors=[], warnings=[];
+  PRICE_PRODUCT_ORDER.forEach(function(k){
+    var cs=document.getElementById('pd-col-'+k);
+    var us=document.getElementById('pd-unit-'+k);
+    if(!cs || !cs.value) return;
+    var col=byIndex[parseInt(cs.value,10)]; if(!col) return;
+    var unit=us?us.value:PRICE_PRODUCTS[k].unit;
+    /* Keep every row including NaN placeholders out, but preserve interior
+       zeros and negatives -- see the note at the top of this module. */
+    var vals=col.arr.filter(function(x){ return isFinite(x); });
+    var v=pdValidateSeries(vals, k, unit);
+    v.errors.forEach(function(e){ errors.push(PRICE_PRODUCTS[k].label+': '+e); });
+    v.warnings.forEach(function(w){ warnings.push(PRICE_PRODUCTS[k].label+': '+w); });
+    staged.push({ key:k, vals:vals, unit:unit, col:col, stats:v.stats });
+  });
+
+  var msg=document.getElementById('pd-map-msg');
+  if(!staged.length){
+    if(msg) msg.innerHTML='<div style="font-size:10.5px;color:#F59E0B">Assign at least one product before importing.</div>';
+    return;
+  }
+  if(errors.length){
+    if(msg) msg.innerHTML='<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);'
+      +'border-radius:6px;padding:8px 10px;font-size:10px;color:#EF4444;line-height:1.6">'
+      +errors.map(function(e){ return '\u2717 '+e; }).join('<br>')+'</div>';
+    return;
+  }
+  /* Warnings are shown once and require a second click to accept, so a unit
+     mismatch cannot be imported by reflex. */
+  if(warnings.length && !window._pdWarnAck){
+    window._pdWarnAck=true;
+    if(msg) msg.innerHTML='<div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);'
+      +'border-radius:6px;padding:8px 10px;font-size:10px;color:#F59E0B;line-height:1.6">'
+      +warnings.map(function(w){ return '\u26a0 '+w; }).join('<br>')
+      +'<div style="margin-top:6px;color:#8FA3B8">Click Import again to accept and continue.</div></div>';
+    return;
+  }
+  window._pdWarnAck=false;
+
+  staged.forEach(function(st){
+    deck.series[st.key] = {
+      hourly: st.vals, unit: st.unit,
+      rows: st.stats.rows, intervalMin: st.stats.intervalMin,
+      colName: st.col.header, source: _pdImport.fname,
+      stats: st.stats, warnings: [], importedAt: Date.now()
+    };
+  });
+  deck.updatedAt=Date.now();
+  pdMapperClose();
+  _pdTouch();
+  if(typeof showBanner==='function'){
+    try{ showBanner('cond',' Imported '+staged.length+' series into "'+deck.name+'".'); }catch(e){}
+  }
+}
+window.pdApplyMapping=pdApplyMapping;
+
+/* ---- forecast adapters ---------------------------------------------
+   A deck can come from a vendor forecast rather than settled history. The
+   provider and vintage are recorded and the deck is lockable, so a scenario
+   pinned to a forecast does not silently re-baseline when a new vintage
+   lands -- which is the whole reason vintage is a field.
+
+   DividendVPP is listed as a provider so decks can be tagged today. A
+   dedicated column mapping for it is NOT implemented, because guessing at
+   another vendor's export schema is how you get a silently mis-mapped deck.
+   Its files import through the generic mapper above, which is safe: the
+   user confirms every column. Wire a named adapter once a sample export is
+   in hand. */
+var PRICE_PROVIDERS = ['', 'ERCOT settled (historical)', 'DividendVPP forecast',
+                       'Internal forecast', 'Broker / consultant curve', 'Other'];
+window.PRICE_PROVIDERS = PRICE_PROVIDERS;
+
+/* ---- manager UI ------------------------------------------------------ */
+function _pdEsc(t){ return String(t==null?'':t).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+function openPriceDecks(){
+  var m=document.getElementById('pd-modal'); if(!m) return;
+  m.style.display='block';
+  renderPriceDecks();
+}
+function closePriceDecks(){
+  var m=document.getElementById('pd-modal'); if(m) m.style.display='none';
+  pdMapperClose();
+}
+window.openPriceDecks=openPriceDecks; window.closePriceDecks=closePriceDecks;
+
+function renderPriceDecks(){
+  var host=document.getElementById('pd-body'); if(!host) return;
+  var decks=priceDeckList();
+
+  if(!decks.length){
+    host.innerHTML='<div style="text-align:center;padding:40px 20px;color:#8FA3B8;font-size:11px;line-height:1.7">'
+      +'<div style="font-size:30px;margin-bottom:10px">\u268c</div>'
+      +'<div style="font-size:12px;font-weight:700;color:#E2EEF9;margin-bottom:5px">No price decks yet</div>'
+      +'A deck holds the hourly price series for one settlement point \u2014 day-ahead and real-time '
+      +'energy, plus the ancillary clearing prices. Decks are stored with the project and can be '
+      +'referenced by any scenario, so a forecast can be priced against the same curves as the base case.'
+      +'<div style="margin-top:14px"><button onclick="priceDeckNew()" style="background:#1DB954;border:none;'
+      +'color:#052e16;border-radius:6px;padding:9px 18px;font-size:11px;font-weight:700;cursor:pointer;'
+      +'font-family:inherit">+ New price deck</button></div></div>';
+    return;
+  }
+
+  var cards=decks.map(function(x){
+    var d=priceDeckGet(x.id);
+    var ready=priceDeckReady(x.id);
+    var missing=priceDeckMissing(x.id);
+
+    var chips=PRICE_PRODUCT_ORDER.map(function(k){
+      var P=PRICE_PRODUCTS[k];
+      var sr=d.series[k];
+      var on=!!sr, loaded=!!(sr && sr.hourly && sr.hourly.length);
+      var bg = !on ? 'rgba(255,255,255,.03)'
+             : loaded ? (P.color+'1F') : 'rgba(245,158,11,.12)';
+      var bc = !on ? 'rgba(255,255,255,.08)'
+             : loaded ? (P.color+'55') : 'rgba(245,158,11,.4)';
+      var fg = !on ? '#4B5A6B' : loaded ? P.color : '#F59E0B';
+      var tip = !on ? P.label+' \u2014 not imported. '+P.hint
+              : loaded ? (P.label+' \u2014 '+sr.rows.toLocaleString()+' rows, '
+                  +sr.unit+', avg '+(sr.stats?sr.stats.avg.toFixed(2):'?')
+                  +(sr.stats&&sr.stats.negatives?(' \u00b7 '+sr.stats.negatives.toLocaleString()+' negative hours'):''))
+              : (P.label+' \u2014 described but not loaded: '+(sr.dropped||'re-import needed'));
+      return '<span title="'+_pdEsc(tip)+'" style="display:inline-block;background:'+bg+';border:1px solid '+bc
+        +';color:'+fg+';border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700;margin:2px 3px 2px 0">'
+        + P.short + (on && !loaded ? ' \u26a0' : '') + '</span>';
+    }).join('');
+
+    var provOpts=PRICE_PROVIDERS.map(function(p){
+      return '<option value="'+_pdEsc(p)+'"'+((d.provider||'')===p?' selected':'')+'>'
+        +(p||'\u2014 provider \u2014')+'</option>'; }).join('');
+
+    var lockBtn = d.locked
+      ? '<button onclick="priceDeckLock(\''+x.id+'\')" title="Unlock to allow re-import" style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);color:#F59E0B;border-radius:5px;padding:4px 9px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">\ud83d\udd12 Locked</button>'
+      : '<button onclick="priceDeckLock(\''+x.id+'\')" title="Lock so a scenario priced off this deck cannot be re-baselined underneath it" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#8FA3B8;border-radius:5px;padding:4px 9px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">\ud83d\udd13 Lock</button>';
+
+    var status = !Object.keys(d.series||{}).length
+        ? '<span style="color:#8FA3B8">No series imported yet</span>'
+      : ready
+        ? '<span style="color:#4ADE80">Ready \u2014 '+Object.keys(d.series).length+' series loaded</span>'
+        : '<span style="color:#F59E0B">'+missing.length+' series described but not loaded \u2014 re-import to price with them</span>';
+
+    return '<div style="border:1px solid '+(d.locked?'rgba(245,158,11,.35)':'#243B55')+';border-radius:9px;'
+      +'background:rgba(255,255,255,.02);padding:13px 15px;margin-bottom:11px">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+        +'<div style="flex:1;min-width:0">'
+          +'<div style="font-size:12.5px;font-weight:800;color:#E2EEF9">'+_pdEsc(d.name)+'</div>'
+          +'<div style="font-size:9px;color:#8FA3B8;margin-top:2px">'+status+'</div>'
+        +'</div>'
+        +'<button onclick="pdImportClick(\''+x.id+'\')" style="background:rgba(96,165,250,.14);border:1px solid rgba(96,165,250,.4);color:#60A5FA;border-radius:5px;padding:4px 9px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">\u2b06 Import CSV</button>'
+        +'<button onclick="priceDeckRename(\''+x.id+'\')" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#8FA3B8;border-radius:5px;padding:4px 9px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">\u270e</button>'
+        +lockBtn
+        +'<button onclick="priceDeckDelete(\''+x.id+'\')" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:#EF4444;border-radius:5px;padding:4px 9px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">\u2715</button>'
+      +'</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:9px">'
+        +'<div><div style="font-size:8.5px;color:#8FA3B8;margin-bottom:2px">Settlement point</div>'
+          +'<input value="'+_pdEsc(d.node||'')+'" placeholder="RN_XYZ_UNIT1"'
+          +' oninput="priceDeckSetMeta(\''+x.id+'\',\'node\',this.value)"'
+          +' style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:5px 7px;font-size:10.5px;font-family:\'IBM Plex Mono\',monospace"></div>'
+        +'<div><div style="font-size:8.5px;color:#8FA3B8;margin-bottom:2px">Provider</div>'
+          +'<select onchange="priceDeckSetMeta(\''+x.id+'\',\'provider\',this.value)"'
+          +' style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:5px 7px;font-size:10.5px;font-family:inherit">'+provOpts+'</select></div>'
+        +'<div><div style="font-size:8.5px;color:#8FA3B8;margin-bottom:2px">Vintage / as-of</div>'
+          +'<input value="'+_pdEsc(d.vintage||'')+'" placeholder="2026-06 forecast"'
+          +' oninput="priceDeckSetMeta(\''+x.id+'\',\'vintage\',this.value)"'
+          +' style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:5px;padding:5px 7px;font-size:10.5px;font-family:inherit"></div>'
+      +'</div>'
+      +'<div>'+chips+'</div>'
+      +'</div>';
+  }).join('');
+
+  host.innerHTML =
+     '<div style="display:flex;align-items:center;gap:9px;margin-bottom:12px">'
+      +'<div style="flex:1;font-size:10px;color:#8FA3B8;line-height:1.55">'
+      +'Decks are stored with the project and referenced by scenarios. Lock a deck once a scenario '
+      +'has been priced off it, so a new forecast vintage cannot re-baseline a case you have already sent out.'
+      +'</div>'
+      +'<button onclick="priceDeckNew()" style="background:#1DB954;border:none;color:#052e16;border-radius:6px;'
+      +'padding:7px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">+ New deck</button>'
+    +'</div>'
+    + cards;
+}
+window.renderPriceDecks=renderPriceDecks;
+</script>
 </body>
 </html>
