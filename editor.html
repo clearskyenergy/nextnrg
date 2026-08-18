@@ -33176,55 +33176,11 @@ function buildBOM() {
     'EV-FEEDER':{ condSize:'3" PVC Sch40', label:'EV Feeder (xfmr→panel)',  conductors:3, condWire:'4/0 AL',      gnd:'4 AWG', wireType:'XHHW-2 AL (wet-rated)', trench:true },
     'EV-BRANCH':{ condSize:'2" PVC Sch40', label:'EV Branch (panel→charger)',conductors:3, condWire:'3/0 CU',      gnd:'6 AWG', wireType:'THWN-2 CU (wet-rated)', trench:true },
     'EV-SPARE': { condSize:'3" PVC Sch40', label:'EV Spare / future-proof',    conductors:0, condWire:'',            gnd:'',      wireType:'(capped — no conductors)', trench:true, spare:true },
-
-    /* ── Level 2 legend ──────────────────────────────────────────────
-       The L2 drawing tools create these two, and neither was in this
-       table, so every conduit run on a Level 2 job was skipped and the
-       utility sheet went out with empty Conduit & Cable rows.
-       240V single phase pulls two current-carrying conductors plus a
-       ground, not the three a 3-phase feeder needs. */
-    'L2-INT':    { condSize:'3/4" EMT',      label:'L2 Interior (240V 1\u00D8)',
-                   conductors:2, condWire:'8 AWG',  gnd:'10 AWG', wireType:'THHN CU', trench:false },
-    'L2-TRENCH': { condSize:'2" PVC Sch40',  label:'L2 Trench (panel\u2192EVSE)',
-                   conductors:2, condWire:'8 AWG',  gnd:'10 AWG', wireType:'THWN-2 CU (wet-rated)', trench:true },
-
-    /* ── DCFC legend, short ids ──────────────────────────────────────
-       _extendCtypes() adds MAIN / FEEDER / BRANCH / FP / FP-SPARE
-       alongside the EV-* ids. Same runs, different key. */
-    'MAIN':      { condSize:'3" PVC Sch40',  label:'Main (pole\u2192transformer)',
-                   conductors:3, condWire:'350 kcmil AL', gnd:'4 AWG', wireType:'XHHW-2 AL (wet-rated)', trench:true },
-    'FEEDER':    { condSize:'3" PVC Sch40',  label:'Feeder (xfmr\u2192panel)',
-                   conductors:3, condWire:'4/0 AL',       gnd:'4 AWG', wireType:'XHHW-2 AL (wet-rated)', trench:true },
-    'BRANCH':    { condSize:'2" PVC Sch40',  label:'Branch (panel\u2192charger)',
-                   conductors:3, condWire:'3/0 CU',       gnd:'6 AWG', wireType:'THWN-2 CU (wet-rated)', trench:true },
-    'FP':        { condSize:'3" PVC Sch40',  label:'Future proofing (charger\u2192future)',
-                   conductors:0, condWire:'', gnd:'', wireType:'(capped \u2014 no conductors)', trench:true, spare:true },
-    'FP-SPARE':  { condSize:'2" PVC Sch40',  label:'Future proofing spare',
-                   conductors:0, condWire:'', gnd:'', wireType:'(capped \u2014 no conductors)', trench:true, spare:true },
-
-    /* Anything drawn with the Custom tool still gets priced. */
-    'custom':    { condSize:'2" PVC Sch40',  label:'Custom conduit run',
-                   conductors:3, condWire:wg.gauge, gnd:'6 AWG', wireType:'THWN-2 CU (wet-rated)', trench:false },
   };
 
-  /* A run whose type isn't in the table above used to be dropped without
-     a word. Price it on a generic plan instead: a run costed on a
-     fallback rate is a rounding error, a run that silently isn't there
-     is a submission with no conduit in it. */
-  function _planFor(type){
-    if(CONDUIT_PLAN[type]) return CONDUIT_PLAN[type];
-    var t = String(type||'').toUpperCase();
-    var buried = /UG|TRENCH|MAIN|FEEDER|BRANCH|FP|MV/.test(t);
-    var spare  = /SPARE|FP/.test(t);
-    return { condSize:'2" PVC Sch40', label:(type||'Conduit')+' run',
-             conductors:(spare?0:3), condWire:(spare?'':wg.gauge),
-             gnd:(spare?'':'6 AWG'),
-             wireType:(spare?'(capped \u2014 no conductors)':'THWN-2 CU'),
-             trench:buried, spare:spare, _fallback:true };
-  }
-
   Object.keys(byType).forEach(function(type){
-    var plan = _planFor(type);
+    var plan = CONDUIT_PLAN[type];
+    if(!plan) return;
     var ft = byType[type].ft;
     var runs = byType[type].runs;
     if(ft <= 0) return;
@@ -108729,5 +108685,1037 @@ function renderPriceDecks(){
 }
 window.renderPriceDecks=renderPriceDecks;
 </script>
+<!-- ═════════════════════════════════════════════════════════════════════
+     PORTED FROM THE FENECON BUILD (editor-fenecon-2.html, Patch 45).
+
+     Lifted verbatim rather than rewritten: the model is sound and the
+     comments record why each choice was made. Its dependencies were
+     checked against this build before porting -- omegaBessFleet,
+     window._bill8760, _COST_TOTAL, _EMS_ANNUAL, _revStreams, the ce-om
+     and ems-rate inputs, and the ribbon host lookup all resolve here.
+
+     It mounts itself into Analyze > Operations by walking the ribbon for
+     a known neighbour, so it needs no markup of its own.
+
+     TWO THINGS TO KNOW BEFORE TRUSTING ITS OUTPUT, both flagged on screen:
+       - The degradation defaults are generic LFP planning figures, not a
+         manufacturer warranty curve. Replace them with the real warranty
+         table before any of this reaches a customer.
+       - It models the BATTERY only. Solar, fuel cell, EV and data-centre
+         O&M are not in it. See the fleet-wide extension that follows.
+     ═════════════════════════════════════════════════════════════════════ -->
+<script>
+/* ═════════════════════════════════════════════════════════════════════
+   OMEGA PATCH — 45 : O&M / LIFECYCLE ANALYZER   (Analyze › Operations)
+
+   Ten-year cost of ownership for the battery that is actually on the
+   drawing, driven by counted cycles and modelled degradation rather
+   than a flat annual figure.
+
+   HOW IT GETS ITS NUMBERS
+     System    omegaBessFleet() — the kW/kWh actually placed.
+     Duty      Best available, and it always says which it used:
+                 MEASURED  window._bill8760.hourly exists (pasted or CSV
+                           8760) → threshold dispatch, hour by hour,
+                           discharge summed. Real throughput.
+                 ESTIMATED 8760 came from the PDF/AI path, which returns
+                           aggregates but no hourly series → monthly
+                           shave events.
+                 PLANNING  Nothing imported → duty-cycle preset.
+     Fade      Calendar + cycle, summed (the conservative reading).
+     Cost      Service contract, EMS, insurance + property tax, and
+               energy: parasitic/thermal draw plus round-trip losses.
+
+   ── UNVERIFIED DEFAULTS ──────────────────────────────────────────────
+   The FENECON-IND-XXL catalogue entry carries no cycleLife field and no
+   warranty curve, so the degradation defaults below are generic LFP
+   planning figures, NOT FENECON's warranty. Every one is an editable
+   input and the panel labels them UNVERIFIED on screen. Replace them
+   with the real warranty table before any of this reaches a customer.
+   ═════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+  var TAG = '[omega/o&m]';
+
+  /* Throughput from a real 8760. Simple threshold dispatch: discharge to
+   hold load under the shave line, recharge whenever there is headroom.
+   Not an optimiser — an honest count of the energy this battery would
+   actually move against this customer's measured load. */
+function omSimThroughput(hourly, thrKw, kw, usableKwh, rte){
+  if(!hourly || !hourly.length || !(kw > 0) || !(usableKwh > 0)) return null;
+  var soc = usableKwh, dis = 0, chg = 0, unserved = 0, i, load, want, got, room;
+
+  /* Interval length in hours — an 8760 is hourly, but a 15-min series
+     is 35,040 points and each one covers a quarter hour. */
+  var h = hourly.length > 20000 ? 0.25 : (hourly.length > 10000 ? 0.5 : 1);
+
+  for(i = 0; i < hourly.length; i++){
+    load = +hourly[i] || 0;
+    if(load > thrKw){
+      want = Math.min((load - thrKw) * h, kw * h, soc);
+      soc -= want; dis += want;
+      unserved += Math.max(0, (load - thrKw) * h - want);
+    }else{
+      room = usableKwh - soc;
+      if(room > 0){
+        got = Math.min((thrKw - load) * h, kw * h, room);
+        soc += got; chg += got;
+      }
+    }
+  }
+  return { dischargeKwh: dis, chargeKwh: chg, unservedKwh: unserved,
+           intervalHrs: h, intervals: hourly.length };
+}
+
+/* Duty-cycle fallbacks when there is no measured load. Equivalent full
+   cycles per year by service type. These are planning figures, not
+   measurements, and the UI says so. */
+var OM_DUTY = {
+  demand:    { efc: 50,  label: 'Peak shaving only (~12-60 events/yr)' },
+  solar:     { efc: 260, label: 'Solar self-consumption / shift' },
+  arbitrage: { efc: 340, label: 'Daily energy arbitrage' },
+  aggressive:{ efc: 500, label: 'Arbitrage + ancillary (>1 cycle/day)' },
+  backup:    { efc: 12,  label: 'Backup / resilience standby' }
+};
+
+/* ── The lifecycle model ────────────────────────────────────────────
+   Fade is the SUM of calendar and cycle terms, which is the
+   conservative reading. Many warranty sheets specify the two as a
+   combined envelope rather than additive, so this will run slightly
+   pessimistic against such a sheet — deliberately, until FENECON's
+   real curve replaces it.
+   ─────────────────────────────────────────────────────────────────── */
+function omLifecycle(p, strategy){
+  var years    = p.years || 10,
+      dod      = p.dod,
+      rte      = p.rte,
+      eol      = p.eolSoh,
+      cycLife  = p.cycleLife,
+      calFade  = p.calFadePct / 100,
+      thruput  = p.throughputKwh,
+      esc      = 1 + p.escalationPct / 100,
+      decline  = 1 - p.capexDeclinePct / 100,
+      fadePerEfc = cycLife > 0 ? (1 - eol) / cycLife : 0;
+
+  var nameplate = p.kwh, required = p.requiredUsableKwh, day1Extra = 0;
+
+  /* OVERSIZE: solve day-one nameplate so end-of-term usable still meets
+     the requirement. Bigger pack = fewer equivalent full cycles for the
+     same throughput = less cycle fade, so the sizing feeds back on
+     itself. Five passes converges well inside a kWh. */
+  if(strategy === 'oversize'){
+    var N = nameplate;
+    for(var it = 0; it < 6; it++){
+      var efcN = (N * dod) > 0 ? thruput / (N * dod) : 0;
+      var fadeN = calFade * years + fadePerEfc * efcN * years;
+      if(fadeN >= 0.95) break;
+      N = required / (dod * (1 - fadeN));
+    }
+    if(N > nameplate){ day1Extra = (N - nameplate) * p.capexPerKwh; nameplate = N; }
+  }
+
+  var avail = nameplate, cumEfc = 0, rows = [], totalOpex = 0,
+      totalCapex = day1Extra, replaceYear = null, augTotal = 0, shortfall = 0,
+      yearsUnder = 0;
+
+  for(var y = 1; y <= years; y++){
+    /* EFC is throughput over the capacity actually available, so a faded
+       or an oversized pack cycles differently for the same energy. */
+    var usableNow = avail * dod,
+        efc = usableNow > 0 ? thruput / usableNow : 0;
+    cumEfc += efc;
+
+    avail -= nameplate * (calFade + fadePerEfc * efc);
+    if(avail < 0) avail = 0;
+
+    var soh = nameplate > 0 ? avail / nameplate : 0,
+        usable = avail * dod,
+        capexEvent = 0, note = '';
+
+    /* Augmentation happens in whole racks on a mobilisation, not as a
+       continuous trickle. Only top up once the deficit is worth a truck
+       roll, then buy enough blocks to clear it. */
+    if(strategy === 'augment' && usable < required && p.capexPerKwh > 0){
+      var block = p.augBlockKwh > 0 ? p.augBlockKwh : (required / dod - avail);
+      var deficit = required / dod - avail;
+      if(deficit >= block){
+        var add = Math.ceil(deficit / block) * block;
+        capexEvent = add * p.capexPerKwh * Math.pow(decline, y);
+        augTotal += add;
+        nameplate += add; avail += add;
+        soh = avail / nameplate; usable = avail * dod;
+        note = '+' + Math.round(add).toLocaleString() + ' kWh augmented';
+      }
+    }else if(strategy === 'replace' && soh <= eol && replaceYear === null){
+      capexEvent = nameplate * p.capexPerKwh * Math.pow(decline, y);
+      replaceYear = y; avail = nameplate; soh = 1; usable = avail * dod;
+      note = 'Full replacement at ' + Math.round(eol * 100) + '% SOH';
+    }
+
+    var under = usable < required - 0.5;
+    if(under){
+      shortfall += required - usable;
+      yearsUnder++;
+      if(!note) note = 'Under spec by ' + Math.round(required - usable).toLocaleString() + ' kWh';
+    }
+
+    var e   = Math.pow(esc, y - 1),
+        svc = p.servicePerKwYr * p.kw * e,
+        ems = p.emsAnnual * e,
+        ins = p.installedCapex * (p.insurancePct + p.taxPct) / 100 * e,
+        /* Two distinct energy costs: parasitic draw for thermal
+           management and controls, and the round-trip loss on every
+           kWh moved. The second is where a high-RTE pack pays back. */
+        auxKwh  = thruput * p.auxPct / 100,
+        lossKwh = rte > 0 ? thruput * (1 / rte - 1) : 0,
+        energy  = (auxKwh + lossKwh) * p.energyPrice * e,
+        opex    = svc + ems + ins + energy;
+
+    totalOpex += opex; totalCapex += capexEvent;
+
+    rows.push({ year:y, efc:efc, cumEfc:cumEfc, soh:soh, usableKwh:usable,
+                service:svc, ems:ems, insurance:ins, energy:energy,
+                auxKwh:auxKwh, lossKwh:lossKwh,
+                opex:opex, capex:capexEvent, total:opex + capexEvent,
+                underSpec:under, note:note });
+  }
+
+  var total = totalOpex + totalCapex, mwh = thruput * years / 1000;
+  return {
+    strategy:strategy, rows:rows,
+    day1ExtraKwh: strategy === 'oversize' ? nameplate - p.kwh : 0,
+    day1Extra:day1Extra, augmentedKwh:augTotal, replaceYear:replaceYear,
+    totalOpex:totalOpex, totalCapex:totalCapex, total:total,
+    avgPerYear: total / years,
+    costPerMwh: mwh > 0 ? total / mwh : null,
+    endSoh: rows.length ? rows[rows.length - 1].soh : 1,
+    shortfallKwh:shortfall, yearsUnderSpec:yearsUnder,
+    meetsSpec: yearsUnder === 0
+  };
+}
+
+function omRunAll(p){
+  return { augment:  omLifecycle(p, 'augment'),
+           oversize: omLifecycle(p, 'oversize'),
+           replace:  omLifecycle(p, 'replace') };
+}
+
+
+  /* ── Defaults ──────────────────────────────────────────────────────
+     unverified:true means "generic LFP planning figure, not FENECON's
+     warranty" and the field is flagged amber on screen. */
+  var F = [
+    { g:'System',      k:'kw',            l:'BESS power',            u:'kW',        d:0 },
+    { g:'System',      k:'kwh',           l:'BESS energy (nameplate)',u:'kWh',      d:0 },
+    { g:'System',      k:'installedCapex',l:'Installed cost',        u:'$',         d:0 },
+    { g:'System',      k:'capexPerKwh',   l:'Battery price',         u:'$/kWh',     d:210, unverified:true },
+    { g:'System',      k:'requiredUsableKwh', l:'Usable kWh the site must hold', u:'kWh', d:0 },
+
+    { g:'Duty cycle',  k:'throughputKwh', l:'Annual throughput',     u:'kWh/yr',    d:0 },
+    { g:'Duty cycle',  k:'dod',           l:'Depth of discharge',    u:'%',         d:95 },
+    { g:'Duty cycle',  k:'rte',           l:'Round-trip efficiency', u:'%',         d:95, unverified:true },
+
+    { g:'Degradation', k:'cycleLife',     l:'Cycle life to EOL',     u:'EFC',       d:8000, unverified:true },
+    { g:'Degradation', k:'eolSoh',        l:'End-of-life SOH',       u:'%',         d:70,   unverified:true },
+    { g:'Degradation', k:'calFadePct',    l:'Calendar fade',         u:'%/yr',      d:1.0,  unverified:true },
+    { g:'Degradation', k:'augBlockKwh',   l:'Augmentation block',    u:'kWh',       d:0 },
+
+    { g:'Annual cost', k:'servicePerKwYr',l:'Service contract',      u:'$/kW-yr',   d:6,    unverified:true },
+    { g:'Annual cost', k:'emsAnnual',     l:'EMS / software',        u:'$/yr',      d:0 },
+    { g:'Annual cost', k:'insurancePct',  l:'Insurance',             u:'%/yr',      d:0.5,  unverified:true },
+    { g:'Annual cost', k:'taxPct',        l:'Property tax',          u:'%/yr',      d:0.5,  unverified:true },
+    { g:'Annual cost', k:'auxPct',        l:'Parasitic / thermal',   u:'% thruput', d:2.5,  unverified:true },
+    { g:'Annual cost', k:'energyPrice',   l:'Energy price',          u:'$/kWh',     d:0.11 },
+
+    { g:'Term',        k:'years',         l:'Analysis term',         u:'yrs',       d:10 },
+    { g:'Term',        k:'escalationPct', l:'O&M escalation',        u:'%/yr',      d:2.5 },
+    { g:'Term',        k:'capexDeclinePct',l:'Battery price decline',u:'%/yr',      d:5,    unverified:true }
+  ];
+
+  var state = { basis:null, duty:'arbitrage', view:'augment', last:null };
+
+  function num(v, fb){ v = parseFloat(v); return isFinite(v) ? v : fb; }
+  function money(v){
+    if(v === null || !isFinite(v)) return '--';
+    var n = Math.round(v);
+    return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString();
+  }
+
+  /* ── Read the drawing ─────────────────────────────────────────────── */
+  function readFleet(){
+    var o = { kw:0, kwh:0, units:0, cost:0 };
+    try{
+      if(typeof omegaBessFleet === 'function'){
+        var f = omegaBessFleet();
+        o.kw = +f.kw || 0; o.kwh = +f.kwh || 0;
+        o.units = +f.units || 0; o.cost = +f.cost || 0;
+      }
+    }catch(e){}
+    try{ if(!o.cost && window._COST_TOTAL) o.cost = +window._COST_TOTAL || 0; }catch(e){}
+    return o;
+  }
+
+  /* ── Work out annual throughput, and be explicit about how ───────── */
+  function resolveDuty(kw, kwh, dod, rte){
+    var usable = kwh * dod, b = window._bill8760;
+
+    if(b && b.ok && b.hourly && b.hourly.length >= 24 && kw > 0 && usable > 0){
+      var peak = +b.peakKw || Math.max.apply(null, b.hourly),
+          frac = (b.shave20 && b.shave20.targetFrac) || 0.8,
+          sim  = omSimThroughput(b.hourly, peak * frac, kw, usable, rte);
+      if(sim && sim.dischargeKwh > 0){
+        /* A partial series scales to a full year; a full one does not. */
+        var yrs = (sim.intervals * sim.intervalHrs) / 8760,
+            scale = yrs > 0.05 ? 1 / yrs : 1;
+        return { kind:'MEASURED', throughput:sim.dischargeKwh * scale,
+                 detail: sim.intervals.toLocaleString() + ' intervals at ' +
+                         sim.intervalHrs + ' hr, shaving above ' +
+                         Math.round(peak * frac).toLocaleString() + ' kW' +
+                         (scale !== 1 ? ' (scaled to a year)' : ''),
+                 unserved: sim.unservedKwh * scale };
+      }
+    }
+
+    if(b && b.ok && b.shave20 && b.shave20.months && b.shave20.months.length){
+      var t = 0;
+      for(var i = 0; i < b.shave20.months.length; i++) t += +b.shave20.months[i].eventKwh || 0;
+      if(t > 0) return { kind:'ESTIMATED', throughput:t,
+        detail:'Monthly shave events from the imported bill. No hourly series, so this is a floor — paste a CSV 8760 for a measured count.' };
+    }
+
+    var duty = OM_DUTY[state.duty] || OM_DUTY.arbitrage;
+    return { kind:'PLANNING', throughput:duty.efc * usable,
+             detail: duty.label + ' — ' + duty.efc + ' EFC/yr assumed. Nothing imported, so this is a planning figure only.' };
+  }
+
+  /* Pre-select a duty preset from whatever revenue streams are enabled,
+     so the planning fallback at least matches the business case. */
+  function guessDuty(){
+    try{
+      var on = {}, i;
+      if(window._revStreams && _revStreams.length){
+        for(i = 0; i < _revStreams.length; i++){
+          var s = _revStreams[i];
+          if(s && (s.enabled === undefined || s.enabled)) on[s.id] = true;
+        }
+      }
+      if(on.arbitrage && (on.vpp || on.reg_pjm)) return 'aggressive';
+      if(on.arbitrage) return 'arbitrage';
+      if(on.resilience && !on.demand) return 'backup';
+      if(on.demand) return 'demand';
+    }catch(e){}
+    return 'arbitrage';
+  }
+
+  function seedDefaults(){
+    var fl = readFleet(), v = {};
+    for(var i = 0; i < F.length; i++) v[F[i].k] = F[i].d;
+
+    v.kw = fl.kw; v.kwh = fl.kwh; v.installedCapex = fl.cost;
+    v.requiredUsableKwh = Math.round(fl.kwh * 0.95);
+    v.augBlockKwh = Math.round(fl.kwh * 0.10);
+
+    try{ if(window._EMS_ANNUAL) v.emsAnnual = +window._EMS_ANNUAL || 0; }catch(e){}
+    if(!v.emsAnnual){
+      var rate = 0;
+      try{ rate = +((document.getElementById('ems-rate') || {}).value) || 0; }catch(e){}
+      v.emsAnnual = rate * fl.kwh;
+    }
+
+    state.duty = guessDuty();
+    var d = resolveDuty(fl.kw, fl.kwh, 0.95, 0.95);
+    v.throughputKwh = Math.round(d.throughput);
+    state.basis = d;
+    return v;
+  }
+
+  function collect(){
+    var p = {}, i, f;
+    for(i = 0; i < F.length; i++){
+      f = F[i];
+      var el = document.getElementById('om-' + f.k);
+      p[f.k] = el ? num(el.value, f.d) : f.d;
+    }
+    p.dod    = p.dod / 100;
+    p.rte    = p.rte / 100;
+    p.eolSoh = p.eolSoh / 100;
+    if(p.dod <= 0 || p.dod > 1) p.dod = 0.95;
+    if(p.rte <= 0 || p.rte > 1) p.rte = 0.95;
+    if(p.years < 1)  p.years = 1;
+    if(p.years > 30) p.years = 30;
+    return p;
+  }
+
+  /* ── Rendering ────────────────────────────────────────────────────── */
+  var C = { bg:'#0F1720', pan:'#141D28', line:'#22303F', txt:'#DCE6F2',
+            sub:'#8FA3B8', grn:'#4ADE80', amb:'#FBBF24', blu:'#60A5FA', red:'#EF4444' };
+
+  function fieldHtml(f, v){
+    var flag = f.unverified
+      ? '<span title="Generic LFP planning figure, not FENECON warranty data" ' +
+        'style="color:' + C.amb + ';font-size:8px;font-weight:700;margin-left:4px">UNVERIFIED</span>' : '';
+    return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">' +
+      '<label for="om-' + f.k + '" style="flex:1;font-size:9.5px;color:' + C.sub + '">' + f.l + flag + '</label>' +
+      '<input id="om-' + f.k + '" type="number" step="any" value="' + v + '" ' +
+      'style="width:88px;background:' + C.bg + ';border:1px solid ' + C.line + ';color:' + C.txt +
+      ';border-radius:3px;padding:3px 5px;font-size:10px;font-family:\'IBM Plex Mono\',monospace;text-align:right">' +
+      '<span style="width:56px;font-size:8.5px;color:' + C.sub + '">' + f.u + '</span></div>';
+  }
+
+  function inputsHtml(v){
+    var groups = [], i, out = '';
+    for(i = 0; i < F.length; i++) if(groups.indexOf(F[i].g) < 0) groups.push(F[i].g);
+    for(i = 0; i < groups.length; i++){
+      out += '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;' +
+             'color:' + C.blu + ';margin:10px 0 5px">' + groups[i] + '</div>';
+      for(var j = 0; j < F.length; j++) if(F[j].g === groups[i]) out += fieldHtml(F[j], v[F[j].k]);
+      if(groups[i] === 'Duty cycle') out += dutyPickerHtml();
+    }
+    return out;
+  }
+
+  function dutyPickerHtml(){
+    var o = '', k;
+    for(k in OM_DUTY) o += '<option value="' + k + '"' + (k === state.duty ? ' selected' : '') + '>' +
+                            OM_DUTY[k].label + '</option>';
+    return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">' +
+      '<label style="flex:1;font-size:9.5px;color:' + C.sub + '">Duty preset (used only if nothing imported)</label>' +
+      '<select id="om-duty" style="width:148px;background:' + C.bg + ';border:1px solid ' + C.line +
+      ';color:' + C.txt + ';border-radius:3px;padding:3px;font-size:9px">' + o + '</select></div>';
+  }
+
+  function basisHtml(b){
+    var col = b.kind === 'MEASURED' ? C.grn : (b.kind === 'ESTIMATED' ? C.amb : C.sub);
+    return '<div style="border-left:3px solid ' + col + ';background:' + C.bg +
+      ';padding:7px 9px;margin-bottom:10px;border-radius:0 3px 3px 0">' +
+      '<div style="font-size:9px;font-weight:700;color:' + col + ';letter-spacing:.5px">CYCLE BASIS: ' + b.kind + '</div>' +
+      '<div style="font-size:9px;color:' + C.sub + ';margin-top:2px;line-height:1.5">' + b.detail + '</div>' +
+      (b.unserved > 1 ? '<div style="font-size:9px;color:' + C.amb + ';margin-top:3px">' +
+        Math.round(b.unserved).toLocaleString() + ' kWh/yr of peak went unserved — the battery is undersized for this load.</div>' : '') +
+      '</div>';
+  }
+
+  function cardHtml(key, name, r, blurb){
+    var sel = state.view === key,
+        spec = r.meetsSpec
+          ? '<span style="color:' + C.grn + '">Holds spec all ' + r.rows.length + ' yrs</span>'
+          : '<span style="color:' + C.red + '">Under spec ' + r.yearsUnderSpec + ' of ' + r.rows.length + ' yrs</span>';
+    return '<div onclick="OmegaOM.view(\'' + key + '\')" style="cursor:pointer;flex:1;min-width:170px;' +
+      'background:' + (sel ? '#1B2836' : C.pan) + ';border:1px solid ' + (sel ? C.blu : C.line) +
+      ';border-radius:4px;padding:9px">' +
+      '<div style="font-size:10px;font-weight:700;color:' + (sel ? C.blu : C.txt) + '">' + name + '</div>' +
+      '<div style="font-size:8.5px;color:' + C.sub + ';margin:2px 0 6px;line-height:1.4">' + blurb + '</div>' +
+      '<div style="font-size:16px;font-weight:700;font-family:\'IBM Plex Mono\',monospace;color:' + C.txt + '">' +
+        money(r.total) + '</div>' +
+      '<div style="font-size:8.5px;color:' + C.sub + '">' + r.rows.length + '-yr total cost of ownership</div>' +
+      '<div style="margin-top:6px;font-size:9px;color:' + C.sub + ';line-height:1.6">' +
+        'Opex ' + money(r.totalOpex) + '<br>Lifecycle capex ' + money(r.totalCapex) + '<br>' +
+        (r.costPerMwh !== null ? '<strong style="color:' + C.grn + '">$' + r.costPerMwh.toFixed(2) + '/MWh</strong> throughput<br>' : '') +
+        'End SOH ' + (r.endSoh * 100).toFixed(1) + '%<br>' + spec +
+      '</div></div>';
+  }
+
+  function tableHtml(r){
+    var h = '<table style="width:100%;border-collapse:collapse;font-size:9px;font-family:\'IBM Plex Mono\',monospace">' +
+      '<thead><tr style="color:' + C.sub + ';text-align:right">' +
+      ['Yr','EFC','Cum EFC','SOH','Usable kWh','Service','EMS','Ins+Tax','Energy','Capex','Total'].map(function(x, i){
+        return '<th style="padding:3px 4px;border-bottom:1px solid ' + C.line + ';text-align:' +
+               (i === 0 ? 'left' : 'right') + '">' + x + '</th>'; }).join('') +
+      '</tr></thead><tbody>';
+    for(var i = 0; i < r.rows.length; i++){
+      var w = r.rows[i];
+      h += '<tr style="color:' + C.txt + ';text-align:right">' +
+        '<td style="padding:3px 4px;text-align:left;border-bottom:1px solid #1A2432">' + w.year + '</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432">' + Math.round(w.efc) + '</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432">' + Math.round(w.cumEfc).toLocaleString() + '</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432;color:' +
+          (w.soh < 0.8 ? C.amb : C.txt) + '">' + (w.soh * 100).toFixed(1) + '%</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432;color:' +
+          (w.underSpec ? C.red : C.txt) + '">' + Math.round(w.usableKwh).toLocaleString() + '</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432">' + money(w.service) + '</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432">' + money(w.ems) + '</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432">' + money(w.insurance) + '</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432">' + money(w.energy) + '</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432;color:' +
+          (w.capex > 0 ? C.amb : C.sub) + '">' + (w.capex > 0 ? money(w.capex) : '--') + '</td>' +
+        '<td style="padding:3px 4px;border-bottom:1px solid #1A2432;font-weight:700">' + money(w.total) + '</td>' +
+      '</tr>';
+      if(w.note) h += '<tr><td colspan="11" style="padding:1px 4px 4px 14px;font-size:8.5px;color:' +
+        (w.capex > 0 ? C.amb : C.red) + '">' + w.note + '</td></tr>';
+    }
+    return h + '</tbody></table>';
+  }
+
+  function render(){
+    var p = collect();
+    try{ state.duty = (document.getElementById('om-duty') || {}).value || state.duty; }catch(e){}
+
+    /* Re-resolve duty so a changed DoD/RTE re-counts cycles, but never
+       stomp a throughput the user typed over. */
+    var b = resolveDuty(p.kw, p.kwh, p.dod, p.rte);
+    state.basis = b;
+
+    var R = omRunAll(p);
+    state.last = { p:p, R:R };
+    var cur = R[state.view] || R.augment;
+
+    var out = document.getElementById('om-results');
+    if(!out) return;
+    out.innerHTML =
+      basisHtml(b) +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+        cardHtml('augment',  'Augment',      R.augment,  'Add racks when capacity drops below spec') +
+        cardHtml('oversize', 'Oversize day 1',R.oversize, 'Build extra so end-of-term still meets spec') +
+        cardHtml('replace',  'Replace at EOL',R.replace,  'Run to ' + Math.round(p.eolSoh * 100) + '% SOH, then replace') +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">' +
+        '<div style="font-size:10px;font-weight:700;color:' + C.txt + '">' +
+          cur.strategy.charAt(0).toUpperCase() + cur.strategy.slice(1) + ' — year by year</div>' +
+        '<button onclick="OmegaOM.writeOM()" style="background:' + C.grn + ';color:#06210F;border:0;' +
+          'border-radius:3px;padding:4px 9px;font-size:9px;font-weight:700;cursor:pointer">' +
+          'Write ' + money(cur.totalOpex / cur.rows.length) + '/yr to the O&amp;M field</button>' +
+      '</div>' +
+      tableHtml(cur) +
+      (cur.day1ExtraKwh > 0 ? '<div style="font-size:9px;color:' + C.amb + ';margin-top:6px">Day-one oversize: +' +
+        Math.round(cur.day1ExtraKwh).toLocaleString() + ' kWh nameplate, ' + money(cur.day1Extra) + ' extra capex.</div>' : '') +
+      '<div style="font-size:8.5px;color:' + C.sub + ';margin-top:9px;line-height:1.6;border-top:1px solid ' + C.line + ';padding-top:7px">' +
+        'Fade is calendar plus cycle, summed — the conservative reading. Many warranty sheets specify the two as one ' +
+        'combined envelope, so this runs slightly pessimistic against such a sheet. Energy cost covers parasitic/thermal ' +
+        'draw and round-trip losses on every kWh moved, which is where round-trip efficiency shows up in the money. ' +
+        '<strong style="color:' + C.amb + '">Fields marked UNVERIFIED are generic LFP planning figures, not FENECON warranty data.</strong>' +
+      '</div>';
+  }
+
+  /* ── Modal ────────────────────────────────────────────────────────── */
+  function open(){
+    close();
+    var v = seedDefaults();
+    var d = document.createElement('div');
+    d.id = 'om-modal';
+    d.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(4,9,15,.72);' +
+                      'display:flex;align-items:center;justify-content:center;padding:22px';
+    d.innerHTML =
+      '<div style="background:' + C.pan + ';border:1px solid ' + C.line + ';border-radius:6px;width:1080px;' +
+        'max-width:97vw;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 18px 60px rgba(0,0,0,.6)">' +
+        '<div style="display:flex;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid ' + C.line + '">' +
+          '<span style="font-size:15px">\u2699</span>' +
+          '<div style="flex:1"><div style="font-size:12px;font-weight:700;color:' + C.txt + '">O&amp;M / Lifecycle Analyzer</div>' +
+          '<div style="font-size:9px;color:' + C.sub + '">Cost of ownership from counted cycles and modelled degradation</div></div>' +
+          '<button onclick="OmegaOM.close()" style="background:none;border:1px solid ' + C.line +
+            ';color:' + C.sub + ';border-radius:3px;padding:3px 9px;font-size:11px;cursor:pointer">\u2715</button>' +
+        '</div>' +
+        '<div style="flex:1;overflow:auto;display:flex;gap:14px;padding:12px 14px">' +
+          '<div style="width:296px;flex-shrink:0">' + inputsHtml(v) + '</div>' +
+          '<div id="om-results" style="flex:1;min-width:0"></div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(d);
+
+    /* Any input re-runs the model. */
+    var ins = d.querySelectorAll('input,select');
+    for(var i = 0; i < ins.length; i++){
+      ins[i].addEventListener('input', function(){ try{ render(); }catch(e){ console.error(TAG, e); } });
+      ins[i].addEventListener('change', function(){ try{ render(); }catch(e){ console.error(TAG, e); } });
+    }
+    d.addEventListener('mousedown', function(ev){ if(ev.target === d) close(); });
+
+    if(!v.kwh){
+      document.getElementById('om-results').innerHTML =
+        '<div style="font-size:11px;color:' + C.amb + ';padding:14px;line-height:1.7">' +
+        'No BESS found on the drawing. Place a battery (Build \u203a BESS Build, or the BESS Sizer) ' +
+        'and reopen this, or type a power and energy on the left to model a hypothetical system.</div>';
+    }else{
+      render();
+    }
+  }
+
+  function close(){
+    var d = document.getElementById('om-modal');
+    if(d && d.parentNode) d.parentNode.removeChild(d);
+  }
+
+  /* Push the modelled fixed opex into the cost panel so ROI, LCOE and
+     the results rail stop using the flat default. */
+  function writeOM(){
+    if(!state.last) return;
+    var r = state.last.R[state.view] || state.last.R.augment,
+        avg = Math.round(r.totalOpex / r.rows.length),
+        el = document.getElementById('ce-om');
+    if(!el){ alert('The cost panel is not open yet. Open Estimate \u203a Construction Cost once, then try again.'); return; }
+    el.value = avg;
+    try{ el.dispatchEvent(new Event('input', { bubbles:true })); }catch(e){}
+    try{ if(typeof _debounceROI === 'function') _debounceROI(); }catch(e){}
+    try{ if(typeof _debounceCost === 'function') _debounceCost(); }catch(e){}
+    if(window.console) console.info(TAG + ' wrote $' + avg.toLocaleString() + '/yr to ce-om (' + r.strategy + ' case).');
+    close();
+  }
+
+  /* ── Ribbon button: Analyze › Operations ──────────────────────────── */
+  function addButton(){
+    if(document.getElementById('rb-omlife')) return true;
+    var host = null;
+    try{
+      var all = document.querySelectorAll('button.rbtn');
+      for(var i = 0; i < all.length; i++){
+        var oc = all[i].getAttribute('onclick') || '';
+        if(/omegaDigitalTwinSoon/.test(oc)){ host = all[i].parentNode; break; }
+      }
+      if(!host){
+        for(var j = 0; j < all.length; j++){
+          if(/openViabilityWorkflow/.test(all[j].getAttribute('onclick') || '')){ host = all[j].parentNode; break; }
+        }
+      }
+    }catch(e){}
+    if(!host) return false;
+    var b = document.createElement('button');
+    b.className = 'rbtn';
+    b.id = 'rb-omlife';
+    b.title = 'Ten-year cost of ownership from counted cycles and modelled degradation';
+    b.innerHTML = '<span class="rb-ico" style="color:#4ADE80">\u2699</span>' +
+                  '<span class="rb-lbl">O&amp;M<br>Lifecycle</span>';
+    b.onclick = function(){ try{ open(); }catch(e){ console.error(TAG, e); } };
+    host.appendChild(b);
+    return true;
+  }
+
+  window.OmegaOM = {
+    open:open, close:close, writeOM:writeOM,
+    view:function(k){ state.view = k; render(); },
+    run:function(over){
+      var p = collect(), k;
+      if(over) for(k in over) p[k] = over[k];
+      return omRunAll(p);
+    },
+    engine:{ lifecycle:omLifecycle, runAll:omRunAll, sim:omSimThroughput, duty:OM_DUTY },
+    state:state
+  };
+
+  var n = 0, iv = setInterval(function(){
+    if(addButton() || ++n > 200){
+      clearInterval(iv);
+      if(window.console) console.info(TAG + ' armed \u2014 Analyze \u203a Operations \u203a O&M Lifecycle, or OmegaOM.open()');
+    }
+  }, 400);
+})();
+</script>
+<script>
+/* ═════════════════════════════════════════════════════════════════════
+   FLEET O&M  —  extends the ported Lifecycle Analyzer past the battery
+
+   Patch 45 (above) models the BESS thoroughly: counted cycles, calendar
+   and cycle fade, augment / oversize / replace strategies. What it does
+   not model is everything else on the drawing. A site with 4 MW of PV,
+   a fuel cell and eight DC fast chargers reported the battery's O&M as
+   the whole site's O&M, which understates cost of ownership on exactly
+   the mixed-asset projects this tool exists to design.
+
+   This module adds the rest of the fleet and totals them together. It
+   does NOT re-implement the battery: it calls OmegaOM's engine for that
+   and takes the strategy the user selected, so there is one degradation
+   model, not two that can disagree.
+
+   ── WHY THE ASSET MODELS DIFFER ─────────────────────────────────────
+   Each technology fails and is serviced differently, so a single
+   $/kW-yr applied to everything would be arithmetic, not analysis:
+
+     Solar PV     Low, predictable: module wash, inverter swap around
+                  the midpoint, some tracker service. Priced $/kW-yr
+                  with a discrete inverter replacement event.
+     Wind         An order of magnitude higher per kW than PV, and
+                  scheduled: gearbox / blade service dominates.
+     Fuel cell    Dominated by STACK REPLACEMENT on operating hours,
+                  not years, plus a fuel cost that dwarfs service. This
+                  is the asset most often under-budgeted, because the
+                  stack is a capex event inside the O&M horizon.
+     EV charging  Priced PER PORT, not per kW, and driven by uptime
+                  obligation and vandalism/connector wear rather than
+                  energy throughput.
+     Data centre  Priced off IT load with PUE-driven cooling service;
+                  the mechanical plant, not the electrical, sets cost.
+
+   ── EVERY DEFAULT HERE IS A PLANNING FIGURE ─────────────────────────
+   None of these rates come from a quoted service contract. They are
+   order-of-magnitude industry planning values, they are all editable,
+   and the panel marks them UNVERIFIED. Replace them with real contract
+   pricing before anything goes to a customer. Fuel-cell stack life and
+   fuel price in particular move the answer more than anything else on
+   the screen.
+   ═════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+  var TAG='[omega/fleet-o&m]';
+
+  /* ── Asset O&M models ────────────────────────────────────────────── */
+  var FLEET_OM = {
+    solar: {
+      label:'Solar PV', color:'#F5A623', basis:'kW-dc',
+      f:[ {k:'ratePerKwYr', l:'Service',            u:'$/kW-yr', d:14,  unverified:true},
+          {k:'invLifeYr',   l:'Inverter life',      u:'yr',      d:12,  unverified:true},
+          {k:'invCostPerKw',l:'Inverter replace',   u:'$/kW',    d:60,  unverified:true} ],
+      run:function(v,q,y,esc){
+        var opex=v.ratePerKwYr*q*esc, capex=0, note='';
+        /* Inverter replacement is a discrete event at its service life,
+           not an escalator -- budgeting it as an annual average hides the
+           year the money is actually needed. */
+        if(v.invLifeYr>0 && y%Math.round(v.invLifeYr)===0){
+          capex=v.invCostPerKw*q; note='Inverter replacement';
+        }
+        return {opex:opex, capex:capex, note:note};
+      }
+    },
+    wind: {
+      label:'Wind', color:'#38BDF8', basis:'kW',
+      f:[ {k:'ratePerKwYr', l:'Service contract',   u:'$/kW-yr', d:45, unverified:true},
+          {k:'majorYr',     l:'Major service every',u:'yr',      d:5,  unverified:true},
+          {k:'majorPerKw',  l:'Major service',      u:'$/kW',    d:35, unverified:true} ],
+      run:function(v,q,y,esc){
+        var opex=v.ratePerKwYr*q*esc, capex=0, note='';
+        if(v.majorYr>0 && y%Math.round(v.majorYr)===0){
+          capex=v.majorPerKw*q; note='Scheduled major service';
+        }
+        return {opex:opex, capex:capex, note:note};
+      }
+    },
+    fuelcell: {
+      label:'Fuel cell', color:'#A78BFA', basis:'kW',
+      f:[ {k:'ratePerKwYr',  l:'Service',            u:'$/kW-yr', d:38,    unverified:true},
+          {k:'capacityFac',  l:'Capacity factor',    u:'%',       d:90},
+          {k:'stackLifeHr',  l:'Stack life',         u:'op hr',   d:40000, unverified:true},
+          {k:'stackPerKw',   l:'Stack replacement',  u:'$/kW',    d:450,   unverified:true},
+          {k:'fuelPerMmbtu', l:'Fuel price',         u:'$/MMBtu', d:5.50},
+          {k:'heatRate',     l:'Heat rate (HHV)',    u:'Btu/kWh', d:7500,  unverified:true} ],
+      run:function(v,q,y,esc,st){
+        var hrs=8760*(v.capacityFac/100),
+            kwh=q*hrs,
+            fuel=kwh*(v.heatRate/1000000)*v.fuelPerMmbtu*esc,
+            opex=v.ratePerKwYr*q*esc + fuel,
+            capex=0, note='';
+        /* Stack life is in OPERATING HOURS, so a high-capacity-factor
+           unit reaches replacement sooner in calendar years. Tracking
+           cumulative hours is the whole point -- a years-based rule
+           would put the event in the wrong year. */
+        st.hr=(st.hr||0)+hrs;
+        if(v.stackLifeHr>0 && st.hr>=v.stackLifeHr){
+          capex=v.stackPerKw*q; st.hr-=v.stackLifeHr;
+          note='Stack replacement at '+Math.round(v.stackLifeHr).toLocaleString()+' op hr';
+        }
+        return {opex:opex, capex:capex, note:note, fuel:fuel, kwh:kwh};
+      }
+    },
+    ev: {
+      label:'EV charging', color:'#F59E0B', basis:'ports',
+      f:[ {k:'ratePerPortYr', l:'Service / network',  u:'$/port-yr', d:1200, unverified:true},
+          {k:'connLifeYr',    l:'Connector / cable',  u:'yr',        d:4,    unverified:true},
+          {k:'connCost',      l:'Connector replace',  u:'$/port',    d:900,  unverified:true} ],
+      run:function(v,q,y,esc){
+        var opex=v.ratePerPortYr*q*esc, capex=0, note='';
+        if(v.connLifeYr>0 && y%Math.round(v.connLifeYr)===0){
+          capex=v.connCost*q; note='Connector / cable replacement';
+        }
+        return {opex:opex, capex:capex, note:note};
+      }
+    },
+    datacenter: {
+      label:'Data centre', color:'#22D3EE', basis:'kW IT',
+      f:[ {k:'ratePerKwYr', l:'Mechanical / electrical', u:'$/kW-yr', d:95, unverified:true},
+          {k:'pue',         l:'PUE',                     u:'',        d:1.35},
+          {k:'upsLifeYr',   l:'UPS battery life',        u:'yr',      d:6,  unverified:true},
+          {k:'upsPerKw',    l:'UPS battery replace',     u:'$/kW',    d:110,unverified:true} ],
+      run:function(v,q,y,esc){
+        /* Service scales with the FACILITY load, not the IT load -- the
+           cooling plant is what gets maintained, and PUE is what sizes it. */
+        var fac=q*(v.pue>0?v.pue:1),
+            opex=v.ratePerKwYr*fac*esc, capex=0, note='';
+        if(v.upsLifeYr>0 && y%Math.round(v.upsLifeYr)===0){
+          capex=v.upsPerKw*q; note='UPS battery replacement';
+        }
+        return {opex:opex, capex:capex, note:note};
+      }
+    }
+  };
+  var FLEET_ORDER=['solar','wind','fuelcell','ev','datacenter'];
+
+  /* ── Read quantities off the drawing ─────────────────────────────── */
+  function readFleetAssets(){
+    var q={solar:0,wind:0,fuelcell:0,ev:0,datacenter:0}, src={};
+    try{
+      if(typeof omegaDer==='function'){
+        var d=omegaDer();
+        q.solar      = +d.solarKwDc||0;  src.solar='omegaDer (placed arrays)';
+        q.wind       = +d.windKw||0;     src.wind='omegaDer (placed turbines)';
+        /* 'deralt' is the alternative-generation kind, which is where fuel
+           cells land in this build. Labelled as such rather than pretending
+           the drawing distinguishes a fuel cell from a genset. */
+        q.fuelcell   = +d.altKw||0;      src.fuelcell='omegaDer (alt generation — includes any genset)';
+        q.datacenter = +d.dcLoadKw||0;   src.datacenter='omegaDer (data centre IT load)';
+      }
+    }catch(e){}
+    try{
+      if(typeof evChargerCosts==='function'){
+        var ev=evChargerCosts();
+        q.ev=+ev.units||0; src.ev='evChargerCosts (placed chargers)';
+      }
+    }catch(e){}
+    return {q:q, src:src};
+  }
+
+  /* ── Battery: delegate, never duplicate ──────────────────────────── */
+  function readBattery(years){
+    var out={present:false, rows:[], total:0, opex:0, capex:0, strategy:null, note:''};
+    try{
+      if(!window.OmegaOM || !OmegaOM.run){
+        out.note='Open the O&M Lifecycle analyzer once so the battery model can seed itself.';
+        return out;
+      }
+      var R=OmegaOM.run({years:years});
+      var strat=(OmegaOM.state && OmegaOM.state.view) || 'augment';
+      var r=R[strat]||R.augment;
+      if(!r || !r.rows || !r.rows.length){ out.note='Battery model returned nothing.'; return out; }
+      out.present=true; out.strategy=strat;
+      out.rows=r.rows.map(function(x){
+        return {year:x.year, opex:x.opex, capex:x.capex, note:x.note||''}; });
+      out.opex=r.totalOpex; out.capex=r.totalCapex; out.total=r.total;
+      out.endSoh=r.endSoh;
+    }catch(e){ out.note='Battery model error: '+(e&&e.message||e); }
+    return out;
+  }
+
+  /* ── Roll the whole site up ──────────────────────────────────────── */
+  var fstate={ years:10, escPct:2.5, v:{}, last:null };
+
+  function seed(){
+    FLEET_ORDER.forEach(function(k){
+      if(!fstate.v[k]) fstate.v[k]={};
+      FLEET_OM[k].f.forEach(function(f){
+        if(fstate.v[k][f.k]===undefined) fstate.v[k][f.k]=f.d;
+      });
+    });
+  }
+
+  function runFleet(){
+    seed();
+    var fa=readFleetAssets(), years=fstate.years, esc=1+fstate.escPct/100;
+    var batt=readBattery(years);
+    var assets=[], grand={opex:0,capex:0,total:0};
+
+    FLEET_ORDER.forEach(function(k){
+      var qty=fa.q[k]||0;
+      if(!(qty>0)) return;
+      var M=FLEET_OM[k], v=fstate.v[k], st={}, rows=[], to=0, tc=0;
+      for(var y=1;y<=years;y++){
+        var r=M.run(v, qty, y, Math.pow(esc,y-1), st);
+        to+=r.opex; tc+=r.capex;
+        rows.push({year:y, opex:r.opex, capex:r.capex, note:r.note||''});
+      }
+      assets.push({key:k, label:M.label, color:M.color, basis:M.basis,
+                   qty:qty, source:fa.src[k]||'', rows:rows,
+                   opex:to, capex:tc, total:to+tc});
+      grand.opex+=to; grand.capex+=tc;
+    });
+
+    if(batt.present){ grand.opex+=batt.opex; grand.capex+=batt.capex; }
+    grand.total=grand.opex+grand.capex;
+
+    /* Per-year totals across every asset, so the year a stack or an
+       inverter lands is visible rather than averaged away. */
+    var byYear=[];
+    for(var y=1;y<=years;y++){
+      var o=0,c=0,notes=[];
+      assets.forEach(function(a){
+        var r=a.rows[y-1]; if(!r) return;
+        o+=r.opex; c+=r.capex;
+        if(r.note) notes.push(a.label+': '+r.note);
+      });
+      if(batt.present && batt.rows[y-1]){
+        o+=batt.rows[y-1].opex; c+=batt.rows[y-1].capex;
+        if(batt.rows[y-1].note) notes.push('BESS: '+batt.rows[y-1].note);
+      }
+      byYear.push({year:y, opex:o, capex:c, total:o+c, notes:notes});
+    }
+
+    fstate.last={assets:assets, battery:batt, grand:grand, byYear:byYear,
+                 years:years, empty:(!assets.length && !batt.present)};
+    return fstate.last;
+  }
+
+  /* ── Panel ───────────────────────────────────────────────────────── */
+  function money(v){
+    if(v===null||!isFinite(v)) return '--';
+    var n=Math.round(v);
+    return (n<0?'-$':'$')+Math.abs(n).toLocaleString();
+  }
+  function esc(t){ return String(t==null?'':t).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  function openFleet(){
+    var d=document.getElementById('fom-modal');
+    if(!d){
+      d=document.createElement('div');
+      d.id='fom-modal';
+      d.style.cssText='position:fixed;inset:0;z-index:9001;background:rgba(7,14,26,.93);'
+        +'backdrop-filter:blur(6px);overflow:hidden;display:none';
+      d.innerHTML='<div style="display:flex;flex-direction:column;height:100vh;max-width:1000px;margin:0 auto">'
+        +'<div style="background:linear-gradient(135deg,#0B1E35,#1B4F8A);border-bottom:2px solid #4ADE80;'
+          +'padding:11px 18px;display:flex;align-items:center;gap:10px;flex-shrink:0">'
+          +'<div style="font-size:20px">\u2699</div><div style="flex:1">'
+          +'<div style="font-size:14px;font-weight:800;color:#fff">Fleet O&amp;M</div>'
+          +'<div style="font-size:9px;color:#4ADE80;margin-top:1px">Whole-site cost of ownership \u2014 battery, generation, charging and load</div>'
+          +'</div>'
+          +'<button onclick="OmegaFleetOM.close()" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);'
+          +'color:#fff;border-radius:5px;padding:4px 11px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit">\u2715 Close</button>'
+        +'</div><div id="fom-body" style="flex:1;overflow-y:auto;padding:16px 20px"></div></div>';
+      document.body.appendChild(d);
+    }
+    d.style.display='block';
+    renderFleet();
+  }
+  function closeFleet(){ var d=document.getElementById('fom-modal'); if(d) d.style.display='none'; }
+
+  function renderFleet(){
+    var host=document.getElementById('fom-body'); if(!host) return;
+    var R=runFleet();
+
+    if(R.empty){
+      host.innerHTML='<div style="text-align:center;padding:44px 20px;color:#8FA3B8;font-size:11px;line-height:1.7">'
+        +'<div style="font-size:30px;margin-bottom:10px">\u2699</div>'
+        +'<div style="font-size:12px;font-weight:700;color:#E2EEF9;margin-bottom:5px">Nothing on the drawing to service</div>'
+        +'Place a battery, array, turbine, fuel cell, charger or data-centre load, then reopen this. '
+        +'Quantities are read from the drawing \u2014 nothing here is typed in by hand.</div>';
+      return;
+    }
+
+    /* --- editable rates, per present asset only ---------------------- */
+    var inputs=R.assets.map(function(a){
+      var rows=FLEET_OM[a.key].f.map(function(f){
+        return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+          +'<span style="flex:1;font-size:9.5px;color:'+(f.unverified?'#F59E0B':'#8FA3B8')+'">'
+          + esc(f.l) + (f.unverified?' \u26a0':'') + '</span>'
+          +'<input type="number" value="'+fstate.v[a.key][f.k]+'" '
+          +'oninput="OmegaFleetOM.set(\''+a.key+'\',\''+f.k+'\',this.value)" '
+          +'style="width:82px;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:4px;'
+          +'padding:3px 6px;font-size:10px;font-family:\'IBM Plex Mono\',monospace">'
+          +'<span style="width:60px;font-size:8.5px;color:#64748B">'+esc(f.u)+'</span></div>';
+      }).join('');
+      return '<div style="border:1px solid #243B55;border-radius:8px;padding:11px 13px;background:rgba(255,255,255,.02)">'
+        +'<div style="display:flex;align-items:baseline;gap:7px;margin-bottom:7px">'
+          +'<span style="font-size:11.5px;font-weight:800;color:'+a.color+'">'+esc(a.label)+'</span>'
+          +'<span style="font-size:9.5px;color:#8FA3B8">'+Math.round(a.qty).toLocaleString()+' '+esc(a.basis)+'</span>'
+          +'<span style="flex:1"></span>'
+          +'<span style="font-size:11px;font-weight:700;color:#4ADE80;font-family:\'IBM Plex Mono\',monospace">'+money(a.total)+'</span>'
+        +'</div>'
+        +'<div style="font-size:8.5px;color:#64748B;margin-bottom:6px">'+esc(a.source)+'</div>'
+        + rows + '</div>';
+    }).join('');
+
+    /* --- per-year table --------------------------------------------- */
+    var yrRows=R.byYear.map(function(r){
+      return '<tr style="border-bottom:1px solid rgba(255,255,255,.04)">'
+        +'<td style="padding:4px 6px;color:#8FA3B8;font-size:10px">Yr '+r.year+'</td>'
+        +'<td style="padding:4px 6px;text-align:right;font-family:\'IBM Plex Mono\',monospace;font-size:10px">'+money(r.opex)+'</td>'
+        +'<td style="padding:4px 6px;text-align:right;font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:'
+          +(r.capex>0?'#F59E0B':'#475569')+'">'+(r.capex>0?money(r.capex):'\u2014')+'</td>'
+        +'<td style="padding:4px 6px;text-align:right;font-family:\'IBM Plex Mono\',monospace;font-size:10px;font-weight:700">'+money(r.total)+'</td>'
+        +'<td style="padding:4px 6px;font-size:9px;color:#F59E0B">'+esc(r.notes.join(' \u00b7 '))+'</td>'
+        +'</tr>';
+    }).join('');
+
+    var battLine = R.battery.present
+      ? '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:10.5px">'
+        +'<span style="color:#00D4FF">BESS ('+esc(R.battery.strategy)+' case, from the Lifecycle analyzer)</span>'
+        +'<span style="font-family:\'IBM Plex Mono\',monospace;color:#E2EEF9">'+money(R.battery.total)+'</span></div>'
+      : '<div style="font-size:10px;color:#F59E0B;padding:4px 0">Battery not included \u2014 '
+        + esc(R.battery.note||'no BESS on the drawing') + '</div>';
+
+    host.innerHTML=
+       '<div style="background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);border-radius:7px;'
+        +'padding:9px 12px;margin-bottom:13px;font-size:9.5px;color:#F59E0B;line-height:1.55">'
+        +'\u26a0 Every rate marked \u26a0 is an order-of-magnitude planning figure, not quoted contract pricing. '
+        +'Fuel-cell stack life and fuel price move this answer more than anything else on the screen. '
+        +'Replace them with real numbers before this reaches a customer.</div>'
+
+      +'<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px">'
+        +'<span style="font-size:9.5px;color:#8FA3B8">Term</span>'
+        +'<input type="number" value="'+fstate.years+'" oninput="OmegaFleetOM.term(this.value)" '
+        +'style="width:60px;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:4px;padding:4px 7px;font-size:10.5px;font-family:inherit"> '
+        +'<span style="font-size:9.5px;color:#8FA3B8">yr \u00b7 escalation</span>'
+        +'<input type="number" step="0.1" value="'+fstate.escPct+'" oninput="OmegaFleetOM.escal(this.value)" '
+        +'style="width:60px;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:4px;padding:4px 7px;font-size:10.5px;font-family:inherit">'
+        +'<span style="font-size:9.5px;color:#8FA3B8">%/yr</span></div>'
+
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">'+inputs+'</div>'
+
+      +'<div style="border:1px solid #4ADE80;border-radius:8px;padding:12px 14px;background:rgba(74,222,128,.05);margin-bottom:14px">'
+        +'<div style="font-size:10px;font-weight:700;color:#4ADE80;text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px">'
+        + fstate.years + '-year total cost of ownership</div>'
+        + R.assets.map(function(a){
+            return '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:10.5px">'
+              +'<span style="color:'+a.color+'">'+esc(a.label)+'</span>'
+              +'<span style="font-family:\'IBM Plex Mono\',monospace;color:#E2EEF9">'+money(a.total)+'</span></div>'; }).join('')
+        + battLine
+        +'<div style="display:flex;justify-content:space-between;border-top:1px solid rgba(74,222,128,.3);'
+          +'margin-top:7px;padding-top:7px;font-weight:800">'
+          +'<span style="color:#fff;font-size:12px">Site total</span>'
+          +'<span style="color:#4ADE80;font-size:14px;font-family:\'IBM Plex Mono\',monospace">'+money(R.grand.total)+'</span></div>'
+        +'<div style="display:flex;justify-content:space-between;font-size:9.5px;color:#8FA3B8;margin-top:3px">'
+          +'<span>Recurring '+money(R.grand.opex)+' \u00b7 events '+money(R.grand.capex)+'</span>'
+          +'<span>avg '+money(R.grand.total/fstate.years)+'/yr</span></div>'
+      +'</div>'
+
+      +'<table style="width:100%;border-collapse:collapse">'
+        +'<thead><tr style="color:#C5A55A;border-bottom:1px solid #243B55">'
+        +'<th style="text-align:left;padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.5px">Yr</th>'
+        +'<th style="text-align:right;padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.5px">Recurring</th>'
+        +'<th style="text-align:right;padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.5px">Events</th>'
+        +'<th style="text-align:right;padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.5px">Total</th>'
+        +'<th style="text-align:left;padding:4px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.5px">What lands this year</th>'
+        +'</tr></thead><tbody>'+yrRows+'</tbody></table>'
+      +'<div style="font-size:8.5px;color:#64748B;margin-top:10px;line-height:1.6">'
+        +'Quantities are read from the drawing, not typed. The battery line comes from the O&amp;M Lifecycle '
+        +'analyzer using whichever strategy is selected there \u2014 there is one degradation model, not two. '
+        +'Replacement events are shown in the year they land rather than averaged into an annual figure, '
+        +'because the year a fuel-cell stack or an inverter has to be bought is the point of the exercise.</div>';
+  }
+
+  /* ── Ribbon: sit next to the ported analyzer ─────────────────────── */
+  function addFleetButton(){
+    if(document.getElementById('rb-fom')) return true;
+    var host=null;
+    try{
+      var el=document.getElementById('rb-omlife');
+      if(el) host=el.parentNode;
+      if(!host){
+        var all=document.querySelectorAll('button.rbtn');
+        for(var i=0;i<all.length;i++){
+          if(/omegaDigitalTwinSoon/.test(all[i].getAttribute('onclick')||'')){ host=all[i].parentNode; break; }
+        }
+      }
+    }catch(e){}
+    if(!host) return false;
+    var b=document.createElement('button');
+    b.className='rbtn'; b.id='rb-fom';
+    b.title='Fleet O&M \u2014 whole-site cost of ownership across battery, solar, wind, fuel cell, EV and data-centre load';
+    b.innerHTML='<span class="rb-ico" style="color:#4ADE80">\u2692</span><span class="rb-lbl">Fleet<br>O&amp;M</span>';
+    b.onclick=function(){ try{ openFleet(); }catch(e){ console.error(TAG,e); } };
+    host.appendChild(b);
+    return true;
+  }
+
+  window.OmegaFleetOM={
+    open:openFleet, close:closeFleet, run:runFleet, render:renderFleet,
+    set:function(a,k,v){ seed(); var n=parseFloat(v); fstate.v[a][k]=isFinite(n)?n:0; renderFleet(); },
+    term:function(v){ var n=parseInt(v,10); fstate.years=(isFinite(n)&&n>0&&n<=40)?n:10; renderFleet(); },
+    escal:function(v){ var n=parseFloat(v); fstate.escPct=isFinite(n)?n:0; renderFleet(); },
+    models:FLEET_OM, order:FLEET_ORDER, state:fstate, assets:readFleetAssets
+  };
+
+  var n=0, iv=setInterval(function(){
+    if(addFleetButton() || ++n>200){
+      clearInterval(iv);
+      if(window.console) console.info(TAG+' armed \u2014 Analyze \u203a Operations \u203a Fleet O&M, or OmegaFleetOM.open()');
+    }
+  },400);
+})();
+</script>
+
 </body>
 </html>
