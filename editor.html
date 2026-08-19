@@ -109883,6 +109883,42 @@ function omRunAll(p){
 #omega-arch .arch-btn.arch-go{ background:var(--hl-dim); border-color:var(--hl) }
 #omega-arch .arch-btn.arch-go:hover{ background:var(--hl) }
 
+/* ====================================================================== *
+ *  RIBBON SVG ICONS  —  scale with the glyph icons                       *
+ *  The eight line-drawn icons (guided builds, Auto Layout, 3D View) carry *
+ *  width="20" height="20" as attributes, so none of the four font-size    *
+ *  rules the app uses to size .rb-ico ever reached them. Sizing in em ties *
+ *  them to that same font-size, which makes all four rules work at once   *
+ *  and covers any SVG icon added later.                                   *
+ *                                                                         *
+ *  Two knobs, both live: OmegaRibbonIcons.scale() and .stroke().          *
+ * ====================================================================== */
+:root{
+  --rb-svg-size: 1.35em;   /* 21.6px at the 16px base, 25.6px in Designer */
+  --rb-svg-stroke: 1.9;    /* viewBox units; the markup ships 1.6 = 1.33px */
+}
+#ribbon .rb-ico > svg,
+#ribbon .rs-ico > svg,
+#ribbon .fi-ico > svg,
+#ribbon .mi-ico > svg{
+  width: var(--rb-svg-size);
+  height: var(--rb-svg-size);
+  flex: 0 0 auto;          /* never let a narrow icon box squash it */
+  display: block;
+  stroke-width: var(--rb-svg-stroke);
+}
+/* A child that sets its own stroke-width attribute keeps it: the heavier
+   racking lines in the Auto Layout icon are deliberate, and an inherited
+   value must not flatten that contrast. */
+
+/* .rb-ico is pinned to height:18px, which would clip an icon scaled past
+   it. The class is applied by the icon module; the :has() rule is the same
+   thing for browsers that support it, kept in its own block because an
+   unknown pseudo-class would invalidate the whole selector list. */
+#ribbon .rbtn .rb-ico.omg-svg-ico,
+#ribbon .rsbtn .rs-ico.omg-svg-ico{ height: auto; }
+#ribbon .rbtn .rb-ico:has(> svg){ height: auto; }
+
 </style>
 <!-- ===================================================================
      OMEGA CAD BLOCK  —  self-contained, no network, no build step
@@ -115586,6 +115622,113 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       if (window.console) console.info(TAG + ' settled \u2014 OmegaRibbonDedupe.audit() lists what is left');
     }
   }, 500);
+})();
+
+</script>
+<script id="omega-ribbon-icons-js">
+/* ====================================================================== *
+ *  OMEGA RIBBON ICONS                                                    *
+ *  ------------------------------------------------------------------    *
+ *  Eight ribbon buttons draw their icon as inline SVG with a hardcoded    *
+ *  width="20" height="20": the guided builds (DER, BESS, Full Topology,   *
+ *  Level 2, DCFC, Compute), Auto Layout and 3D View. The other 110        *
+ *  buttons use a text glyph, sized by font-size on .rb-ico.               *
+ *                                                                         *
+ *  Four separate rules size .rb-ico by font-size — 16px base, 17px at the *
+ *  narrow breakpoint, 19px in Designer mode, 13px docked left — and NONE  *
+ *  of them reach an SVG with a fixed pixel attribute. So the guided        *
+ *  builds are frozen while every neighbour scales, and their 1.6-unit     *
+ *  stroke on a 24-unit viewBox renders at 1.33 px, which reads as a faint *
+ *  hairline next to a solid glyph.                                        *
+ *                                                                         *
+ *  The fix is one em-based rule rather than editing eight attribute       *
+ *  pairs: em ties the SVG to the same font-size the app is already        *
+ *  driving, so all four existing rules start working on these icons, and  *
+ *  any SVG icon added later is covered without another edit.              *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaRibbonIcons) return;
+  var TAG = '[OmegaRibbonIcons]';
+
+  /* .rb-ico carries a fixed height:18px, which would clip an icon scaled
+     past it. :has() would do this in CSS alone, but tagging the span keeps
+     it working where :has() is unavailable — and the class is also what a
+     future rule can hook without re-deriving "contains an svg". */
+  function tag() {
+    var spans = document.querySelectorAll(
+      '#ribbon .rb-ico, #ribbon .rs-ico, #ribbon .fi-ico, #ribbon .mi-ico');
+    var n = 0;
+    for (var i = 0; i < spans.length; i++) {
+      var has = !!spans[i].querySelector('svg');
+      if (has && !spans[i].classList.contains('omg-svg-ico')) {
+        spans[i].classList.add('omg-svg-ico');
+        n++;
+      }
+    }
+    return n;
+  }
+
+  /* One knob, live. scale(1.6) makes them larger everywhere at once,
+     including in Designer mode and docked left, because the value is em. */
+  function scale(v) {
+    if (v == null) {
+      return getComputedStyle(document.documentElement)
+        .getPropertyValue('--rb-svg-size').trim() || '1.35em';
+    }
+    var s = typeof v === 'number' ? v + 'em' : String(v);
+    document.documentElement.style.setProperty('--rb-svg-size', s);
+    return s;
+  }
+  function stroke(v) {
+    if (v == null) {
+      return getComputedStyle(document.documentElement)
+        .getPropertyValue('--rb-svg-stroke').trim() || '1.9';
+    }
+    document.documentElement.style.setProperty('--rb-svg-stroke', String(v));
+    return String(v);
+  }
+
+  /* What the icons actually measure, for checking the fix rather than
+     eyeballing it. */
+  function audit() {
+    var out = [];
+    var btns = document.querySelectorAll('#ribbon .rbtn');
+    for (var i = 0; i < btns.length; i++) {
+      var ico = btns[i].querySelector('.rb-ico');
+      if (!ico) continue;
+      var lbl = btns[i].querySelector('.rb-lbl');
+      var svg = ico.querySelector('svg');
+      out.push({
+        label: lbl ? lbl.textContent.replace(/\s+/g, ' ').trim() : (btns[i].id || '?'),
+        kind: svg ? 'svg' : 'glyph',
+        attrWidth: svg ? svg.getAttribute('width') : null,
+        tagged: ico.classList.contains('omg-svg-ico')
+      });
+    }
+    return out;
+  }
+
+  window.OmegaRibbonIcons = { tag: tag, scale: scale, stroke: stroke, audit: audit };
+
+  /* Buttons arrive on timers from several patch modules, and Designer mode
+     rebuilds the ribbon, so this keeps tagging for a while rather than once. */
+  var n = 0, iv = setInterval(function () {
+    try { tag(); } catch (e) { if (window.console) console.warn(TAG, e && e.message); }
+    if (++n > 24) {
+      clearInterval(iv);
+      if (window.console) {
+        console.info(TAG + ' ready \u2014 OmegaRibbonIcons.scale(1.5) to resize, .audit() to check');
+      }
+    }
+  }, 500);
+
+  /* Designer mode swaps the ribbon set; retag when it does. */
+  try {
+    var mo = new MutationObserver(function () { tag(); });
+    var rb = document.getElementById('ribbon');
+    if (rb) mo.observe(rb, { childList: true, subtree: true });
+  } catch (e) {}
 })();
 
 </script>
