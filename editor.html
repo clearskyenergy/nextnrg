@@ -113352,6 +113352,835 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script id="omega-arch-raceway-js">
+/* ====================================================================== *
+ *  OMEGA RACEWAY  —  conduit fill and cable geometry                     *
+ *  ------------------------------------------------------------------    *
+ *  Sizes a raceway from NEC Chapter 9 and draws it: the pipe walls at    *
+ *  their real trade dimension, and the conductors inside it.             *
+ *                                                                         *
+ *  WHY REAL TABLES.                                                       *
+ *  The tempting shortcut is to treat trade size as a diameter and take    *
+ *  pi*d^2/4 as the area. Trade size is a NAME, not a bore: 2 inch EMT     *
+ *  has 3.356 sq in of internal area, while pi*2^2/4 says 3.142 — and for  *
+ *  RMC and PVC the gap runs the other way. Chapter 9 Table 4 exists       *
+ *  because the shortcut is wrong in both directions depending on the      *
+ *  material, so the tables are here rather than a formula.                *
+ *                                                                         *
+ *  Fill limits are Chapter 9 Table 1 and depend on CONDUCTOR COUNT:       *
+ *  53% for one, 31% for two, 40% for three or more. Applying 40% to a     *
+ *  two-conductor run overfills it.                                        *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.raceway) return;
+
+  /* ---- Chapter 9, Table 5: conductor area including insulation, sq in.
+     THWN-2 / THHN, the insulation these runs are actually pulled in. ---- */
+  var COND_AREA = {
+    '14': 0.0097, '12': 0.0133, '10': 0.0211, '8': 0.0366, '6': 0.0507,
+    '4': 0.0824, '3': 0.0973, '2': 0.1158, '1': 0.1562,
+    '1/0': 0.1855, '2/0': 0.2223, '3/0': 0.2679, '4/0': 0.3237,
+    '250': 0.3970, '300': 0.4608, '350': 0.5242, '400': 0.5863,
+    '500': 0.7073, '600': 0.8676, '750': 1.0496
+  };
+  /* XHHW-2 is slightly slimmer in the large sizes; MV cable is far larger.
+     Only the sizes that differ enough to change a trade size are listed. */
+  var COND_AREA_XHHW = {
+    '4/0': 0.3197, '250': 0.3904, '350': 0.5153, '500': 0.6984, '750': 1.0297
+  };
+  /* 15 kV shielded MV-105, 133% insulation level — a different animal. */
+  var COND_AREA_MV15 = {
+    '2': 0.8938, '1/0': 1.1085, '2/0': 1.2311, '4/0': 1.5482,
+    '250': 1.7710, '500': 2.5730
+  };
+
+  /* ---- Chapter 9, Table 4: total internal area, sq in, by trade size --- */
+  var RACEWAY = {
+    EMT:   { '1/2': 0.304, '3/4': 0.533, '1': 0.864, '1-1/4': 1.496, '1-1/2': 2.036,
+             '2': 3.356, '2-1/2': 5.858, '3': 8.846, '3-1/2': 11.545, '4': 14.753 },
+    PVC40: { '1/2': 0.285, '3/4': 0.508, '1': 0.832, '1-1/4': 1.453, '1-1/2': 1.986,
+             '2': 3.291, '2-1/2': 4.695, '3': 7.268, '3-1/2': 9.737, '4': 12.554,
+             '5': 19.761, '6': 28.567 },
+    RMC:   { '1/2': 0.314, '3/4': 0.549, '1': 0.887, '1-1/4': 1.526, '1-1/2': 2.071,
+             '2': 3.408, '2-1/2': 4.866, '3': 7.499, '3-1/2': 10.010, '4': 12.882,
+             '5': 20.212, '6': 29.158 }
+  };
+  /* Outside dimension, inches — what the pipe actually occupies on a plan. */
+  var OD = {
+    '1/2': 0.84, '3/4': 1.05, '1': 1.315, '1-1/4': 1.66, '1-1/2': 1.9,
+    '2': 2.375, '2-1/2': 2.875, '3': 3.5, '3-1/2': 4.0, '4': 4.5,
+    '5': 5.563, '6': 6.625
+  };
+  var ORDER = ['1/2', '3/4', '1', '1-1/4', '1-1/2', '2', '2-1/2', '3', '3-1/2', '4', '5', '6'];
+
+  /* Chapter 9, Table 1. */
+  function fillLimit(count) {
+    if (count <= 1) return 0.53;
+    if (count === 2) return 0.31;
+    return 0.40;
+  }
+
+  function condArea(size, insulation) {
+    var k = String(size);
+    if (insulation === 'MV15' && COND_AREA_MV15[k] != null) return COND_AREA_MV15[k];
+    if (insulation === 'XHHW' && COND_AREA_XHHW[k] != null) return COND_AREA_XHHW[k];
+    return COND_AREA[k] != null ? COND_AREA[k] : null;
+  }
+
+  /* Smallest trade size that holds `count` conductors of `size`. Returns the
+     numbers behind the answer, so a reviewer can check it against the code
+     rather than trust the label. */
+  function sizeFor(size, count, material, insulation) {
+    material = material || 'EMT';
+    var tbl = RACEWAY[material] || RACEWAY.EMT;
+    var a = condArea(size, insulation);
+    if (a == null) {
+      return { ok: false, error: 'No Chapter 9 area for conductor size ' + size };
+    }
+    if (!(count > 0)) return { ok: false, error: 'Conductor count must be at least 1' };
+    var need = a * count, limit = fillLimit(count), i;
+    for (i = 0; i < ORDER.length; i++) {
+      var t = ORDER[i];
+      if (tbl[t] == null) continue;
+      if (need <= tbl[t] * limit + 1e-12) {
+        return {
+          ok: true, trade: t, material: material, insulation: insulation || 'THWN',
+          conductors: count, conductorSize: String(size),
+          conductorAreaSqIn: a, totalAreaSqIn: +need.toFixed(4),
+          internalAreaSqIn: tbl[t], limitPct: limit * 100,
+          fillPct: +(need / tbl[t] * 100).toFixed(1),
+          odIn: OD[t] || null
+        };
+      }
+    }
+    /* Past the largest listed size the honest answer is parallel runs, not
+       a bigger number invented off the end of the table. */
+    var biggest = ORDER.filter(function (t2) { return tbl[t2] != null; }).pop();
+    var per = tbl[biggest] * limit / a;
+    return {
+      ok: false, overflow: true, material: material,
+      error: count + ' \u00D7 ' + size + ' will not fit one raceway. Largest listed is ' +
+             biggest + '", which holds ' + Math.floor(per) + ' at ' + (limit * 100) +
+             '% fill \u2014 use ' + Math.ceil(count / Math.floor(per)) + ' parallel runs.',
+      maxPerRun: Math.floor(per), runsNeeded: Math.ceil(count / Math.floor(per))
+    };
+  }
+
+  /* Compare a computed size against one written on a catalogue or a plan.
+     Silent disagreement between the schedule and the drawing is the thing
+     worth catching. */
+  function checkAgainst(declared, computed) {
+    if (!computed || !computed.ok) return null;
+    var m = String(declared || '').match(/(\d+(?:-\d+\/\d+)?|\d+\/\d+)\s*"/);
+    if (!m) return null;
+    var d = m[1];
+    var di = ORDER.indexOf(d), ci = ORDER.indexOf(computed.trade);
+    if (di < 0 || ci < 0) return null;
+    return {
+      declared: d, computed: computed.trade,
+      agrees: di === ci,
+      declaredSmaller: di < ci,
+      note: di === ci ? 'catalogue size agrees with the fill calculation'
+          : di < ci ? 'catalogue says ' + d + '" but ' + computed.conductors + ' \u00D7 ' +
+                      computed.conductorSize + ' needs ' + computed.trade + '" at ' +
+                      computed.limitPct + '% fill'
+                    : 'catalogue says ' + d + '", larger than the ' + computed.trade +
+                      '" the fill calculation requires'
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  GEOMETRY                                                           *
+   *  Walls at the true outside dimension, conductors spread across the   *
+   *  bore. Offsets are PERPENDICULAR to the run — offsetting x and y by  *
+   *  the same amount, which is the obvious shortcut, sends the           *
+   *  conductors diagonally out through the pipe wall on any run that is  *
+   *  not at 45 degrees.                                                  *
+   *                                                                     *
+   *  Nothing is exaggerated. At site scale a 2 inch conduit reads as a   *
+   *  single line, which is how a plan shows conduit; zoom in and the     *
+   *  walls and the conductors separate on their own.                     *
+   * ------------------------------------------------------------------ */
+  function geometry(pts, opts) {
+    opts = opts || {};
+    var od = opts.odIn || 2;
+    var count = Math.max(1, opts.conductors || 1);
+    var out = { walls: [], conductors: [], odIn: od };
+    if (!pts || pts.length < 2) return out;
+
+    out.walls.push(E.offsetPath(pts, od / 2));
+    out.walls.push(E.offsetPath(pts, -od / 2));
+
+    /* Conductors sit inside the bore, not on the wall. */
+    var bore = od * 0.72;
+    var maxDraw = opts.maxDrawn || 12;
+    var drawn = Math.min(count, maxDraw);
+    var i;
+    for (i = 0; i < drawn; i++) {
+      var t = drawn === 1 ? 0 : (i / (drawn - 1) - 0.5);
+      out.conductors.push({
+        path: E.offsetPath(pts, t * bore),
+        index: i,
+        role: i === drawn - 1 && opts.includeGround ? 'ground' : 'phase'
+      });
+    }
+    out.drawn = drawn;
+    out.notDrawn = count - drawn;
+    return out;
+  }
+
+  E.raceway = {
+    COND_AREA: COND_AREA, RACEWAY: RACEWAY, OD: OD, ORDER: ORDER,
+    fillLimit: fillLimit, condArea: condArea, sizeFor: sizeFor,
+    checkAgainst: checkAgainst, geometry: geometry
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-arch-wire-js">
+/* ====================================================================== *
+ *  OMEGA WIRE  —  NEC conductor sizing, and the asset aggregator         *
+ *  ------------------------------------------------------------------    *
+ *  A feeder is not a lookup on horsepower. It is the smallest conductor   *
+ *  that satisfies, simultaneously:                                        *
+ *                                                                         *
+ *    215.2(A)(1)   ampacity >= 125% of the continuous load                *
+ *    310.16        table ampacity at the right temperature column         *
+ *    110.14(C)     terminations limit you to the 75 C column, whatever    *
+ *                  the insulation is rated for                            *
+ *    310.15(B)(1)  ambient correction                                     *
+ *    310.15(C)(1)  bundling adjustment above three current-carrying       *
+ *    240.4         the OCPD that protects it, with the next-size-up rule  *
+ *    250.122       an equipment ground sized to that OCPD — and upsized   *
+ *                  in proportion when the phase conductors are            *
+ *    voltage drop  a design limit, not a code one, and named as such      *
+ *                                                                         *
+ *  The four-step gauge lookup this replaces caps at 350 kcmil and never   *
+ *  parallels, so a 380 kW inverter at 480 V — 457 A, needing 571 A of     *
+ *  75 C ampacity — was given a 310 A conductor. It also grounded every    *
+ *  run with a #6, which is correct only up to a 200 A OCPD.               *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.wire) return;
+
+  var SIZES = ['14','12','10','8','6','4','3','2','1','1/0','2/0','3/0','4/0',
+               '250','300','350','400','500','600','750'];
+
+  /* NEC 310.16 — copper, 75 C and 90 C columns. */
+  var CU75 = { '14':20,'12':25,'10':35,'8':50,'6':65,'4':85,'3':100,'2':115,'1':130,
+               '1/0':150,'2/0':175,'3/0':200,'4/0':230,'250':255,'300':285,'350':310,
+               '400':335,'500':380,'600':420,'750':475 };
+  var CU90 = { '14':25,'12':30,'10':40,'8':55,'6':75,'4':95,'3':110,'2':130,'1':145,
+               '1/0':170,'2/0':195,'3/0':225,'4/0':260,'250':290,'300':320,'350':350,
+               '400':380,'500':430,'600':475,'750':535 };
+  /* Aluminium / copper-clad aluminium. */
+  var AL75 = { '8':40,'6':50,'4':65,'3':75,'2':90,'1':100,'1/0':120,'2/0':135,'3/0':155,
+               '4/0':180,'250':205,'300':230,'350':250,'400':270,'500':310,'600':340,'750':385 };
+  var AL90 = { '8':45,'6':55,'4':75,'3':85,'2':100,'1':115,'1/0':135,'2/0':150,'3/0':175,
+               '4/0':205,'250':230,'300':260,'350':280,'400':305,'500':350,'600':385,'750':435 };
+
+  /* Chapter 9 Table 9, effective Z at 0.85 PF, ohms per 1000 ft, PVC conduit. */
+  var Z_CU = { '14':3.1,'12':2.0,'10':1.2,'8':0.78,'6':0.49,'4':0.31,'3':0.25,'2':0.19,
+               '1':0.15,'1/0':0.12,'2/0':0.10,'3/0':0.077,'4/0':0.062,'250':0.052,
+               '300':0.044,'350':0.038,'400':0.033,'500':0.027,'600':0.023,'750':0.019 };
+  var Z_AL = { '8':1.3,'6':0.81,'4':0.51,'3':0.40,'2':0.32,'1':0.25,'1/0':0.20,'2/0':0.16,
+               '3/0':0.13,'4/0':0.10,'250':0.085,'300':0.071,'350':0.061,'400':0.054,
+               '500':0.043,'600':0.036,'750':0.029 };
+
+  /* 240.6(A) standard OCPD frames. */
+  var FRAMES = [15,20,25,30,35,40,45,50,60,70,80,90,100,110,125,150,175,200,225,250,
+                300,350,400,450,500,600,700,800,1000,1200,1600,2000,2500,3000,4000,5000,6000];
+
+  /* 250.122 — equipment grounding conductor by OCPD rating. */
+  var EGC_CU = [[15,'14'],[20,'12'],[60,'10'],[100,'8'],[200,'6'],[300,'4'],[400,'3'],
+                [500,'2'],[600,'1'],[800,'1/0'],[1000,'2/0'],[1200,'3/0'],[1600,'4/0'],
+                [2000,'250'],[2500,'350'],[3000,'400'],[4000,'500'],[5000,'700'],[6000,'800']];
+
+  /* 310.15(B)(1)(1) ambient correction, 30 C base. */
+  function tempCorr(ambientC, ratingC) {
+    var t = [[25,1.05,1.04],[30,1.00,1.00],[35,0.94,0.96],[40,0.88,0.91],[45,0.82,0.87],
+             [50,0.75,0.82],[55,0.67,0.76],[60,0.58,0.71],[70,0.33,0.58],[80,0,0.41]];
+    for (var i = 0; i < t.length; i++) {
+      if (ambientC <= t[i][0]) return ratingC >= 90 ? t[i][2] : t[i][1];
+    }
+    return 0;
+  }
+  /* 310.15(C)(1) adjustment for more than three current-carrying conductors. */
+  function bundleAdj(ccc) {
+    if (ccc <= 3) return 1;
+    if (ccc <= 6) return 0.8;
+    if (ccc <= 9) return 0.7;
+    if (ccc <= 20) return 0.5;
+    if (ccc <= 30) return 0.45;
+    if (ccc <= 40) return 0.4;
+    return 0.35;
+  }
+  function areaCM(size) {
+    var A = { '14':4110,'12':6530,'10':10380,'8':16510,'6':26240,'4':41740,'3':52620,
+              '2':66360,'1':83690,'1/0':105600,'2/0':133100,'3/0':167800,'4/0':211600 };
+    if (A[size]) return A[size];
+    var k = parseFloat(size);
+    return isFinite(k) ? k * 1000 : 0;      /* kcmil */
+  }
+  function nextFrame(a) {
+    for (var i = 0; i < FRAMES.length; i++) if (FRAMES[i] >= a) return FRAMES[i];
+    return FRAMES[FRAMES.length - 1];
+  }
+  function egcFor(ocpd, material) {
+    for (var i = 0; i < EGC_CU.length; i++) {
+      if (ocpd <= EGC_CU[i][0]) {
+        var cu = EGC_CU[i][1];
+        if (material !== 'AL') return cu;
+        /* 250.122 aluminium column is roughly two sizes up. */
+        var ix = SIZES.indexOf(cu);
+        return SIZES[Math.min(SIZES.length - 1, ix + 2)];
+      }
+    }
+    return '800';
+  }
+
+  function amps(kw, volts, phase, pf) {
+    var v = volts || 480;
+    if (phase === 1) return (kw * 1000) / (v * (pf || 1));
+    return (kw * 1000) / (v * Math.sqrt(3) * (pf || 1));
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SIZE A FEEDER                                                      *
+   * ------------------------------------------------------------------ */
+  function sizeFeeder(o) {
+    o = o || {};
+    var load = +o.loadAmps;
+    if (!(load > 0) && o.kw) load = amps(o.kw, o.volts, o.phase, o.pf);
+    if (!(load > 0)) return { ok: false, error: 'No load given — pass loadAmps or kw.' };
+
+    var mat = (o.material === 'AL') ? 'AL' : 'CU';
+    var insC = o.insulationC || 90;
+    var termC = o.terminationC || 75;          /* 110.14(C) */
+    var ambient = o.ambientC == null ? 30 : o.ambientC;
+    var ccc = o.ccc == null ? 3 : o.ccc;
+    var cont = o.continuous !== false;         /* feeders usually are        */
+    var volts = o.volts || 480;
+    var phase = o.phase || 3;
+    var lengthFt = +o.lengthFt || 0;
+    var vdLimit = o.maxVdPct == null ? 2 : o.maxVdPct;
+    var maxSets = o.maxSets == null ? 10 : o.maxSets;
+
+    var t75 = mat === 'AL' ? AL75 : CU75;
+    var tIns = insC >= 90 ? (mat === 'AL' ? AL90 : CU90) : t75;
+    var tTerm = termC >= 90 ? tIns : t75;
+    var Z = mat === 'AL' ? Z_AL : Z_CU;
+
+    var required = cont ? load * 1.25 : load;
+    var ocpd = nextFrame(required);
+    var corr = tempCorr(ambient, insC), adj = bundleAdj(ccc);
+
+    var pick = null, sets, si;
+    for (sets = 1; sets <= maxSets && !pick; sets++) {
+      var perSet = load / sets, reqPerSet = required / sets;
+      for (si = 0; si < SIZES.length; si++) {
+        var s = SIZES[si];
+        if (tIns[s] == null || tTerm[s] == null) continue;
+        /* 240.4(D) small-conductor rule caps 14/12/10 regardless of table */
+        var smallCap = { '14': 15, '12': 20, '10': 30 }[s];
+        /* (a) derated ampacity must carry the actual load */
+        var derated = tIns[s] * corr * adj;
+        if (derated < perSet - 1e-9) continue;
+        /* (b) the termination column must carry 125% of continuous load */
+        var termAmp = tTerm[s];
+        if (smallCap != null) termAmp = Math.min(termAmp, smallCap);
+        if (termAmp < reqPerSet - 1e-9) continue;
+        pick = { size: s, sets: sets, derated: derated, termAmp: termAmp };
+        break;
+      }
+    }
+    if (!pick) {
+      return { ok: false, error: 'No conductor in the table carries ' + Math.round(required) +
+               ' A even in ' + maxSets + ' parallel sets.' };
+    }
+
+    /* Voltage drop is a DESIGN limit (210.19/215.2 are informational notes),
+       so it is applied after the code minimum and labelled as the reason. */
+    var vdUpsized = false, vd = null;
+    if (lengthFt > 0) {
+      var k = phase === 1 ? 2 : Math.sqrt(3);
+      for (;;) {
+        var z = Z[pick.size];
+        if (z == null) break;
+        vd = (k * z * (load / pick.sets) * lengthFt) / 1000;
+        var pct = (vd / volts) * 100;
+        if (pct <= vdLimit + 1e-9) { vd = { volts: vd, pct: pct }; break; }
+        var ix = SIZES.indexOf(pick.size);
+        if (ix < SIZES.length - 1 && Z[SIZES[ix + 1]] != null) {
+          pick.size = SIZES[ix + 1]; vdUpsized = true;
+        } else if (pick.sets < maxSets) {
+          pick.sets++; vdUpsized = true;
+        } else { vd = { volts: vd, pct: pct, exceeded: true }; break; }
+      }
+    }
+
+    /* 250.122(B): when phase conductors are upsized, the EGC is upsized in
+       the same proportion. Almost always missed, and the reason a long
+       voltage-drop feeder ends up with an undersized ground. */
+    var egc = egcFor(ocpd, mat);
+    var egcUpsized = false;
+    if (vdUpsized) {
+      /* the size the code minimum would have used, before the VD upsize */
+      var minSize = null;
+      for (si = 0; si < SIZES.length; si++) {
+        var s2 = SIZES[si];
+        if (tIns[s2] == null) continue;
+        if (tIns[s2] * corr * adj >= load / pick.sets - 1e-9 &&
+            tTerm[s2] >= required / pick.sets - 1e-9) { minSize = s2; break; }
+      }
+      if (minSize) {
+        var ratio = areaCM(pick.size) / areaCM(minSize);
+        if (ratio > 1.0001) {
+          var needCM = areaCM(egc) * ratio;
+          for (si = 0; si < SIZES.length; si++) {
+            if (areaCM(SIZES[si]) >= needCM) { 
+              if (SIZES[si] !== egc) egcUpsized = true;
+              egc = SIZES[si]; break;
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      loadAmps: +load.toFixed(1),
+      requiredAmps: +required.toFixed(1),
+      continuous: cont,
+      material: mat,
+      size: pick.size, sets: pick.sets,
+      conductorsPerSet: phase === 3 ? 3 : 2,
+      totalPhaseConductors: pick.sets * (phase === 3 ? 3 : 2),
+      ocpdAmps: ocpd,
+      egcSize: egc, egcPerSet: true, egcUpsizedForVd: egcUpsized,
+      ampacity: { table: pick.termAmp, derated: +pick.derated.toFixed(1),
+                  tempCorrection: corr, bundleAdjustment: adj,
+                  ambientC: ambient, ccc: ccc, terminationC: termC, insulationC: insC },
+      voltageDrop: vd ? { volts: +vd.volts.toFixed(2), pct: +vd.pct.toFixed(2),
+                          limitPct: vdLimit, exceeded: !!vd.exceeded,
+                          upsizedForVd: vdUpsized } : null,
+      basis: ['NEC 215.2(A)(1) 125% continuous', 'NEC 310.16 ' + termC + '\u00B0C column',
+              'NEC 110.14(C) termination limit',
+              'NEC 310.15(B)(1) ambient ' + ambient + '\u00B0C \u00D7' + corr,
+              'NEC 310.15(C)(1) ' + ccc + ' CCC \u00D7' + adj,
+              'NEC 240.6 frame ' + ocpd + 'A',
+              'NEC 250.122 EGC ' + egc + (egcUpsized ? ' (upsized per 250.122(B))' : ''),
+              'voltage drop ' + vdLimit + '% design limit'].join(' \u00B7 ')
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  ASSET AGGREGATOR                                                   *
+   *  One takeoff from every engine that produces a quantity: equipment   *
+   *  blocks, conductors, raceway, trench, piles and racking. Each line   *
+   *  says where the number came from, because a BOM whose provenance is  *
+   *  unknown is a BOM nobody will sign.                                  *
+   * ------------------------------------------------------------------ */
+  function aggregate(doc, opts) {
+    opts = opts || {};
+    var items = [], IN = 12;
+    function add(cat, desc, size, qty, unit, from) {
+      if (!(qty > 0)) return;
+      items.push({ category: cat, description: desc, size: size || '',
+                   qty: Math.round(qty * 100) / 100, unit: unit || 'ea', from: from });
+    }
+
+    /* equipment, from the drawing's own schedule */
+    var bom = E.bom(doc);
+    bom.rows.forEach(function (r) {
+      add('Equipment', r.label, Math.round(r.w / IN) + ' \u00D7 ' + Math.round(r.h / IN) + ' ft',
+          r.n, 'ea', 'blocks placed on the sheet');
+    });
+
+    /* raceway and conductors, by layer, from the drawn geometry */
+    var runFt = {}, wireFt = 0;
+    doc.ents.forEach(function (e) {
+      if (e.t !== 'pline' || e.closed || !e.pts || e.pts.length < 2) return;
+      var lyr = e.layer || doc.layer, len = 0, i;
+      for (i = 1; i < e.pts.length; i++) {
+        len += Math.hypot(e.pts[i].x - e.pts[i - 1].x, e.pts[i].y - e.pts[i - 1].y);
+      }
+      if (/^E-COND-WIRE$/.test(lyr)) { wireFt += len / IN; return; }
+      if (/^E-COND-/.test(lyr) || lyr === 'E-POWR-COND') {
+        runFt[lyr] = (runFt[lyr] || 0) + len / IN;
+      }
+    });
+    Object.keys(runFt).forEach(function (l) {
+      /* the pipe is drawn as two walls plus a centreline, so the drawn
+         length is three times the run — divide it back out rather than
+         quoting three times the conduit */
+      add('Raceway', l.replace('E-COND-', '').replace('E-POWR-', ''), '',
+          runFt[l] / 3, 'LF', 'conduit centrelines on ' + l);
+    });
+    if (wireFt > 0) add('Conductor', 'Conductor, all runs', '', wireFt, 'LF',
+                        'conductors drawn inside the raceway');
+
+    /* trench excavation, and the spoil it generates */
+    var trenchFt = 0;
+    doc.ents.forEach(function (e) {
+      if (e.t !== 'pline' || !e.closed || (e.layer || '') !== 'C-TRCH-EXCV') return;
+      /* A CLOSED polyline has one more segment than it has gaps between
+         listed points: the one back to the start. Leaving it out shortens
+         every trench by one width. */
+      var per = 0, i;
+      for (i = 1; i < e.pts.length; i++) {
+        per += Math.hypot(e.pts[i].x - e.pts[i - 1].x, e.pts[i].y - e.pts[i - 1].y);
+      }
+      var f0 = e.pts[0], fN = e.pts[e.pts.length - 1];
+      per += Math.hypot(f0.x - fN.x, f0.y - fN.y);
+      /* A band's perimeter is twice its length PLUS its two end caps, so
+         half the perimeter overstates the run by one trench width. Take the
+         shortest edge as the width and subtract it. */
+      var shortest = Infinity;
+      for (i = 1; i < e.pts.length; i++) {
+        var seg = Math.hypot(e.pts[i].x - e.pts[i - 1].x, e.pts[i].y - e.pts[i - 1].y);
+        if (seg > 1e-6 && seg < shortest) shortest = seg;
+      }
+      if (!isFinite(shortest)) shortest = 0;
+      trenchFt += Math.max(0, (per / 2 - shortest)) / IN;
+    });
+    if (trenchFt > 0) {
+      var depthFt = opts.trenchDepthFt || 3, widthFt = opts.trenchWidthFt || 2;
+      add('Civil', 'Trench excavation', depthFt + ' ft deep', trenchFt, 'LF',
+          'excavation bands on C-TRCH-EXCV');
+      add('Civil', 'Trench spoil / backfill', '', trenchFt * depthFt * widthFt / 27, 'CY',
+          'trench length \u00D7 assumed ' + widthFt + ' \u00D7 ' + depthFt + ' ft section');
+    }
+
+    /* foundations and racking, if the pier pass has been run */
+    if (opts.piers && opts.piers.total && opts.piers.total.piles) {
+      var p = opts.piers.total;
+      add('Structural', 'Driven pile', (opts.piers.cfg.lbPerFt || 9) + ' lb/ft',
+          p.piles, 'ea', 'pier schedule');
+      add('Structural', 'Pile steel', '', p.steelFt, 'LF', 'reveal + embedment per pile');
+      if (p.tubeFt) add('Structural', 'Torque tube', '', p.tubeFt, 'LF', 'pier schedule');
+      if (p.railFt) add('Structural', 'Module rail / purlin', '', p.railFt, 'LF', 'pier schedule');
+      add('Structural', 'Structural steel, total', '', p.weightLb / 2000, 'ton',
+          'length \u00D7 section for each member');
+    }
+
+    /* modules, from the array blocks actually drawn */
+    if (bom.total.mods) {
+      add('Solar', 'PV module', '', bom.total.mods, 'ea', 'module grid in the drawn tables');
+    }
+
+    var byCat = {};
+    items.forEach(function (i) { byCat[i.category] = (byCat[i.category] || 0) + 1; });
+    return {
+      items: items, categories: byCat,
+      totals: { kwDc: bom.total.kwDc, kwAc: bom.total.kwAc, kwh: bom.total.kwh,
+                modules: bom.total.mods, blocks: bom.total.count,
+                conduitFt: Object.keys(runFt).reduce(function (s, l) { return s + runFt[l] / 3; }, 0),
+                conductorFt: wireFt, trenchFt: trenchFt }
+    };
+  }
+
+  function toCSV(agg) {
+    var out = 'CATEGORY,DESCRIPTION,SIZE,QTY,UNIT,SOURCE\n';
+    agg.items.forEach(function (i) {
+      out += [i.category, '"' + i.description + '"', '"' + i.size + '"',
+              i.qty, i.unit, '"' + i.from + '"'].join(',') + '\n';
+    });
+    return out;
+  }
+
+  E.wire = {
+    SIZES: SIZES, CU75: CU75, CU90: CU90, AL75: AL75, FRAMES: FRAMES,
+    tempCorr: tempCorr, bundleAdj: bundleAdj, egcFor: egcFor, nextFrame: nextFrame,
+    amps: amps, areaCM: areaCM, sizeFeeder: sizeFeeder,
+    aggregate: aggregate, toCSV: toCSV
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-arch-solar-js">
+/* ====================================================================== *
+ *  OMEGA SOLAR  —  performance / energy model                            *
+ *  ------------------------------------------------------------------    *
+ *  The editor already calls PVWatts v8, which is a better model than      *
+ *  anything written here and should stay the default. This is what runs   *
+ *  when PVWatts cannot: no network, no NREL key, or a site its datasets   *
+ *  do not cover. It is also what makes the array layout answer a          *
+ *  question the layout alone cannot — how much energy does this tilt,     *
+ *  this azimuth and this DC/AC ratio actually produce.                    *
+ *                                                                         *
+ *  IT NEEDS AN IRRADIANCE INPUT.                                          *
+ *  Annual GHI is the one number that cannot be derived from geometry, so  *
+ *  it is required rather than guessed. Give it monthly GHI and it uses    *
+ *  that; give it an annual figure and it says it distributed it by a      *
+ *  clear-sky shape, which is an assumption and is labelled one.           *
+ *                                                                         *
+ *  Every loss is a named, separately visible factor. A single blanket     *
+ *  "14% losses" hides which assumption is doing the work.                 *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.solar) return;
+
+  var D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  var DAYS = [31,28,31,30,31,30,31,31,30,31,30,31];
+  /* representative day-of-year for each month (Klein) */
+  var REPDAY = [17,47,75,105,135,162,198,228,258,288,318,344];
+
+  function declination(doy) {
+    return 23.45 * Math.sin(2 * Math.PI * (284 + doy) / 365);
+  }
+  /* Extraterrestrial irradiance on a horizontal surface, daily, kWh/m2. */
+  function h0Daily(latDeg, doy) {
+    var lat = latDeg * D2R, dec = declination(doy) * D2R;
+    var cosW = -Math.tan(lat) * Math.tan(dec);
+    cosW = Math.max(-1, Math.min(1, cosW));
+    var ws = Math.acos(cosW);
+    var Gsc = 1367;                                   /* W/m2                */
+    var E0 = 1 + 0.033 * Math.cos(2 * Math.PI * doy / 365);
+    var Wh = (24 / Math.PI) * Gsc * E0 *
+             (Math.cos(lat) * Math.cos(dec) * Math.sin(ws) + ws * Math.sin(lat) * Math.sin(dec));
+    return Math.max(0, Wh / 1000);
+  }
+
+  /* Erbs correlation: split daily GHI into diffuse and beam from clearness. */
+  function erbsDiffuseFraction(kt) {
+    if (kt <= 0.22) return 1 - 0.09 * kt;
+    if (kt <= 0.80) {
+      return 0.9511 - 0.1604 * kt + 4.388 * kt * kt - 16.638 * Math.pow(kt, 3) +
+             12.336 * Math.pow(kt, 4);
+    }
+    return 0.165;
+  }
+
+  /* Geometric factor Rb: beam on a tilted plane over beam on horizontal,
+     for a surface at tilt/azimuth, integrated over the day (Liu & Jordan,
+     using the representative-day hour angle). */
+  function rbDaily(latDeg, doy, tiltDeg, azFromSouthDeg) {
+    var lat = latDeg * D2R, dec = declination(doy) * D2R;
+    var b = tiltDeg * D2R, g = (azFromSouthDeg || 0) * D2R;
+    var ws = Math.acos(Math.max(-1, Math.min(1, -Math.tan(lat) * Math.tan(dec))));
+    /* numerically integrate cos(theta) and cos(theta_z) over the day */
+    var num = 0, den = 0, steps = 96, i;
+    for (i = 0; i <= steps; i++) {
+      var w = -ws + (2 * ws) * (i / steps);
+      var cosZ = Math.sin(dec) * Math.sin(lat) + Math.cos(dec) * Math.cos(lat) * Math.cos(w);
+      if (cosZ <= 0.01) continue;
+      var cosT = Math.sin(dec) * Math.sin(lat) * Math.cos(b)
+               - Math.sin(dec) * Math.cos(lat) * Math.sin(b) * Math.cos(g)
+               + Math.cos(dec) * Math.cos(lat) * Math.cos(b) * Math.cos(w)
+               + Math.cos(dec) * Math.sin(lat) * Math.sin(b) * Math.cos(g) * Math.cos(w)
+               + Math.cos(dec) * Math.sin(b) * Math.sin(g) * Math.sin(w);
+      if (cosT > 0) num += cosT;
+      den += cosZ;
+    }
+    return den > 0 ? num / den : 0;
+  }
+
+  /* Plane-of-array irradiation for a month, kWh/m2/day. Isotropic sky for
+     diffuse — HDKR would add a couple of percent and another assumption. */
+  function poaDaily(ghiDaily, latDeg, doy, tiltDeg, azDeg, albedo) {
+    var h0 = h0Daily(latDeg, doy);
+    if (h0 <= 0) return { poa: 0, kt: 0, beam: 0, diffuse: 0, ground: 0 };
+    var kt = Math.max(0, Math.min(1, ghiDaily / h0));
+    var df = erbsDiffuseFraction(kt);
+    var Hd = ghiDaily * df, Hb = ghiDaily - Hd;
+    var b = tiltDeg * D2R;
+    var rb = rbDaily(latDeg, doy, tiltDeg, azDeg);
+    var beam = Hb * rb;
+    var diffuse = Hd * (1 + Math.cos(b)) / 2;
+    var ground = ghiDaily * (albedo == null ? 0.2 : albedo) * (1 - Math.cos(b)) / 2;
+    return { poa: beam + diffuse + ground, kt: kt, beam: beam, diffuse: diffuse, ground: ground };
+  }
+
+  /* Cell temperature, Sandia-style from ambient, POA and wind. */
+  function cellTemp(ambientC, poaWm2, windMs, mount) {
+    var m = { open: { a: -3.56, b: -0.075 }, roof: { a: -2.98, b: -0.0471 } };
+    var k = m[mount] || m.open;
+    return ambientC + poaWm2 * Math.exp(k.a + k.b * (windMs == null ? 1 : windMs));
+  }
+
+  var LOSSES = {
+    soiling: 0.02, shading: 0.03, mismatch: 0.02, wiring: 0.02,
+    connections: 0.005, lid: 0.015, nameplate: 0.01, availability: 0.03
+  };
+
+  /* ------------------------------------------------------------------ *
+   *  MODEL                                                              *
+   * ------------------------------------------------------------------ */
+  function model(cfg) {
+    cfg = cfg || {};
+    var lat = cfg.latDeg;
+    if (!isFinite(lat)) return { ok: false, error: 'A latitude is required.' };
+    var kwDc = +cfg.kwDc;
+    if (!(kwDc > 0)) return { ok: false, error: 'A DC capacity is required.' };
+
+    /* Irradiance: measured monthly if given, otherwise a stated assumption. */
+    var ghiMonthly = cfg.ghiMonthlyKwhM2Day, assumedShape = false;
+    if (!Array.isArray(ghiMonthly) || ghiMonthly.length !== 12) {
+      var annual = +cfg.ghiAnnualKwhM2;
+      if (!(annual > 0)) {
+        return { ok: false,
+          error: 'No irradiance given. Pass ghiMonthlyKwhM2Day (12 values) or ' +
+                 'ghiAnnualKwhM2. Irradiance is the one input that cannot be ' +
+                 'derived from the layout, so it is not guessed.' };
+      }
+      /* distribute the annual total by the clear-sky shape for this latitude */
+      var shape = REPDAY.map(function (d) { return h0Daily(lat, d); });
+      var wsum = 0, i;
+      for (i = 0; i < 12; i++) wsum += shape[i] * DAYS[i];
+      ghiMonthly = shape.map(function (h) { return annual * h / wsum; });
+      assumedShape = true;
+    }
+
+    var tilt = cfg.tiltDeg == null ? Math.min(35, Math.abs(lat)) : cfg.tiltDeg;
+    var az = cfg.azFromSouthDeg || 0;
+    var albedo = cfg.albedo == null ? 0.2 : cfg.albedo;
+    var mount = cfg.mount || 'open';
+    var tempCoef = cfg.tempCoefPctPerC == null ? -0.0035 : cfg.tempCoefPctPerC;
+    var ambient = cfg.ambientMonthlyC;
+    var wind = cfg.windMs == null ? 1 : cfg.windMs;
+    var invEff = cfg.inverterEff == null ? 0.975 : cfg.inverterEff;
+    var kwAc = +cfg.kwAc || 0;
+
+    var L = {}, k;
+    for (k in LOSSES) L[k] = LOSSES[k];
+    for (k in (cfg.losses || {})) if (L[k] != null || true) L[k] = cfg.losses[k];
+    var lossFactor = 1;
+    Object.keys(L).forEach(function (kk) { lossFactor *= (1 - L[kk]); });
+
+    var months = [], acAnnual = 0, dcAnnual = 0, poaAnnual = 0, clipAnnual = 0;
+    for (var m = 0; m < 12; m++) {
+      var doy = REPDAY[m], days = DAYS[m];
+      var p = poaDaily(ghiMonthly[m], lat, doy, tilt, az, albedo);
+      var poaMonth = p.poa * days;                         /* kWh/m2         */
+      /* DC energy at STC reference: kW_dc * POA(kWh/m2) / 1 kW/m2 */
+      var dcIdeal = kwDc * poaMonth;
+      /* temperature: use the mean daytime POA intensity as the operating point */
+      var meanPoaW = p.poa > 0 ? (p.poa * 1000) / Math.max(4, 8) : 0;
+      var amb = Array.isArray(ambient) ? ambient[m] : (cfg.ambientC == null ? 20 : cfg.ambientC);
+      var tc = cellTemp(amb, meanPoaW, wind, mount);
+      var tempDerate = 1 + tempCoef * (tc - 25);
+      var dc = dcIdeal * tempDerate * lossFactor;
+      var ac = dc * invEff;
+      var clipped = 0;
+      if (kwAc > 0) {
+        /* Clipping needs an hourly shape to be exact. Approximate the hours
+           above the inverter limit from the ratio and the month's peak-sun
+           hours, and report it as an approximation rather than a result. */
+        var psh = p.poa;                                   /* peak sun hours */
+        var ratio = kwDc / kwAc;
+        if (ratio > 1.02 && psh > 0) {
+          var over = 1 - 1 / ratio;
+          var frac = Math.max(0, Math.min(0.35, over * 0.55));
+          clipped = ac * frac;
+          ac -= clipped;
+        }
+      }
+      months.push({
+        month: m, days: days,
+        ghiKwhM2Day: +ghiMonthly[m].toFixed(3),
+        poaKwhM2Day: +p.poa.toFixed(3), poaKwhM2: +poaMonth.toFixed(1),
+        clearnessKt: +p.kt.toFixed(3),
+        cellTempC: +tc.toFixed(1), tempDerate: +tempDerate.toFixed(4),
+        dcKwh: Math.round(dc), acKwh: Math.round(ac), clippedKwh: Math.round(clipped)
+      });
+      dcAnnual += dc; acAnnual += ac; poaAnnual += poaMonth; clipAnnual += clipped;
+    }
+
+    return {
+      ok: true,
+      acAnnualKwh: Math.round(acAnnual),
+      dcAnnualKwh: Math.round(dcAnnual),
+      specificYield: +(acAnnual / kwDc).toFixed(0),
+      capacityFactorPct: kwAc > 0 ? +((acAnnual / (kwAc * 8760)) * 100).toFixed(2)
+                                  : +((acAnnual / (kwDc * 8760)) * 100).toFixed(2),
+      poaAnnualKwhM2: +poaAnnual.toFixed(1),
+      transpositionGain: +(poaAnnual / (ghiMonthly.reduce(function (s, g, i2) {
+        return s + g * DAYS[i2]; }, 0)) ).toFixed(3),
+      clippedKwh: Math.round(clipAnnual),
+      clippedPct: acAnnual + clipAnnual > 0
+        ? +((clipAnnual / (acAnnual + clipAnnual)) * 100).toFixed(2) : 0,
+      months: months,
+      inputs: { latDeg: lat, tiltDeg: tilt, azFromSouthDeg: az, kwDc: kwDc, kwAc: kwAc,
+                dcAcRatio: kwAc > 0 ? +(kwDc / kwAc).toFixed(3) : null,
+                albedo: albedo, mount: mount, inverterEff: invEff },
+      losses: L, lossFactorTotal: +lossFactor.toFixed(4),
+      assumptions: [
+        assumedShape ? 'Monthly irradiance distributed from an annual total by the ' +
+                       'clear-sky shape at this latitude \u2014 an assumption, not data.' : null,
+        'Isotropic sky for diffuse; HDKR would add a little and another assumption.',
+        'Erbs correlation splits beam from diffuse.',
+        Array.isArray(ambient) ? null
+          : 'Ambient temperature assumed ' + (cfg.ambientC == null ? 20 : cfg.ambientC) +
+            '\u00B0C year-round \u2014 pass ambientMonthlyC for a real profile.',
+        kwAc > 0 ? 'Clipping is approximated from the DC/AC ratio; an hourly ' +
+                   'profile is needed to state it exactly.' : null,
+        'PVWatts remains the better answer when it is reachable.'
+      ].filter(Boolean)
+    };
+  }
+
+  /* Tilt that maximises annual energy, found by search rather than by the
+     rule of thumb that tilt equals latitude — which is right for a
+     south-facing array at mid latitudes and wrong elsewhere. */
+  function optimumTilt(cfg) {
+    var best = null;
+    for (var t = 0; t <= 60; t += 1) {
+      var c = {}, k;
+      for (k in cfg) c[k] = cfg[k];
+      c.tiltDeg = t;
+      var r = model(c);
+      if (!r.ok) return r;
+      if (!best || r.acAnnualKwh > best.acAnnualKwh) best = { tiltDeg: t, acAnnualKwh: r.acAnnualKwh };
+    }
+    return best;
+  }
+
+  /* Read the array straight off the drawing: capacity, tilt and azimuth all
+     come from the blocks that were placed. */
+  function fromDoc(doc, cfg) {
+    cfg = cfg || {};
+    var bom = E.bom(doc);
+    var kwDc = bom.total.kwDc, tilt = null, az = null;
+    doc.ents.forEach(function (e) {
+      if (e.t !== 'ins') return;
+      var b = E.BLOCKS[e.key];
+      if (!b || !b.kwDc) return;
+      if (b.cfg && b.cfg.tiltDeg != null && tilt == null) tilt = b.cfg.tiltDeg;
+      else if (E.iso && tilt == null) {
+        var z = E.iso.zProfile(e.key);
+        if (z && z.kind === 'tilted' && z.tiltDeg != null) tilt = z.tiltDeg;
+      }
+      if (az == null) az = -(e.rot || 0) * R2D;
+    });
+    var out = {}, k;
+    for (k in cfg) out[k] = cfg[k];
+    if (out.kwDc == null) out.kwDc = kwDc;
+    if (out.tiltDeg == null && tilt != null) out.tiltDeg = tilt;
+    if (out.azFromSouthDeg == null && az != null) out.azFromSouthDeg = az;
+    if (out.kwAc == null && bom.total.kwAc) out.kwAc = bom.total.kwAc;
+    if (out.latDeg == null && E.geo && E.geo.hasAnchor(doc)) out.latDeg = doc.geo.lat;
+    var r = model(out);
+    if (r.ok) r.fromDrawing = { kwDc: kwDc, tiltDeg: tilt, azFromSouthDeg: az,
+                                kwAc: bom.total.kwAc, modules: bom.total.mods };
+    return r;
+  }
+
+  E.solar = {
+    model: model, optimumTilt: optimumTilt, fromDoc: fromDoc,
+    poaDaily: poaDaily, h0Daily: h0Daily, declination: declination,
+    erbsDiffuseFraction: erbsDiffuseFraction, cellTemp: cellTemp,
+    rbDaily: rbDaily, LOSSES: LOSSES, DAYS: DAYS
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script id="omega-arch-js">
 
 /* ====================================================================== *
@@ -114746,6 +115575,53 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
   /* Trench width by conduit class, in inches. A drawing convention for the
      band on the plan — the trench detail sheet is the authority, and the
      width a contractor prices comes from there, not from here. */
+  /* WHICH RUNS ARE ACTUALLY IN THE GROUND.
+     The guided build stamps route:'trench' on every leg it creates, so an
+     import trenched all six runs including the ones on a roof. Route alone
+     is therefore not evidence. A raceway type is: MV-UG, PVC-UG and the EV
+     underground feeders go in the ground; EMT and RMC are exposed raceway,
+     on a roof or up a wall, and a trench under them is fiction. An explicit
+     'surface' always wins. */
+  var UNDERGROUND = { 'MV-UG': 1, 'PVC-UG': 1, 'EV-MAIN': 1, 'EV-FEEDER': 1,
+                      'EV-BRANCH': 1, 'EV-SPARE': 1, 'L2-TRENCH': 1 };
+  var EXPOSED = { 'EMT-BMS': 1, 'L2-INT': 1, 'RMC-DC': 1, 'RMC-AC': 1 };
+  function isTrenched(c) {
+    if (c.route === 'surface') return false;
+    if (EXPOSED[c.condType]) return false;
+    if (UNDERGROUND[c.condType]) return true;
+    return c.route === 'trench';
+  }
+
+  /* Raceway material and a representative conductor per run type. The
+     conductor gauge is NOT stored on a run, so it is an assumption — it is
+     stated on the callout and checked against the catalogue's own conduit
+     size, which is the part that can be verified. */
+  var RUN_SPEC = {
+    'MV-UG':     { material: 'PVC40', size: '1/0', insulation: 'MV15' },
+    'PVC-UG':    { material: 'PVC40', size: '4/0' },
+    'RMC-DC':    { material: 'RMC',   size: '10' },
+    'RMC-AC':    { material: 'RMC',   size: '4/0' },
+    'EMT-BMS':   { material: 'EMT',   size: '14' },
+    'EV-MAIN':   { material: 'PVC40', size: '500' },
+    'EV-FEEDER': { material: 'PVC40', size: '4/0' },
+    'EV-BRANCH': { material: 'PVC40', size: '2' },
+    'EV-SPARE':  { material: 'PVC40', size: '4/0' },
+    'L2-INT':    { material: 'EMT',   size: '8' },
+    'L2-TRENCH': { material: 'PVC40', size: '8' }
+  };
+  /* The app's own conductors-per-conduit rule, read from the app rather
+     than restated here so the two cannot drift. */
+  function cablePer(c) {
+    if (c.cablePer != null) return +c.cablePer;
+    try {
+      if (typeof _cablePerFor === 'function') return _cablePerFor(c.condType);
+      if (typeof window._cablePerFor === 'function') return window._cablePerFor(c.condType);
+    } catch (e) {}
+    var d = { 'RMC-DC': 4, 'RMC-AC': 4, 'EMT-BMS': 2, 'PVC-UG': 4, 'MV-UG': 3,
+              'EV-MAIN': 4, 'EV-FEEDER': 4, 'EV-BRANCH': 4, 'L2-INT': 3, 'L2-TRENCH': 3 };
+    return d[c.condType] != null ? d[c.condType] : 4;
+  }
+
   var TRENCH_W = {
     'MV-UG': 30, 'EV-MAIN': 30, 'RMC-DC': 24, 'RMC-AC': 24,
     'PVC-UG': 24, 'EV-FEEDER': 24, 'EV-BRANCH': 18, 'EV-SPARE': 18,
@@ -114904,7 +115780,9 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       /* A trench is a band on a plan, not a line. Draw the excavation
          width as a closed outline with the raceway centreline inside it,
          so the sheet shows what is actually dug and what runs in it. */
-      if (c.route === 'trench') {
+      var trenched = isTrenched(c);
+      if (c.route === 'trench' && !trenched) made.reclassified = (made.reclassified || 0) + 1;
+      if (trenched) {
         E.ensureLayer('C-TRCH-EXCV', 8);
         var wIn = TRENCH_W[c.condType] || 24;
         var band = E.bandPath(pts, wIn);
@@ -114913,6 +115791,33 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
           made.trench = (made.trench || 0) + 1;
         }
       }
+
+      /* The raceway itself: pipe walls at the real outside dimension and the
+         conductors inside. At site scale this reads as one line, which is
+         how a plan shows conduit; zoom in and it separates. Nothing is
+         exaggerated to make it visible. */
+      var spec = RUN_SPEC[c.condType] || { material: 'PVC40', size: '4/0' };
+      var nCond = cablePer(c);
+      var fill = E.raceway ? E.raceway.sizeFor(spec.size, nCond, spec.material, spec.insulation)
+                           : { ok: false };
+      if (fill.ok && nCond > 0) {
+        var geo = E.raceway.geometry(pts, { odIn: fill.odIn || 2, conductors: nCond, maxDrawn: 12 });
+        geo.walls.forEach(function (wall) {
+          if (wall && wall.length >= 2) {
+            E.add(ST.doc, { t: 'pline', closed: false, layer: m[0], pts: wall });
+          }
+        });
+        E.ensureLayer('E-COND-WIRE', 2);
+        geo.conductors.forEach(function (cd) {
+          if (cd.path && cd.path.length >= 2) {
+            E.add(ST.doc, { t: 'pline', closed: false, layer: 'E-COND-WIRE', pts: cd.path });
+          }
+        });
+        made.pipes = (made.pipes || 0) + 1;
+        made.wires = (made.wires || 0) + geo.drawn;
+      }
+      /* The centreline stays either way: it is what a run is picked and
+         measured by, and it is the only thing left if the fill failed. */
       E.add(ST.doc, { t: 'pline', closed: false, layer: m[0], pts: pts });
       made.runs++;
 
@@ -114924,14 +115829,28 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       else if (c.condType) bits.push(String(c.condType));
       /* the cable and raceway the run actually carries, from the app's own
          conduit catalogue rather than restated here */
-      if (ct && ct.size) bits.push(String(ct.size));
+      if (fill.ok) {
+        bits.push(nCond + '\u00D7 ' + spec.size +
+                  (spec.insulation === 'MV15' ? ' MV-105' : ' THWN-2'));
+        bits.push(fill.trade + '" ' + fill.material.replace('40', '') +
+                  ' (' + fill.fillPct + '% fill, ' + fill.limitPct + '% max)');
+        var chk = E.raceway.checkAgainst(ct && ct.size, fill);
+        if (chk && !chk.agrees) {
+          made.mismatch = made.mismatch || [];
+          made.mismatch.push((c.label || c.condType) + ': ' + chk.note);
+        }
+      } else if (fill.error) {
+        made.fillErr = made.fillErr || [];
+        made.fillErr.push((c.label || c.condType) + ': ' + fill.error);
+      }
+      if (ct && ct.size) bits.push('CAT ' + String(ct.size));
       if (c.cable) bits.push(String(c.cable));
-      if (c.route === 'trench') {
+      if (trenched) {
         var tw = TRENCH_W[c.condType] || 24;
         bits.push('TRENCH ' + E.fmtLen(tw, ST.doc.units) + ' W' +
           (c.trenchIn === 'concrete' ? ', SAWCUT CONCRETE'
            : c.trenchIn === 'asphalt' ? ', SAWCUT ASPHALT' : ''));
-      } else if (c.route === 'surface') bits.push('SURFACE MOUNT');
+      } else bits.push('EXPOSED RACEWAY');
       if (c.ftLen) bits.push((+c.ftLen).toFixed(0) + ' FT');
       if (c.runFrom && c.runTo) bits.push(c.runFrom + ' \u2192 ' + c.runTo);
       if (bits.length) {
@@ -114993,6 +115912,19 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         made.runs + ' conduit run(s)' +
         (made.trench ? ' (' + made.trench + ' trenched)' : '') +
         ', ' + made.shapes + ' shape(s), ' + made.labels + ' label(s).');
+    if (made.pipes) {
+      say('Raceway: ' + made.pipes + ' run(s) drawn as pipe with ' + made.wires +
+          ' conductor(s) inside, sized to NEC Chapter 9 fill.');
+    }
+    if (made.reclassified) {
+      say(made.reclassified + ' run(s) were tagged as trench but use exposed raceway ' +
+          '(EMT or RMC) \u2014 drawn as conduit, not excavation. A trench under a roof ' +
+          'run is fiction.');
+    }
+    (made.mismatch || []).forEach(function (mm) {
+      say('Conduit size disagrees \u2014 ' + mm);
+    });
+    (made.fillErr || []).forEach(function (fe) { say('Fill: ' + fe); });
     if (made.tables) {
       say('Solar: ' + made.tables.toLocaleString() + ' racking table(s) drawn at true size.');
     }
@@ -117511,6 +118443,479 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
   setInterval(function () {
     try { graft(); } catch (e) { if (window.console) console.warn(TAG, e && e.message); }
   }, 700);
+})();
+
+</script>
+<script id="omega-valuestack-js">
+/* ====================================================================== *
+ *  OMEGA VALUE STACK  —  dispatch-constrained revenue and lifecycle IRR  *
+ *  ------------------------------------------------------------------    *
+ *  THE PROBLEM THIS SOLVES.                                               *
+ *  A value stack is usually built by computing each revenue stream on its *
+ *  own and adding them up. Every stream is individually defensible and    *
+ *  the total is not, because one battery cannot be shaving a peak,        *
+ *  arbitraging a spread and following a regulation signal in the same     *
+ *  hour. Summed naively, a 380 kW / 760 kWh system commits about 9,500    *
+ *  hours of a 8,760 hour year — 1.09x the asset that exists.              *
+ *                                                                         *
+ *  So the streams are ALLOCATED, not added: each takes what the asset has *
+ *  left after the ones ahead of it, against two real budgets —            *
+ *                                                                         *
+ *    hours     8,760 a year, minus what is already committed              *
+ *    cycles    the warranty's throughput, not an arbitrary 330            *
+ *                                                                         *
+ *  and the engine reports what each stream had to give up, so the         *
+ *  forgone revenue is visible rather than silently claimed.               *
+ *                                                                         *
+ *  This does NOT invent rates. It takes the per-stream gross figures the  *
+ *  existing estimator produces — which carry real tariff and ISO data —   *
+ *  and applies the constraint the estimator does not.                     *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  if (root.OmegaValueStack) return;
+
+  var DEFAULTS = {
+    dod: 0.90,                 /* usable fraction of nameplate              */
+    rte: 0.88,                 /* round trip, AC to AC                      */
+    warrantyCycles: 6000,      /* full equivalent cycles over the warranty  */
+    warrantyYears: 15,
+    maxCyclesPerDay: 1.2,
+    peakEventsYr: 252,         /* weekday peak events                       */
+    peakDurationH: 2,          /* hours the shave has to hold               */
+    regAvailability: 0.90,     /* hours the market expects you to be there  */
+    /* Priority: what gets the asset first. Peak shaving leads because it is
+       the contracted, deterministic BTM value; the merchant streams take
+       what is left. Reorder this and the allocation changes with it. */
+    order: ['demand', 'capacity', 'arbitrage', 'regulation']
+  };
+
+  /* Hours a stream needs from the asset, given the sizes involved. */
+  function hoursFor(stream, a, cfg) {
+    var usableKwh = a.kwh * cfg.dod;
+    var dischargeH = a.kw > 0 ? usableKwh / a.kw : 0;
+    if (stream === 'demand') {
+      /* one shave a weekday, plus the recharge it forces */
+      return cfg.peakEventsYr * (cfg.peakDurationH + cfg.peakDurationH / cfg.rte);
+    }
+    if (stream === 'arbitrage') {
+      return a._arbCycles * (dischargeH + dischargeH / cfg.rte);
+    }
+    if (stream === 'regulation') return 8760 * cfg.regAvailability;
+    /* Capacity/DR is an availability obligation in the same peak-coincident
+       hours the shave already covers, so it does not add committed hours.
+       That is exactly why it stacks with demand and regulation does not. */
+    return 0;
+  }
+
+  /* Full equivalent cycles a stream consumes. */
+  function cyclesFor(stream, a, cfg) {
+    var usableKwh = a.kwh * cfg.dod;
+    if (usableKwh <= 0) return 0;
+    if (stream === 'demand') {
+      return cfg.peakEventsYr * (a.kw * cfg.peakDurationH) / usableKwh;
+    }
+    if (stream === 'arbitrage') return a._arbCycles;
+    return 0;                        /* regulation is energy-neutral        */
+  }
+
+  function merge(base, over) {
+    var o = {}, k;
+    for (k in base) if (base.hasOwnProperty(k)) o[k] = base[k];
+    for (k in (over || {})) if (over.hasOwnProperty(k) && over[k] != null) o[k] = over[k];
+    return o;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  ALLOCATE                                                           *
+   *  streams: gross annual $ per stream, as the estimator computed them  *
+   *  asset:   { kw, kwh }                                               *
+   * ------------------------------------------------------------------ */
+  function allocate(streams, asset, opts) {
+    var cfg = merge(DEFAULTS, opts);
+    var a = { kw: +asset.kw || 0, kwh: +asset.kwh || 0 };
+    if (a.kw <= 0 || a.kwh <= 0) {
+      return { ok: false, error: 'No battery to allocate — the drawing has no kW or kWh.' };
+    }
+    /* Cycle budget from the warranty, not from a habit. */
+    var byWarranty = cfg.warrantyCycles / cfg.warrantyYears;
+    var byDuty = cfg.maxCyclesPerDay * 365;
+    var cycleBudget = Math.min(byWarranty, byDuty);
+    a._arbCycles = cycleBudget;      /* arbitrage would take all of it      */
+
+    var hoursLeft = 8760, cyclesLeft = cycleBudget;
+    var out = {}, detail = [], conflicts = [];
+
+    cfg.order.forEach(function (s) {
+      var gross = +streams[s] || 0;
+      if (gross <= 0) { out[s] = 0; return; }
+      var wantH = hoursFor(s, a, cfg);
+      var wantC = cyclesFor(s, a, cfg);
+      /* The binding constraint is whichever runs out first. */
+      var fH = wantH > 0 ? Math.max(0, Math.min(1, hoursLeft / wantH)) : 1;
+      var fC = wantC > 0 ? Math.max(0, Math.min(1, cyclesLeft / wantC)) : 1;
+      var f = Math.min(fH, fC);
+      out[s] = gross * f;
+      hoursLeft -= wantH * f;
+      cyclesLeft -= wantC * f;
+      detail.push({
+        stream: s, grossYr: gross, allocatedYr: gross * f, fraction: f,
+        hoursWanted: wantH, cyclesWanted: wantC,
+        limitedBy: f >= 1 ? null : (fH < fC ? 'hours' : 'cycles')
+      });
+      if (f < 0.999) {
+        conflicts.push(s + ' is limited to ' + Math.round(f * 100) + '% of its standalone value by ' +
+          (fH < fC ? 'the hours already committed ahead of it'
+                   : 'the warranty cycle budget already spent'));
+      }
+    });
+
+    var gross = 0, net = 0;
+    Object.keys(streams).forEach(function (k) { gross += +streams[k] || 0; });
+    Object.keys(out).forEach(function (k) { net += out[k]; });
+
+    return {
+      ok: true, streams: out, detail: detail, conflicts: conflicts,
+      grossYr: gross, allocatedYr: net, forgoneYr: gross - net,
+      overcommitment: net > 0 ? gross / net : 1,
+      budget: {
+        cycleBudget: cycleBudget,
+        cycleBudgetFrom: byWarranty <= byDuty ? 'warranty throughput' : 'daily duty limit',
+        cyclesLeft: Math.max(0, cyclesLeft),
+        hoursLeft: Math.max(0, hoursLeft)
+      },
+      asset: { kw: a.kw, kwh: a.kwh, usableKwh: a.kwh * cfg.dod },
+      cfg: cfg
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  LIFECYCLE                                                          *
+   * ------------------------------------------------------------------ */
+  var FIN = {
+    years: 20,
+    capexPerKwh: 450, capexPerKw: 120, capexFixed: 15000,
+    itcPct: 0.30,                    /* claimed in year 0                   */
+    opexYr: 8500, opexEscalation: 0.025,
+    energyFadePct: 0.018,            /* per year                            */
+    powerFadePct: 0.010,             /* inverters fade slower than cells    */
+    revenueEscalation: 0.02,
+    augmentAtPct: 0.70,              /* augment when usable falls this far  */
+    augmentCostPerKwh: 200,
+    discountRate: 0.08
+  };
+
+  function lifecycle(alloc, opts) {
+    if (!alloc || !alloc.ok) return { ok: false, error: (alloc && alloc.error) || 'no allocation' };
+    var f = merge(FIN, opts);
+    var kw = alloc.asset.kw, kwh = alloc.asset.kwh;
+
+    var capex = kwh * f.capexPerKwh + kw * f.capexPerKw + f.capexFixed;
+    var itc = capex * f.itcPct;
+    var flows = [-(capex - itc)];
+    var rows = [{ year: 0, capacityPct: 1, revenue: 0, opex: 0, capex: capex,
+                  itc: itc, net: -(capex - itc) }];
+
+    /* Which streams follow energy fade and which follow power fade. Demand
+       shaving and regulation are paid on kW; arbitrage is paid on kWh. */
+    var byEnergy = { arbitrage: 1 };
+    var byPower = { demand: 1, capacity: 1, regulation: 1 };
+
+    var augmented = 0;
+    for (var y = 1; y <= f.years; y++) {
+      /* Year 1 has a year of degradation on it — indexing from year-1 gives
+         year 1 a brand-new battery, which is a free year of capacity. */
+      var eFade = Math.pow(1 - f.energyFadePct, y);
+      var pFade = Math.pow(1 - f.powerFadePct, y);
+      var augCapex = 0;
+      if (f.augmentAtPct > 0 && eFade < f.augmentAtPct && augmented < 1) {
+        /* Buy back to nameplate once. Ignoring this makes a 20 year model
+           out of a 12 year asset. */
+        augCapex = kwh * (1 - eFade) * f.augmentCostPerKwh;
+        augmented++;
+        eFade = 1;
+      }
+      var esc = Math.pow(1 + f.revenueEscalation, y - 1);
+      var rev = 0;
+      Object.keys(alloc.streams).forEach(function (s) {
+        var base = alloc.streams[s];
+        var fade = byEnergy[s] ? eFade : (byPower[s] ? pFade : 1);
+        rev += base * fade * esc;
+      });
+      var opex = f.opexYr * Math.pow(1 + f.opexEscalation, y - 1);
+      var net = rev - opex - augCapex;
+      flows.push(net);
+      rows.push({ year: y, capacityPct: eFade, revenue: rev, opex: opex,
+                  capex: augCapex, itc: 0, net: net });
+    }
+
+    var r = irr(flows);
+    return {
+      ok: true, flows: flows, rows: rows,
+      capex: capex, itc: itc, netCapex: capex - itc,
+      irr: r, npv: npv(flows, f.discountRate), payback: payback(flows),
+      augmentations: augmented, cfg: f
+    };
+  }
+
+  /* IRR by bisection on a bracketed sign change. Newton-Raphson from a
+     single guess can walk off to a spurious root or fail to converge and
+     report nothing, on cash flows that have a perfectly good answer. */
+  function irr(flows, lo, hi) {
+    if (!flows || flows.length < 2) return null;
+    lo = lo == null ? -0.9999 : lo;
+    hi = hi == null ? 10 : hi;
+    var fLo = npv(flows, lo), fHi = npv(flows, hi);
+    if (!isFinite(fLo) || !isFinite(fHi)) return null;
+    if (fLo * fHi > 0) return null;          /* no sign change, no root      */
+    for (var i = 0; i < 200; i++) {
+      var mid = (lo + hi) / 2, fMid = npv(flows, mid);
+      if (Math.abs(fMid) < 1e-7 || (hi - lo) < 1e-9) return mid;
+      if (fLo * fMid < 0) { hi = mid; fHi = fMid; }
+      else { lo = mid; fLo = fMid; }
+    }
+    return (lo + hi) / 2;
+  }
+  function npv(flows, rate) {
+    var s = 0;
+    for (var t = 0; t < flows.length; t++) s += flows[t] / Math.pow(1 + rate, t);
+    return s;
+  }
+  /* Payback with a guard: a project that never turns positive has no
+     payback, and reporting one anyway is how a bad project looks fine. */
+  function payback(flows) {
+    var cum = 0;
+    for (var t = 0; t < flows.length; t++) {
+      var prev = cum;
+      cum += flows[t];
+      if (t > 0 && prev < 0 && cum >= 0) {
+        return t - 1 + (-prev / flows[t]);
+      }
+    }
+    return null;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  READ THE DRAWING                                                   *
+   *  The whole point: the value stack sizes off what is on the sitemap,  *
+   *  not off numbers typed into a form.                                  *
+   * ------------------------------------------------------------------ */
+  function readSite() {
+    var out = { kw: 0, kwh: 0, solarKwDc: 0, solarKwAc: 0, source: [], ok: false };
+    var S = null;
+    try { S = (typeof window.S !== 'undefined' && window.S) ? window.S : null; } catch (e) {}
+    if (!S) { try { S = eval('typeof S !== "undefined" ? S : null'); } catch (e) {} }
+
+    /* 1. the placed fleet, which is what is actually drawn */
+    try {
+      if (typeof window._ppCollectFleet === 'function') {
+        var fl = window._ppCollectFleet();
+        if (fl && (fl.totalKw > 0 || fl.totalKwh > 0)) {
+          out.kw = fl.totalKw || 0; out.kwh = fl.totalKwh || 0;
+          out.source.push('placed fleet on the sitemap');
+        }
+      }
+    } catch (e) {}
+
+    /* 2. the configured list, if nothing is placed yet */
+    if (!out.kwh && S && S.bessList && S.bessList.length) {
+      S.bessList.forEach(function (b) {
+        var q = +b.qty || 1;
+        out.kwh += (+b.kwh || 0) * q;
+        out.kw += (+b.kw || 0) * q;
+      });
+      if (out.kwh) out.source.push('configured BESS list');
+    }
+
+    /* 3. the architecture drawing's own schedule */
+    if (!out.kwh) {
+      try {
+        var sch = window.OmegaArch && window.OmegaArch.schedule && window.OmegaArch.schedule();
+        if (sch && sch.total && sch.total.kwh) {
+          out.kwh = sch.total.kwh; out.kw = sch.total.kwAc || 0;
+          out.source.push('Architecture Mode equipment schedule');
+        }
+      } catch (e) {}
+    }
+
+    /* solar, for the co-location streams */
+    try {
+      if (S && S.shapes) {
+        S.shapes.forEach(function (sh) {
+          if (sh && /solar|dersolar/i.test(String(sh.kind || '')) && +sh.kw) out.solarKwDc += +sh.kw;
+        });
+      }
+    } catch (e) {}
+    if (out.solarKwDc) out.source.push('solar arrays on the sitemap');
+
+    out.ok = out.kw > 0 && out.kwh > 0;
+    if (!out.ok) {
+      out.error = 'No battery found on the sitemap or in the BESS list. Draw or configure ' +
+                  'one first — the value stack sizes off the system, not the other way round.';
+    }
+    out.durationH = out.kw > 0 ? out.kwh / out.kw : 0;
+    return out;
+  }
+
+  /* Gross per-stream figures from the app's own estimator, which carries
+     the tariff and ISO data. Nothing here re-derives a rate. */
+  function readStreams() {
+    var vs = null;
+    try { vs = window._VS_ESTIMATE || null; } catch (e) {}
+    if (!vs) return null;
+    return {
+      arbitrage: +vs.arbitrage || 0,
+      demand: +vs.demand || 0,
+      capacity: +vs.dr || 0,
+      regulation: +vs.reg_pjm || 0,
+      _meta: { state: vs.state, util: vs.util && vs.util.name, inPJM: vs.inPJM }
+    };
+  }
+
+  function run(opts) {
+    opts = opts || {};
+    var site = opts.asset || readSite();
+    if (!site.ok && !opts.asset) return { ok: false, error: site.error, site: site };
+    var streams = opts.streams || readStreams();
+    if (!streams) {
+      return { ok: false, site: site,
+               error: 'No value-stream estimate yet. Run the Value Stack Estimator ' +
+                      '(ZIP + monthly bill) first — this constrains those numbers, ' +
+                      'it does not invent them.' };
+    }
+    var alloc = allocate(streams, site, opts.dispatch);
+    if (!alloc.ok) return { ok: false, error: alloc.error, site: site };
+    var life = lifecycle(alloc, opts.finance);
+    return { ok: true, site: site, streams: streams, allocation: alloc, lifecycle: life };
+  }
+
+  root.OmegaValueStack = {
+    DEFAULTS: DEFAULTS, FIN: FIN,
+    allocate: allocate, lifecycle: lifecycle, run: run,
+    readSite: readSite, readStreams: readStreams,
+    irr: irr, npv: npv, payback: payback,
+    hoursFor: hoursFor, cyclesFor: cyclesFor
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-recent-fetch-js">
+/* ====================================================================== *
+ *  OMEGA RECENT  —  refresh the Recent panel once sign-in resolves       *
+ *  ------------------------------------------------------------------    *
+ *  WHY THE PANEL IS EMPTY.                                                *
+ *                                                                         *
+ *  The Recent list is fetched by a boot routine that fires 200 ms after   *
+ *  DOMContentLoaded and retries only until #home-recent exists. It waits  *
+ *  for the DOM, not for authentication. At that moment _currentUser is    *
+ *  still null, so the fetch takes its unauthenticated branch — an         *
+ *  unscoped read of the projects collection — which the security rules    *
+ *  refuse. The empty result is then cached as an ANSWER: the projects     *
+ *  patch sets fetched = true and, from then on, renders "No recent        *
+ *  projects yet" whenever it is called.                                    *
+ *                                                                         *
+ *  Sign-in completes a moment later. onAuthStateChanged re-resolves the    *
+ *  brand and caches the user — but nothing re-runs the project fetch. So   *
+ *  a signed-in user with projects sees the empty state permanently, and    *
+ *  re-opening the Home tab does not help, because the cached empty answer  *
+ *  short-circuits before any query is made.                                *
+ *                                                                         *
+ *  The fix is small: when the user appears, treat the pre-auth answer as   *
+ *  stale and ask again.                                                    *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  /* NOT OmegaRecent: that name already belongs to the panel's row-styling
+     module. Two things under one name means one of them silently never
+     loads. */
+  if (window.OmegaRecentFetch) return;
+  var TAG = '[OmegaRecentFetch]';
+  var lastUid = null, refreshes = 0, armed = false;
+
+  function uid() {
+    try { return (window._currentUser && window._currentUser.uid) || null; } catch (e) { return null; }
+  }
+  function listLen() {
+    return (window._allProjects && window._allProjects.length) || 0;
+  }
+
+  /* The projects patch caches "fetched" inside its own closure, so the only
+     way to invalidate it from outside is to replace the list with something
+     it treats as unfetched. Setting it to null is exactly the state the
+     original loader tests for. */
+  function invalidate() {
+    try { window._allProjects = null; } catch (e) {}
+  }
+
+  function refresh(why) {
+    invalidate();
+    refreshes++;
+    var done = function () {
+      try { if (typeof window.homeLoadRecent === 'function') window.homeLoadRecent(); } catch (e) {}
+    };
+    try {
+      if (typeof window._homeFetchProjects === 'function') {
+        var p = window._homeFetchProjects();
+        if (p && typeof p.then === 'function') { p.then(done, done); return; }
+      }
+    } catch (e) {}
+    done();
+    if (window.console) console.info(TAG + ' refreshed Recent (' + why + ')');
+  }
+
+  /* Watch for the user to appear. A poll rather than an auth hook: the auth
+     handler is inside a closure this cannot reach, and a poll cannot break
+     the sign-in path if the SDK is not present at all. */
+  function tick() {
+    var u = uid();
+    if (u && u !== lastUid) {
+      lastUid = u;
+      /* Only worth re-asking if the cached answer was the empty one. A list
+         that already has projects in it does not need disturbing. */
+      if (listLen() === 0) refresh('signed in as ' + u);
+    } else if (!u && lastUid) {
+      lastUid = null;
+      invalidate();
+    }
+  }
+
+  /* What the panel is actually doing, for checking rather than guessing. */
+  function why() {
+    var u = uid();
+    return {
+      signedIn: !!u,
+      uid: u || null,
+      email: (window._currentUser && window._currentUser.email) || null,
+      orgFromEmail: (function () {
+        try {
+          var e = window._currentUser && window._currentUser.email;
+          return e && e.indexOf('@') > -1 ? e.split('@')[1].toLowerCase() : null;
+        } catch (e2) { return null; }
+      })(),
+      host: location.hostname,
+      firestore: !!window._db,
+      cachedProjects: window._allProjects === null ? 'not fetched' : listLen(),
+      panelPresent: !!document.getElementById('home-recent'),
+      refreshesIssued: refreshes,
+      note: !window._db ? 'No Firestore handle — nothing can be fetched.'
+          : !u ? 'Not signed in. The unauthenticated read is refused by the rules, ' +
+                 'and that empty result is what the panel shows.'
+          : listLen() === 0 ? 'Signed in with an empty list. Projects are stored with ' +
+                 'uid and orgId; a project created under a different account or a ' +
+                 'different email domain will not match either query.'
+          : 'Signed in with ' + listLen() + ' project(s) cached.'
+    };
+  }
+
+  window.OmegaRecentFetch = { refresh: refresh, why: why, invalidate: invalidate, tick: tick };
+
+  if (!armed) {
+    armed = true;
+    setInterval(tick, 800);
+    /* And once shortly after load, for the case where auth resolved from the
+       cached user before this module was even parsed. */
+    setTimeout(function () { if (uid() && listLen() === 0) refresh('late boot'); }, 1500);
+  }
 })();
 
 </script>
