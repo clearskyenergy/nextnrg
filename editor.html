@@ -110151,6 +110151,23 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       return { label: 'Handhole / pull box', cat: 'elec', layer: 'E-POWR-COND',
                tag: 'HH', w: 36, h: 24, kwDc: 0, kwAc: 0, kwh: 0, geom: g };
     })(),
+    /* The point of interconnection is an interface, not a cabinet. It gets
+       a survey-style target rather than an enclosure, because drawing it as
+       a box implies a piece of equipment that nobody is buying. */
+    'poi': (function () {
+      var g = [C(0, 0, 24), C(0, 0, 15), L(-30, 0, 30, 0), L(0, -30, 0, 30)];
+      g.push(T(0, -38, 10, 'POI'));
+      return { label: 'Utility point of interconnection', cat: 'elec',
+               layer: 'E-POWR-EQPM', tag: 'POI', w: 60, h: 76,
+               kwDc: 0, kwAc: 0, kwh: 0, geom: g };
+    })(),
+    'bldg-load': (function () {
+      var w = 12 * 12, h = 12 * 12, g = box(w, h);
+      g.push(L(-w / 2, -h / 2, w / 2, h / 2));
+      g.push(T(0, 0, 14, 'LOAD'));
+      return { label: 'Facility load tie-in', cat: 'elec', layer: 'A-WALL',
+               tag: 'LOAD', w: w, h: h, kwDc: 0, kwAc: 0, kwh: 0, geom: g };
+    })(),
     'pole': { label: 'Utility pole', cat: 'elec', layer: 'E-POWR-EQPM', tag: 'PP',
       w: 14, h: 14, kwDc: 0, kwAc: 0, kwh: 0,
       geom: [C(0, 0, 7), L(-7, -7, 7, 7), L(-7, 7, 7, -7)] },
@@ -111926,6 +111943,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     'handhole':  { kind: 'flat' },
     'pole':      { kind: 'post', h: 480 },
     'grnd-rod':  { kind: 'flat' },
+    'poi':       { kind: 'flat' },
+    'bldg-load': { kind: 'box', h: 180 },
     'dcfc-disp': { kind: 'box', h: 72 },
     'dcfc-cab':  { kind: 'box', h: 84 },
     'l2-charger':{ kind: 'box', h: 60 },
@@ -114184,9 +114203,35 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
   };
   /* Element type -> block, for the elements that are not type:'eq' */
   var TYPE_BLOCK = {
-    'bess-asm': 'bess-20', 'evgear': 'dcfc-cab', 'ems': 'ems-cab',
+    'bess-asm': 'bess-20', 'ems': 'ems-cab',
     'gasmeter': 'meter', 'utility': 'xfmr-pad', 'mgc': 'swgr'
   };
+
+  /* THE GUIDED BUILDS DO NOT USE eqId.
+     Everything a guided build places is type:'evgear' with the role on
+     .evKind — utilxfmr, mainswgr, acblock, pvinv, pv, loads and the POI all
+     arrive that way. Mapping the TYPE alone sent every one of them to the
+     same DCFC power cabinet, which is why a guided build imported as a row
+     of identical boxes. Dispatch on the role. */
+  var EVKIND_BLOCK = {
+    xfmr: 'xfmr-pad',
+    panel: 'swgr',
+    bess: 'bess-20',
+    inverter: 'inv-central',
+    disco: 'discon',
+    meter: 'meter',
+    service: 'poi',
+    charger: 'dcfc-disp',
+    solar: null          /* an array is an area, not a cabinet — see below */
+  };
+  function evgearBlock(e) {
+    var role = e.evKind || e.bgbRole || e.evRole || '';
+    /* "Building Loads" is stored as a panel because that is what it ties
+       into, but on a plan it is the facility, not the switchgear. */
+    if (role === 'panel' && /load|facilit|building/i.test(String(e.label || ''))) return 'bldg-load';
+    if (role === 'bess') return null;       /* sized below, 20 ft vs 40 ft */
+    return EVKIND_BLOCK[role] === undefined ? undefined : EVKIND_BLOCK[role];
+  }
   /* The app's own declared footprints, in feet. It knows a transformer is
      6 x 5 ft — but _eqDropW returns only a width and _elBoxSize defaults
      h = w, so every dropped icon is drawn SQUARE. The drawn box is
@@ -114258,7 +114303,14 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         return;
       }
 
-      var key = (t === 'eq') ? EQ_BLOCK[e.eqId] : TYPE_BLOCK[t];
+      var key;
+      if (t === 'eq') key = EQ_BLOCK[e.eqId];
+      else if (t === 'evgear') {
+        key = evgearBlock(e);
+        if (key === null && (e.evKind === 'bess' || e.bgbRole === 'acblock')) {
+          key = (box.w * K > 30 * 12) ? 'bess-40' : 'bess-20';
+        }
+      } else key = TYPE_BLOCK[t];
       if (key === undefined && t !== 'eq') key = null;
 
       /* a 40 ft assembly is a 40 ft container, not the 20 ft one */
@@ -114278,16 +114330,23 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         if (ins) made.blocks++;
       } else {
         /* No symbol for it — draw the true footprint and say what it is,
-           rather than dropping it or pretending a generic box is a match. */
+           rather than dropping it or pretending a generic box is a match.
+           A PV array is the honest case for this: it is an AREA, and giving
+           it a table symbol would state a module layout nobody chose. */
         var w = box.w * K, h = box.h * K;
-        var lyr = /bess|stor/i.test(t + (e.eqId || '')) ? 'E-STOR-EQPM'
-                : /solar|pv/i.test(t + (e.eqId || '')) ? 'E-SOLR-MODL'
-                : /ev|charg/i.test(t + (e.eqId || '')) ? 'E-EVSE-EQPM'
-                : /build|facil/i.test(t + (e.eqId || '')) ? 'A-WALL' : 'E-POWR-EQPM';
+        var role = e.evKind || e.bgbRole || '';
+        var tag = t + (e.eqId || '') + role;
+        var lyr = /bess|stor|acblock/i.test(tag) ? 'E-STOR-EQPM'
+                : /solar|pv/i.test(tag) ? 'E-SOLR-MODL'
+                : /ev|charg/i.test(tag) ? 'E-EVSE-EQPM'
+                : /build|facil|load/i.test(tag) ? 'A-WALL' : 'E-POWR-EQPM';
         E.add(ST.doc, { t: 'pline', closed: true, layer: lyr, pts: rectPts(cx, cy, w, h, rot) });
         made.boxes++;
-        var k2 = (t === 'eq' ? e.eqId : t) || '?';
-        unmapped[k2] = (unmapped[k2] || 0) + 1;
+        /* a solar area is a deliberate outline, not a missing symbol */
+        if (!/solar|pv/i.test(tag)) {
+          var k2 = (t === 'eq' ? e.eqId : (role || t)) || '?';
+          unmapped[k2] = (unmapped[k2] || 0) + 1;
+        } else made.areas = (made.areas || 0) + 1;
       }
 
       var lbl = String(e.label || e.name || e.eqId || '').trim();
@@ -114361,6 +114420,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 
     var total = made.blocks + made.boxes + made.runs + made.shapes;
     say('Imported at ' + ppf.toFixed(3) + ' px/ft: ' + made.blocks + ' equipment symbol(s), ' +
+        (made.areas ? made.areas + ' array area(s), ' : '') +
         made.runs + ' conduit run(s), ' + made.shapes + ' shape(s), ' + made.labels + ' label(s).');
     if (made.boxes) {
       var list = Object.keys(unmapped).map(function (k) { return k + ' \u00D7' + unmapped[k]; });
