@@ -85050,6 +85050,30 @@ window._crmToastModal=_crmToastModal;
   /* ── the battery that is actually drawn ─────────────────────────── */
   function battery() {
     var s = S_(); if (!s) return { units: 0, kwh: 0, kw: 0 };
+
+    /* _ppCollectFleet() is the shared collector, and it already handles the
+       case this walk cannot see: a guided build commits its battery as an
+       ELEMENT via _evAdd('bess', ...) carrying the rating on bgbKw/bgbKwh
+       (or bessKw/bessKwh), with no eqId and no kwh/kw. The walk below looks
+       for eqId === 'bess', finds nothing, and Value Stack reports "no
+       battery on the site map" beside a results rail showing 380 kW.
+
+       The collector's own comment says the legend, the BOM, the cost sheet,
+       Value Stack and the rail all read it so they cannot disagree — but
+       Value Stack was never wired to it. Wire it, and keep the walk below
+       as the fallback for anything the collector does not claim. */
+    try {
+      if (typeof _ppCollectFleet === 'function') {
+        var f = _ppCollectFleet();
+        if (f && f.units > 0 && (f.totalKwh > 0 || f.totalKw > 0)) {
+          var fk = +f.totalKw || 0, fkh = +f.totalKwh || 0;
+          if (fkh && !fk) fk = +(fkh / 2).toFixed(1);
+          return { units: f.units, kwh: +fkh.toFixed(1), kw: +fk.toFixed(1),
+                   from: 'placed fleet' };
+        }
+      }
+    } catch (e) {}
+
     var units = 0, kwh = 0, kw = 0;
     (s.shapes || []).forEach(function (sh) {
       if (!sh) return;
@@ -118702,9 +118726,14 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
    * ------------------------------------------------------------------ */
   function readSite() {
     var out = { kw: 0, kwh: 0, solarKwDc: 0, solarKwAc: 0, source: [], ok: false };
-    var S = null;
-    try { S = (typeof window.S !== 'undefined' && window.S) ? window.S : null; } catch (e) {}
-    if (!S) { try { S = eval('typeof S !== "undefined" ? S : null'); } catch (e) {} }
+    /* Do NOT name this S. The app's site state is a top-level `const S`,
+       which lives in the global lexical scope and is not a property of
+       window; a local `var S` shadows it and the eval below then resolves
+       to the local null instead of the app's state. Same shadowing trap
+       that made the first site import silently read nothing. */
+    var Site = null;
+    try { Site = (typeof window.S !== 'undefined' && window.S) ? window.S : null; } catch (e) {}
+    if (!Site) { try { Site = eval('typeof S !== "undefined" ? S : null'); } catch (e) {} }
 
     /* 1. the placed fleet, which is what is actually drawn */
     try {
@@ -118717,9 +118746,25 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       }
     } catch (e) {}
 
+    /* 1b. the guided build's own element, which carries its rating on
+           bgbKw/bgbKwh and has no eqId — the exact case a walk keyed on
+           eqId === 'bess' cannot see. */
+    if (!out.kwh && Site && Site.elements) {
+      Site.elements.forEach(function (el) {
+        if (!el) return;
+        var role = el.bgbRole || el.evKind || el.eqId || '';
+        if (role !== 'bess') return;
+        var k = +el.bgbKw || +el.bessKw || +el.kw || 0;
+        var e = +el.bgbKwh || +el.bessKwh || +el.kwh || 0;
+        if (k <= 0 && e <= 0) return;
+        out.kw += k; out.kwh += e;
+      });
+      if (out.kwh || out.kw) out.source.push('guided-build BESS on the sitemap');
+    }
+
     /* 2. the configured list, if nothing is placed yet */
-    if (!out.kwh && S && S.bessList && S.bessList.length) {
-      S.bessList.forEach(function (b) {
+    if (!out.kwh && Site && Site.bessList && Site.bessList.length) {
+      Site.bessList.forEach(function (b) {
         var q = +b.qty || 1;
         out.kwh += (+b.kwh || 0) * q;
         out.kw += (+b.kw || 0) * q;
@@ -118740,8 +118785,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 
     /* solar, for the co-location streams */
     try {
-      if (S && S.shapes) {
-        S.shapes.forEach(function (sh) {
+      if (Site && Site.shapes) {
+        Site.shapes.forEach(function (sh) {
           if (sh && /solar|dersolar/i.test(String(sh.kind || '')) && +sh.kw) out.solarKwDc += +sh.kw;
         });
       }
