@@ -109919,6 +109919,18 @@ function omRunAll(p){
 #ribbon .rsbtn .rs-ico.omg-svg-ico{ height: auto; }
 #ribbon .rbtn .rb-ico:has(> svg){ height: auto; }
 
+/* --- design review findings -------------------------------------------- */
+#omega-arch .arch-rv{
+  display:flex; gap:7px; align-items:flex-start; padding:5px 4px;
+  border-bottom:1px solid rgba(255,255,255,.05); cursor:pointer;
+  border-radius:var(--radius-sm);
+}
+#omega-arch .arch-rv:hover{ background:rgba(255,255,255,.05) }
+#omega-arch .arch-rv i{ width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:4px }
+#omega-arch .arch-rv div{ font-size:10.5px; line-height:1.45 }
+#omega-arch .arch-rv b{ font-family:var(--font-mono); font-size:9.5px; letter-spacing:.03em }
+#omega-arch .arch-rv u{ display:block; text-decoration:none; color:var(--sub); font-size:9.5px; margin-top:2px }
+
 </style>
 <!-- ===================================================================
      OMEGA CAD BLOCK  —  self-contained, no network, no build step
@@ -110287,12 +110299,20 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     'ups-cab':   { front: 36, side: 12, note: 'NEC 110.26(A)(1)' }
   };
 
-  /* A door leaf plus its swing arc, the way a plan shows access. */
+  /* A door leaf plus its swing arc, the way a plan shows access.
+     Arcs run COUNTER-CLOCKWISE from a1 to a2, so a negative opening angle
+     wraps the long way round: a 90 degree door drawn as a 270 degree
+     sweep, which is the near-full circle that appeared over the BESS
+     container. Order the endpoints so the drawn sweep is always the one
+     that was asked for. */
   function doorSwing(hx, hy, w, dir, open) {
-    var a0 = dir, a1 = dir + (open || Math.PI / 2);
+    var sweep = open == null ? Math.PI / 2 : open;
+    var a1 = sweep < 0 ? dir + sweep : dir;
+    var a2 = sweep < 0 ? dir : dir + sweep;
+    var leaf = dir + sweep;                 /* the leaf sits at the open end */
     return [
-      L(hx, hy, hx + w * Math.cos(a1), hy + w * Math.sin(a1)),
-      A(hx, hy, w, a0, a1)
+      L(hx, hy, hx + w * Math.cos(leaf), hy + w * Math.sin(leaf)),
+      A(hx, hy, w, a1, a2)
     ];
   }
   /* Evenly spaced parallel lines: cooling fins, louvers, rack fronts. */
@@ -110912,6 +110932,61 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
   function dimText(e, units) { return fmtLen(Math.hypot(e.x2 - e.x1, e.y2 - e.y1), units); }
 
   /* ------------------------------------------------------------------ *
+   *  6b. POLYLINE OFFSET                                                *
+   *  One side of a path, offset by d, with mitred joints. A trench is a  *
+   *  band on a plan, not a line, and drawing it as a line loses the      *
+   *  width a civil contractor is actually pricing.                       *
+   *                                                                     *
+   *  Joints are mitred by intersecting the two offset segments. Where    *
+   *  they are near-parallel there is no intersection to find, so the     *
+   *  plain offset point is used — and the miter is capped, because a     *
+   *  hairpin turn produces a spike that runs off the sheet.              *
+   * ------------------------------------------------------------------ */
+  function offsetPath(pts, d, miterLimit) {
+    if (!pts || pts.length < 2) return [];
+    var lim = miterLimit == null ? 4 : miterLimit;
+    var segs = [], i;
+    for (i = 1; i < pts.length; i++) {
+      var dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y;
+      var len = Math.hypot(dx, dy);
+      if (len < 1e-9) continue;
+      var nx = -dy / len, ny = dx / len;            /* left normal */
+      segs.push({
+        a: { x: pts[i - 1].x + nx * d, y: pts[i - 1].y + ny * d },
+        b: { x: pts[i].x + nx * d, y: pts[i].y + ny * d },
+        nx: nx, ny: ny
+      });
+    }
+    if (!segs.length) return [];
+    var out = [segs[0].a];
+    for (i = 1; i < segs.length; i++) {
+      var p = lineIntersect(segs[i - 1].a, segs[i - 1].b, segs[i].a, segs[i].b);
+      if (p) {
+        var back = pts[i];
+        if (Math.hypot(p.x - back.x, p.y - back.y) > Math.abs(d) * lim) p = null;
+      }
+      out.push(p || segs[i].a);
+    }
+    out.push(segs[segs.length - 1].b);
+    return out;
+  }
+  function lineIntersect(p1, p2, p3, p4) {
+    var d1x = p2.x - p1.x, d1y = p2.y - p1.y;
+    var d2x = p4.x - p3.x, d2y = p4.y - p3.y;
+    var den = d1x * d2y - d1y * d2x;
+    if (Math.abs(den) < 1e-9) return null;
+    var t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / den;
+    return { x: p1.x + t * d1x, y: p1.y + t * d1y };
+  }
+  /* A trench drawn as a closed band: one side out, the other back. */
+  function bandPath(pts, width) {
+    var h = width / 2;
+    var l = offsetPath(pts, h), r = offsetPath(pts, -h);
+    if (!l.length || !r.length) return null;
+    return l.concat(r.slice().reverse());
+  }
+
+  /* ------------------------------------------------------------------ *
    *  7. BOUNDS, SNAP POINTS, HIT TEST                                   *
    * ------------------------------------------------------------------ */
   function growArc(bb, p) {
@@ -111466,6 +111541,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     newDoc: newDoc, add: add, addBlock: addBlock, remove: remove,
     explode: explode, bbox: bbox, entBBox: entBBox,
     snapPoints: snapPoints, hitTest: hitTest, entsInWindow: entsInWindow, distToSeg: distToSeg,
+    offsetPath: offsetPath, bandPath: bandPath, lineIntersect: lineIntersect,
     translate: translate, rotate: rotate, mirror: mirror, cloneEnt: cloneEnt,
     parseLen: parseLen, fmtLen: fmtLen, fmtArea: fmtArea, parsePoint: parsePoint,
     dimText: dimText, dimGeom: dimGeom, polyArea: polyArea, bom: bom,
@@ -112975,6 +113051,299 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script id="omega-arch-review-js">
+/* ====================================================================== *
+ *  OMEGA ARCHITECTURE MODE  —  DESIGN REVIEW                             *
+ *  ------------------------------------------------------------------    *
+ *  One pass over the drawing that answers "what is wrong with this".      *
+ *                                                                         *
+ *  Two of the checks are new geometry: equipment footprints that overlap, *
+ *  and equipment sitting inside another unit's required working space.    *
+ *  The rest aggregate what the pier, grading and array engines already    *
+ *  compute, so the answer lives in one place instead of three panels.     *
+ *                                                                         *
+ *  WHAT THIS IS NOT.                                                      *
+ *  It is a screening pass, not a code check. Calling a tilt limit and a   *
+ *  clearance minimum "NEC / ASCE compliant" — which is the temptation on  *
+ *  a permit-adjacent tool — states a conclusion no arithmetic here can    *
+ *  support. Every finding names the rule it applied and where the number  *
+ *  came from, so a reviewer can disagree with it.                         *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.review) return;
+
+  var IN = 12;
+
+  /* ------------------------------------------------------------------ *
+   *  CONVEX OVERLAP  —  separating axis theorem                         *
+   *  Footprints are rotated rectangles, so an axis-aligned box test      *
+   *  would report two skewed rows as clashing when they are not, and     *
+   *  miss a real clash between two rotated pads.                         *
+   * ------------------------------------------------------------------ */
+  function project(poly, ax, ay) {
+    var min = Infinity, max = -Infinity, i;
+    for (i = 0; i < poly.length; i++) {
+      var d = poly[i].x * ax + poly[i].y * ay;
+      if (d < min) min = d;
+      if (d > max) max = d;
+    }
+    return { min: min, max: max };
+  }
+  /* eps lets two pads share an edge without being called a clash: laying
+     equipment exactly against a pad line is a layout, not a collision. */
+  function overlapsPoly(a, b, eps) {
+    eps = eps == null ? 0.5 : eps;          /* half an inch */
+    var polys = [a, b], p, i;
+    for (p = 0; p < 2; p++) {
+      var poly = polys[p];
+      for (i = 0; i < poly.length; i++) {
+        var j = (i + 1) % poly.length;
+        var ex = poly[j].x - poly[i].x, ey = poly[j].y - poly[i].y;
+        var len = Math.hypot(ex, ey);
+        if (len < 1e-9) continue;
+        var ax = -ey / len, ay = ex / len;       /* edge normal */
+        var pa = project(a, ax, ay), pb = project(b, ax, ay);
+        if (pa.max <= pb.min + eps || pb.max <= pa.min + eps) return false;
+      }
+    }
+    return true;
+  }
+  /* how deep the overlap runs, along the least-separated axis */
+  function penetration(a, b) {
+    var polys = [a, b], best = Infinity, p, i;
+    for (p = 0; p < 2; p++) {
+      var poly = polys[p];
+      for (i = 0; i < poly.length; i++) {
+        var j = (i + 1) % poly.length;
+        var ex = poly[j].x - poly[i].x, ey = poly[j].y - poly[i].y;
+        var len = Math.hypot(ex, ey);
+        if (len < 1e-9) continue;
+        var ax = -ey / len, ay = ex / len;
+        var pa = project(a, ax, ay), pb = project(b, ax, ay);
+        var o = Math.min(pa.max, pb.max) - Math.max(pa.min, pb.min);
+        if (o < best) best = o;
+      }
+    }
+    return best;
+  }
+
+  function footprintPoly(e) {
+    var d = E.BLOCKS[e.key];
+    if (!d || !E.iso) return null;
+    return E.iso.corners(e, d);
+  }
+
+  /* The clearance envelope as a polygon in world space. Built from the same
+     CLEAR table the drawing renders, so the check and the dashed line on
+     the sheet can never disagree. */
+  function clearancePoly(e) {
+    var d = E.BLOCKS[e.key];
+    if (!d || !E.CLEAR) return null;
+    var c = E.CLEAR[e.key];
+    if (!c) return null;
+    var f = c.all != null ? c.all : (c.front || 0);
+    var sd = c.all != null ? c.all : (c.side || 0);
+    var rr = c.all != null ? c.all : (c.rear != null ? c.rear : 0);
+    if (!f && !sd && !rr) return null;
+    var s = e.s || 1, rot = e.rot || 0;
+    var cos = Math.cos(rot), sin = Math.sin(rot);
+    var x1 = -d.w / 2 * s - sd, x2 = d.w / 2 * s + sd;
+    var y1 = -d.h / 2 * s - f, y2 = d.h / 2 * s + rr;
+    return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].map(function (p) {
+      return { x: e.x + p[0] * cos - p[1] * sin, y: e.y + p[0] * sin + p[1] * cos };
+    });
+  }
+
+  function inserts(doc) {
+    return doc.ents.filter(function (e) {
+      return e.t === 'ins' && !e.hidden && E.BLOCKS[e.key];
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  CHECKS                                                             *
+   * ------------------------------------------------------------------ */
+  function overlaps(doc) {
+    var list = inserts(doc), out = [], i, j;
+    var polys = list.map(footprintPoly);
+    for (i = 0; i < list.length; i++) {
+      if (!polys[i]) continue;
+      for (j = i + 1; j < list.length; j++) {
+        if (!polys[j]) continue;
+        if (!overlapsPoly(polys[i], polys[j])) continue;
+        out.push({
+          a: list[i].id, b: list[j].id,
+          tagA: E.BLOCKS[list[i].key].tag, tagB: E.BLOCKS[list[j].key].tag,
+          depthIn: penetration(polys[i], polys[j])
+        });
+      }
+    }
+    return out;
+  }
+
+  function encroachments(doc) {
+    var list = inserts(doc), out = [], i, j;
+    var foot = list.map(footprintPoly);
+    var clear = list.map(clearancePoly);
+    for (i = 0; i < list.length; i++) {
+      if (!clear[i]) continue;
+      for (j = 0; j < list.length; j++) {
+        if (i === j || !foot[j]) continue;
+        /* the unit's own footprint is inside its own envelope by design */
+        if (!overlapsPoly(clear[i], foot[j])) continue;
+        /* and an overlap of the FOOTPRINTS is a clash, reported separately */
+        if (overlapsPoly(foot[i], foot[j])) continue;
+        var c = E.CLEAR[list[i].key];
+        out.push({
+          owner: list[i].id, intruder: list[j].id,
+          tagOwner: E.BLOCKS[list[i].key].tag, tagIntruder: E.BLOCKS[list[j].key].tag,
+          note: (c && c.note) || 'working clearance'
+        });
+      }
+    }
+    return out;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  RUN                                                                *
+   *  ctx carries results the other engines already produced, so nothing  *
+   *  is recomputed here and nothing can drift out of step with the panel *
+   *  it came from.                                                      *
+   * ------------------------------------------------------------------ */
+  function finding(level, code, msg, ids, why) {
+    return { level: level, code: code, msg: msg, ids: ids || [], why: why || null };
+  }
+
+  function run(doc, ctx) {
+    ctx = ctx || {};
+    var f = [];
+
+    if (!doc.ents.length) {
+      f.push(finding('info', 'EMPTY', 'The drawing is empty.'));
+      return { findings: f, counts: tally(f) };
+    }
+
+    /* ---- geometry ---- */
+    var ov = overlaps(doc);
+    ov.forEach(function (o) {
+      f.push(finding('fail', 'CLASH',
+        o.tagA + ' and ' + o.tagB + ' overlap by ' + E.fmtLen(o.depthIn, doc.units) + '.',
+        [o.a, o.b],
+        'Footprints tested as rotated rectangles; touching edges are not counted.'));
+    });
+
+    var en = encroachments(doc);
+    en.forEach(function (e2) {
+      f.push(finding('warn', 'CLEARANCE',
+        e2.tagIntruder + ' sits inside the working space of ' + e2.tagOwner + '.',
+        [e2.owner, e2.intruder], e2.note));
+    });
+
+    /* ---- piers ---- */
+    if (ctx.piers && ctx.piers.piles && ctx.piers.piles.length) {
+      var p = ctx.piers.total;
+      if (p.belowMin) {
+        f.push(finding('fail', 'REVEAL-LOW',
+          p.belowMin + ' pile(s) fall below the minimum reveal.', [],
+          'Minimum reveal ' + (ctx.piers.cfg.minRevealIn / IN).toFixed(1) + ' ft, as entered.'));
+      }
+      if (p.overMax) {
+        f.push(finding('warn', 'REVEAL-HIGH',
+          p.overMax + ' pile(s) exceed the maximum reveal \u2014 grading or a heavier section.', [],
+          'Maximum reveal ' + (ctx.piers.cfg.maxRevealIn / IN).toFixed(1) + ' ft, as entered.'));
+      }
+      if (p.overSlope) {
+        f.push(finding('warn', 'SLOPE',
+          p.overSlope + ' row line(s) exceed the screening slope limit.', [],
+          'Per-equipment default, not the tracker vendor\u2019s published limit.'));
+      }
+      if (p.noData) {
+        f.push(finding('warn', 'OFF-SURVEY',
+          p.noData + ' pile(s) fell outside the sampled survey and were left out of the schedule.',
+          [], 'Excluded rather than assumed to be at grade.'));
+      }
+    }
+
+    /* ---- grading ---- */
+    if (ctx.fit && ctx.fit.rows && ctx.fit.rows.length) {
+      if (ctx.fit.flagged) {
+        f.push(finding('warn', 'GRADE',
+          ctx.fit.flagged + ' pad(s) sit on ground steeper than their screening limit.', [],
+          'Mean-plane balance over the footprint; a screening number, not a grading plan.'));
+      }
+      if (ctx.fit.missing) {
+        f.push(finding('info', 'GRADE-GAP',
+          ctx.fit.missing + ' pad(s) are outside the sampled survey.'));
+      }
+    } else if (ctx.placed) {
+      f.push(finding('info', 'NO-TOPO',
+        'No topography sampled, so nothing was checked against the ground.'));
+    }
+
+    /* ---- array ---- */
+    if (ctx.array && ctx.array.pitch) {
+      if (ctx.array.pitch.unshaded === false && ctx.array.pitch.minPitchIn) {
+        f.push(finding('warn', 'SHADING',
+          'Rows shade each other in the design window; clearing it needs ' +
+          E.fmtLen(ctx.array.pitch.minPitchIn, doc.units) + ' pitch.', [],
+          'Winter solstice, scanned across the design window.'));
+      }
+      if (ctx.array.pitch.err) {
+        f.push(finding('warn', 'PITCH', ctx.array.pitch.err));
+      }
+    }
+
+    /* ---- georeference and scale ---- */
+    if (E.geo && !E.geo.hasAnchor(doc)) {
+      f.push(finding('info', 'NO-ANCHOR',
+        'The drawing has no geographic anchor \u2014 no GIS export and no grading check.'));
+    }
+
+    /* ---- layers ---- */
+    var offLayer = doc.ents.filter(function (e) {
+      return e.t === 'ins' && E.BLOCKS[e.key] &&
+             (e.layer || doc.layer) !== E.BLOCKS[e.key].layer;
+    });
+    if (offLayer.length) {
+      f.push(finding('info', 'LAYER',
+        offLayer.length + ' block(s) sit on a layer other than their own.',
+        offLayer.map(function (e) { return e.id; }),
+        'Deliberate sometimes; worth a look before the sheet is issued.'));
+    }
+
+    /* ---- schedule sanity ---- */
+    var bom = E.bom(doc);
+    if (bom.total.kwDc > 0 && bom.total.kwAc > 0) {
+      var ratio = bom.total.kwDc / bom.total.kwAc;
+      if (ratio > 1.6) {
+        f.push(finding('warn', 'DCAC',
+          'DC/AC ratio on the sheet is ' + ratio.toFixed(2) + '.', [],
+          'Nameplate on the drawing only \u2014 the inverter schedule is the authority.'));
+      }
+    }
+
+    if (!f.length) {
+      f.push(finding('pass', 'OK', 'No screening findings on this drawing.'));
+    }
+    return { findings: f, counts: tally(f) };
+  }
+
+  function tally(f) {
+    var c = { fail: 0, warn: 0, info: 0, pass: 0 };
+    f.forEach(function (x) { if (c[x.level] != null) c[x.level]++; });
+    return c;
+  }
+
+  E.review = {
+    run: run, overlaps: overlaps, encroachments: encroachments,
+    overlapsPoly: overlapsPoly, penetration: penetration,
+    footprintPoly: footprintPoly, clearancePoly: clearancePoly
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script id="omega-arch-js">
 
 /* ====================================================================== *
@@ -113143,6 +113512,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     '3d': 'VIEW3D', iso: 'VIEW3D', view3d: 'VIEW3D', plan: 'PLANVIEW',
     rot: 'VROTATE', vrotate: 'VROTATE', drape: 'DRAPE', dxf3d: 'DXF3D',
     piers: 'PIERS', pier: 'PIERS', piles: 'PIERS', piercsv: 'PIERCSV',
+    review: 'REVIEW', rv: 'REVIEW', check: 'REVIEW', audit: 'REVIEW',
     geo: 'GEO', anchor: 'GEO', geojson: 'GEOJSON', kml: 'KML',
     geoin: 'GEOIN', importgeo: 'GEOIN',
     q: 'QSAVE', help: 'HELP', '?': 'HELP'
@@ -113160,7 +113530,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
    'SNAP','OSNAP','DXF','SCR','SVG','SAVE','QSAVE','OPEN','IMPORT','SELALL','PAN','HELP',
    'PLACE','UNPLACE','SITEFIT','OFFSET','NETAREA','IMPORTDXF','DETAIL','CLEARANCE','ROUTE','TRENCH','SPEC','SCHEDULE','PVARRAY',
    'VIEW3D','PLANVIEW','VROTATE','DRAPE','DXF3D','PIERS','PIERCSV',
-   'GEO','GEOJSON','KML','GEOIN'
+   'GEO','GEOJSON','KML','GEOIN','REVIEW'
   ].forEach(function (k) { KNOWN[k] = 1; });
 
   function onEnter(text) {
@@ -113226,7 +113596,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         say('LINE PLINE RECT CIRCLE ARC TEXT DIM DIST AREA | MOVE COPY ROTATE MIRROR ARRAY ERASE');
         say('INSERT ZOOM UNDO REDO LAYER UNITS SNAP OSNAP DETAIL CLEARANCE');
         say('OFFSET NETAREA IMPORTDXF <ft|in|m> | PVARRAY [one] | PLACE <deg> UNPLACE SITEFIT');
-        say('VIEW3D PLAN VROTATE <deg> DRAPE DXF3D | PIERS PIERCSV');
+        say('VIEW3D PLAN VROTATE <deg> DRAPE DXF3D | PIERS PIERCSV | REVIEW');
         say('GEO <lat> <lng> [rot] | GEOJSON KML GEOIN | DXF SCR SVG SAVE OPEN IMPORT');
         say('Points: 25,10  @30,0  @30<45  or type a distance along the rubber band.');
         say('F3 osnap  F7 grid  F8 ortho  F9 snap  F10 polar  Esc cancel  Enter repeat');
@@ -113257,6 +113627,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       case 'GEOJSON': ST.cmd = null; geoExport('geojson'); prompt('Command:'); return;
       case 'KML': ST.cmd = null; geoExport('kml'); prompt('Command:'); return;
       case 'GEOIN': ST.cmd = null; geoImport(); prompt('Command:'); return;
+      case 'REVIEW': ST.cmd = null; runReview(); prompt('Command:'); return;
       case 'PVARRAY':
         ST.cmd = null;
         arrayBuild(/^one$/i.test((arg || '').trim()));
@@ -113989,7 +114360,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 
   function refresh() {
     renderLayers(); renderProps(); renderBom(); renderArray();
-    renderSpec(); renderSched(); renderPiers(); renderFit();
+    renderSpec(); renderSched(); renderPiers(); renderFit(); renderReview();
     renderModes(); updateCoords(); draw();
   }
 
@@ -114364,6 +114735,25 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 
   /* Conduit type -> its own layer, so the runs stay separable on the sheet
      and in the DXF instead of collapsing into one raceway layer. */
+  /* Trench width by conduit class, in inches. A drawing convention for the
+     band on the plan — the trench detail sheet is the authority, and the
+     width a contractor prices comes from there, not from here. */
+  var TRENCH_W = {
+    'MV-UG': 30, 'EV-MAIN': 30, 'RMC-DC': 24, 'RMC-AC': 24,
+    'PVC-UG': 24, 'EV-FEEDER': 24, 'EV-BRANCH': 18, 'EV-SPARE': 18,
+    'EMT-BMS': 12, 'L2-TRENCH': 24, 'L2-INT': 12
+  };
+  /* The app's conduit catalogue is a top-level `const CTYPES`, so it is in
+     the global lexical scope and NOT on window — read the binding. */
+  function condType(id) {
+    var list = null;
+    try { list = (typeof CTYPES !== 'undefined' && CTYPES) ? CTYPES : (window.CTYPES || null); }
+    catch (e) { list = window.CTYPES || null; }
+    if (!list) return null;
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+
   var COND_LAYER = {
     'MV-UG':     ['E-COND-MVLT', 1],
     'RMC-AC':    ['E-COND-ACPW', 2],
@@ -114501,6 +114891,20 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       var m = COND_LAYER[c.condType] || ['E-POWR-COND', 2];
       E.ensureLayer(m[0], m[1]);
       var pts = c.pts.map(function (p) { return { x: p.x * K, y: -p.y * K }; });
+      var ct = condType(c.condType);
+
+      /* A trench is a band on a plan, not a line. Draw the excavation
+         width as a closed outline with the raceway centreline inside it,
+         so the sheet shows what is actually dug and what runs in it. */
+      if (c.route === 'trench') {
+        E.ensureLayer('C-TRCH-EXCV', 8);
+        var wIn = TRENCH_W[c.condType] || 24;
+        var band = E.bandPath(pts, wIn);
+        if (band && band.length > 3) {
+          E.add(ST.doc, { t: 'pline', closed: true, layer: 'C-TRCH-EXCV', pts: band });
+          made.trench = (made.trench || 0) + 1;
+        }
+      }
       E.add(ST.doc, { t: 'pline', closed: false, layer: m[0], pts: pts });
       made.runs++;
 
@@ -114508,9 +114912,19 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
          trench readable as a trench rather than a stray polyline */
       var bits = [];
       if (c.label) bits.push(String(c.label));
+      else if (ct && ct.label) bits.push(String(ct.label));
       else if (c.condType) bits.push(String(c.condType));
-      if (c.route === 'trench') bits.push('TRENCH');
-      else if (c.route === 'surface') bits.push('SURFACE');
+      /* the cable and raceway the run actually carries, from the app's own
+         conduit catalogue rather than restated here */
+      if (ct && ct.size) bits.push(String(ct.size));
+      if (c.cable) bits.push(String(c.cable));
+      if (c.route === 'trench') {
+        var tw = TRENCH_W[c.condType] || 24;
+        bits.push('TRENCH ' + E.fmtLen(tw, ST.doc.units) + ' W' +
+          (c.trenchIn === 'concrete' ? ', SAWCUT CONCRETE'
+           : c.trenchIn === 'asphalt' ? ', SAWCUT ASPHALT' : ''));
+      } else if (c.route === 'surface') bits.push('SURFACE MOUNT');
+      if (c.ftLen) bits.push((+c.ftLen).toFixed(0) + ' FT');
       if (c.runFrom && c.runTo) bits.push(c.runFrom + ' \u2192 ' + c.runTo);
       if (bits.length) {
         var mid = pts[Math.floor(pts.length / 2)];
@@ -114558,7 +114972,9 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     var total = made.blocks + made.boxes + made.runs + made.shapes;
     say('Imported at ' + ppf.toFixed(3) + ' px/ft: ' + made.blocks + ' equipment symbol(s), ' +
         (made.areas ? made.areas + ' array area(s), ' : '') +
-        made.runs + ' conduit run(s), ' + made.shapes + ' shape(s), ' + made.labels + ' label(s).');
+        made.runs + ' conduit run(s)' +
+        (made.trench ? ' (' + made.trench + ' trenched)' : '') +
+        ', ' + made.shapes + ' shape(s), ' + made.labels + ' label(s).');
     if (made.boxes && Object.keys(unmapped).length) {
       var list = Object.keys(unmapped).map(function (k) { return k + ' \u00D7' + unmapped[k]; });
       say(Object.keys(unmapped).length + ' item type(s) had no matching symbol and came in as a ' +
@@ -115053,6 +115469,87 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       r.readAsText(f);
     };
     i.click();
+  }
+
+
+  /* ------------------------------------------------------------------ *
+   *  DESIGN REVIEW                                                      *
+   *  One pass, one list. It aggregates what the pier, grading and array  *
+   *  engines already computed rather than recomputing them, so the panel *
+   *  can never disagree with the panel a finding came from.              *
+   * ------------------------------------------------------------------ */
+  var RV = { res: null };
+
+  function runReview(quiet) {
+    var ctx = {
+      piers: PR.res || null,
+      fit: ST.fit || null,
+      placed: !!ST.lastPlace
+    };
+    try {
+      var pv = arrayPreview();
+      if (pv && pv.plan && !pv.plan.err) ctx.array = pv.plan;
+    } catch (e) {}
+    RV.res = E.review.run(ST.doc, ctx);
+    renderReview();
+    if (!quiet) {
+      var c = RV.res.counts;
+      say('Design review: ' + c.fail + ' failure(s), ' + c.warn + ' warning(s), ' +
+          c.info + ' note(s).');
+      RV.res.findings.filter(function (x) { return x.level === 'fail'; })
+        .forEach(function (x) { say('  FAIL  ' + x.msg); });
+      RV.res.findings.filter(function (x) { return x.level === 'warn'; })
+        .forEach(function (x) { say('  WARN  ' + x.msg); });
+      if (!c.fail && !c.warn) say('  Nothing to flag on this pass.');
+    }
+    draw();
+    return RV.res;
+  }
+
+  var RV_COLOR = { fail: 'var(--red)', warn: 'var(--amber)', info: 'var(--sub)', pass: 'var(--accent)' };
+  function renderReview() {
+    if (!el.review) return;
+    if (!RV.res) {
+      el.review.innerHTML = '<div class="arch-note">Run a review to check the drawing for ' +
+        'equipment clashes, working-space encroachment, and anything the pier, grading ' +
+        'and array passes flagged.</div>' +
+        '<button class="arch-btn arch-wide arch-go" data-arch-act="rv-run">Run design review</button>';
+      return;
+    }
+    var c = RV.res.counts, h = '';
+    h += '<div class="arch-tot" style="margin-bottom:6px">' +
+      '<div><span>Failures</span><b style="color:' + (c.fail ? 'var(--red)' : 'inherit') + '">' + c.fail + '</b></div>' +
+      '<div><span>Warnings</span><b style="color:' + (c.warn ? 'var(--amber)' : 'inherit') + '">' + c.warn + '</b></div>' +
+      '<div><span>Notes</span><b>' + c.info + '</b></div></div>';
+    RV.res.findings.forEach(function (x, i) {
+      h += '<div class="arch-rv" data-arch-rv="' + i + '"' +
+           (x.ids.length ? ' title="Click to select the objects involved"' : '') + '>' +
+           '<i style="background:' + RV_COLOR[x.level] + '"></i>' +
+           '<div><b>' + x.code + '</b> ' + esc(x.msg) +
+           (x.why ? '<u>' + esc(x.why) + '</u>' : '') + '</div></div>';
+    });
+    h += '<button class="arch-btn arch-wide arch-go" data-arch-act="rv-run">Re-run review</button>';
+    h += '<div class="arch-note">A screening pass, not a code check. Each finding names the ' +
+      'rule it applied and where the number came from, so it can be argued with.</div>';
+    el.review.innerHTML = h;
+  }
+
+  /* Clicking a finding selects what it is about, which is the difference
+     between a report and something you can act on. */
+  function reviewPick(ix) {
+    if (!RV.res) return;
+    var f = RV.res.findings[+ix];
+    if (!f || !f.ids.length) return;
+    ST.sel = f.ids.slice();
+    say(f.code + ': selected ' + ST.sel.length + ' object(s).');
+    var ents = selEnts();
+    if (ents.length) {
+      var bb = E.bbox(ST.doc, ents);
+      if (bb) {
+        ST.V.x = (bb.x1 + bb.x2) / 2; ST.V.y = (bb.y1 + bb.y2) / 2;
+      }
+    }
+    refresh();
   }
 
   /* ------------------------------------------------------------------ *
@@ -116057,6 +116554,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
           '<div id="omega-arch-spec"></div>' +
           '<div class="arch-cat">Conduit schedule</div>' +
           '<div id="omega-arch-sched"></div>' +
+          '<div class="arch-cat">Design review</div>' +
+          '<div id="omega-arch-review"></div>' +
           '<div class="arch-cat">Pier schedule</div>' +
           '<div id="omega-arch-piers"></div>' +
           '<div class="arch-cat">Site fit \u2014 grading</div>' +
@@ -116098,6 +116597,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     el.sched = r.querySelector('#omega-arch-sched');
     el.array = r.querySelector('#omega-arch-array');
     el.piers = r.querySelector('#omega-arch-piers');
+    el.review = r.querySelector('#omega-arch-review');
     el.hist = r.querySelector('#omega-arch-hist');
     el.input = r.querySelector('#omega-arch-input');
     el.prompt = r.querySelector('#omega-arch-prompt');
@@ -116112,7 +116612,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     el.name.addEventListener('change', function () { ST.doc.name = el.name.value || 'Site Plan'; });
 
     r.addEventListener('click', function (ev) {
-      var t = ev.target.closest('[data-arch-act],[data-arch-tool],[data-arch-block],[data-arch-layer],[data-arch-mode],[data-arch-lyrvis]');
+      var t = ev.target.closest('[data-arch-act],[data-arch-tool],[data-arch-block],[data-arch-layer],[data-arch-mode],[data-arch-lyrvis],[data-arch-view],[data-arch-rv]');
       if (!t) return;
       var vis = t.getAttribute('data-arch-lyrvis');
       if (vis) {
@@ -116137,6 +116637,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         else if (act === 'dxf3d') doExport('dxf3d');
         else if (act === 'pr-run') runPiers();
         else if (act === 'pr-csv') pierCSV();
+        else if (act === 'rv-run') runReview();
         else if (act === 'geojson') geoExport('geojson');
         else if (act === 'kml') geoExport('kml');
         else if (act === 'geoin') geoImport();
@@ -116165,6 +116666,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       if (blk) { pickBlock(blk); return; }
       var lyr = t.getAttribute('data-arch-layer');
       if (lyr) { setLayer(lyr); return; }
+      var rvi = t.getAttribute('data-arch-rv');
+      if (rvi !== null && rvi !== undefined) { reviewPick(rvi); return; }
       var vw = t.getAttribute('data-arch-view');
       if (vw) {
         if (vw === '3d') toggle3D();
@@ -116316,6 +116819,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     view3d: toggle3D, rotateView: rotateView, drape: toggleDrape,
     piers: runPiers, pierCSV: pierCSV, pierSet: pierSet,
     setGeo: setGeo, geoStatus: geoStatus, geoExport: geoExport, geoImport: geoImport,
+    review: runReview, reviewPick: reviewPick, reviewRes: function () { return RV.res; },
     anchorFromPlacement: anchorFromPlacement,
     toGeoJSON: function () { return E.geo.toGeoJSON(ST.doc); },
     toKML: function () { return E.geo.toKML(ST.doc); },
