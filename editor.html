@@ -25548,7 +25548,7 @@ function openProposalExport() {
     c.siteEq > 0 ? row('  Site Equipment', c.siteEq) : '',
     c.condCost > 0 ? row(' Conduit & Wiring (mat+labor)', c.condCost, '#F87171') : '',
     c.indirect > 0 ? row('  Engineering / Permitting / Commissioning', c.indirect) : '',
-    c.emsOn && c.emsCost > 0 ? row('  EMS Software (setup + yr1)', c.emsCost, '#A78BFA') : '',
+    c.emsOn && c.emsCost > 0 ? row('  EMS Software (setup)', c.emsCost, '#A78BFA') : '',
     row(`  Contingency (${c.contPct}%)`, c.cont),
     `<div style="display:flex;justify-content:space-between;padding:6px 0;margin-top:4px;border-top:2px solid rgba(255,255,255,.2)">
       <span style="font-weight:700;color:#fff">ESTIMATED TOTAL</span>
@@ -25697,9 +25697,31 @@ function _proposalType(){
 function buildProposalHTML({proj,addr,client,utility,rep,propNum,today,c,bessRows,condRows,sitemapDataUrl}) {
   var _pt=_proposalType();
   const GREEN='#1DB95A', DARK='#0A1628', NAVY='#0F2040', ACCENT='#00D4FF';
-  const yr1Rev = c.total * 0.18; // rough estimate
-  const payback = (c.total / yr1Rev).toFixed(1);
-  const irr = '14-18';
+  /* The two figures below were a rough estimate and a literal string.
+     yr1Rev = total x 0.18 makes payback total/(total x 0.18) = 1/0.18 —
+     5.6 years on every proposal ever generated, whatever the project cost.
+     And IRR was the text "14-18", presented to a customer as a projection.
+
+     Use the value-stack estimate when one exists; otherwise show a dash.
+     A proposal with an honest gap is worth more than one with an invented
+     return, because the invented one is the number a lender checks. */
+  var _vs = null;
+  try { _vs = window._VS_ESTIMATE || null; } catch(e){}
+  var _yr1 = _vs ? (+_vs.total || 0) : 0;
+  const yr1Rev = _yr1;
+  const payback = (_yr1 > 0 && c.total > 0) ? (c.total / _yr1).toFixed(1) : null;
+  var _irrNum = null;
+  if (_yr1 > 0 && c.total > 0) {
+    try {
+      var _f = [-c.total];
+      for (var _y = 1; _y <= 20; _y++) _f.push(_yr1 * Math.pow(1.02, _y - 1));
+      if (window.OmegaValueStack && window.OmegaValueStack.irr) {
+        var _r = window.OmegaValueStack.irr(_f);
+        if (_r != null) _irrNum = (_r * 100).toFixed(1);
+      }
+    } catch(e){}
+  }
+  const irr = _irrNum;
   // -- Company branding (white-label) --
   const _bn = (typeof brandName==='function') ? brandName() : 'Your Company';
   const _bl = (typeof brandLogo==='function') ? brandLogo() : '';
@@ -25869,8 +25891,8 @@ ${sitemapDataUrl ? `
     <h2 class="section-title">Project Economics</h2>
     <div class="fin-grid">
       <div class="fin-card fin-green"><div class="fin-val">${c.fmt(c.total)}</div><div class="fin-lbl">Gross Investment</div></div>
-      <div class="fin-card fin-blue"><div class="fin-val">${payback} yrs</div><div class="fin-lbl">Est. Simple Payback</div></div>
-      <div class="fin-card fin-amber"><div class="fin-val">${irr}%</div><div class="fin-lbl">Projected IRR</div></div>
+      <div class="fin-card fin-blue"><div class="fin-val">${payback ? payback+' yrs' : '&mdash;'}</div><div class="fin-lbl">${payback ? 'Est. Simple Payback' : 'Payback &mdash; run the Value Stack'}</div></div>
+      <div class="fin-card fin-amber"><div class="fin-val">${irr ? irr+'%' : '&mdash;'}</div><div class="fin-lbl">${irr ? 'Projected IRR (20 yr)' : 'IRR &mdash; run the Value Stack'}</div></div>
       ${(()=>{
         const kwh_kpi = S.bessList.reduce((s,b)=>(s+(+(b.kwh||0))*(+(b.qty||1))),0)||760;
         let inc = 0;
@@ -26557,7 +26579,13 @@ function updateCostEst() {
      zero, not "assume $27,000". */
   const eng = +($v('ce-eng')||0), perm = +($v('ce-perm')||0);
   const comm = +($v('ce-comm')||0);
-  const indirect = eng + perm + comm + emsCost;
+  /* EMS: the SETUP is capex, the annual fee is O&M. emsCost is setup+annual,
+     and the annual half is separately added to O&M through _EMS_ANNUAL — so
+     rolling emsCost into indirect charged the year-1 subscription twice,
+     once in the build and once in operations, and every payback and IRR
+     downstream inherited the overstated capex. Capex takes the setup only. */
+  const emsSetupCapex = (emsOn && kwh_total > 0) ? emsSetup : 0;
+  const indirect = eng + perm + comm + emsSetupCapex;
 
   // EV charging equipment + install (from chargers placed on the map).
   var _evCosts = (typeof evChargerCosts==='function') ? evChargerCosts() : {eq:0,install:0,total:0,units:0,byModel:{}};
@@ -26662,8 +26690,8 @@ function updateCostEst() {
       (evTotal > 0 ? row('  EV Charging (equip + install)', evTotal, '#22D3EE') : '') +
       row('   Site Equipment', siteEq - xfmrCost, 'var(--amber)') +
       (xfmrCost > 0 ? row('  Transformer', xfmrCost, '#F97316') : '') +
-      row('  Engineering + Permitting', indirect - emsCost, 'var(--sub)') +
-      (emsOn ? row(' EMS Software (setup + yr1)', emsCost, '#A78BFA') : '') +
+      row('  Engineering + Permitting', indirect - emsSetupCapex, 'var(--sub)') +
+      (emsOn ? row(' EMS Software (setup)', emsSetupCapex, '#A78BFA') : '') +
       row(`  Contingency (${Math.round(contPct*100)}%)`, cont, 'var(--sub)') +
       `<div style="display:flex;justify-content:space-between;padding:6px 0;margin-top:2px">
         <span style="color:var(--text);font-weight:700;font-size:11px">Total</span>
@@ -26703,7 +26731,12 @@ function updateCostEst() {
   window._SITE_EQ_TOTAL = inScope ? siteEq : 0;
   window._CONDUIT_TOTAL = condTotal;
   window._INDIRECT_TOTAL = inScope ? indirect : 0;
-  window._EMS_COST_TOTAL = inScope ? emsCost : 0;
+  /* The capex total now carries the EMS SETUP only, so the figure the cost
+     breakdown and the spec sheet display has to match it — otherwise the
+     line items would sum past the total they sit under. The annual fee is
+     still reported, as O&M, where it belongs. */
+  window._EMS_COST_TOTAL = inScope ? emsSetupCapex : 0;
+  window._EMS_SETUP = emsSetupCapex;
   window._CONT_TOTAL = cont;
   window._CONT_PCT = Math.round(contPct*100);
   // Refresh the live cost-breakdown bar wherever it's shown.
@@ -29506,7 +29539,9 @@ function _d4GenFin(){
   try{
     var bKw=omegaBessKw(), sDc=omegaSolarKwDc();
     var y=(typeof omegaYield==='function')?omegaYield():null;
-    var omAnn=0; try{ omAnn=(+($v('ce-om')||12941))+(+(window._EMS_ANNUAL||0)); }catch(e){}
+    var omAnn=0; try{ var _o=+$v('ce-om');
+      omAnn=(_o>0?_o:(typeof _omDefaultFor==='function'?_omDefaultFor():0))
+            +(+(window._EMS_ANNUAL||0)); }catch(e){}
     var net=window._NET_COST||window._COST_TOTAL||0;
     var lcoe=(y && typeof omegaLcoe==='function') ? omegaLcoe(net, y.kwh, omAnn, 25) : null;
     var _bf=omegaBessFleet();
@@ -32335,18 +32370,40 @@ function omegaRenderResults(){
   var net   = _omNum(window._NET_COST); if(net===null) net=gross;
   var perKw = _omNum(window._COST_PER_KW);
   var rev   = _omNum(window._YR1_REV);
-  var omAnn = 0;
-  try{ omAnn = (+($v('ce-om')||12941)) + (+(window._EMS_ANNUAL||0)); }catch(e){ omAnn = +(window._EMS_ANNUAL||0); }
+  /* $12,941 was a flat fallback: the same O&M on a 380 kW site ($34/kW-yr)
+     and a 10 MW one ($1.29/kW-yr). Scale the default with the system and
+     say it is a default, so a blank field cannot quietly price a project. */
+  var omAnn = 0, _omDefaulted = false;
+  try{
+    var _omIn = +$v('ce-om');
+    if(!(_omIn > 0)){ _omIn = _omDefaultFor(); _omDefaulted = true; }
+    omAnn = _omIn + (+(window._EMS_ANNUAL||0));
+  }catch(e){ omAnn = +(window._EMS_ANNUAL||0); }
 
-  var payback=null, irr=null, npv=null;
+  var payback=null, coc=null, irr=null, npv=null;
   if(net && rev && (rev-omAnn)>0){
     payback = net/(rev-omAnn);
-    irr     = ((rev-omAnn)/net)*100;
-    var DISC=0.08, GR=0.03, GO=0.02, acc=-net;
+    /* (rev-omAnn)/net is CASH-ON-CASH: first-year net income over the money
+       in. It is not an IRR — it has no notion of how long the asset lasts.
+       On a 5 year life that ratio reads 17% where the true IRR is -5%, so
+       labelling it IRR turns a loss into a return. Report both, named. */
+    coc     = ((rev-omAnn)/net)*100;
+    var DISC=0.08, GR=0.03, GO=0.02, acc=-net, _flows=[-net];
     for(var yy=1;yy<=10;yy++){
-      acc += (rev*Math.pow(1+GR,yy-1) - omAnn*Math.pow(1+GO,yy-1))/Math.pow(1+DISC,yy);
+      var _cf = rev*Math.pow(1+GR,yy-1) - omAnn*Math.pow(1+GO,yy-1);
+      acc += _cf/Math.pow(1+DISC,yy);
+      _flows.push(_cf);
     }
     npv = acc;
+    /* IRR over the same cash flows the NPV above already uses, so the two
+       cannot disagree. Bisection, so a series with no root returns nothing
+       rather than a clamped guess. */
+    try{
+      if(window.OmegaValueStack && window.OmegaValueStack.irr){
+        var _ir = window.OmegaValueStack.irr(_flows);
+        if(_ir!=null) irr = _ir*100;
+      }
+    }catch(e){}
   }
   var lcoe = y ? omegaLcoe(net, y.kwh, omAnn, 25) : null;
   var totKw = (bKw||0) + (sDc||0);
@@ -32357,8 +32414,10 @@ function omegaRenderResults(){
   fi += _omRow('Net of incentives', _omMoney(net));
   fi += _omRow('$/W', perW!==null ? '$'+perW.toFixed(2) : null);
   fi += _omRow('$/kW', perKw ? '$'+Math.round(perKw).toLocaleString() : null);
-  fi += _omRow('Payback', payback!==null ? payback.toFixed(1)+' yrs' : null);
-  fi += _omRow('IRR', irr!==null ? Math.round(irr)+' %' : null,
+  fi += _omRow('Payback', (payback!==null && payback>0) ? payback.toFixed(1)+' yrs' : null);
+  fi += _omRow('Cash-on-cash (yr 1)', coc!==null ? coc.toFixed(1)+' %' : null,
+               coc!==null ? (coc>=10?'rr-pos':'') : '');
+  fi += _omRow('IRR (10 yr)', irr!==null ? irr.toFixed(1)+' %' : null,
                irr!==null ? (irr>=10?'rr-pos':'') : '');
   fi += _omRow('NPV (10 yr)', _omMoney(npv), npv!==null ? (npv>=0?'rr-pos':'rr-neg') : '');
   fi += _omRow('LCOE', lcoe!==null ? '$'+lcoe.toFixed(4)+'/kWh' : null);
@@ -32522,6 +32581,26 @@ function omegaGrpToggle(id){
   }
 })();
 
+/* O&M when the field is blank. Benchmarked per kW of installed capacity
+   rather than as one number, because a flat figure is either absurd on a
+   large site or ruinous on a small one. Returns a DEFAULT, and callers say
+   so; it is not a measurement. */
+function _omDefaultFor(){
+  var kw = 0;
+  try{
+    var f = (typeof _ppCollectFleet==='function') ? _ppCollectFleet() : null;
+    if(f) kw += (+f.totalKw||0);
+  }catch(e){}
+  try{
+    var t = (typeof derTotals==='function') ? derTotals() : null;
+    if(t) kw += (+t.solarKwDc||0) + (+t.windKw||0) + (+t.altKw||0);
+  }catch(e){}
+  if(!(kw > 0)) return 0;          /* nothing placed -> no O&M to assume */
+  /* ~$18/kW-yr for storage-and-solar O&M, with a small fixed site element */
+  return Math.round(kw * 18 + 3500);
+}
+window._omDefaultFor = _omDefaultFor;
+
 // -- ROI / IRR / NPV -------------------------------------------
 function updateROI() {
   if(!_revStreams || !_revStreams.length) return;
@@ -32529,14 +32608,19 @@ function updateROI() {
   const grossCost = window._COST_TOTAL||0;
   const netCost = window._NET_COST||grossCost;
   const yr1Rev = window._YR1_REV||0;
-  const omCost = +($v('ce-om')||12941) + (window._EMS_ANNUAL||0);
+  var _omEntered = +$v('ce-om');
+  const omCost = (_omEntered > 0 ? _omEntered : _omDefaultFor()) + (window._EMS_ANNUAL||0);
   if(!netCost || !yr1Rev) {
     ['roi-payback','roi-irr','roi-yr10','roi-npv'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='--';});
     const tb=document.getElementById('roi-table');if(tb)tb.innerHTML='<div style="color:var(--sub);padding:8px 0">Enter revenue stream values to see projections.</div>';
     return;
   }
-  const payback = (netCost / (yr1Rev - omCost)).toFixed(1);
-  const irr = Math.round(((yr1Rev-omCost)/netCost)*100);
+  /* If O&M exceeds revenue the project never pays back. Dividing anyway
+     prints a negative number of years, which reads as a fast payback to
+     anyone skimming. */
+  const _netAnn = yr1Rev - omCost;
+  const payback = _netAnn > 0 ? (netCost / _netAnn).toFixed(1) : null;
+  const irr = Math.round((_netAnn / netCost) * 100);
   const DISC = 0.08, GROW_REV = 0.03, GROW_OM = 0.02;
   let npv = -netCost, yr10Rev = 0;
   const rows = [];
@@ -32551,7 +32635,7 @@ function updateROI() {
   }
   const fmt = n => '$'+Math.round(Math.abs(n)).toLocaleString();
   const el=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
-  el('roi-payback', payback+' yrs');
+  el('roi-payback', payback!==null ? payback+' yrs' : 'never');
   el('roi-irr', irr+'%');
   el('roi-yr10', fmt(yr10Rev));
   el('roi-npv', (npv>=0?'':'-')+fmt(npv));
@@ -33872,7 +33956,7 @@ ${emsOn ? '<h2>EMS Software &amp; Services</h2><table><thead><tr><th>Service</th
     <tr><td>Site Equipment</td><td style="font-weight:700">${fmt(snap.siteEq)}</td><td colspan="2">Pad, disconnect, meter, bollards, panelboard, misc</td></tr>
     <tr><td>Conduit & Wiring (mat + labor)</td><td style="font-weight:700">${fmt(snap.conduit)}</td><td colspan="2">RMC/EMT per site map routing . $35/ft labor</td></tr>
     <tr><td>Engineering, Permitting & Commissioning</td><td style="font-weight:700">${fmt(snap.indirect)}</td><td colspan="2">Design, AHJ submission, commissioning</td></tr>
-    ${emsOn ? '<tr><td>EMS Setup + Year 1 Software</td><td style="font-weight:700;color:#5B21B6">' + fmt(snap.ems) + '</td><td colspan="2">${emsBrandName()} platform -- setup + yr1 annual fee</td></tr>' : ''}
+    ${emsOn ? '<tr><td>EMS Setup</td><td style="font-weight:700;color:#5B21B6">' + fmt(snap.ems) + '</td><td colspan="2">${emsBrandName()} platform -- setup; the annual fee is carried in O&M</td></tr>' : ''}
     <tr><td>Contingency (${snap.contPct}%)</td><td>${fmt(snap.cont)}</td><td colspan="2"></td></tr>
     <tr style="font-size:12px"><td style="font-weight:800">GROSS PROJECT TOTAL</td><td style="font-weight:800;color:#0D3A6B">${fmt(snap.total)}</td><td colspan="2">Matches cost estimate panel</td></tr>
     <tr style="background:#F0FFF4"><td style="font-weight:800;color:#166534">Less Incentives & Rebates</td><td style="font-weight:800;color:#166534">  ${fmt(incTotal)}</td><td colspan="2">ITC, rebates, and other incentives applied</td></tr>
@@ -48751,8 +48835,22 @@ function calcFin(){
   var life=g('p7_life')||20;
   var npv=-net;
   for(var y=1;y<=life;y++)npv+=netAnn/Math.pow(1+disc,y);
-  var irr=0;
-  try{var r=0.1;for(var iter=0;iter<50;iter++){var fv=-net,dfv=0;for(var y2=1;y2<=life;y2++){fv+=netAnn/Math.pow(1+r,y2);dfv-=y2*netAnn/Math.pow(1+r,y2+1);}if(Math.abs(dfv)<1e-10)break;r-=fv/dfv;if(r<-0.99){r=-0.99;break;}}irr=r;}catch(e){}
+  /* Newton from a single guess, clamped at -0.99 when it wandered, reported
+     that clamp AS the IRR. Bisect the same flows instead: a bracketed root
+     always converges, and a series with no sign change returns null rather
+     than a number that was really a guard rail. */
+  var irr=null;
+  try{
+    var _fl=[-net]; for(var _y=1;_y<=life;_y++) _fl.push(netAnn);
+    if(window.OmegaValueStack && window.OmegaValueStack.irr){
+      irr = window.OmegaValueStack.irr(_fl);
+    } else {
+      var _npv=function(fs,rr){var s=0;for(var t=0;t<fs.length;t++)s+=fs[t]/Math.pow(1+rr,t);return s;};
+      var lo=-0.95, hi=10, fl2=_npv(_fl,lo), fh=_npv(_fl,hi);
+      if(fl2*fh<=0){ for(var i2=0;i2<200;i2++){ var mid=(lo+hi)/2, fm=_npv(_fl,mid);
+        if(fl2*fm<0){hi=mid;} else {lo=mid;fl2=fm;} } irr=(lo+hi)/2; }
+    }
+  }catch(e){ irr=null; }
   VW.fin=Object.assign(VW.fin||{},{gross,net,netAnn,pb,npv,irr,rev,opex});
   var dec='pending';
   if(net>0&&rev>0){if(pb<=7&&npv>0)dec='invest';else if(pb<=12&&npv>-net*0.2)dec='hold';else if(pb<=18)dec='redesign';else dec='reject';}
@@ -53155,10 +53253,32 @@ function sebCollect(){
   /* Add catalog chargers placed via the EV Charging catalog (shape kinds). */
   if(typeof evChargerTotals==='function'){ var _ev=evChargerTotals();
     chgKw += (_ev.dcfcKw||0) + (_ev.l2Kw||0); chgN += (_ev.dcfcUnits||0) + (_ev.l2Units||0); }
+  /* FACILITY LOAD.
+     The guided build writes the connected load onto its element as
+     el.loadKw — the "250 kW connected load" the map shows. sebCollect()
+     never read it, so a site with a real building load reported a
+     consumption side made up entirely of BESS round-trip losses, and then
+     announced 0% grid reliance and 100% self-supply against it. Three other
+     consumers already read this field; this one did not.
+
+     Elements the data-centre path has already counted are skipped, so the
+     two cannot double up. */
+  var facKw=0, facN=0;
+  try{
+    var _dcRoles = (typeof DERC_DC!=='undefined') ? DERC_DC : null;
+    (S.elements||[]).forEach(function(el){
+      if(!el || !(+el.loadKw>0)) return;
+      var _r = (typeof _eqRole==='function') ? _eqRole(el) : null;
+      if(_dcRoles && _r && _dcRoles[_r]) return;      /* already in dcLoadKw */
+      facKw += +el.loadKw; facN++;
+    });
+  }catch(e){}
+
   return {
     solarKw:t.solarKwDc, windKw:t.windKw, gasKw:t.altKw,
     solarUnits:t.solarUnits, windUnits:t.windUnits, gasUnits:t.altUnits,
     dcKw:t.dcLoadKw, dcUnits:t.dcUnits,
+    facKw:facKw, facUnits:facN,
     bessKwh:fleet.totalKwh, bessKw:fleet.totalKw, bessUnits:fleet.units,
     chgKw:chgKw, chgN:chgN
   };
@@ -53186,14 +53306,31 @@ function sebCompute(){
   var rte=_sebNum('bessRte',0.88);                   /* round-trip efficiency */
   var bessThroughput=s.bessKwh*cyclesYr;             /* kWh discharged/yr */
   var bessLossKwh=bessThroughput*(1/rte - 1);        /* charging losses = extra load */
+  /* Facility load: connected kW is a nameplate, not an average. A load
+     factor converts it to energy, and it is exposed rather than buried —
+     0.45 is a common C&I figure and wrong for a 24/7 site. */
+  var loadFactor=_sebNum('loadFactor',0.45);
+  var facKwh=(s.facKw||0)*8760*loadFactor;
   var siteExtra=_sebNum('siteExtraKwh',0);
-  var consumeTotal=dcKwh+chgKwh+bessLossKwh+siteExtra;
+  var consumeTotal=dcKwh+chgKwh+facKwh+bessLossKwh+siteExtra;
   /* balance */
-  var selfSupply=Math.min(genTotal, consumeTotal);
   var gridImport=Math.max(0, consumeTotal-genTotal);
   var surplus=Math.max(0, genTotal-consumeTotal);
   var reliancePct=consumeTotal>0 ? (gridImport/consumeTotal*100) : 0;
+
+  /* SELF-SUPPLY IS NOT AN ANNUAL SUBTRACTION.
+     min(generation, consumption) says solar at noon serves a load at
+     midnight. What generation can actually serve is the part that happens
+     while the load is on, plus whatever the battery can time-shift. Both
+     bounds are reported: the annual-energy figure, and the coincidence
+     limited one that is the honest planning number. */
+  var overlap=_sebNum('genLoadOverlap',0.50);        /* editable */
+  var coincidentGen=genTotal*overlap;
+  var shiftable=bessThroughput*rte;                  /* delivered, not stored */
+  var selfBound=Math.min(genTotal, consumeTotal);
+  var selfSupply=Math.min(selfBound, coincidentGen+shiftable);
   var selfPct=consumeTotal>0 ? (selfSupply/consumeTotal*100) : 0;
+  var selfPctEnergyOnly=consumeTotal>0 ? (selfBound/consumeTotal*100) : 0;
   /* $ */
   var gridCost=_sebNum('gridCost',(typeof DER_GRID_COST!=='undefined'?DER_GRID_COST:0.11));
   var importBill=gridImport*gridCost;
@@ -53201,11 +53338,23 @@ function sebCompute(){
     sys:s,
     cf:{ solar:cfSolar, wind:cfWind, gas:cfGas },
     gen:{ solar:genSolar, wind:genWind, gas:genGas, total:genTotal },
-    con:{ dc:dcKwh, chg:chgKwh, bessLoss:bessLossKwh, extra:siteExtra, total:consumeTotal },
-    selfSupply:selfSupply, gridImport:gridImport, surplus:surplus,
-    reliancePct:reliancePct, selfPct:selfPct,
+    con:{ dc:dcKwh, chg:chgKwh, fac:facKwh, bessLoss:bessLossKwh, extra:siteExtra, total:consumeTotal },
+    selfSupply:selfSupply, selfSupplyEnergyOnly:selfBound,
+    gridImport:gridImport, surplus:surplus,
+    reliancePct:reliancePct, selfPct:selfPct, selfPctEnergyOnly:selfPctEnergyOnly,
     gridCost:gridCost, importBill:importBill,
-    dcDuty:dcDuty, chgDuty:chgDuty, cyclesYr:cyclesYr, rte:rte
+    dcDuty:dcDuty, chgDuty:chgDuty, cyclesYr:cyclesYr, rte:rte,
+    loadFactor:loadFactor, overlap:overlap, coincidentGen:coincidentGen, shiftable:shiftable,
+    /* Assumptions worth seeing rather than inheriting. */
+    notes:[
+      (s.facKw>0 ? s.facUnits+' facility load(s), '+Math.round(s.facKw)+' kW connected \u00d7 '
+        +loadFactor+' load factor' : 'No facility load placed \u2014 consumption is DER losses only'),
+      (cyclesYr>=365 ? cyclesYr+' full cycles a year is a merchant duty; a peak-shaving '
+        +'battery cycles far less and its round-trip loss is smaller' : null),
+      'Self-supply is bounded by generation that coincides with load ('+(overlap*100).toFixed(0)
+        +'%) plus what the battery can shift \u2014 an annual subtraction alone would credit '
+        +'midday solar against a midnight load.'
+    ].filter(Boolean)
   };
 }
 
@@ -53362,6 +53511,7 @@ function _sebInner(){
       +'<div style="font-size:12px">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">Data center (duty '+edit('dcDuty',r.dcDuty,'0.05')+')</span><strong>'+_f(r.con.dc)+'</strong></div>'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">EV chargers (util '+edit('chgDuty',r.chgDuty,'0.05')+')</span><strong>'+_f(r.con.chg)+'</strong></div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">Facility load (LF '+edit('loadFactor',r.loadFactor,'0.05')+')</span><strong>'+_f(r.con.fac)+'</strong></div>'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">BESS charge loss (RTE '+edit('bessRte',r.rte,'0.01')+')</span><strong>'+_f(r.con.bessLoss)+'</strong></div>'
       +'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #14243a"><span style="color:#94A3B8">Extra site load</span><strong>'+edit('siteExtraKwh',r.con.extra,'1000')+'</strong></div>'
       +row('Total consumption', _f(r.con.total),'#F87171')
@@ -53404,6 +53554,7 @@ function exportEnergyBalance(){
     +'<h2>Annual Consumption</h2><table><tr><th>Load</th><th class="r">kWh/yr</th></tr>'
     +'<tr><td>Data center ('+(r.dcDuty*100).toFixed(0)+'% duty)</td><td class="r">'+f(r.con.dc)+'</td></tr>'
     +'<tr><td>EV chargers ('+(r.chgDuty*100).toFixed(0)+'% util)</td><td class="r">'+f(r.con.chg)+'</td></tr>'
+    +'<tr><td>Facility load ('+(r.loadFactor*100).toFixed(0)+'% load factor)</td><td class="r">'+f(r.con.fac)+'</td></tr>'
     +'<tr><td>BESS charge losses ('+(r.rte*100).toFixed(0)+'% RTE)</td><td class="r">'+f(r.con.bessLoss)+'</td></tr>'
     +'<tr><td>Extra site load</td><td class="r">'+f(r.con.extra)+'</td></tr>'
     +'<tr><td><b>Total</b></td><td class="r rd">'+f(r.con.total)+'</td></tr></table>'
