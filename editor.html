@@ -115433,6 +115433,162 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 
 
 </script>
+<script id="omega-ribbon-dedupe-js">
+/* ====================================================================== *
+ *  OMEGA RIBBON DE-DUPLICATE                                             *
+ *  ------------------------------------------------------------------    *
+ *  Removes a ribbon button when an identical command already sits in the  *
+ *  SAME panel.                                                            *
+ *                                                                         *
+ *  Same panel is the whole rule. The same command on two different tabs   *
+ *  is normal and useful — Calibrate Scale belongs both under Modify >     *
+ *  Scale and next to the overlay controls in View, and AutoCAD does this  *
+ *  constantly. Two buttons side by side under one caption, doing exactly  *
+ *  the same thing, is the only case that is unambiguously a mistake, and  *
+ *  it is the only case this touches.                                      *
+ *                                                                         *
+ *  It happens because OmegaEdit.organize() deliberately moves ALL matches *
+ *  of a command into one panel. That is correct — leaving a copy behind   *
+ *  under the old heading was the bug it fixed — but nothing then merged   *
+ *  the copies once they arrived together.                                 *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  /* NOT OmegaDedupe: the app already owns that name for dedupeElements(),
+     which strips duplicate DOM nodes for drawn site elements. Claiming it
+     here would either be silently blocked by the guard below or, worse,
+     replace a running de-duplicator with one that knows nothing about
+     data-elid nodes. */
+  if (window.OmegaRibbonDedupe) return;
+  var TAG = '[OmegaRibbonDedupe]';
+  var removed = [];
+
+  /* The command a button runs, with the rbRun wrapper and empty argument
+     list normalised away, so openSolarBessSizer() and rbRun(openSolarBessSizer)
+     compare equal. Buttons with arguments keep them: _guidedPick('der') and
+     _guidedPick('ev') are different tools, not copies. */
+  function commandOf(btn) {
+    var oc = btn.getAttribute && btn.getAttribute('onclick');
+    if (!oc) return null;          /* injected buttons wire onclick as a
+                                      property; they have no twin to find */
+    oc = oc.replace(/\s+/g, '');
+    var m = /^rbRun\((.*)\)$/.exec(oc);
+    if (m) oc = m[1];
+    return oc.replace(/\(\)$/, '');
+  }
+
+  /* Which copy survives. A wrapped button owns a caret and a flyout full of
+     other commands, so removing it would take unrelated tools with it — it
+     always wins. After that, an id is something else may point at, and the
+     rbRun form closes any open flyout before running, which the bare call
+     does not. */
+  function score(btn) {
+    var s = 0;
+    if (btn.closest && btn.closest('.rbtn-wrap')) s += 100;
+    if (btn.id) s += 10;
+    if (/^rbRun\(/.test((btn.getAttribute('onclick') || '').replace(/\s+/g, ''))) s += 5;
+    return s;
+  }
+
+  function label(btn) {
+    var l = btn.querySelector && btn.querySelector('.rb-lbl');
+    return l ? l.textContent.replace(/\s+/g, ' ').trim() : (btn.id || '?');
+  }
+  function capOf(panel) {
+    var c = panel && panel.querySelector('.rpanel-cap');
+    return c ? c.textContent.trim() : '?';
+  }
+
+  function run() {
+    var bodies = document.querySelectorAll('#ribbon .rpanel-body');
+    var cut = 0, i, j;
+    for (i = 0; i < bodies.length; i++) {
+      var body = bodies[i];
+      var btns = body.querySelectorAll('.rbtn');
+      var seen = {};
+      for (j = 0; j < btns.length; j++) {
+        var cmd = commandOf(btns[j]);
+        if (!cmd) continue;
+        (seen[cmd] = seen[cmd] || []).push(btns[j]);
+      }
+      Object.keys(seen).forEach(function (cmd) {
+        var group = seen[cmd];
+        if (group.length < 2) return;
+        group.sort(function (a, b) { return score(b) - score(a); });
+        var keep = group[0];
+        group.slice(1).forEach(function (dup) {
+          /* never strip a button that carries a flyout: its caret and menu
+             hold commands that exist nowhere else */
+          if (dup.closest && dup.closest('.rbtn-wrap')) return;
+          var panel = dup.closest ? dup.closest('.rpanel') : null;
+          removed.push({
+            command: cmd, panel: capOf(panel),
+            removedLabel: label(dup), keptLabel: label(keep)
+          });
+          if (dup.parentNode) dup.parentNode.removeChild(dup);
+          cut++;
+        });
+      });
+    }
+    if (cut && window.console) {
+      console.info(TAG + ' removed ' + cut + ' duplicate button(s) from their own panel:',
+                   removed.slice(-cut));
+    }
+    /* the mode module tags buttons by onclick; a removal changes what is
+       present, so let it retag rather than leaving a stale keep-set */
+    if (cut && window.OmegaMode && window.OmegaMode.retag) {
+      try { window.OmegaMode.retag(); } catch (e) {}
+    }
+    return cut;
+  }
+
+  /* Report without changing anything, including the cross-tab copies this
+     deliberately leaves alone — so the ones it keeps are visible rather
+     than silently tolerated. */
+  function audit() {
+    var all = document.querySelectorAll('#ribbon .rbtn');
+    var byCmd = {}, i;
+    for (i = 0; i < all.length; i++) {
+      var cmd = commandOf(all[i]);
+      if (!cmd) continue;
+      var page = all[i].closest ? all[i].closest('.ribbon-page') : null;
+      var panel = all[i].closest ? all[i].closest('.rpanel') : null;
+      (byCmd[cmd] = byCmd[cmd] || []).push({
+        label: label(all[i]),
+        tab: page ? page.getAttribute('data-page') : '?',
+        panel: capOf(panel)
+      });
+    }
+    var samePanel = [], crossTab = [];
+    Object.keys(byCmd).forEach(function (cmd) {
+      var g = byCmd[cmd];
+      if (g.length < 2) return;
+      var keys = {}, dupInPanel = false;
+      g.forEach(function (x) {
+        var k = x.tab + '|' + x.panel;
+        if (keys[k]) dupInPanel = true;
+        keys[k] = 1;
+      });
+      (dupInPanel ? samePanel : crossTab).push({ command: cmd, places: g });
+    });
+    return { samePanel: samePanel, crossTab: crossTab };
+  }
+
+  window.OmegaRibbonDedupe = { run: run, audit: audit, removed: removed, commandOf: commandOf };
+
+  /* OmegaEdit.organize() moves buttons on a timer, and the duplicate only
+     becomes visible after those moves land, so this has to keep looking for
+     a while rather than run once at startup. */
+  var n = 0, iv = setInterval(function () {
+    try { run(); } catch (e) { if (window.console) console.warn(TAG, e && e.message); }
+    if (++n > 24) {
+      clearInterval(iv);
+      if (window.console) console.info(TAG + ' settled \u2014 OmegaRibbonDedupe.audit() lists what is left');
+    }
+  }, 500);
+})();
+
+</script>
 
 </body>
 </html>
