@@ -113791,10 +113791,53 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
   /* ------------------------------------------------------------------ *
    *  IMPORT FROM THE SITE MODEL                                         *
    *  The point of drafting inside this product rather than beside it:    *
-   *  what is already placed on the map arrives as real geometry at real  *
-   *  dimensions. Needs a calibrated scale, and says so when it is        *
-   *  missing rather than guessing a conversion.                          *
+   *  what the guided builds placed on the map arrives as real equipment  *
+   *  symbols at real dimensions, on real layers — not as blank boxes.    *
    * ------------------------------------------------------------------ */
+
+  /* Site equipment id -> block library key. The app stores an eqId on
+     type:'eq' elements; these are the symbols that answer to them. */
+  var EQ_BLOCK = {
+    bess: 'bess-cab', pcs: 'pcs-skid', xfmr: 'xfmr-pad', disco: 'discon',
+    panel: 'panelbd', meter: 'meter', genset: 'genset', pad: 'pad-conc',
+    bollard: 'bollard', jbox: 'handhole', charger: 'dcfc-disp',
+    ups: 'ups-cab', pole: 'pole', hydrant: 'bollard',
+    dc_cruiser: 'dc-mod', dc_triton: 'dc-mod', dc_leviathan: 'dc-mod',
+    solar: 'pv-1up-10', building: null, fence: null, camera: null
+  };
+  /* Element type -> block, for the elements that are not type:'eq' */
+  var TYPE_BLOCK = {
+    'bess-asm': 'bess-20', 'evgear': 'dcfc-cab', 'ems': 'ems-cab',
+    'gasmeter': 'meter', 'utility': 'xfmr-pad', 'mgc': 'swgr'
+  };
+  /* The app's own declared footprints, in feet. It knows a transformer is
+     6 x 5 ft — but _eqDropW returns only a width and _elBoxSize defaults
+     h = w, so every dropped icon is drawn SQUARE. The drawn box is
+     therefore a placeholder, not a measurement, and the catalog length is
+     the honest thing to size the imported symbol from. */
+  var EQ_FT = {
+    bess: 5, pcs: 4, xfmr: 6, disco: 3, panel: 2, meter: 1.5, building: 3,
+    hydrant: 1.5, genset: 12, solar: 6.5, pad: 10, bollard: 0.5, fence: 8,
+    jbox: 1.5, charger: 2.5, camera: 1, ups: 3, pole: 1.25,
+    dc_cruiser: 20, dc_triton: 30, dc_leviathan: 40
+  };
+
+  /* Conduit type -> its own layer, so the runs stay separable on the sheet
+     and in the DXF instead of collapsing into one raceway layer. */
+  var COND_LAYER = {
+    'MV-UG':     ['E-COND-MVLT', 1],
+    'RMC-AC':    ['E-COND-ACPW', 2],
+    'RMC-DC':    ['E-COND-DCPW', 1],
+    'EMT-BMS':   ['E-COND-DATA', 5],
+    'PVC-UG':    ['E-COND-UGND', 6],
+    'EV-MAIN':   ['E-COND-EVMN', 1],
+    'EV-FEEDER': ['E-COND-EVFD', 2],
+    'EV-BRANCH': ['E-COND-EVBR', 4],
+    'EV-SPARE':  ['E-COND-SPAR', 3],
+    'L2-INT':    ['E-COND-L2IN', 2],
+    'L2-TRENCH': ['E-COND-L2TR', 4]
+  };
+
   function importSite() {
     /* The app's site state is a top-level `const S`, which lives in the
        global lexical scope and is therefore NOT a property of window. Read
@@ -113811,55 +113854,166 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     }
     var K = 12 / ppf;                       /* screen px -> model inches */
     push();
-    var n = 0;
+    var made = { blocks: 0, boxes: 0, runs: 0, shapes: 0, labels: 0 };
+    var unmapped = {};
 
+    /* ---- equipment ------------------------------------------------- */
     (Site.elements || []).forEach(function (e) {
-      var w = (e.w || 60) * K, h = (e.h || e.w || 60) * K;
-      var cx = (e.x || 0) * K, cy = -(e.y || 0) * K;    /* screen Y is down */
-      var lyr = /bess/i.test(e.type || '') ? 'E-STOR-EQPM'
-              : /solar|pv/i.test(e.type || '') ? 'E-SOLR-MODL'
-              : /ev|charg/i.test(e.type || '') ? 'E-EVSE-EQPM' : 'E-POWR-EQPM';
-      E.add(ST.doc, { t: 'pline', closed: true, layer: lyr, pts: [
-        { x: cx - w / 2, y: cy - h / 2 }, { x: cx + w / 2, y: cy - h / 2 },
-        { x: cx + w / 2, y: cy + h / 2 }, { x: cx - w / 2, y: cy + h / 2 }] });
-      var lbl = e.label || e.type || '';
-      if (lbl) {
-        E.add(ST.doc, { t: 'text', layer: 'A-ANNO-TEXT', x: cx, y: cy, h: Math.max(12, h * 0.18),
-                       rot: 0, s: String(lbl).toUpperCase(), mid: true });
+      var t = String(e.type || '');
+      if (t === 'callout' || t === 'dimension' || t === 'image' ||
+          t === 'base64' || t === 'logo' || t === 'document') return;
+
+      var box = elBox(e);
+      /* Element x,y is the TOP-LEFT corner, not the centre — every other
+         placement path in the app adds w/2 to get a centre, and reading it
+         as a centre offsets the whole import by half a box. */
+      var cx = ((e.x || 0) + box.w / 2) * K;
+      var cy = -((e.y || 0) + box.h / 2) * K;    /* screen Y is down */
+      var rot = -(+e.rot || 0) * D2R;            /* screen rotation is CW */
+
+      if (t === 'text') {
+        var s0 = String(e.label || e.text || '').trim();
+        if (s0) {
+          E.add(ST.doc, { t: 'text', layer: 'A-ANNO-TEXT', x: cx, y: cy,
+                          h: Math.max(9, box.h * K * 0.7), rot: 0, s: s0, mid: true });
+          made.labels++;
+        }
+        return;
       }
-      n++;
+
+      var key = (t === 'eq') ? EQ_BLOCK[e.eqId] : TYPE_BLOCK[t];
+      if (key === undefined && t !== 'eq') key = null;
+
+      /* a 40 ft assembly is a 40 ft container, not the 20 ft one */
+      if (t === 'bess-asm' && box.w * K > 30 * 12) key = 'bess-40';
+
+      if (key && E.BLOCKS[key]) {
+        var d = E.BLOCKS[key];
+        /* Size from the app's declared footprint where it has one, since
+           the drawn box is square by construction. Fall back to the drawn
+           box only when the element carries a real, non-square one. */
+        var ft = (t === 'eq') ? EQ_FT[e.eqId] : null;
+        var wantIn = ft ? ft * 12
+                        : (Math.abs(box.w - box.h) > 1 ? Math.max(box.w, box.h) * K : 0);
+        var sc = wantIn > 0 ? wantIn / Math.max(d.w, d.h) : 1;
+        if (!(sc > 0) || !isFinite(sc)) sc = 1;
+        var ins = E.addBlock(ST.doc, key, cx, cy, rot, sc);
+        if (ins) made.blocks++;
+      } else {
+        /* No symbol for it — draw the true footprint and say what it is,
+           rather than dropping it or pretending a generic box is a match. */
+        var w = box.w * K, h = box.h * K;
+        var lyr = /bess|stor/i.test(t + (e.eqId || '')) ? 'E-STOR-EQPM'
+                : /solar|pv/i.test(t + (e.eqId || '')) ? 'E-SOLR-MODL'
+                : /ev|charg/i.test(t + (e.eqId || '')) ? 'E-EVSE-EQPM'
+                : /build|facil/i.test(t + (e.eqId || '')) ? 'A-WALL' : 'E-POWR-EQPM';
+        E.add(ST.doc, { t: 'pline', closed: true, layer: lyr, pts: rectPts(cx, cy, w, h, rot) });
+        made.boxes++;
+        var k2 = (t === 'eq' ? e.eqId : t) || '?';
+        unmapped[k2] = (unmapped[k2] || 0) + 1;
+      }
+
+      var lbl = String(e.label || e.name || e.eqId || '').trim();
+      if (lbl) {
+        E.add(ST.doc, { t: 'text', layer: 'A-ANNO-TEXT', x: cx,
+                        y: cy - (box.h * K) / 2 - 14, h: 12, rot: 0,
+                        s: lbl.toUpperCase(), mid: true });
+        made.labels++;
+      }
     });
 
+    /* ---- conduit and trench ---------------------------------------- */
     (Site.conduits || []).forEach(function (c) {
       if (!c.pts || c.pts.length < 2) return;
-      E.add(ST.doc, { t: 'pline', closed: false, layer: 'E-POWR-COND',
-        pts: c.pts.map(function (p) { return { x: p.x * K, y: -p.y * K }; }) });
-      n++;
+      var m = COND_LAYER[c.condType] || ['E-POWR-COND', 2];
+      E.ensureLayer(m[0], m[1]);
+      var pts = c.pts.map(function (p) { return { x: p.x * K, y: -p.y * K }; });
+      E.add(ST.doc, { t: 'pline', closed: false, layer: m[0], pts: pts });
+      made.runs++;
+
+      /* the run's own callout, which is the thing that makes an imported
+         trench readable as a trench rather than a stray polyline */
+      var bits = [];
+      if (c.label) bits.push(String(c.label));
+      else if (c.condType) bits.push(String(c.condType));
+      if (c.route === 'trench') bits.push('TRENCH');
+      else if (c.route === 'surface') bits.push('SURFACE');
+      if (c.runFrom && c.runTo) bits.push(c.runFrom + ' \u2192 ' + c.runTo);
+      if (bits.length) {
+        var mid = pts[Math.floor(pts.length / 2)];
+        var prev = pts[Math.max(0, Math.floor(pts.length / 2) - 1)];
+        var ang = Math.atan2(mid.y - prev.y, mid.x - prev.x);
+        if (ang > Math.PI / 2 || ang < -Math.PI / 2) ang += Math.PI;
+        E.add(ST.doc, { t: 'text', layer: 'A-ANNO-TEXT', x: mid.x, y: mid.y + 10,
+                        h: 11, rot: ang, s: bits.join(' \u00B7 ').toUpperCase(), mid: true });
+        made.labels++;
+      }
     });
 
+    /* ---- shapes ----------------------------------------------------- */
     (Site.shapes || []).forEach(function (sh) {
       if (!sh.pts || !sh.pts.length) return;
       var p = sh.pts.map(function (q) { return { x: q.x * K, y: -q.y * K }; });
-      if (sh.kind === 'circle' && p.length >= 2) {
-        E.add(ST.doc, { t: 'circle', layer: 'C-PKNG', cx: p[0].x, cy: p[0].y,
+      var k = String(sh.kind || '');
+      var lyr = /solar|der/i.test(k) ? 'E-SOLR-MODL'
+              : /park/i.test(k) ? 'C-PKNG'
+              : /pad/i.test(k) ? 'C-PKNG'
+              : /fenc/i.test(k) ? 'C-FENC'
+              : /bound|prop/i.test(k) ? 'C-TOPO' : 'C-PKNG';
+      if (k === 'circle' && p.length >= 2) {
+        E.add(ST.doc, { t: 'circle', layer: lyr, cx: p[0].x, cy: p[0].y,
           r: Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y) });
-      } else if (sh.kind === 'rect' && p.length >= 2) {
-        E.add(ST.doc, { t: 'pline', closed: true, layer: 'C-PKNG', pts: [
+      } else if (k === 'rect' && p.length >= 2) {
+        E.add(ST.doc, { t: 'pline', closed: true, layer: lyr, pts: [
           { x: p[0].x, y: p[0].y }, { x: p[1].x, y: p[0].y },
           { x: p[1].x, y: p[1].y }, { x: p[0].x, y: p[1].y }] });
       } else if (p.length >= 2) {
-        E.add(ST.doc, { t: 'pline', closed: false, layer: 'C-PKNG', pts: p });
+        E.add(ST.doc, { t: 'pline', closed: p.length > 2 && /solar|der|park|bound|prop|pad/i.test(k),
+                        layer: lyr, pts: p });
       } else return;
-      n++;
+      made.shapes++;
+      var slbl = String(sh.label || '').trim();
+      if (slbl) {
+        var bb = { x: 0, y: 0 }, i;
+        for (i = 0; i < p.length; i++) { bb.x += p[i].x; bb.y += p[i].y; }
+        E.add(ST.doc, { t: 'text', layer: 'A-ANNO-TEXT', x: bb.x / p.length,
+                        y: bb.y / p.length, h: 14, rot: 0, s: slbl.toUpperCase(), mid: true });
+        made.labels++;
+      }
     });
 
-    say('Imported ' + n + ' object(s) from the site model at ' + ppf.toFixed(3) + ' px/ft.');
-    if (!n) say('The site model had nothing placed on it yet.');
+    var total = made.blocks + made.boxes + made.runs + made.shapes;
+    say('Imported at ' + ppf.toFixed(3) + ' px/ft: ' + made.blocks + ' equipment symbol(s), ' +
+        made.runs + ' conduit run(s), ' + made.shapes + ' shape(s), ' + made.labels + ' label(s).');
+    if (made.boxes) {
+      var list = Object.keys(unmapped).map(function (k) { return k + ' \u00D7' + unmapped[k]; });
+      say(made.boxes + ' item(s) had no matching symbol and came in as a true-size outline: ' +
+          list.join(', ') + '.');
+    }
+    if (!total) say('The site model had nothing placed on it yet.');
     zoomExtents(); refresh();
   }
 
-
-
+  /* The app's own box rule: h falls back to w, which is why dropped
+     equipment is square even though the catalog knows better. */
+  function elBox(e) {
+    try {
+      if (typeof window._elBoxSize === 'function') return window._elBoxSize(e);
+    } catch (err) {}
+    var w = (+e.w || 60), h;
+    if (+e.h) h = +e.h;
+    else if (e.type === 'evgear') h = Math.round(w * (e.aspect || 0.72));
+    else if (e.type === 'bess-asm') h = Math.round(w * 0.55);
+    else h = w;
+    return { w: w, h: h };
+  }
+  function rectPts(cx, cy, w, h, rot) {
+    var c = Math.cos(rot || 0), s = Math.sin(rot || 0);
+    return [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]
+      .map(function (p) {
+        return { x: cx + p[0] * c - p[1] * s, y: cy + p[0] * s + p[1] * c };
+      });
+  }
 
   /* ------------------------------------------------------------------ *
    *  3D VIEW                                                            *
@@ -114621,9 +114775,13 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
           'without pixels-per-foot the drawing would land at an arbitrary size.');
       return;
     }
-    /* Arm a one-shot capture on the site canvas. Adding a mode to the app's
-       own click router would mean editing its state machine; a capture
-       listener that removes itself touches nothing the app owns. */
+    /* Arm a one-shot capture. It has to be on WINDOW, not on #sc.
+       setMapInteractive() sets #sc{pointer-events:none} whenever the map is
+       pannable — which is most of the time — so a listener bound to #sc
+       never receives the click at all. That is why Place on map appeared to
+       do nothing: the capture was armed on an element that cannot be hit.
+       Window sees the event in the capture phase regardless, and stopping it
+       there also keeps the click from reaching the map underneath. */
     var sc = document.getElementById('sc');
     if (!sc) { say('Site canvas not found.'); return; }
     close();
@@ -114631,7 +114789,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     if (banner) banner('shape', '\u25F1 Architecture Mode \u2014 click the map to set the insertion point. ESC cancels.');
 
     function cleanup() {
-      sc.removeEventListener('mousedown', onPick, true);
+      window.removeEventListener('mousedown', onPick, true);
       window.removeEventListener('keydown', onEsc, true);
       ST.place = null;
       var hb = app('hideBanner'); if (hb) try { hb(); } catch (e) {}
@@ -114643,8 +114801,16 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     }
     function onPick(ev) {
       if (ev.button !== 0) return;
-      ev.preventDefault(); ev.stopPropagation();
+      /* Only the drawing area counts. A click on the ribbon, a panel or a
+         floating widget is the user reaching for a control, not choosing an
+         insertion point, and swallowing it would strand them with no way
+         out but Escape. */
+      var t = ev.target;
+      if (t && t.closest && t.closest('#ribbon, #tb, .panel, .float, #banner, #eng-legend, #lgd, #zc, #ruler, #omega-arch')) return;
       var r = sc.getBoundingClientRect();
+      if (ev.clientX < r.left || ev.clientX > r.right ||
+          ev.clientY < r.top || ev.clientY > r.bottom) return;
+      ev.preventDefault(); ev.stopPropagation();
       var raw = { x: ev.clientX - r.left, y: ev.clientY - r.top };
       /* Every other placement path in the app stores model/plot coordinates,
          not raw screen pixels. Storing raw pixels here would look right until
@@ -114656,7 +114822,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       open();
     }
     ST.place = { armed: true };
-    sc.addEventListener('mousedown', onPick, true);
+    window.addEventListener('mousedown', onPick, true);
     window.addEventListener('keydown', onEsc, true);
   }
 
