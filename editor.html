@@ -105916,6 +105916,14 @@ table.e3-tbl td{ white-space:normal }
   }
 
   function sizeFromInterval(vals, opts) {
+    /* The 24-value floor lived only in the dialog, so a direct call —
+       which the console API openly invites — would size a battery from
+       three numbers and report it with the same confidence as a year of
+       data. The guard belongs on the engine. */
+    if (!vals || vals.length < 24) {
+      return { ok: false, error: 'Interval sizing needs at least 24 readings; ' +
+               'got ' + ((vals && vals.length) || 0) + '. Paste a load column in kW.' };
+    }
     opts = opts || {};
     var tariff = merge(defaultTariff(), opts.tariff);
     var intervalMin = +opts.intervalMin || 60;
@@ -114939,6 +114947,16 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 
     /* ---- shapes ----------------------------------------------------- */
     (Site.shapes || []).forEach(function (sh) {
+      /* A SOLAR ARRAY IS NOT A POLYLINE.
+         An auto-laid array is kind:'dersolar' carrying its boundary, its
+         exclusion zones and the actual table rectangles, with pts holding a
+         single origin point. The generic path needs two points, so every
+         array fell straight through and the import reported 0 shapes —
+         which is why the PV field never appeared. */
+      if (sh.kind === 'dersolar' || sh.autoLayout || sh.tables) {
+        made.shapes += importSolar(sh, K, made);
+        return;
+      }
       if (!sh.pts || !sh.pts.length) return;
       var p = sh.pts.map(function (q) { return { x: q.x * K, y: -q.y * K }; });
       var k = String(sh.kind || '');
@@ -114975,6 +114993,13 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         made.runs + ' conduit run(s)' +
         (made.trench ? ' (' + made.trench + ' trenched)' : '') +
         ', ' + made.shapes + ' shape(s), ' + made.labels + ' label(s).');
+    if (made.tables) {
+      say('Solar: ' + made.tables.toLocaleString() + ' racking table(s) drawn at true size.');
+    }
+    if (made.density) {
+      say(made.density + ' array(s) were stored as a density view with no table geometry \u2014 ' +
+          'the boundary and the capacity came across, the tables did not.');
+    }
     if (made.boxes && Object.keys(unmapped).length) {
       var list = Object.keys(unmapped).map(function (k) { return k + ' \u00D7' + unmapped[k]; });
       say(Object.keys(unmapped).length + ' item type(s) had no matching symbol and came in as a ' +
@@ -114988,6 +115013,87 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     }
     if (!total) say('The site model had nothing placed on it yet.');
     zoomExtents(); refresh();
+  }
+
+  /* An auto-laid solar array, brought across as what it actually is: a
+     boundary, the exclusions cut out of it, and every racking table. */
+  function importSolar(sh, K, made) {
+    var n = 0;
+
+    /* The extent can be stored three ways: an auto-layout boundary, a drawn
+       polygon in pts, or an origin plus a width and height for the plain
+       rectangular array the renderer draws from pts[0]. Handle all three,
+       because an array that came in with no outline reads as no array. */
+    var ring = null;
+    if (sh.boundary && sh.boundary.length >= 3) ring = sh.boundary;
+    else if (sh.pts && sh.pts.length >= 3) ring = sh.pts;
+    else if (sh.pts && sh.pts.length && (sh.wPx || sh.hPx)) {
+      var o = sh.pts[0], w0 = sh.wPx || 0, h0 = sh.hPx || 0;
+      ring = [{ x: o.x, y: o.y }, { x: o.x + w0, y: o.y },
+              { x: o.x + w0, y: o.y + h0 }, { x: o.x, y: o.y + h0 }];
+    }
+    if (ring && ring.length >= 3) {
+      E.add(ST.doc, { t: 'pline', closed: true, layer: 'E-SOLR-MODL',
+        pts: ring.map(function (p) { return { x: p.x * K, y: -p.y * K }; }) });
+      n++;
+    }
+    /* Exclusions are the reason a layout has the shape it has. Dropping
+       them leaves a field that looks buildable where it is not. */
+    E.ensureLayer('E-SOLR-EXCL', 1);
+    (sh.exclusions || []).forEach(function (z) {
+      if (!z || z.length < 3) return;
+      E.add(ST.doc, { t: 'pline', closed: true, layer: 'E-SOLR-EXCL',
+        pts: z.map(function (p) { return { x: p.x * K, y: -p.y * K }; }) });
+      n++;
+    });
+
+    /* The tables themselves. This is the array; the boundary is only its
+       extent. */
+    var tables = sh.tables || [];
+    if (tables.length) {
+      tables.forEach(function (tb) {
+        var x1 = tb.x * K, y1 = -tb.y * K;
+        var x2 = (tb.x + tb.w) * K, y2 = -(tb.y + tb.h) * K;
+        E.add(ST.doc, { t: 'pline', closed: true, layer: 'E-SOLR-MODL', pts: [
+          { x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 }] });
+      });
+      made.tables = (made.tables || 0) + tables.length;
+      n += tables.length;
+    }
+
+    /* Centre the callout on the boundary, and say what the array IS —
+       capacity, table count, pitch and GCR all travel with the shape. */
+    var cx = 0, cy = 0, cnt = 0;
+    (ring || []).forEach(function (p) { cx += p.x * K; cy += -p.y * K; cnt++; });
+    if (!cnt && sh.pts && sh.pts.length) {
+      cx = (sh.pts[0].x + (sh.wPx || 0) / 2) * K;
+      cy = -(sh.pts[0].y + (sh.hPx || 0) / 2) * K;
+      cnt = 1;
+    }
+    if (cnt) {
+      cx /= cnt; cy /= cnt;
+      var bits = [];
+      if (sh.kw) bits.push(Math.round(sh.kw).toLocaleString() + ' KW-DC');
+      if (sh.tableCount) bits.push(sh.tableCount.toLocaleString() + ' TABLES');
+      if (sh.rowCount) bits.push(sh.rowCount + ' ROWS');
+      if (sh.gcr) bits.push('GCR ' + (+sh.gcr).toFixed(2));
+      if (sh.pitchFt) bits.push('PITCH ' + (+sh.pitchFt).toFixed(1) + " FT");
+      if (sh.setbackFt) bits.push('SETBACK ' + (+sh.setbackFt).toFixed(0) + ' FT');
+      if (bits.length) {
+        E.add(ST.doc, { t: 'text', layer: 'A-ANNO-TEXT', x: cx, y: cy, h: 24,
+                        rot: 0, s: bits.join(' \u00B7 '), mid: true });
+        made.labels++;
+      }
+      /* A capped layout stores no tables at all. Saying so beats drawing an
+         empty boundary and letting it read as an array with no modules. */
+      if (sh.densityOnly || (!tables.length && sh.tableCount)) {
+        E.add(ST.doc, { t: 'text', layer: 'A-ANNO-TEXT', x: cx, y: cy - 34, h: 16, rot: 0,
+          s: 'DENSITY VIEW \u2014 TABLES NOT DRAWN AT THIS COUNT', mid: true });
+        made.labels++;
+        made.density = (made.density || 0) + 1;
+      }
+    }
+    return n;
   }
 
   /* The app's own box rule: h falls back to w, which is why dropped
