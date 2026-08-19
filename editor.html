@@ -112543,6 +112543,370 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script id="omega-arch-geo-js">
+/* ====================================================================== *
+ *  OMEGA ARCHITECTURE MODE  —  GEOREFERENCE                              *
+ *  ------------------------------------------------------------------    *
+ *  Ties the drawing to the ground: an anchor lat/lng for the model        *
+ *  origin plus a rotation, and from that, real coordinates for every      *
+ *  entity — out as GeoJSON and KML, back in from either.                  *
+ *                                                                         *
+ *  WHY NOT MERCATOR.                                                      *
+ *  The obvious approach is to convert Web-Mercator metres to feet. Web-   *
+ *  Mercator metres are NOT ground metres: the projection inflates         *
+ *  distance by 1/cos(latitude). Treating them as ground distance          *
+ *  oversizes everything by 5.1% at Norman Manley, 20.7% in Los Angeles    *
+ *  and 34.4% in Iowa — enough to turn a 20 ft container into a 27 ft one  *
+ *  in Iowa while still looking entirely plausible on screen.              *
+ *                                                                         *
+ *  A site fits inside a few thousand feet, so a local tangent plane on    *
+ *  the WGS84 ellipsoid is both simpler and correct: exact degree lengths  *
+ *  at the anchor latitude, no projection scale factor to forget.          *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.geo) return;
+
+  var D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  var FT_PER_M = 3.280839895;
+  var IN = 12;
+
+  /* WGS84 degree lengths, metres per degree, at a given latitude.
+     These are the standard series; they vary by about 1% pole to equator,
+     which is 10 ft in a 1000 ft site — worth getting right. */
+  function mPerDegLat(lat) {
+    var p = lat * D2R;
+    return 111132.92 - 559.82 * Math.cos(2 * p) + 1.175 * Math.cos(4 * p)
+           - 0.0023 * Math.cos(6 * p);
+  }
+  function mPerDegLon(lat) {
+    var p = lat * D2R;
+    return 111412.84 * Math.cos(p) - 93.5 * Math.cos(3 * p) + 0.118 * Math.cos(5 * p);
+  }
+  function ftPerDegLat(lat) { return mPerDegLat(lat) * FT_PER_M; }
+  function ftPerDegLon(lat) { return mPerDegLon(lat) * FT_PER_M; }
+
+  /* Kept so the failure mode is nameable rather than folklore: this is the
+     factor by which Web-Mercator overstates ground distance. */
+  function mercatorMetres(lat) {
+    return Math.log(Math.tan((90 + lat) * Math.PI / 360)) * 6378137;
+  }
+  function mercatorScale(lat) { return 1 / Math.cos(lat * D2R); }
+
+  /* ------------------------------------------------------------------ *
+   *  ANCHOR                                                             *
+   *  doc.geo = { lat, lng, rotDeg }                                     *
+   *  Model origin (0,0) sits at lat/lng. Model +Y points rotDeg CLOCKWISE *
+   *  from true north, which is how a bearing is written on a plan.       *
+   * ------------------------------------------------------------------ */
+  function setAnchor(doc, lat, lng, rotDeg) {
+    if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+    doc.geo = { lat: +lat, lng: +lng, rotDeg: +(rotDeg || 0) };
+    return doc.geo;
+  }
+  function hasAnchor(doc) {
+    return !!(doc && doc.geo && isFinite(doc.geo.lat) && isFinite(doc.geo.lng));
+  }
+
+  /* model inches -> ground feet east / north of the anchor */
+  function modelToEN(doc, x, y) {
+    var r = (doc.geo.rotDeg || 0) * D2R;
+    var c = Math.cos(r), s = Math.sin(r);
+    var xf = x / IN, yf = y / IN;
+    return { e: xf * c + yf * s, n: -xf * s + yf * c };
+  }
+  function enToModel(doc, e, n) {
+    var r = (doc.geo.rotDeg || 0) * D2R;
+    var c = Math.cos(r), s = Math.sin(r);
+    return { x: (e * c - n * s) * IN, y: (e * s + n * c) * IN };
+  }
+
+  function modelToGeo(doc, x, y) {
+    if (!hasAnchor(doc)) return null;
+    var en = modelToEN(doc, x, y);
+    var lat = doc.geo.lat + en.n / ftPerDegLat(doc.geo.lat);
+    var lng = doc.geo.lng + en.e / ftPerDegLon(doc.geo.lat);
+    return { lat: lat, lng: lng };
+  }
+  function geoToModel(doc, lat, lng) {
+    if (!hasAnchor(doc)) return null;
+    var n = (lat - doc.geo.lat) * ftPerDegLat(doc.geo.lat);
+    var e = (lng - doc.geo.lng) * ftPerDegLon(doc.geo.lat);
+    return enToModel(doc, e, n);
+  }
+
+  /* Ground distance between two model points, for checking that the
+     georeferenced drawing still measures what the drawing measures. */
+  function groundDistFt(doc, x1, y1, x2, y2) {
+    var a = modelToGeo(doc, x1, y1), b = modelToGeo(doc, x2, y2);
+    if (!a || !b) return null;
+    var dn = (b.lat - a.lat) * ftPerDegLat(doc.geo.lat);
+    var de = (b.lng - a.lng) * ftPerDegLon(doc.geo.lat);
+    return Math.hypot(dn, de);
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  GEOJSON                                                            *
+   *  Coordinates are [lng, lat] — the order the spec requires and the    *
+   *  one that silently plots a Jamaican site in Somalia when swapped.    *
+   * ------------------------------------------------------------------ */
+  function r7(v) { return Math.round(v * 1e7) / 1e7; }
+  function pt(doc, x, y) {
+    var g = modelToGeo(doc, x, y);
+    return [r7(g.lng), r7(g.lat)];
+  }
+
+  function blockProps(e) {
+    var d = E.BLOCKS[e.key] || {};
+    var p = {
+      kind: 'equipment', block: e.key, tag: d.tag || null, label: d.label || null,
+      layer: e.layer || d.layer || null,
+      widthFt: d.w ? +(d.w * (e.s || 1) / IN).toFixed(2) : null,
+      depthFt: d.h ? +(d.h * (e.s || 1) / IN).toFixed(2) : null,
+      rotationDeg: +(((e.rot || 0) * R2D) % 360).toFixed(2)
+    };
+    if (d.kwDc) p.kwDc = d.kwDc;
+    if (d.kwAc) p.kwAc = d.kwAc;
+    if (d.kwh) p.kwh = d.kwh;
+    if (d.mods) p.modules = d.mods;
+    if (E.iso) {
+      var h = E.iso.heightOf(e.key);
+      if (h > 0) p.heightFt = +(h / IN).toFixed(2);
+    }
+    return p;
+  }
+
+  function feature(geom, props, id) {
+    return { type: 'Feature', id: id, properties: props, geometry: geom };
+  }
+
+  function toGeoJSON(doc, opts) {
+    opts = opts || {};
+    if (!hasAnchor(doc)) return null;
+    var feats = [];
+
+    doc.ents.forEach(function (e) {
+      if (e.hidden && !opts.includeHidden) return;
+      var lyr = e.layer || doc.layer;
+
+      if (e.t === 'ins') {
+        var d = E.BLOCKS[e.key];
+        if (!d) return;
+        var cs = E.iso ? E.iso.corners(e, d) : null;
+        if (cs) {
+          var ring = cs.map(function (c) { return pt(doc, c.x, c.y); });
+          ring.push(ring[0]);                    /* GeoJSON rings must close */
+          feats.push(feature({ type: 'Polygon', coordinates: [ring] }, blockProps(e), e.id));
+        }
+        /* the insertion point as its own feature: a GIS layer of equipment
+           locations is what most downstream tools actually want to join on */
+        feats.push(feature({ type: 'Point', coordinates: pt(doc, e.x, e.y) },
+          Object.assign({}, blockProps(e), { kind: 'equipment-point' }), e.id + '-pt'));
+        return;
+      }
+
+      if (e.t === 'line') {
+        feats.push(feature({ type: 'LineString',
+          coordinates: [pt(doc, e.x1, e.y1), pt(doc, e.x2, e.y2)] },
+          { kind: 'line', layer: lyr,
+            lengthFt: +(Math.hypot(e.x2 - e.x1, e.y2 - e.y1) / IN).toFixed(2) }, e.id));
+        return;
+      }
+      if (e.t === 'pline') {
+        var cc = e.pts.map(function (p) { return pt(doc, p.x, p.y); });
+        var len = 0, i;
+        for (i = 1; i < e.pts.length; i++) {
+          len += Math.hypot(e.pts[i].x - e.pts[i - 1].x, e.pts[i].y - e.pts[i - 1].y);
+        }
+        if (e.closed && cc.length > 2) {
+          cc.push(cc[0]);
+          feats.push(feature({ type: 'Polygon', coordinates: [cc] },
+            { kind: 'area', layer: lyr,
+              areaSf: +(E.polyArea(e.pts) / 144).toFixed(1) }, e.id));
+        } else {
+          feats.push(feature({ type: 'LineString', coordinates: cc },
+            { kind: 'route', layer: lyr, lengthFt: +(len / IN).toFixed(2) }, e.id));
+        }
+        return;
+      }
+      if (e.t === 'circle') {
+        var ring2 = [], n = 32, k;
+        for (k = 0; k <= n; k++) {
+          var a = (k / n) * Math.PI * 2;
+          ring2.push(pt(doc, e.cx + e.r * Math.cos(a), e.cy + e.r * Math.sin(a)));
+        }
+        feats.push(feature({ type: 'Polygon', coordinates: [ring2] },
+          { kind: 'area', layer: lyr, radiusFt: +(e.r / IN).toFixed(2) }, e.id));
+        return;
+      }
+      if (e.t === 'arc') {
+        var cs2 = [], m = 24, j, sweep = e.a2 - e.a1;
+        while (sweep < 0) sweep += Math.PI * 2;
+        for (j = 0; j <= m; j++) {
+          var a2 = e.a1 + sweep * (j / m);
+          cs2.push(pt(doc, e.cx + e.r * Math.cos(a2), e.cy + e.r * Math.sin(a2)));
+        }
+        feats.push(feature({ type: 'LineString', coordinates: cs2 },
+          { kind: 'arc', layer: lyr }, e.id));
+        return;
+      }
+      if (e.t === 'text') {
+        feats.push(feature({ type: 'Point', coordinates: pt(doc, e.x, e.y) },
+          { kind: 'label', layer: lyr, text: String(e.s == null ? '' : e.s) }, e.id));
+        return;
+      }
+      if (e.t === 'dim') {
+        feats.push(feature({ type: 'LineString',
+          coordinates: [pt(doc, e.x1, e.y1), pt(doc, e.x2, e.y2)] },
+          { kind: 'dimension', layer: lyr, text: e.txt || null }, e.id));
+      }
+    });
+
+    return {
+      type: 'FeatureCollection',
+      /* CRS84 is the GeoJSON default and stating it costs nothing; a reader
+         that assumes otherwise is a reader that will plot this wrong. */
+      properties: {
+        name: doc.name || 'Site Plan',
+        anchor: { lat: r7(doc.geo.lat), lng: r7(doc.geo.lng), rotationDeg: doc.geo.rotDeg || 0 },
+        units: 'model inches, projected on a local tangent plane (WGS84)',
+        generator: 'Omega Site Pro \u2014 Architecture Mode'
+      },
+      features: feats
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  KML                                                                *
+   * ------------------------------------------------------------------ */
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function kmlCoords(cs) {
+    return cs.map(function (c) { return c[0] + ',' + c[1] + ',0'; }).join(' ');
+  }
+  function toKML(doc) {
+    var gj = toGeoJSON(doc);
+    if (!gj) return null;
+    var byLayer = {};
+    gj.features.forEach(function (f) {
+      var l = (f.properties && f.properties.layer) || '0';
+      (byLayer[l] = byLayer[l] || []).push(f);
+    });
+    var s = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>' +
+            '<name>' + esc(doc.name || 'Site Plan') + '</name>';
+    Object.keys(byLayer).forEach(function (l) {
+      var lay = E.layer(l);
+      /* KML colour is aabbggrr, not rrggbb — reversed, and alpha first */
+      var hex = (lay.hex || '#ffffff').replace('#', '');
+      var abgr = 'ff' + hex.slice(4, 6) + hex.slice(2, 4) + hex.slice(0, 2);
+      s += '<Style id="s-' + esc(l) + '"><LineStyle><color>' + abgr +
+           '</color><width>2</width></LineStyle>' +
+           '<PolyStyle><color>66' + abgr.slice(2) + '</color></PolyStyle></Style>';
+      s += '<Folder><name>' + esc(l) + '</name>';
+      byLayer[l].forEach(function (f) {
+        var p = f.properties || {};
+        var nm = p.text || p.tag || p.label || p.kind || 'feature';
+        s += '<Placemark><name>' + esc(nm) + '</name>' +
+             '<styleUrl>#s-' + esc(l) + '</styleUrl>';
+        var desc = Object.keys(p).filter(function (k) { return p[k] != null && k !== 'layer'; })
+          .map(function (k) { return k + ': ' + p[k]; }).join('\n');
+        if (desc) s += '<description>' + esc(desc) + '</description>';
+        var g = f.geometry;
+        if (g.type === 'Point') {
+          s += '<Point><coordinates>' + kmlCoords([g.coordinates]) + '</coordinates></Point>';
+        } else if (g.type === 'LineString') {
+          s += '<LineString><tessellate>1</tessellate><coordinates>' +
+               kmlCoords(g.coordinates) + '</coordinates></LineString>';
+        } else if (g.type === 'Polygon') {
+          s += '<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>' +
+               kmlCoords(g.coordinates[0]) + '</coordinates></LinearRing></outerBoundaryIs></Polygon>';
+        }
+        s += '</Placemark>';
+      });
+      s += '</Folder>';
+    });
+    return s + '</Document></kml>';
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  GEOJSON IN                                                         *
+   *  Bring a GIS layer back as drawing geometry. Needs an anchor: without *
+   *  one there is no model space to land the coordinates in.             *
+   * ------------------------------------------------------------------ */
+  function fromGeoJSON(doc, gj, opts) {
+    opts = opts || {};
+    if (!hasAnchor(doc)) return { err: 'the drawing has no geographic anchor to place these against' };
+    if (!gj || gj.type !== 'FeatureCollection' || !Array.isArray(gj.features)) {
+      return { err: 'not a GeoJSON FeatureCollection' };
+    }
+    var layer = opts.layer || doc.layer, added = 0, skipped = {};
+    function m(c) {
+      var p = geoToModel(doc, c[1], c[0]);      /* [lng, lat] */
+      return { x: p.x, y: p.y };
+    }
+    gj.features.forEach(function (f) {
+      var g = f && f.geometry; if (!g) return;
+      var lyr = (f.properties && f.properties.layer) || layer;
+      E.ensureLayer(lyr, null);
+      try {
+        if (g.type === 'Point') {
+          var t = f.properties && f.properties.text;
+          if (t) E.add(doc, { t: 'text', layer: lyr, x: m(g.coordinates).x, y: m(g.coordinates).y,
+                              h: 14, rot: 0, s: String(t), mid: true });
+          else E.add(doc, { t: 'circle', layer: lyr, cx: m(g.coordinates).x,
+                            cy: m(g.coordinates).y, r: 6 });
+          added++;
+        } else if (g.type === 'LineString') {
+          E.add(doc, { t: 'pline', closed: false, layer: lyr, pts: g.coordinates.map(m) });
+          added++;
+        } else if (g.type === 'Polygon') {
+          var ring = g.coordinates[0].slice();
+          /* a GeoJSON ring repeats its first point; a pline must not */
+          if (ring.length > 1) {
+            var a = ring[0], b = ring[ring.length - 1];
+            if (a[0] === b[0] && a[1] === b[1]) ring.pop();
+          }
+          E.add(doc, { t: 'pline', closed: true, layer: lyr, pts: ring.map(m) });
+          added++;
+        } else if (g.type === 'MultiLineString') {
+          g.coordinates.forEach(function (ls) {
+            E.add(doc, { t: 'pline', closed: false, layer: lyr, pts: ls.map(m) });
+            added++;
+          });
+        } else if (g.type === 'MultiPolygon') {
+          g.coordinates.forEach(function (poly) {
+            var r2 = poly[0].slice();
+            if (r2.length > 1) {
+              var a2 = r2[0], b2 = r2[r2.length - 1];
+              if (a2[0] === b2[0] && a2[1] === b2[1]) r2.pop();
+            }
+            E.add(doc, { t: 'pline', closed: true, layer: lyr, pts: r2.map(m) });
+            added++;
+          });
+        } else {
+          skipped[g.type] = (skipped[g.type] || 0) + 1;
+        }
+      } catch (err) { skipped[g.type || '?'] = (skipped[g.type || '?'] || 0) + 1; }
+    });
+    return { added: added, skipped: skipped };
+  }
+
+  E.geo = {
+    FT_PER_M: FT_PER_M,
+    ftPerDegLat: ftPerDegLat, ftPerDegLon: ftPerDegLon,
+    mercatorMetres: mercatorMetres, mercatorScale: mercatorScale,
+    setAnchor: setAnchor, hasAnchor: hasAnchor,
+    modelToGeo: modelToGeo, geoToModel: geoToModel,
+    modelToEN: modelToEN, enToModel: enToModel, groundDistFt: groundDistFt,
+    toGeoJSON: toGeoJSON, toKML: toKML, fromGeoJSON: fromGeoJSON
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script id="omega-arch-js">
 
 /* ====================================================================== *
@@ -112711,6 +113075,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     '3d': 'VIEW3D', iso: 'VIEW3D', view3d: 'VIEW3D', plan: 'PLANVIEW',
     rot: 'VROTATE', vrotate: 'VROTATE', drape: 'DRAPE', dxf3d: 'DXF3D',
     piers: 'PIERS', pier: 'PIERS', piles: 'PIERS', piercsv: 'PIERCSV',
+    geo: 'GEO', anchor: 'GEO', geojson: 'GEOJSON', kml: 'KML',
+    geoin: 'GEOIN', importgeo: 'GEOIN',
     q: 'QSAVE', help: 'HELP', '?': 'HELP'
   };
   var lastCmd = null;
@@ -112725,7 +113091,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
    'ROTATE','MIRROR','ARRAY','ERASE','INSERT','ZOOM','UNDO','REDO','LAYER','UNITS',
    'SNAP','OSNAP','DXF','SCR','SVG','SAVE','QSAVE','OPEN','IMPORT','SELALL','PAN','HELP',
    'PLACE','UNPLACE','SITEFIT','OFFSET','NETAREA','IMPORTDXF','DETAIL','CLEARANCE','ROUTE','TRENCH','SPEC','SCHEDULE','PVARRAY',
-   'VIEW3D','PLANVIEW','VROTATE','DRAPE','DXF3D','PIERS','PIERCSV'
+   'VIEW3D','PLANVIEW','VROTATE','DRAPE','DXF3D','PIERS','PIERCSV',
+   'GEO','GEOJSON','KML','GEOIN'
   ].forEach(function (k) { KNOWN[k] = 1; });
 
   function onEnter(text) {
@@ -112791,7 +113158,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         say('LINE PLINE RECT CIRCLE ARC TEXT DIM DIST AREA | MOVE COPY ROTATE MIRROR ARRAY ERASE');
         say('INSERT ZOOM UNDO REDO LAYER UNITS SNAP OSNAP DETAIL CLEARANCE');
         say('OFFSET NETAREA IMPORTDXF <ft|in|m> | PVARRAY [one] | PLACE <deg> UNPLACE SITEFIT');
-        say('VIEW3D PLAN VROTATE <deg> DRAPE DXF3D | PIERS PIERCSV | DXF SCR SVG SAVE OPEN IMPORT');
+        say('VIEW3D PLAN VROTATE <deg> DRAPE DXF3D | PIERS PIERCSV');
+        say('GEO <lat> <lng> [rot] | GEOJSON KML GEOIN | DXF SCR SVG SAVE OPEN IMPORT');
         say('Points: 25,10  @30,0  @30<45  or type a distance along the rubber band.');
         say('F3 osnap  F7 grid  F8 ortho  F9 snap  F10 polar  Esc cancel  Enter repeat');
         ST.cmd = null; prompt('Command:'); return;
@@ -112817,6 +113185,10 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       case 'DXF3D': ST.cmd = null; doExport('dxf3d'); prompt('Command:'); return;
       case 'PIERS': ST.cmd = null; runPiers(); prompt('Command:'); return;
       case 'PIERCSV': ST.cmd = null; pierCSV(); prompt('Command:'); return;
+      case 'GEO': ST.cmd = null; setGeo(arg); prompt('Command:'); return;
+      case 'GEOJSON': ST.cmd = null; geoExport('geojson'); prompt('Command:'); return;
+      case 'KML': ST.cmd = null; geoExport('kml'); prompt('Command:'); return;
+      case 'GEOIN': ST.cmd = null; geoImport(); prompt('Command:'); return;
       case 'PVARRAY':
         ST.cmd = null;
         arrayBuild(/^one$/i.test((arg || '').trim()));
@@ -113538,8 +113910,13 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
   function updateCoords() {
     if (!el.coord) return;
     var u = ST.doc.units;
-    el.coord.textContent = 'X ' + E.fmtLen(ST.cursor.x, u) + '   Y ' + E.fmtLen(ST.cursor.y, u) +
+    var t = 'X ' + E.fmtLen(ST.cursor.x, u) + '   Y ' + E.fmtLen(ST.cursor.y, u) +
       '   1:' + Math.max(1, Math.round(1 / (ST.V.z * 12)));
+    if (E.geo.hasAnchor(ST.doc)) {
+      var g = E.geo.modelToGeo(ST.doc, ST.cursor.x, ST.cursor.y);
+      if (g) t += '   ' + g.lat.toFixed(6) + ', ' + g.lng.toFixed(6);
+    }
+    el.coord.textContent = t;
   }
 
   function refresh() {
@@ -114356,6 +114733,113 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     say('Pier schedule written \u2014 ' + r.total.piles + ' pile(s), with the criteria they were solved under.');
   }
 
+
+  /* ------------------------------------------------------------------ *
+   *  GEOREFERENCE                                                       *
+   *  Once the drawing has been placed on the map it knows where it is on *
+   *  Earth, and everything downstream — GIS export, the coordinate       *
+   *  readout, a re-place that updates instead of duplicating — follows   *
+   *  from that one anchor.                                              *
+   * ------------------------------------------------------------------ */
+
+  /* Derive the anchor from a placement: model origin -> canvas px -> lat/lng.
+     The rotation sign flips because placeTransform rotates counter-clockwise
+     in model space while a bearing is written clockwise from north. */
+  function anchorFromPlacement(place) {
+    if (!place) return null;
+    var Site = siteState(), ppf = Site && Site.pxPerFt;
+    if (!ppf) return null;
+    var pxToGeo = window._pxToLatLng;
+    if (typeof pxToGeo !== 'function') return null;
+    var ms = window._liveMapState ? window._liveMapState() : null;
+    var sz = window._getCanvasSize ? window._getCanvasSize() : { w: 1200, h: 800 };
+    var T = E.placeTransform({
+      pxPerFt: ppf, anchorX: place.anchorX, anchorY: place.anchorY,
+      originX: place.originX, originY: place.originY, rotDeg: place.rotDeg || 0
+    });
+    var p0 = T(0, 0);
+    var g = pxToGeo(p0.x, p0.y, ms, sz.w, sz.h);
+    if (!g || !isFinite(g.lat) || !isFinite(g.lng)) return null;
+    return E.geo.setAnchor(ST.doc, g.lat, g.lng, -(place.rotDeg || 0));
+  }
+
+  function geoStatus() {
+    if (!E.geo.hasAnchor(ST.doc)) {
+      say('The drawing has no geographic anchor yet. Place it on the map, or set one ' +
+          'with GEO <lat> <lng> [rotation].');
+      return null;
+    }
+    var a = ST.doc.geo;
+    say('Anchored at ' + a.lat.toFixed(6) + ', ' + a.lng.toFixed(6) +
+        ' \u2014 model +Y points ' + (a.rotDeg || 0).toFixed(1) + '\u00B0 clockwise from true north.');
+    return a;
+  }
+
+  function setGeo(arg) {
+    var m = String(arg || '').trim().split(/[\s,]+/).filter(Boolean);
+    if (!m.length) return geoStatus();
+    var lat = parseFloat(m[0]), lng = parseFloat(m[1]), rot = m.length > 2 ? parseFloat(m[2]) : 0;
+    if (!E.geo.setAnchor(ST.doc, lat, lng, rot)) {
+      say('GEO: give a latitude and longitude \u2014 GEO 17.93604 -76.77157 [rotation]');
+      return null;
+    }
+    say('Anchor set. Ground distances are computed on a local tangent plane at this ' +
+        'latitude, not from Web-Mercator metres \u2014 which would oversize the site by ' +
+        ((E.geo.mercatorScale(lat) - 1) * 100).toFixed(1) + '% here.');
+    refresh();
+    return ST.doc.geo;
+  }
+
+  function geoExport(kind) {
+    if (!E.geo.hasAnchor(ST.doc)) {
+      say('Nothing to export geographically \u2014 the drawing has no anchor. Place it on ' +
+          'the map first, or set one with GEO.');
+      return;
+    }
+    try {
+      if (kind === 'kml') {
+        dl(E.geo.toKML(ST.doc), safeName() + '.kml', 'application/vnd.google-earth.kml+xml');
+        say('KML written \u2014 opens in Google Earth, grouped into folders by layer.');
+      } else {
+        var gj = E.geo.toGeoJSON(ST.doc);
+        dl(JSON.stringify(gj, null, 2), safeName() + '.geojson', 'application/geo+json');
+        say('GeoJSON written \u2014 ' + gj.features.length + ' feature(s) in WGS84 lng/lat, ' +
+            'equipment carrying its tag, footprint, height and ratings.');
+      }
+    } catch (err) { say('Geographic export failed: ' + (err && err.message)); }
+  }
+
+  function geoImport() {
+    if (!E.geo.hasAnchor(ST.doc)) {
+      say('GeoJSON import needs an anchor first \u2014 without one there is no model space ' +
+          'to land the coordinates in.');
+      return;
+    }
+    var i = document.createElement('input');
+    i.type = 'file'; i.accept = '.geojson,.json,application/geo+json,application/json';
+    i.onchange = function () {
+      var f = i.files && i.files[0]; if (!f) return;
+      var r = new FileReader();
+      r.onload = function () {
+        var gj;
+        try { gj = JSON.parse(String(r.result)); }
+        catch (err) { say('That file is not valid JSON: ' + (err && err.message)); return; }
+        push();
+        var res = E.geo.fromGeoJSON(ST.doc, gj, { layer: ST.doc.layer });
+        if (res.err) { ST.hist.pop(); say('GeoJSON import: ' + res.err); return; }
+        if (!res.added) { ST.hist.pop(); say('Nothing in that file could be imported.'); return; }
+        say('Imported ' + res.added + ' feature(s) from ' + f.name + '.');
+        var sk = Object.keys(res.skipped || {});
+        if (sk.length) {
+          say('Not imported: ' + sk.map(function (k) { return k + ' \u00D7' + res.skipped[k]; }).join(', ') + '.');
+        }
+        zoomExtents(); refresh();
+      };
+      r.readAsText(f);
+    };
+    i.click();
+  }
+
   /* ------------------------------------------------------------------ *
    *  ARRAY LAYOUT  —  parametric PV                                     *
    *  Pick a module and a mounting system, set tilt and azimuth, and the  *
@@ -114901,6 +115385,14 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 
     ST.doc.placedAs = gid;
     ST.lastPlace = { anchorX: ax, anchorY: ay, originX: ox, originY: oy, rotDeg: conf.rotDeg };
+    /* the placement is the only moment we know both the model origin and a
+       point on the map, so it is the moment to record where on Earth the
+       drawing sits */
+    var anc = anchorFromPlacement(ST.lastPlace);
+    if (anc) {
+      say('Anchored at ' + anc.lat.toFixed(6) + ', ' + anc.lng.toFixed(6) +
+          ' \u2014 GEOJSON and KML now export real coordinates.');
+    }
     /* pushHist geo-stamps everything, which is what anchors the stamped
        geometry to the ground so it survives the next pan or zoom. */
     var ush = app('updShapeCount'); if (ush) try { ush(); } catch (e) {}
@@ -115320,6 +115812,9 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         '<button class="arch-btn" data-arch-act="sitefit" title="Check the placed layout against sampled topography: elevation, slope and cut/fill per pad">Site fit</button>' +
         '<button class="arch-btn" data-arch-act="dxfin" title="Import a DXF basemap or survey \u2014 you will be asked what units the file is in">DXF in</button>' +
         '<button class="arch-btn" data-arch-act="dxf3d" title="Export the model as 3D DXF \u2014 real 3DFACE solids with elevations, not a picture of a 3D view">DXF 3D</button>' +
+        '<button class="arch-btn" data-arch-act="geojson" title="Export GeoJSON in WGS84 lng/lat \u2014 real coordinates for GIS, computed on a local tangent plane rather than from Web-Mercator metres">GeoJSON</button>' +
+        '<button class="arch-btn" data-arch-act="kml" title="Export KML for Google Earth, grouped into folders by layer">KML</button>' +
+        '<button class="arch-btn" data-arch-act="geoin" title="Bring a GeoJSON layer in as drawing geometry (needs an anchor)">Geo in</button>' +
         '<button class="arch-btn" data-arch-act="zoom" title="Zoom extents (Z)">Zoom ext</button>' +
         '<button class="arch-btn" data-arch-act="undo" title="Undo (Ctrl+Z)">Undo</button>' +
         '<button class="arch-btn" data-arch-act="redo" title="Redo (Ctrl+Y)">Redo</button>' +
@@ -115427,6 +115922,9 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         else if (act === 'dxf3d') doExport('dxf3d');
         else if (act === 'pr-run') runPiers();
         else if (act === 'pr-csv') pierCSV();
+        else if (act === 'geojson') geoExport('geojson');
+        else if (act === 'kml') geoExport('kml');
+        else if (act === 'geoin') geoImport();
         else if (act === 'dxfin') {
           say('IMPORTDXF: say which units the file is in \u2014 type IMPORTDXF FT, IN, M or MM.');
           if (el.input) { el.input.value = 'IMPORTDXF '; el.input.focus(); }
@@ -115602,6 +116100,10 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     arrayCfg: AR, arrayPlan: arrayPreview, arrayBuild: arrayBuild, arraySet: arraySet,
     view3d: toggle3D, rotateView: rotateView, drape: toggleDrape,
     piers: runPiers, pierCSV: pierCSV, pierSet: pierSet,
+    setGeo: setGeo, geoStatus: geoStatus, geoExport: geoExport, geoImport: geoImport,
+    anchorFromPlacement: anchorFromPlacement,
+    toGeoJSON: function () { return E.geo.toGeoJSON(ST.doc); },
+    toKML: function () { return E.geo.toKML(ST.doc); },
     pierCfg: PR, groundFn: groundFn,
     exportDXF3D: function () { return E.iso.toDXF3D(ST.doc, sceneOpts()); },
     scene: function () { return E.iso.scene(ST.doc, sceneOpts()); },
