@@ -116962,6 +116962,558 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 
 
 </script>
+<script id="omega-bill-reader-js">
+/* ====================================================================== *
+ *  OMEGA BILL READER                                                     *
+ *  ------------------------------------------------------------------    *
+ *  Turns a utility file into the twelve numbers the BESS sizer bills on:  *
+ *  each month's BILLED DEMAND in kW and its usage in kWh.                 *
+ *                                                                         *
+ *  THE THING THAT MATTERS MOST                                            *
+ *  A demand charge is not billed on the highest instantaneous reading.    *
+ *  It is billed on the highest AVERAGE over the tariff's demand interval  *
+ *  — almost always 15 minutes, sometimes 30. Taking the max of 1-minute   *
+ *  or 5-minute data overstates the peak, and every kW of overstatement    *
+ *  buys a kW of battery that earns nothing. So the reader rolls the       *
+ *  series up to the demand window BEFORE taking a maximum, and says which *
+ *  window it used.                                                        *
+ *                                                                         *
+ *  WHAT IT WILL NOT DO                                                    *
+ *  Invent a number. If a column cannot be identified, or a month has no   *
+ *  readings, it says so. A sizing run that silently falls back to a       *
+ *  "typical" 120 kW profile produces a real battery quote from no data.   *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  if (root.OmegaBillReader) return;
+
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  /* ------------------------------------------------------------------ *
+   *  CSV                                                                *
+   * ------------------------------------------------------------------ */
+  function splitLine(line) {
+    var out = [], cur = '', q = false, i, c;
+    for (i = 0; i < line.length; i++) {
+      c = line.charAt(i);
+      if (q) {
+        if (c === '"') {
+          if (line.charAt(i + 1) === '"') { cur += '"'; i++; }
+          else q = false;
+        } else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === ',' || c === '\t' || c === ';') { out.push(cur); cur = ''; }
+      else cur += c;
+    }
+    out.push(cur);
+    return out.map(function (s) { return s.trim(); });
+  }
+  function parseCSV(text) {
+    var lines = String(text || '').replace(/\r\n?/g, '\n').split('\n')
+      .filter(function (l) { return l.trim() !== ''; });
+    return lines.map(splitLine);
+  }
+
+  function num(v) {
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    var s = String(v == null ? '' : v).replace(/[$,\s]/g, '');
+    if (s === '' || !/^-?\d*\.?\d+([eE][-+]?\d+)?$/.test(s)) return null;
+    var n = parseFloat(s);
+    return isFinite(n) ? n : null;
+  }
+
+  /* Dates: the formats a utility export actually uses. Ambiguous
+     day-first vs month-first is resolved by scanning the whole column for a
+     value above 12, which is the only evidence a file gives. */
+  function parseWhen(v, dayFirst) {
+    if (v == null) return null;
+    var s = String(v).trim();
+    if (!s) return null;
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ]?(\d{2})?:?(\d{2})?/);
+    if (m) {
+      return { y: +m[1], mo: +m[2] - 1, d: +m[3],
+               h: m[4] ? +m[4] : 0, mi: m[5] ? +m[5] : 0 };
+    }
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\s*(\d{1,2})?:?(\d{2})?\s*([AaPp])?/);
+    if (m) {
+      var a = +m[1], b = +m[2], y = +m[3];
+      if (y < 100) y += 2000;
+      var mo = dayFirst ? b - 1 : a - 1, d = dayFirst ? a : b;
+      var h = m[4] ? +m[4] : 0;
+      if (m[6]) {
+        var pm = /[Pp]/.test(m[6]);
+        if (pm && h < 12) h += 12;
+        if (!pm && h === 12) h = 0;
+      }
+      return { y: y, mo: mo, d: d, h: h, mi: m[5] ? +m[5] : 0 };
+    }
+    var t = Date.parse(s);
+    if (!isNaN(t)) {
+      var dt = new Date(t);
+      return { y: dt.getFullYear(), mo: dt.getMonth(), d: dt.getDate(),
+               h: dt.getHours(), mi: dt.getMinutes() };
+    }
+    return null;
+  }
+  function minutesOf(w) {
+    return ((w.y * 12 + w.mo) * 31 + w.d) * 1440 + w.h * 60 + w.mi;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  COLUMN IDENTIFICATION                                              *
+   *  Named on evidence, not on a guess: the header decides, and where    *
+   *  there is no header the shape of the data does.                      *
+   * ------------------------------------------------------------------ */
+  var RX = {
+    when: /(date|time|timestamp|interval|read|period|start)/i,
+    kw:   /\b(kw|demand|power|load)\b/i,
+    kwh:  /\b(kwh|usage|consumption|energy)\b/i,
+    kvar: /\b(kvar|kva|reactive|power ?factor|pf)\b/i,
+    month:/(month|billing period|period)/i
+  };
+  function identify(rows) {
+    if (!rows.length) return null;
+    var head = rows[0], hasHeader = head.some(function (c) { return num(c) === null && /[a-z]/i.test(c); });
+    if (!hasHeader) return { header: false, when: 0, kw: 1, kwh: null };
+    var idx = { header: true, when: null, kw: null, kwh: null, kva: null };
+    head.forEach(function (c, i) {
+      if (idx.when === null && RX.when.test(c)) idx.when = i;
+      /* kWh must be tested first: "Usage (kWh)" also matches nothing in the
+         kW pattern, but "kWh" contains "kw" for a looser rule */
+      if (idx.kwh === null && RX.kwh.test(c)) { idx.kwh = i; return; }
+      if (idx.kw === null && RX.kw.test(c) && !RX.kvar.test(c)) idx.kw = i;
+    });
+    return idx;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  INTERVAL SERIES -> BILLED DEMAND PER MONTH                         *
+   * ------------------------------------------------------------------ */
+  function readInterval(text, opts) {
+    opts = opts || {};
+    var rows = parseCSV(text);
+    if (rows.length < 3) return { ok: false, error: 'Not enough rows to read as interval data.' };
+    var idx = identify(rows);
+    if (!idx) return { ok: false, error: 'Could not read the file.' };
+    if (idx.kw === null && idx.kwh === null) {
+      return { ok: false, error: 'No demand (kW) or usage (kWh) column found. ' +
+               'Headers seen: ' + rows[0].join(', ') };
+    }
+    var body = idx.header ? rows.slice(1) : rows;
+
+    /* day-first vs month-first, decided by evidence in the column */
+    var dayFirst = false;
+    if (idx.when !== null) {
+      for (var i = 0; i < body.length; i++) {
+        var mm = String(body[i][idx.when] || '').match(/^(\d{1,2})[\/\-](\d{1,2})/);
+        if (mm && +mm[1] > 12) { dayFirst = true; break; }
+        if (mm && +mm[2] > 12) break;
+      }
+    }
+
+    var pts = [], bad = 0;
+    body.forEach(function (r) {
+      var w = idx.when !== null ? parseWhen(r[idx.when], dayFirst) : null;
+      var kw = idx.kw !== null ? num(r[idx.kw]) : null;
+      var kwh = idx.kwh !== null ? num(r[idx.kwh]) : null;
+      if (kw === null && kwh === null) { bad++; return; }
+      pts.push({ w: w, kw: kw, kwh: kwh });
+    });
+    if (pts.length < 24) {
+      return { ok: false, error: 'Only ' + pts.length + ' usable reading(s) found; ' +
+               'interval sizing needs at least 24.' };
+    }
+
+    /* Interval length, measured from the timestamps rather than assumed. */
+    var stepMin = opts.intervalMin || null;
+    if (!stepMin) {
+      var diffs = [], k;
+      for (k = 1; k < pts.length && diffs.length < 200; k++) {
+        if (!pts[k].w || !pts[k - 1].w) continue;
+        var d = minutesOf(pts[k].w) - minutesOf(pts[k - 1].w);
+        if (d > 0 && d <= 1440) diffs.push(d);
+      }
+      if (diffs.length) {
+        diffs.sort(function (a, b) { return a - b; });
+        stepMin = diffs[Math.floor(diffs.length / 2)];
+      }
+    }
+    if (!stepMin) stepMin = 60;
+
+    /* kWh per interval converts to average kW over that interval. A file
+       that gives energy is giving demand too, once you divide by the hours
+       it was measured over. */
+    var hoursPer = stepMin / 60;
+    pts.forEach(function (p) {
+      if (p.kw === null && p.kwh !== null) p.kw = p.kwh / hoursPer;
+      if (p.kwh === null && p.kw !== null) p.kwh = p.kw * hoursPer;
+    });
+
+    /* Roll up to the demand window before taking any maximum. */
+    var winMin = opts.demandWindowMin || 15;
+    var group = Math.max(1, Math.round(winMin / stepMin));
+    var rolled = [];
+    for (var s = 0; s < pts.length; s += group) {
+      var slice = pts.slice(s, s + group);
+      var sum = 0, cnt = 0;
+      slice.forEach(function (p) { if (p.kw !== null) { sum += p.kw; cnt++; } });
+      if (!cnt) continue;
+      rolled.push({ w: slice[0].w, kw: sum / cnt,
+                    kwh: slice.reduce(function (a, p) { return a + (p.kwh || 0); }, 0) });
+    }
+
+    /* Per month, because a demand charge is billed per month. */
+    var byMonth = {};
+    rolled.forEach(function (p) {
+      var key = p.w ? (p.w.y + '-' + p.w.mo) : 'all';
+      var m = byMonth[key] || (byMonth[key] = { y: p.w ? p.w.y : null, mo: p.w ? p.w.mo : null,
+                                                peak: 0, kwh: 0, n: 0 });
+      if (p.kw > m.peak) m.peak = p.kw;
+      m.kwh += p.kwh || 0;
+      m.n++;
+    });
+
+    var months = Object.keys(byMonth).map(function (k) {
+      var m = byMonth[k];
+      return { month: m.mo, year: m.y,
+               label: m.mo != null ? MONTHS[m.mo] : 'All',
+               demandKw: +m.peak.toFixed(1), kwh: Math.round(m.kwh),
+               readings: m.n, partial: m.n * group * stepMin < 20 * 1440 };
+    }).sort(function (a, b) {
+      return (a.year - b.year) || (a.month - b.month);
+    });
+
+    var rawMax = pts.reduce(function (x, p) { return Math.max(x, p.kw || 0); }, 0);
+    var billedMax = months.reduce(function (x, m) { return Math.max(x, m.demandKw); }, 0);
+
+    return {
+      ok: true, months: months,
+      intervalMin: stepMin, demandWindowMin: winMin, rolledBy: group,
+      rawPeakKw: +rawMax.toFixed(1), billedPeakKw: +billedMax.toFixed(1),
+      overstatementKw: +(rawMax - billedMax).toFixed(1),
+      readings: pts.length, dropped: bad, dayFirst: dayFirst,
+      basis: 'interval data, ' + stepMin + ' min, rolled to a ' + winMin + ' min demand window'
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  MONTHLY SUMMARY TABLE                                              *
+   * ------------------------------------------------------------------ */
+  function readMonthly(text) {
+    var rows = parseCSV(text);
+    if (rows.length < 2) return { ok: false, error: 'Not enough rows to read as a monthly table.' };
+    var head = rows[0], hasHeader = head.some(function (c) { return num(c) === null; });
+    var iM = null, iKw = null, iKwh = null;
+    if (hasHeader) {
+      head.forEach(function (c, i) {
+        if (iKwh === null && RX.kwh.test(c)) { iKwh = i; return; }
+        if (iKw === null && RX.kw.test(c) && !RX.kvar.test(c)) { iKw = i; return; }
+        if (iM === null && RX.month.test(c)) iM = i;
+      });
+    } else { iM = 0; iKw = 1; iKwh = 2; }
+    if (iKw === null) {
+      return { ok: false, error: 'No billed demand (kW) column found. ' +
+               'Headers seen: ' + head.join(', ') };
+    }
+    var body = hasHeader ? rows.slice(1) : rows, months = [];
+    body.forEach(function (r, i) {
+      var kw = num(r[iKw]);
+      if (kw === null || kw <= 0) return;
+      var mo = i;
+      if (iM !== null) {
+        var raw = String(r[iM] || '');
+        var byName = MONTHS.findIndex(function (nm) {
+          return new RegExp('^' + nm, 'i').test(raw.trim());
+        });
+        if (byName >= 0) mo = byName;
+        else { var nn = num(raw); if (nn !== null && nn >= 1 && nn <= 12) mo = nn - 1; }
+      }
+      months.push({ month: mo, label: MONTHS[mo % 12] || String(mo),
+                    demandKw: kw, kwh: iKwh !== null ? (num(r[iKwh]) || 0) : 0 });
+    });
+    if (!months.length) return { ok: false, error: 'No rows with a billed demand value.' };
+    return { ok: true, months: months, basis: 'monthly billing summary' };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  BILL TEXT                                                          *
+   *  For a bill pasted as text. It reports what it found and what it did *
+   *  not; it never fills a gap with a typical value.                     *
+   * ------------------------------------------------------------------ */
+  function readBillText(text) {
+    var t = String(text || '');
+    if (!t.trim()) return { ok: false, error: 'No text to read.' };
+    var found = {}, notes = [];
+
+    var mDem = t.match(/(?:billing|billed|peak|max(?:imum)?|on-?peak)\s*demand[^0-9\-]{0,20}([0-9][0-9,\.]*)\s*(kw|kva)?/i)
+            || t.match(/demand[^0-9\-]{0,12}([0-9][0-9,\.]*)\s*kw\b/i);
+    if (mDem) {
+      found.demandKw = parseFloat(mDem[1].replace(/,/g, ''));
+      if (mDem[2] && /kva/i.test(mDem[2])) {
+        notes.push('The demand figure is in kVA, not kW. Billed kW depends on power factor \u2014 ' +
+                   'confirm before sizing on it.');
+        found.demandIsKva = true;
+      }
+    }
+    var mUse = t.match(/(?:total\s+)?(?:usage|consumption|energy|kwh\s+used)[^0-9\-]{0,20}([0-9][0-9,\.]*)\s*kwh/i)
+            || t.match(/([0-9][0-9,\.]{2,})\s*kwh\b/i);
+    if (mUse) found.kwh = parseFloat(mUse[1].replace(/,/g, ''));
+
+    var mRate = t.match(/demand\s*(?:charge|rate)[^0-9$]{0,20}\$?\s*([0-9]+\.?[0-9]*)/i);
+    if (mRate) found.demandChargePerKw = parseFloat(mRate[1]);
+
+    var mPer = t.match(/(?:service|billing)\s*period[^0-9]{0,12}([A-Za-z0-9\/\-\s,]{6,40})/i);
+    if (mPer) found.period = mPer[1].trim();
+
+    var missing = [];
+    if (found.demandKw == null) missing.push('billed demand (kW)');
+    if (found.kwh == null) missing.push('usage (kWh)');
+    if (missing.length) {
+      return { ok: false, found: found, missing: missing, notes: notes,
+               error: 'Could not find ' + missing.join(' or ') + ' in this text. ' +
+                      'Enter it by hand rather than sizing on a guess.' };
+    }
+    return { ok: true, months: [{ month: 0, label: 'Bill', demandKw: found.demandKw,
+                                 kwh: found.kwh }],
+             found: found, notes: notes, basis: 'single bill, text' };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  DISPATCH                                                           *
+   * ------------------------------------------------------------------ */
+  function read(text, opts) {
+    opts = opts || {};
+    var t = String(text || '');
+    if (!t.trim()) return { ok: false, error: 'Nothing to read.' };
+    if (opts.as === 'interval') return readInterval(t, opts);
+    if (opts.as === 'monthly') return readMonthly(t, opts);
+    if (opts.as === 'bill') return readBillText(t);
+
+    /* Decide by shape: many rows with a repeating timestamp is interval
+       data; a dozen rows is a billing summary; prose is a bill. */
+    var rows = parseCSV(t);
+    var commas = rows.length > 1 ? rows[1].length : 1;
+    if (rows.length >= 24 && commas >= 2) {
+      var r = readInterval(t, opts);
+      if (r.ok) return r;
+    }
+    if (rows.length >= 2 && rows.length <= 40 && commas >= 2) {
+      var m = readMonthly(t);
+      if (m.ok) return m;
+    }
+    return readBillText(t);
+  }
+
+  /* Rows in the shape the sizer's monthly table expects. */
+  function toSizerRows(res) {
+    if (!res || !res.ok) return null;
+    return res.months.map(function (m) {
+      return { month: m.month, demandKw: m.demandKw, kwh: m.kwh };
+    });
+  }
+
+  root.OmegaBillReader = {
+    read: read, readInterval: readInterval, readMonthly: readMonthly,
+    readBillText: readBillText, toSizerRows: toSizerRows,
+    parseCSV: parseCSV, identify: identify, parseWhen: parseWhen, MONTHS: MONTHS
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-bill-import-js">
+/* ====================================================================== *
+ *  BILL IMPORT  —  wired into the BESS Sizer                             *
+ *  Adds a "Read a bill" mode to the sizer's Utility Data tab: paste       *
+ *  interval data, a monthly billing table, or the text of a bill, and it  *
+ *  fills the twelve rows the sizer bills on.                              *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaBillImport) return;
+  var TAG = '[OmegaBillImport]';
+  var R = window.OmegaBillReader;
+
+  var last = null;
+
+  function panel() {
+    return '' +
+      '<div class="e3-note" style="margin-bottom:8px">Paste interval data, a monthly billing ' +
+      'table, or the text of a bill. Billed demand is the highest average over the tariff\u2019s ' +
+      'demand window \u2014 the reader rolls the data up to that window before taking a peak, ' +
+      'because a max-of-samples reading overstates it and every overstated kW buys battery ' +
+      'that earns nothing.</div>' +
+      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">' +
+        '<label style="font-size:11px;color:#8FA3B8">Demand window' +
+        '<select id="omg-bill-win" style="margin-left:6px">' +
+          '<option value="15">15 min</option><option value="30">30 min</option>' +
+          '<option value="60">60 min</option></select></label>' +
+        '<button class="e3-btn" id="omg-bill-file">Choose a file\u2026</button>' +
+        '<button class="e3-btn pri" id="omg-bill-read">Read it</button>' +
+      '</div>' +
+      '<textarea id="omg-bill-text" spellcheck="false" ' +
+        'style="width:100%;height:150px;font-family:ui-monospace,Menlo,monospace;font-size:11px;' +
+        'background:#0b1220;color:#dbe6f2;border:1px solid #24405e;border-radius:6px;padding:8px" ' +
+        'placeholder="Timestamp,Demand (kW)&#10;2025-01-01 00:00,142.6&#10;2025-01-01 00:15,138.2&#10;&#10;' +
+        '\u2014 or \u2014&#10;Month,Billed Demand (kW),Usage (kWh)&#10;Jan,198,63000&#10;&#10;' +
+        '\u2014 or \u2014 paste the text of a bill"></textarea>' +
+      '<div id="omg-bill-out" style="margin-top:8px"></div>';
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function report(res) {
+    var out = document.getElementById('omg-bill-out');
+    if (!out) return;
+    if (!res.ok) {
+      var extra = '';
+      if (res.missing) extra = '<div style="margin-top:4px">Not found: ' +
+        esc(res.missing.join(', ')) + '</div>';
+      out.innerHTML = '<div class="e3-note warn">' + esc(res.error) + extra + '</div>';
+      return;
+    }
+    var h = '<div class="e3-note ok">Read ' + res.months.length + ' month(s) \u2014 ' +
+            esc(res.basis) + '.</div>';
+    if (res.overstatementKw > 0) {
+      /* The single most useful number this reader produces. */
+      h += '<div class="e3-note" style="margin-top:6px">Raw peak in the file was ' +
+        res.rawPeakKw + ' kW; billed demand over a ' + res.demandWindowMin +
+        ' minute window is ' + res.billedPeakKw + ' kW. Sizing on the raw peak would have ' +
+        'oversized the battery by ' + res.overstatementKw + ' kW.</div>';
+    }
+    (res.notes || []).forEach(function (nt) {
+      h += '<div class="e3-note warn" style="margin-top:6px">' + esc(nt) + '</div>';
+    });
+    var partial = res.months.filter(function (m) { return m.partial; });
+    if (partial.length) {
+      h += '<div class="e3-note warn" style="margin-top:6px">' + partial.length +
+        ' month(s) hold less than 20 days of data. A part-month peak is not a billed peak.</div>';
+    }
+    h += '<table style="width:100%;margin-top:8px;font-size:11px;font-family:ui-monospace,Menlo,monospace">' +
+      '<tr style="color:#8FA3B8"><th align="left">Month</th><th align="right">Billed kW</th>' +
+      '<th align="right">kWh</th></tr>';
+    res.months.forEach(function (m) {
+      h += '<tr><td>' + esc(m.label) + (m.year ? ' ' + m.year : '') + '</td>' +
+           '<td align="right">' + m.demandKw + '</td>' +
+           '<td align="right">' + (m.kwh ? m.kwh.toLocaleString() : '\u2014') + '</td></tr>';
+    });
+    h += '</table>';
+    h += '<button class="e3-btn pri" id="omg-bill-apply" style="margin-top:8px">' +
+         'Use these ' + res.months.length + ' month(s) in the sizer</button>';
+    out.innerHTML = h;
+    var ap = document.getElementById('omg-bill-apply');
+    if (ap) ap.addEventListener('click', apply);
+  }
+
+  /* Hand the rows to the sizer's own state, then let it re-render. Nothing
+     here computes a battery: the sizing engine already does that, and a
+     second path would be a second answer. */
+  function apply() {
+    if (!last || !last.ok) return;
+    var Sz = window.OmegaBessSizer;
+    if (!Sz || !Sz.state) {
+      alert('Sizer state not reachable in this build.');
+      return;
+    }
+    var S = Sz.state, rows = R.toSizerRows(last);
+    if (!rows || !rows.length) return;
+    if (S.rows) {
+      for (var i = 0; i < S.rows.length; i++) { S.rows[i].demandKw = ''; S.rows[i].kwh = ''; }
+      rows.forEach(function (r, i) {
+        var slot = (r.month != null && S.rows[r.month]) ? S.rows[r.month] : S.rows[i];
+        if (!slot) return;
+        slot.demandKw = r.demandKw;
+        slot.kwh = r.kwh || '';
+      });
+    }
+    S.mode = rows.length > 1 ? 'monthly' : 'single';
+    /* A bill that carried its own demand charge should not be overridden by
+       a default that happens to be sitting in the field. */
+    if (last.found && last.found.demandChargePerKw && S.tariff) {
+      S.tariff.demandChargePerKw = last.found.demandChargePerKw;
+    }
+    if (typeof Sz.render === 'function') Sz.render();
+    else if (typeof Sz.open === 'function') Sz.open();
+  }
+
+  function readNow() {
+    var ta = document.getElementById('omg-bill-text');
+    var win = document.getElementById('omg-bill-win');
+    if (!ta) return;
+    if (!R) { alert('Bill reader not loaded.'); return; }
+    var opts = { demandWindowMin: win ? +win.value : 15 };
+    try { last = R.read(ta.value, opts); }
+    catch (e) { last = { ok: false, error: 'Could not read that: ' + (e && e.message) }; }
+    report(last);
+  }
+
+  function pickFile() {
+    var i = document.createElement('input');
+    i.type = 'file';
+    i.accept = '.csv,.txt,.tsv,text/plain,text/csv';
+    i.onchange = function () {
+      var f = i.files && i.files[0]; if (!f) return;
+      var rd = new FileReader();
+      rd.onload = function () {
+        var ta = document.getElementById('omg-bill-text');
+        if (ta) { ta.value = String(rd.result).slice(0, 4000000); readNow(); }
+      };
+      rd.readAsText(f);
+    };
+    i.click();
+  }
+
+  /* ---- graft the mode into the sizer's tab strip --------------------- */
+  function graft() {
+    var host = document.querySelector('#omg-bill-host');
+    if (host) return true;
+    var chips = document.querySelectorAll('[data-sz-mode]');
+    if (!chips.length) return false;
+    var strip = chips[0].parentNode && chips[0].parentNode.parentNode;
+    if (!strip) return false;
+
+    if (!document.getElementById('omg-bill-chip')) {
+      var wrap = document.createElement('div');
+      wrap.className = 'e3-sub';
+      wrap.innerHTML = '<div id="omg-bill-chip" style="cursor:pointer">Read a bill</div>';
+      strip.appendChild(wrap);
+      wrap.addEventListener('click', function () {
+        var h = document.getElementById('omg-bill-host');
+        if (!h) return;
+        var showing = h.style.display !== 'none';
+        h.style.display = showing ? 'none' : '';
+        document.getElementById('omg-bill-chip').className = showing ? '' : 'on';
+      });
+    }
+    var box = document.createElement('div');
+    box.id = 'omg-bill-host';
+    box.style.display = 'none';
+    box.style.marginTop = '10px';
+    box.innerHTML = panel();
+    strip.parentNode.insertBefore(box, strip.nextSibling);
+
+    var b1 = document.getElementById('omg-bill-read');
+    if (b1) b1.addEventListener('click', readNow);
+    var b2 = document.getElementById('omg-bill-file');
+    if (b2) b2.addEventListener('click', pickFile);
+    return true;
+  }
+
+  window.OmegaBillImport = {
+    reader: R, read: readNow, apply: apply, graft: graft,
+    last: function () { return last; }
+  };
+
+  /* The sizer dialog is built on demand and re-rendered on every tab
+     change, so the graft has to keep re-checking rather than run once. */
+  setInterval(function () {
+    try { graft(); } catch (e) { if (window.console) console.warn(TAG, e && e.message); }
+  }, 700);
+})();
+
+</script>
 <script id="omega-ribbon-dedupe-js">
 /* ====================================================================== *
  *  OMEGA RIBBON DE-DUPLICATE                                             *
