@@ -112309,6 +112309,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     maxRevealIn: 9 * IN,     /* above this the section and the cost change  */
     embedIn: 7 * IN,         /* geotech-driven; NOT derived from anything   */
     lbPerFt: 9,              /* W6x9 driven pile                            */
+    tubeLbPerFt: 18,         /* tracker torque tube                         */
+    railLbPerFt: 4.5,        /* module rail / purlin                        */
     maxSlopePct: null,       /* null -> take the per-equipment screening    */
     articulate: true         /* allow the axis to follow a fitted slope     */
   };
@@ -112330,17 +112332,27 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     var L = alongX ? w : h;              /* row length                     */
     var T = alongX ? h : w;              /* row width, across the piles    */
 
+    /* Rails per row follows what the drawing shows: the detail geometry
+       draws two rails per module row, so the takeoff counts two per row.
+       A takeoff that disagrees with the drawing is a takeoff nobody can
+       check against the sheet. */
+    var rows = d.pvRows || 2;
+    var rails = 2 * rows;
+
     if (prof.kind === 'tracker') {
-      return { kind: 'tracker', L: L, alongX: alongX, offsets: [0], prof: prof };
+      return { kind: 'tracker', L: L, alongX: alongX, offsets: [0], prof: prof,
+               rows: rows, rails: rails, tube: true };
     }
     if (prof.kind === 'tilted') {
       /* fixed tilt stands on a front and a back leg, and they are NOT the
          same height on sloped ground — scheduling one line would hide half
          the steel and all of the tilt correction */
-      return { kind: 'tilted', L: L, alongX: alongX, offsets: [-T / 2, T / 2], prof: prof };
+      return { kind: 'tilted', L: L, alongX: alongX, offsets: [-T / 2, T / 2], prof: prof,
+               rows: rows, rails: rails, tube: false };
     }
     if (prof.kind === 'canopy') {
-      return { kind: 'canopy', L: L, alongX: alongX, offsets: [-T / 2, T / 2], prof: prof };
+      return { kind: 'canopy', L: L, alongX: alongX, offsets: [-T / 2, T / 2], prof: prof,
+               rows: rows, rails: rails, tube: false };
     }
     return null;                          /* pads and cabinets are not piled */
   }
@@ -112419,7 +112431,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     for (k in DEFAULTS) if (DEFAULTS.hasOwnProperty(k)) cfg[k] = DEFAULTS[k];
     for (k in (opts || {})) if (opts.hasOwnProperty(k) && opts[k] != null) cfg[k] = opts[k];
 
-    var piles = [], rows = [], skipped = [], noData = 0, rowSeq = 0;
+    var piles = [], rows = [], skipped = [], racking = [], noData = 0, rowSeq = 0;
 
     doc.ents.forEach(function (e) {
       if (e.t !== 'ins') return;
@@ -112437,6 +112449,17 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       rowSeq++;
       var rowTag = 'R' + rowSeq;
       var rowPiles = [], rowMissing = 0;
+
+      /* Racking steel for this structure. The rails run the row length plus
+         the 6 in cantilever the detail draws at each end. */
+      var rowLenFt = lay.L / IN;
+      racking.push({
+        row: rowTag, entId: e.id, tag: d.tag, key: e.key, kind: lay.kind,
+        lengthFt: rowLenFt,
+        tubeFt: lay.tube ? rowLenFt : 0,
+        railFt: lay.rails * (rowLenFt + 1),
+        rails: lay.rails
+      });
 
       Object.keys(byLine).forEach(function (lk) {
         var set = byLine[lk];
@@ -112493,7 +112516,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     /* ---- totals ---- */
     var tot = {
       piles: piles.length,
-      steelFt: 0, weightLb: 0,
+      steelFt: 0, tubeFt: 0, railFt: 0,
+      pileLb: 0, tubeLb: 0, railLb: 0, weightLb: 0,
       minRevealIn: Infinity, maxRevealIn: -Infinity,
       belowMin: 0, overMax: 0, overSlope: 0, noData: noData
     };
@@ -112504,12 +112528,29 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       if (p.flags.indexOf('below min reveal') >= 0) tot.belowMin++;
       if (p.flags.indexOf('over max reveal') >= 0) tot.overMax++;
     });
+    /* Racking is counted once per structure, not once per pile line — a
+       fixed-tilt table has two legs but one set of rails. */
+    var seenRow = {};
+    racking.forEach(function (r) {
+      if (seenRow[r.entId]) return;
+      seenRow[r.entId] = 1;
+      tot.tubeFt += r.tubeFt;
+      tot.railFt += r.railFt;
+    });
     rows.forEach(function (r) { if (r.overSlope) tot.overSlope++; });
-    tot.weightLb = tot.steelFt * cfg.lbPerFt;
+
+    /* Pile weight is LENGTH x section, so embedment actually moves it. A
+       flat pounds-per-pile turns the embedment input into a control that
+       changes nothing, which is worse than not offering it. */
+    tot.pileLb = tot.steelFt * cfg.lbPerFt;
+    tot.tubeLb = tot.tubeFt * cfg.tubeLbPerFt;
+    tot.railLb = tot.railFt * cfg.railLbPerFt;
+    tot.weightLb = tot.pileLb + tot.tubeLb + tot.railLb;
     tot.tons = tot.weightLb / 2000;
     if (!piles.length) { tot.minRevealIn = 0; tot.maxRevealIn = 0; }
 
-    return { piles: piles, rows: rows, skipped: skipped, total: tot, cfg: cfg };
+    return { piles: piles, rows: rows, skipped: skipped, racking: racking,
+             total: tot, cfg: cfg };
   }
 
   /* ------------------------------------------------------------------ *
@@ -112531,8 +112572,16 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     out += '# max reveal (ft),' + (res.cfg.maxRevealIn / IN).toFixed(2) + '\n';
     out += '# embedment (ft),' + (res.cfg.embedIn / IN).toFixed(2) +
            ',geotechnical input - not derived\n';
-    out += '# section (lb/ft),' + res.cfg.lbPerFt + '\n';
-    out += '# total steel (ft),' + res.total.steelFt.toFixed(1) + '\n';
+    out += '# pile section (lb/ft),' + res.cfg.lbPerFt + '\n';
+    out += '# torque tube (lb/ft),' + res.cfg.tubeLbPerFt + '\n';
+    out += '# rail / purlin (lb/ft),' + res.cfg.railLbPerFt + '\n';
+    out += '# pile length (ft),' + res.total.steelFt.toFixed(1) +
+           ',reveal + embedment - so embedment moves the weight\n';
+    out += '# torque tube (ft),' + res.total.tubeFt.toFixed(1) + '\n';
+    out += '# rail / purlin (ft),' + res.total.railFt.toFixed(1) + '\n';
+    out += '# pile steel (lb),' + Math.round(res.total.pileLb) + '\n';
+    out += '# tube steel (lb),' + Math.round(res.total.tubeLb) + '\n';
+    out += '# rail steel (lb),' + Math.round(res.total.railLb) + '\n';
     out += '# total steel (tons),' + res.total.tons.toFixed(2) + '\n';
     if (res.total.noData) {
       out += '# piles with no survey data,' + res.total.noData +
@@ -114232,6 +114281,75 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     if (role === 'bess') return null;       /* sized below, 20 ft vs 40 ft */
     return EVKIND_BLOCK[role] === undefined ? undefined : EVKIND_BLOCK[role];
   }
+  /* ------------------------------------------------------------------ *
+   *  NAME FALLBACK                                                      *
+   *  Structured fields come first: evKind, eqId, type. This runs only    *
+   *  when none of them resolve — a hand-placed element, something        *
+   *  renamed, or an element that carries a label and nothing else.       *
+   *                                                                     *
+   *  It is a GUESS, so it is reported as one. Silently matching on a     *
+   *  name and presenting the result as identification is how a mislabel  *
+   *  becomes a transformer on a permit set.                              *
+   * ------------------------------------------------------------------ */
+  function norm(s0) { return String(s0 || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim(); }
+
+  /* Keyword rules, longest and most specific first, because "BESS AC
+     BLOCK" contains "AC" and "MAIN SWITCHGEAR" contains "MAIN". */
+  var NAME_RULES = [
+    [/\bUTILITY\s+SERVICE\s+TRANSFORMER\b|\bSERVICE\s+TRANSFORMER\b/, 'xfmr-pad'],
+    [/\bSTEP\s*UP\s+TRANSFORMER\b|\bPAD\s*MOUNT\b/, 'xfmr-pad'],
+    [/\bTRANSFORMER\b|\bXFMR\b|\bXFRM\b/, 'xfmr-pad'],
+    [/\bUTILITY\s+POI\b|\bPOINT\s+OF\s+INTERCONNECT/, 'poi'],
+    [/\bPOI\b|\bINTERCONNECTION\b/, 'poi'],
+    [/\bBUILDING\s+LOAD|\bFACILITY\s+LOAD|\bSITE\s+LOAD/, 'bldg-load'],
+    [/\bSWITCHGEAR\b|\bSWGR\b|\bMDP\b/, 'swgr'],
+    [/\bBESS\b|\bBATTERY\b|\bENERGY\s+STORAGE\b/, 'bess-20'],
+    [/\bPCS\b|\bPOWER\s+CONVERSION\b/, 'pcs-skid'],
+    [/\bCENTRAL\s+INVERTER\b|\bCINV\b|\bSOLAR\s+INVERTER\b/, 'inv-central'],
+    [/\bINVERTER\b|\bINV\b/, 'inv-central'],
+    [/\bCOMBINER\b/, 'combiner'],
+    [/\bDISCONNECT\b|\bDISCO\b/, 'discon'],
+    [/\bREVENUE\s+METER\b|\bMETER\b|\bCT\s+CABINET\b/, 'meter'],
+    [/\bPANELBOARD\b|\bPANEL\b/, 'panelbd'],
+    [/\bGENERATOR\b|\bGENSET\b/, 'genset'],
+    [/\bTRANSFER\s+SWITCH\b|\bATS\b/, 'ats'],
+    [/\bDCFC\b|\bFAST\s+CHARG/, 'dcfc-cab'],
+    [/\bCHARGER\b|\bEVSE\b/, 'dcfc-disp'],
+    [/\bHANDHOLE\b|\bPULL\s+BOX\b|\bJUNCTION\s+BOX\b/, 'handhole'],
+    [/\bUTILITY\s+POLE\b|\bPOWER\s+POLE\b/, 'pole'],
+    [/\bBOLLARD\b/, 'bollard'],
+    [/\bUPS\b/, 'ups-cab'],
+    [/\bFUEL\s+CELL\b/, 'fuelcell'],
+    [/\bEMS\b|\bCONTROLS?\s+CABINET\b/, 'ems-cab'],
+    [/\bCONCRETE\s+PAD\b|\bEQUIPMENT\s+PAD\b/, 'pad-conc']
+  ];
+  /* A PV array is an area, so a name that says so must NOT become a block. */
+  var NAME_AREA = /\bPV\s+ARRAY\b|\bSOLAR\s+ARRAY\b|\bARRAY\s+AREA\b|\bPV\s+FIELD\b/;
+
+  var _tagIndex = null;
+  function tagIndex() {
+    if (_tagIndex) return _tagIndex;
+    _tagIndex = {};
+    Object.keys(E.BLOCKS).forEach(function (k) {
+      var t = norm(E.BLOCKS[k].tag);
+      if (t && !_tagIndex[t]) _tagIndex[t] = k;
+    });
+    return _tagIndex;
+  }
+
+  function blockFromName(label) {
+    var n = norm(label);
+    if (!n) return null;
+    if (NAME_AREA.test(n)) return { area: true };
+    /* an exact tag hit is the strongest signal: CINV, SWGR, POI */
+    var ti = tagIndex();
+    if (ti[n]) return { key: ti[n], how: 'tag' };
+    for (var i = 0; i < NAME_RULES.length; i++) {
+      if (NAME_RULES[i][0].test(n)) return { key: NAME_RULES[i][1], how: 'name' };
+    }
+    return null;
+  }
+
   /* The app's own declared footprints, in feet. It knows a transformer is
      6 x 5 ft — but _eqDropW returns only a width and _elBoxSize defaults
      h = w, so every dropped icon is drawn SQUARE. The drawn box is
@@ -114277,7 +114395,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     var K = 12 / ppf;                       /* screen px -> model inches */
     push();
     var made = { blocks: 0, boxes: 0, runs: 0, shapes: 0, labels: 0 };
-    var unmapped = {};
+    var unmapped = {}, byName = [];
 
     /* ---- equipment ------------------------------------------------- */
     (Site.elements || []).forEach(function (e) {
@@ -114311,7 +114429,16 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
           key = (box.w * K > 30 * 12) ? 'bess-40' : 'bess-20';
         }
       } else key = TYPE_BLOCK[t];
+
+      /* Nothing structural resolved — fall back to what it is called. */
+      var guessed = null, asArea = false;
+      if (!key) {
+        var g = blockFromName(e.label || e.name);
+        if (g && g.area) asArea = true;
+        else if (g) { key = g.key; guessed = g.how; }
+      }
       if (key === undefined && t !== 'eq') key = null;
+      if (asArea) key = null;
 
       /* a 40 ft assembly is a 40 ft container, not the 20 ft one */
       if (t === 'bess-asm' && box.w * K > 30 * 12) key = 'bess-40';
@@ -114327,7 +114454,12 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         var sc = wantIn > 0 ? wantIn / Math.max(d.w, d.h) : 1;
         if (!(sc > 0) || !isFinite(sc)) sc = 1;
         var ins = E.addBlock(ST.doc, key, cx, cy, rot, sc);
-        if (ins) made.blocks++;
+        if (ins) {
+          made.blocks++;
+          if (guessed) {
+            byName.push((e.label || e.name || '?') + ' \u2192 ' + E.BLOCKS[key].tag);
+          }
+        }
       } else {
         /* No symbol for it — draw the true footprint and say what it is,
            rather than dropping it or pretending a generic box is a match.
@@ -114336,14 +114468,19 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         var w = box.w * K, h = box.h * K;
         var role = e.evKind || e.bgbRole || '';
         var tag = t + (e.eqId || '') + role;
-        var lyr = /bess|stor|acblock/i.test(tag) ? 'E-STOR-EQPM'
+        /* The layer follows the structural fields. The LABEL is consulted
+           only for an area matched by name — using it generally would put
+           anything called "Solar Inverter" on the module layer. */
+        var lyr = asArea ? 'E-SOLR-MODL'
+                : /bess|stor|acblock/i.test(tag) ? 'E-STOR-EQPM'
                 : /solar|pv/i.test(tag) ? 'E-SOLR-MODL'
                 : /ev|charg/i.test(tag) ? 'E-EVSE-EQPM'
                 : /build|facil|load/i.test(tag) ? 'A-WALL' : 'E-POWR-EQPM';
         E.add(ST.doc, { t: 'pline', closed: true, layer: lyr, pts: rectPts(cx, cy, w, h, rot) });
         made.boxes++;
         /* a solar area is a deliberate outline, not a missing symbol */
-        if (!/solar|pv/i.test(tag)) {
+        if (asArea) made.areas = (made.areas || 0) + 1;
+        else if (!/solar|pv/i.test(tag)) {
           var k2 = (t === 'eq' ? e.eqId : (role || t)) || '?';
           unmapped[k2] = (unmapped[k2] || 0) + 1;
         } else made.areas = (made.areas || 0) + 1;
@@ -114422,10 +114559,16 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     say('Imported at ' + ppf.toFixed(3) + ' px/ft: ' + made.blocks + ' equipment symbol(s), ' +
         (made.areas ? made.areas + ' array area(s), ' : '') +
         made.runs + ' conduit run(s), ' + made.shapes + ' shape(s), ' + made.labels + ' label(s).');
-    if (made.boxes) {
+    if (made.boxes && Object.keys(unmapped).length) {
       var list = Object.keys(unmapped).map(function (k) { return k + ' \u00D7' + unmapped[k]; });
-      say(made.boxes + ' item(s) had no matching symbol and came in as a true-size outline: ' +
-          list.join(', ') + '.');
+      say(Object.keys(unmapped).length + ' item type(s) had no matching symbol and came in as a ' +
+          'true-size outline: ' + list.join(', ') + '.');
+    }
+    if (byName.length) {
+      /* Matched on a name, not on a type. Worth confirming before this
+         reaches a permit set: a renamed element takes the symbol its name
+         suggests, which is a guess dressed as identification. */
+      say('Matched by name rather than by type \u2014 confirm these: ' + byName.join(', ') + '.');
     }
     if (!total) say('The site model had nothing placed on it yet.');
     zoomExtents(); refresh();
@@ -114646,7 +114789,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
    * ------------------------------------------------------------------ */
   var PR = {
     spacingFt: 15, minRevealFt: 4, maxRevealFt: 9,
-    embedFt: 7, lbPerFt: 9, articulate: 1, res: null
+    embedFt: 7, lbPerFt: 9, tubeLbPerFt: 18, railLbPerFt: 4.5,
+    articulate: 1, res: null
   };
 
   /* Elevations in INCHES, matching the model unit, and null where there is
@@ -114680,7 +114824,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     return {
       spacingIn: PR.spacingFt * 12, minRevealIn: PR.minRevealFt * 12,
       maxRevealIn: PR.maxRevealFt * 12, embedIn: PR.embedFt * 12,
-      lbPerFt: PR.lbPerFt, articulate: !!PR.articulate
+      lbPerFt: PR.lbPerFt, tubeLbPerFt: PR.tubeLbPerFt, railLbPerFt: PR.railLbPerFt,
+      articulate: !!PR.articulate
     };
   }
 
@@ -114703,8 +114848,10 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         say('No piled structures in this drawing \u2014 pads and cabinets are not scheduled here.');
       } else {
         say('Scheduled ' + res.total.piles + ' pile(s) across ' + res.rows.length + ' row line(s): ' +
-            res.total.steelFt.toFixed(0) + ' ft of pile, ' + res.total.tons.toFixed(2) + ' tons at ' +
-            PR.lbPerFt + ' lb/ft.');
+            res.total.steelFt.toFixed(0) + ' ft of pile' +
+            (res.total.tubeFt ? ', ' + res.total.tubeFt.toFixed(0) + ' ft of torque tube' : '') +
+            (res.total.railFt ? ', ' + res.total.railFt.toFixed(0) + ' ft of rail' : '') +
+            ' \u2014 ' + res.total.tons.toFixed(2) + ' tons of structural steel.');
         if (res.total.overMax) say('  ' + res.total.overMax + ' pile(s) over the max reveal \u2014 grading or a heavier section.');
         if (res.total.belowMin) say('  ' + res.total.belowMin + ' pile(s) below the min reveal.');
         if (res.total.overSlope) say('  ' + res.total.overSlope + ' row line(s) past the slope limit.');
@@ -114727,13 +114874,16 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     h += row('Min reveal (ft)', num('minRevealFt', PR.minRevealFt, 0.5));
     h += row('Max reveal (ft)', num('maxRevealFt', PR.maxRevealFt, 0.5));
     h += row('Embedment (ft)', num('embedFt', PR.embedFt, 0.5));
-    h += row('Section (lb/ft)', num('lbPerFt', PR.lbPerFt, 0.5));
+    h += row('Pile section (lb/ft)', num('lbPerFt', PR.lbPerFt, 0.5));
+    h += row('Torque tube (lb/ft)', num('tubeLbPerFt', PR.tubeLbPerFt, 0.5));
+    h += row('Rail / purlin (lb/ft)', num('railLbPerFt', PR.railLbPerFt, 0.5));
     h += row('Articulated row', '<select data-arch-pr="articulate">' +
       '<option value="1"' + (PR.articulate ? ' selected' : '') + '>Yes \u2014 tube follows grade</option>' +
       '<option value="0"' + (!PR.articulate ? ' selected' : '') + '>No \u2014 level tube</option></select>');
     h += '<div class="arch-note" style="margin:2px 0 6px">Embedment is a geotechnical input, not a ' +
-         'derived number \u2014 it comes from the soils report, and the schedule carries it so the ' +
-         'steel takeoff can be checked against it.</div>';
+         'derived number \u2014 it comes from the soils report. Pile weight is length \u00D7 section, ' +
+         'so changing embedment moves the tonnage; a flat pounds-per-pile would make this input a ' +
+         'control that changes nothing.</div>';
 
     var r = PR.res;
     if (!r) {
@@ -114763,8 +114913,13 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         '<div><span>Piles</span><b>' + t.piles + '</b></div>' +
         '<div><span>Reveal range</span><b>' + (t.minRevealIn / 12).toFixed(2) + "' \u2013 " +
           (t.maxRevealIn / 12).toFixed(2) + "'</b></div>" +
-        '<div><span>Total pile</span><b>' + t.steelFt.toFixed(0) + ' ft</b></div>' +
-        '<div><span>Steel</span><b>' + t.tons.toFixed(2) + ' tons</b></div>' +
+        '<div><span>Pile length</span><b>' + t.steelFt.toFixed(0) + ' ft</b></div>' +
+        (t.tubeFt ? '<div><span>Torque tube</span><b>' + t.tubeFt.toFixed(0) + ' ft</b></div>' : '') +
+        (t.railFt ? '<div><span>Rail / purlin</span><b>' + t.railFt.toFixed(0) + ' ft</b></div>' : '') +
+        '<div><span>Pile steel</span><b>' + Math.round(t.pileLb).toLocaleString() + ' lb</b></div>' +
+        (t.tubeLb ? '<div><span>Tube steel</span><b>' + Math.round(t.tubeLb).toLocaleString() + ' lb</b></div>' : '') +
+        (t.railLb ? '<div><span>Rail steel</span><b>' + Math.round(t.railLb).toLocaleString() + ' lb</b></div>' : '') +
+        '<div><span>Total steel</span><b>' + t.tons.toFixed(2) + ' tons</b></div>' +
         (t.overMax ? '<div><span>Over max reveal</span><b style="color:var(--red)">' + t.overMax + '</b></div>' : '') +
         (t.belowMin ? '<div><span>Below min reveal</span><b style="color:var(--red)">' + t.belowMin + '</b></div>' : '') +
         (t.overSlope ? '<div><span>Rows over slope</span><b style="color:var(--red)">' + t.overSlope + '</b></div>' : '') +
