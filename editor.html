@@ -110127,6 +110127,17 @@ function omRunAll(p){
 #omega-arch .arch-row{ display:flex; gap:4px }
 #omega-arch .arch-row .arch-btn{ flex:1 }
 
+/* --- panel focus flash --------------------------------------------------- */
+#omega-arch .arch-flash{
+  animation: omega-arch-flash 1.3s ease-out 1;
+  border-radius:var(--radius-sm);
+}
+@keyframes omega-arch-flash{
+  0%   { box-shadow:0 0 0 2px var(--accent), 0 0 14px rgba(0,0,0,0); background:rgba(255,255,255,.06) }
+  70%  { box-shadow:0 0 0 2px var(--accent); background:rgba(255,255,255,.03) }
+  100% { box-shadow:0 0 0 0 rgba(0,0,0,0); background:transparent }
+}
+
 </style>
 <!-- ===================================================================
      OMEGA CAD BLOCK  —  self-contained, no network, no build step
@@ -113719,7 +113730,147 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     return out;
   }
 
+  /* ------------------------------------------------------------------ *
+   *  BENDS  —  NEC Chapter 9, Table 2, "other bends" column              *
+   *  A conduit does not turn a square corner. A 4 inch run needs a two   *
+   *  foot sweep, and drawing it square puts the pipe somewhere it cannot *
+   *  physically go and understates the trench at every corner.           *
+   * ------------------------------------------------------------------ */
+  var BEND_RADIUS = {
+    '1/2': 4, '3/4': 5, '1': 6, '1-1/4': 8, '1-1/2': 10, '2': 12,
+    '2-1/2': 15, '3': 18, '3-1/2': 21, '4': 24, '5': 30, '6': 36
+  };
+  function bendRadius(trade) { return BEND_RADIUS[String(trade)] || null; }
+
+  /* Replace each interior corner with a tangent arc of the given radius,
+     approximated as a short polyline so it exports as ordinary geometry.
+     Where a leg is too short to hold the sweep, the corner is left square
+     and REPORTED — quietly shrinking the radius would draw a bend the
+     conduit cannot be made to. */
+  function sweptPath(pts, radiusIn, opts) {
+    opts = opts || {};
+    var seg = opts.segments || 6;
+    if (!pts || pts.length < 3 || !(radiusIn > 0)) {
+      return { pts: (pts || []).slice(), tight: [] };
+    }
+    var out = [pts[0]], tight = [], i;
+    for (i = 1; i < pts.length - 1; i++) {
+      var p = pts[i], a = pts[i - 1], b = pts[i + 1];
+      var v1x = a.x - p.x, v1y = a.y - p.y, l1 = Math.hypot(v1x, v1y);
+      var v2x = b.x - p.x, v2y = b.y - p.y, l2 = Math.hypot(v2x, v2y);
+      if (l1 < 1e-9 || l2 < 1e-9) { out.push(p); continue; }
+      v1x /= l1; v1y /= l1; v2x /= l2; v2y /= l2;
+      var cosA = Math.max(-1, Math.min(1, v1x * v2x + v1y * v2y));
+      var ang = Math.acos(cosA);
+      if (ang < 1e-6 || Math.abs(Math.PI - ang) < 1e-6) { out.push(p); continue; }
+      var tan = radiusIn / Math.tan(ang / 2);
+      /* the sweep has to fit on BOTH legs, and the legs are shared with the
+         neighbouring corners, so only half of each is available */
+      if (tan > l1 / 2 || tan > l2 / 2) {
+        tight.push({ index: i, needIn: +tan.toFixed(1),
+                     haveIn: +(Math.min(l1, l2) / 2).toFixed(1) });
+        out.push(p);
+        continue;
+      }
+      var s1 = { x: p.x + v1x * tan, y: p.y + v1y * tan };
+      var s2 = { x: p.x + v2x * tan, y: p.y + v2y * tan };
+      /* centre sits along the angle bisector */
+      var bx = v1x + v2x, by = v1y + v2y, bl = Math.hypot(bx, by);
+      if (bl < 1e-9) { out.push(p); continue; }
+      var dist = radiusIn / Math.sin(ang / 2);
+      var c = { x: p.x + (bx / bl) * dist, y: p.y + (by / bl) * dist };
+      var a1 = Math.atan2(s1.y - c.y, s1.x - c.x);
+      var a2 = Math.atan2(s2.y - c.y, s2.x - c.x);
+      var d = a2 - a1;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      out.push(s1);
+      for (var k = 1; k < seg; k++) {
+        var t = a1 + d * (k / seg);
+        out.push({ x: c.x + radiusIn * Math.cos(t), y: c.y + radiusIn * Math.sin(t) });
+      }
+      out.push(s2);
+    }
+    out.push(pts[pts.length - 1]);
+    return { pts: out, tight: tight, radiusIn: radiusIn };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  CONDUCTOR TICKS                                                    *
+   *  How a plan actually shows conductor count. Parallel conductor lines *
+   *  along the whole run are a SECTION convention: at 1 inch = 20 feet a *
+   *  2 inch conduit is a hundredth of an inch on paper, so the walls and *
+   *  every conductor collapse into the one line they were drawn beside.  *
+   *  Slash ticks read at any scale — long for ungrounded, short for the  *
+   *  grounded conductor, and a tick with a bar for the equipment ground. *
+   * ------------------------------------------------------------------ */
+  function ticks(pts, cfg) {
+    cfg = cfg || {};
+    var hots = cfg.hots == null ? 3 : cfg.hots;
+    var neutrals = cfg.neutrals == null ? 0 : cfg.neutrals;
+    var grounds = cfg.grounds == null ? 1 : cfg.grounds;
+    var at = cfg.atIn;                       /* where along the run        */
+    /* Ticks are ANNOTATION: they have to read at the sheet's text height,
+       not at the conduit's physical size. Sized off the pipe they came out
+       a smudge on a site plan, the same mistake as drawing the walls at
+       true outside dimension. Default to the annotation height the rest of
+       the sheet uses. */
+    var h = cfg.textHeightIn || 24;
+    var longIn = cfg.longIn || h * 1.25;
+    var shortIn = cfg.shortIn || h * 0.75;
+    var pitch = cfg.pitchIn || h * 0.5;
+    var angle = (cfg.angleDeg == null ? 60 : cfg.angleDeg) * Math.PI / 180;
+    if (!pts || pts.length < 2) return [];
+
+    /* find the point and direction at a distance along the path */
+    var total = 0, i, segs = [];
+    for (i = 1; i < pts.length; i++) {
+      var L = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+      segs.push({ a: pts[i - 1], b: pts[i], len: L, at: total });
+      total += L;
+    }
+    if (total <= 0) return [];
+    var d = at == null ? total * 0.5 : at;
+    d = Math.max(0, Math.min(total, d));
+    var sIdx = 0;
+    for (i = 0; i < segs.length; i++) { if (d >= segs[i].at) sIdx = i; }
+    var sg = segs[sIdx];
+    var t = sg.len > 0 ? (d - sg.at) / sg.len : 0;
+    var px = sg.a.x + (sg.b.x - sg.a.x) * t;
+    var py = sg.a.y + (sg.b.y - sg.a.y) * t;
+    var ux = (sg.b.x - sg.a.x) / (sg.len || 1), uy = (sg.b.y - sg.a.y) / (sg.len || 1);
+
+    /* the tick leans off the run, the way a drafter strikes it */
+    var tx = ux * Math.cos(angle) - uy * Math.sin(angle);
+    var ty = ux * Math.sin(angle) + uy * Math.cos(angle);
+
+    var marks = [], n = 0;
+    function mark(len, kind) {
+      var ox = ux * (n - (hots + neutrals + grounds - 1) / 2) * pitch;
+      var oy = uy * (n - (hots + neutrals + grounds - 1) / 2) * pitch;
+      marks.push({ kind: kind,
+        x1: px + ox - tx * len / 2, y1: py + oy - ty * len / 2,
+        x2: px + ox + tx * len / 2, y2: py + oy + ty * len / 2 });
+      n++;
+    }
+    for (i = 0; i < hots; i++) mark(longIn, 'hot');
+    for (i = 0; i < neutrals; i++) mark(shortIn, 'neutral');
+    for (i = 0; i < grounds; i++) {
+      mark(shortIn, 'ground');
+      /* the ground tick carries a short cross bar, so it is not read as a
+         neutral */
+      var m = marks[marks.length - 1];
+      var mx = (m.x1 + m.x2) / 2, my = (m.y1 + m.y2) / 2;
+      marks.push({ kind: 'ground-bar',
+        x1: mx - ux * (h * 0.22), y1: my - uy * (h * 0.22),
+        x2: mx + ux * (h * 0.22), y2: my + uy * (h * 0.22) });
+    }
+    return marks;
+  }
+
   E.raceway = {
+    BEND_RADIUS: BEND_RADIUS, bendRadius: bendRadius,
+    sweptPath: sweptPath, ticks: ticks,
     COND_AREA: COND_AREA, RACEWAY: RACEWAY, OD: OD, ORDER: ORDER,
     fillLimit: fillLimit, condArea: condArea, sizeFor: sizeFor,
     checkAgainst: checkAgainst, geometry: geometry
@@ -115380,14 +115531,51 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         msg: 'Nothing on the diagram is a source, so nothing is energised.' });
     }
 
-    /* R2 — two sources onto one bus with nothing to tie them */
+    /* R2 — two FIRM sources onto one bus with nothing to tie them.
+       A grid-parallel inverter sharing a bus with the utility is the normal
+       case, governed by IEEE 1547 and its interconnection breaker, not by a
+       transfer switch. Flagging it would fire on every grid-tied project
+       and the check would be switched off within a week. What is worth
+       flagging is two firm sources — a utility and an engine — tied
+       together with nothing between them. */
+    function isFirm(x) {
+      if (!x) return false;
+      if (x.firmSource != null) return !!x.firmSource;
+      return x.kind === 'utility' || x.kind === 'genset';
+    }
+    /* Trace each incoming branch back to the firm sources it reaches. A
+       utility feeding through a transformer is still the utility, so
+       looking only at the immediate parent misses the case entirely. */
+    function firmUpstream(id, stop, seenIds) {
+      seenIds = seenIds || {};
+      if (seenIds[id]) return [];
+      seenIds[id] = true;
+      var me = byId[id], out = [];
+      if (isFirm(me)) out.push(id);
+      (up[id] || []).forEach(function (e) {
+        if (e.from === stop) return;
+        out = out.concat(firmUpstream(e.from, stop, seenIds));
+      });
+      return out;
+    }
     nodes.forEach(function (n) {
       if (up[n.id].length < 2) return;
       var tie = n.kind === 'ats' || n.tie === true || n.paralleling === true;
-      if (!tie) {
-        findings.push({ level: 'fail', code: 'PARALLEL-SOURCE', ids: [n.id],
-          msg: '"' + (n.label || n.id) + '" is fed from ' + up[n.id].length +
-               ' sources with no transfer switch or paralleling gear between them.' });
+      if (tie) return;
+      var reached = {}, viaEdges = 0;
+      up[n.id].forEach(function (e) {
+        var f = firmUpstream(e.from, n.id, {});
+        if (!f.length) return;
+        viaEdges++;
+        f.forEach(function (k) { reached[k] = true; });
+      });
+      var distinct = Object.keys(reached);
+      if (distinct.length >= 2 && viaEdges >= 2) {
+        findings.push({ level: 'fail', code: 'PARALLEL-SOURCE', ids: [n.id].concat(distinct),
+          msg: '"' + (n.label || n.id) + '" is fed from ' + distinct.length +
+               ' firm sources (' + distinct.map(function (k) {
+                 return (byId[k] && byId[k].label) || k; }).join(', ') +
+               ') with no transfer switch or paralleling gear between them.' });
       }
     });
 
@@ -115397,6 +115585,9 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       if (!a || !b || a.volts == null || b.volts == null) return;
       if (a.volts === b.volts) return;
       if (a.kind === 'xfmr' || b.kind === 'xfmr') return;
+      /* a bus that carries a transformer is where the voltage changes,
+         even though the transformer is not drawn on the branch itself */
+      if (a.transformed || b.transformed) return;
       findings.push({ level: 'fail', code: 'VOLTAGE', ids: [e.from, e.to],
         msg: '"' + (a.label || a.id) + '" at ' + a.volts + ' V feeds "' +
              (b.label || b.id) + '" at ' + b.volts + ' V with no transformer between them.' });
@@ -115527,9 +115718,122 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
              ranks: Object.keys(lay.rows).length };
   }
 
+  /* ------------------------------------------------------------------ *
+   *  ADAPT THE SITE ONE-LINE GRAPH                                      *
+   *  omegaOneLineExport() emits buses (nodes) joined by branches, with   *
+   *  equipment hanging off a bus as components. The design rule check    *
+   *  wants devices and the feeders between them, so the two have to be   *
+   *  flattened: a component becomes a device tied to its bus, and a      *
+   *  branch becomes a feeder between buses.                              *
+   *                                                                     *
+   *  This is what lets the check run on the drawing the Schematic Editor *
+   *  already holds, rather than on a second one-line drawn beside it.    *
+   * ------------------------------------------------------------------ */
+  var CT_KIND = {
+    utility: 'utility', grid: 'utility', source: 'utility',
+    transformer: 'xfmr', xfmr: 'xfmr',
+    breaker: 'breaker', switch: 'breaker', disconnect: 'breaker', recloser: 'breaker',
+    fuse: 'fused', meter: 'meter', ct: 'ct',
+    inverter: 'inverter', pcs: 'inverter',
+    battery: 'bess', bess: 'bess', storage: 'bess',
+    pv: 'pv', solar: 'pv',
+    generator: 'genset', genset: 'genset', engine: 'genset',
+    load: 'load', panel: 'panel', switchgear: 'switchgear', bus: 'switchgear',
+    ats: 'ats'
+  };
+
+  function fromSiteGraph(graph, opts) {
+    opts = opts || {};
+    if (!graph || !Array.isArray(graph.nodes) || !graph.nodes.length) {
+      return { ok: false, error: 'No site one-line to check. Draw the site, or build the ' +
+               'one-line in the Schematic Editor first.' };
+    }
+    /* A transformer on this graph hangs off a bus as a COMPONENT rather
+       than sitting on the branch between two buses. Without knowing that,
+       the voltage rule sees 12 kV feeding 480 V with nothing between them
+       and fails every site one-line that has a transformer in it. Mark the
+       buses that carry one. */
+    var busHasXfmr = {};
+    (graph.components || []).forEach(function (cp) {
+      var k = CT_KIND[String(cp.component_type || '').toLowerCase()];
+      if (k === 'xfmr' && cp.node_key) busHasXfmr[cp.node_key] = true;
+    });
+
+    var nodes = [], edges = [], seen = {};
+    graph.nodes.forEach(function (nd) {
+      var kv = +nd.nominal_kv;
+      nodes.push({
+        id: nd.key, label: nd.name || nd.key, kind: 'switchgear',
+        volts: isFinite(kv) && kv > 0 ? kv * 1000 : null,
+        transformed: !!busHasXfmr[nd.key],
+        source: /slack|swing|utility/i.test(String(nd.bus_type || '')),
+        /* a slack bus IS the utility on this model, so it is a firm supply */
+        firmSource: /slack|swing|utility/i.test(String(nd.bus_type || ''))
+      });
+      seen[nd.key] = true;
+    });
+    (graph.components || []).forEach(function (cp) {
+      var kind = CT_KIND[String(cp.component_type || '').toLowerCase()] || 'load';
+      var np = cp.nameplate || {};
+      var kv = +np.kv || +np.voltage_kv;
+      nodes.push({
+        id: cp.key, label: cp.name || cp.key, kind: kind,
+        volts: isFinite(kv) && kv > 0 ? kv * 1000 : null,
+        ocpdAmps: +np.trip_a || +np.rating_a || null,
+        loadKw: +np.kw || null,
+        /* Anything that delivers into its bus is a source for the purpose
+           of "is this energised" — an inverter with no DC side drawn is
+           not a floating device, it is the AC end of a battery that lives
+           off the diagram. */
+        source: kind === 'utility' || kind === 'genset' || kind === 'pv' ||
+                kind === 'bess' || kind === 'inverter',
+        firmSource: kind === 'utility' || kind === 'genset'
+      });
+      seen[cp.key] = true;
+      if (cp.node_key && seen[cp.node_key]) {
+        /* a component hangs off its bus; the bus feeds it unless the
+           component is itself a source */
+        /* An inverter delivers into the bus it sits on; so does a generator,
+           a battery and the utility. A load takes from it. */
+        if (kind === 'utility' || kind === 'genset' || kind === 'pv' ||
+            kind === 'bess' || kind === 'inverter') {
+          edges.push({ from: cp.key, to: cp.node_key });
+        } else {
+          edges.push({ from: cp.node_key, to: cp.key });
+        }
+      }
+    });
+    (graph.branches || []).forEach(function (b) {
+      if (!seen[b.from_node_key] || !seen[b.to_node_key]) return;
+      edges.push({ from: b.from_node_key, to: b.to_node_key,
+                   conductor: (b.conductor && b.conductor.size) || null,
+                   sets: (b.conductor && b.conductor.sets) || 1,
+                   ocpdAmps: +b.rating_a || null });
+    });
+    return { ok: true, nodes: nodes, edges: edges,
+             counts: { buses: graph.nodes.length,
+                       components: (graph.components || []).length,
+                       branches: (graph.branches || []).length } };
+  }
+
+  /* Run the check straight off whatever the site currently holds. */
+  function checkSite(opts) {
+    var graph = null;
+    try {
+      if (typeof root.omegaOneLineExport === 'function') graph = root.omegaOneLineExport();
+    } catch (e) {
+      return { ok: false, error: 'The site one-line export failed: ' + (e && e.message) };
+    }
+    var g = fromSiteGraph(graph, opts);
+    if (!g.ok) return g;
+    var res = drc(g.nodes, g.edges, opts);
+    return { ok: true, drc: res, counts: g.counts, nodes: g.nodes, edges: g.edges };
+  }
+
   E.oneline = {
     SYM: SYM, drawSymbol: drawSymbol, rank: rank, layout: layout,
-    drc: drc, build: build, layers: layers
+    drc: drc, build: build, layers: layers,
+    CT_KIND: CT_KIND, fromSiteGraph: fromSiteGraph, checkSite: checkSite
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -116129,6 +116433,312 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     allInRate: allInRate, arbitrageValue: arbitrageValue, energyBill: energyBill,
     sizeForShave: sizeForShave, sweep: sweep
   };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-arch-urdb-js">
+/* ====================================================================== *
+ *  OMEGA URDB  —  import a tariff from NREL's Utility Rate Database      *
+ *  ------------------------------------------------------------------    *
+ *  Turns a URDB rate record into the shape OmegaArchEngine.tariff uses,   *
+ *  so the demand and energy engines work on any US commercial tariff      *
+ *  rather than only the one pack transcribed by hand.                     *
+ *                                                                         *
+ *  THE PART THAT IS EASY TO GET WRONG.                                    *
+ *  A URDB rate is not a set of numbers, it is a set of rate STRUCTURES    *
+ *  plus 12x24 schedule matrices that say which structure applies in which *
+ *  month and hour. Reading it as "take the last tier" or "take the        *
+ *  largest rate" produces a plausible number that is simply not the one   *
+ *  the customer is billed:                                                *
+ *                                                                         *
+ *    flatdemandstructure  is indexed BY MONTH through flatdemandmonths,   *
+ *                         so the last tier is whatever month happened to  *
+ *                         be last in the array, not the month you want    *
+ *    demandratestructure  periods are selected by the schedule matrix,    *
+ *                         so the maximum across all periods charges the   *
+ *                         on-peak rate in every hour of the year          *
+ *    energyratestructure  same, and the last period is usually on-peak,   *
+ *                         which then gets applied to off-peak energy      *
+ *                                                                         *
+ *  And URDB carries demandwindow — the averaging interval the demand      *
+ *  charge is measured over. That is exactly the number the bill reader    *
+ *  needs and it is free here, so it is carried through rather than        *
+ *  assumed at 15 minutes.                                                 *
+ *                                                                         *
+ *  Nothing is defaulted to another utility's rate. A structure that is    *
+ *  absent comes back absent, with a finding that says so.                 *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.urdb) return;
+
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  /* A URDB tier carries rate plus an optional adj (an adder the utility
+     applies on top). Ignoring adj understates the bill on every tariff that
+     uses one. */
+  function tierRate(t) {
+    if (!t) return null;
+    var r = +t.rate;
+    if (!isFinite(r)) return null;
+    return r + (isFinite(+t.adj) ? +t.adj : 0);
+  }
+  function firstTier(struct, i) {
+    if (!struct || !struct[i] || !struct[i].length) return null;
+    return tierRate(struct[i][0]);
+  }
+  function isTiered(struct, i) {
+    return !!(struct && struct[i] && struct[i].length > 1);
+  }
+
+  /* Which structure indices a schedule actually uses, and in which months. */
+  function scheduleUse(sched) {
+    var byPeriod = {}, byMonth = [];
+    if (!Array.isArray(sched)) return { byPeriod: byPeriod, byMonth: byMonth };
+    for (var m = 0; m < sched.length && m < 12; m++) {
+      var row = sched[m] || [], set = {};
+      for (var h = 0; h < row.length; h++) {
+        var p = +row[h];
+        if (!isFinite(p)) continue;
+        set[p] = (set[p] || 0) + 1;
+        byPeriod[p] = (byPeriod[p] || 0) + 1;
+      }
+      byMonth.push(set);
+    }
+    return { byPeriod: byPeriod, byMonth: byMonth };
+  }
+
+  /* Rank the periods a schedule uses by rate, so the dearest becomes
+     on-peak and the cheapest super off-peak. URDB does not label them. */
+  function rankPeriods(struct, used) {
+    var list = Object.keys(used).map(function (k) {
+      return { period: +k, rate: firstTier(struct, +k), hours: used[k] };
+    }).filter(function (x) { return x.rate != null; });
+    list.sort(function (a, b) { return b.rate - a.rate; });
+    return list;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  PARSE                                                              *
+   * ------------------------------------------------------------------ */
+  function parse(rate, opts) {
+    opts = opts || {};
+    if (!rate || typeof rate !== 'object') {
+      return { ok: false, error: 'No rate record given.' };
+    }
+    var findings = [], demand = [], monthRates = {};
+
+    /* ---- flat / non-coincident demand, month by month ---- */
+    var fds = rate.flatdemandstructure, fdm = rate.flatdemandmonths;
+    if (fds && fds.length) {
+      if (!Array.isArray(fdm) || fdm.length !== 12) {
+        findings.push('flatdemandstructure has no 12-month index (flatdemandmonths), ' +
+          'so the applicable tier cannot be resolved per month. The first tier is used ' +
+          'and this rate should be checked by hand.');
+        var r0 = firstTier(fds, 0);
+        if (r0 != null) {
+          demand.push({ id: 'flat', label: 'Flat / non-coincident demand', window: 'any',
+                        rate: { summer: r0, winter: r0 }, note: 'flatdemandstructure tier 0' });
+        }
+      } else {
+        for (var m = 0; m < 12; m++) {
+          var idx = +fdm[m];
+          var r = firstTier(fds, idx);
+          if (r == null) {
+            findings.push(MONTHS[m] + ' points at flat demand tier ' + idx +
+                          ', which has no rate.');
+            continue;
+          }
+          monthRates[m] = monthRates[m] || {};
+          monthRates[m].flat = r;
+          if (isTiered(fds, idx)) {
+            findings.push(MONTHS[m] + ' flat demand is tiered; only the first tier is ' +
+                          'applied. A site that crosses the tier boundary will bill higher.');
+          }
+        }
+        var vals = Object.keys(monthRates).map(function (k) { return monthRates[k].flat; });
+        var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+        demand.push({ id: 'flat', label: 'Flat / non-coincident demand', window: 'any',
+                      rate: { summer: hi, winter: lo }, perMonth: true,
+                      note: 'flatdemandstructure, indexed by month' });
+      }
+    }
+
+    /* ---- TOU demand, by the periods the schedule actually uses ---- */
+    var drs = rate.demandratestructure;
+    var dwk = rate.demandweekdayschedule, dwe = rate.demandweekendschedule;
+    if (drs && drs.length) {
+      var useD = scheduleUse(dwk);
+      var useDe = scheduleUse(dwe);
+      Object.keys(useDe.byPeriod).forEach(function (k) {
+        useD.byPeriod[k] = (useD.byPeriod[k] || 0) + useDe.byPeriod[k];
+      });
+      var ranked = rankPeriods(drs, useD.byPeriod);
+      if (!Object.keys(useD.byPeriod).length) {
+        findings.push('demandratestructure is present but no demand schedule says when ' +
+          'each period applies, so the TOU demand charge cannot be placed in time.');
+      }
+      ranked.forEach(function (p, i) {
+        if (p.rate <= 0) return;               /* a zero period is not a charge */
+        demand.push({
+          id: 'tou' + p.period,
+          label: 'TOU demand, period ' + p.period + (i === 0 ? ' (highest)' : ''),
+          window: i === 0 ? 'onpeak' : 'tou',
+          rate: { summer: p.rate, winter: p.rate },
+          hoursPerYear: p.hours,
+          note: 'demandratestructure period ' + p.period
+        });
+        if (isTiered(drs, p.period)) {
+          findings.push('TOU demand period ' + p.period + ' is tiered; only the first ' +
+                        'tier is applied.');
+        }
+      });
+    }
+
+    if (!demand.length) {
+      findings.push('This rate carries no demand charge at all. If the customer is billed ' +
+        'one, the record is incomplete \u2014 it has NOT been substituted from elsewhere.');
+    }
+
+    /* ---- energy, ranked into on / off / super off peak ---- */
+    var ers = rate.energyratestructure;
+    var energy = null;
+    if (ers && ers.length) {
+      var useE = scheduleUse(rate.energyweekdayschedule);
+      var useEe = scheduleUse(rate.energyweekendschedule);
+      Object.keys(useEe.byPeriod).forEach(function (k) {
+        useE.byPeriod[k] = (useE.byPeriod[k] || 0) + useEe.byPeriod[k];
+      });
+      var usedE = Object.keys(useE.byPeriod).length ? useE.byPeriod : null;
+      if (!usedE) {
+        /* no schedule: every listed period is in play, ranked on rate alone */
+        usedE = {};
+        ers.forEach(function (_, i) { usedE[i] = 1; });
+        findings.push('No energy schedule, so the periods are ranked on rate alone and ' +
+                      'the hours each applies to are unknown.');
+      }
+      var rankedE = rankPeriods(ers, usedE);
+      if (rankedE.length) {
+        energy = { delivery: { onpeak: 0, offpeak: 0, superoff: 0 },
+                   generation: { onpeak: 0, offpeak: 0, superoff: 0 },
+                   volumetric: [], periods: rankedE };
+        /* URDB energy rates are all-in for the rate they describe; put them
+           on generation and leave delivery zero rather than inventing a
+           split that the record does not contain */
+        energy.generation.onpeak = rankedE[0].rate;
+        energy.generation.superoff = rankedE[rankedE.length - 1].rate;
+        energy.generation.offpeak = rankedE.length > 2
+          ? rankedE[Math.floor(rankedE.length / 2)].rate
+          : rankedE[rankedE.length - 1].rate;
+        if (rankedE.length === 1) {
+          findings.push('Only one energy period, so there is no time-of-use spread to ' +
+                        'arbitrage on this rate.');
+        }
+        findings.push('URDB energy rates are given as one figure per period. They are ' +
+          'carried as generation with delivery at zero \u2014 the record does not split ' +
+          'them, and inventing a split would misstate both.');
+      }
+    } else {
+      findings.push('No energy rate structure in this record.');
+    }
+
+    /* ---- the demand averaging window, which the bill reader needs ---- */
+    var win = +rate.demandwindow;
+    if (!isFinite(win) || win <= 0) {
+      win = null;
+      findings.push('No demandwindow in the record. The bill reader will roll interval ' +
+        'data up to 15 minutes by default; confirm the tariff\u2019s own interval.');
+    }
+
+    var fixed = {};
+    if (isFinite(+rate.fixedchargefirstmeter) && +rate.fixedchargefirstmeter > 0) {
+      fixed.customerCharge = +rate.fixedchargefirstmeter;
+      fixed.units = rate.fixedchargeunits || '$/month';
+    }
+
+    var tariff = {
+      name: rate.name || 'URDB rate',
+      utility: rate.utility || null,
+      source: 'NREL URDB' + (rate.label ? ' rate ' + rate.label : '') +
+              (rate.startdate ? ', effective ' + rate.startdate : ''),
+      urdbLabel: rate.label || null,
+      sector: rate.sector || null,
+      demandWindowMin: win,
+      demand: demand,
+      energy: energy || { delivery: {}, generation: {}, volumetric: [] },
+      periods: {},                       /* URDB gives schedules, not seasons */
+      fixed: fixed,
+      monthRates: monthRates
+    };
+
+    return { ok: demand.length > 0 || !!energy, tariff: tariff, findings: findings,
+             hasDemand: demand.length > 0, hasEnergy: !!energy };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  FETCH                                                              *
+   *  The endpoint and the parameter names, written out rather than       *
+   *  assembled loosely — a malformed URL fails at the network layer and  *
+   *  looks like an outage.                                               *
+   * ------------------------------------------------------------------ */
+  var ENDPOINT = 'https://api.openei.org/utility_rates';
+
+  function url(params) {
+    var q = [];
+    Object.keys(params).forEach(function (k) {
+      if (params[k] == null || params[k] === '') return;
+      q.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+    });
+    return ENDPOINT + '?' + q.join('&');
+  }
+
+  function fetchRates(opts) {
+    opts = opts || {};
+    if (!opts.apiKey) {
+      return Promise.resolve({ ok: false,
+        error: 'An NREL API key is required. DEMO_KEY is rate-limited to a handful of ' +
+               'calls an hour and is not usable in production.' });
+    }
+    if (!opts.address && !(opts.lat != null && opts.lon != null)) {
+      return Promise.resolve({ ok: false, error: 'Give an address or a latitude and longitude.' });
+    }
+    var u = url({
+      api_key: opts.apiKey, version: opts.version || 'latest', format: 'json',
+      detail: 'full', limit: opts.limit || 25,
+      sector: opts.sector || 'Commercial',
+      address: opts.address, lat: opts.lat, lon: opts.lon,
+      approved: opts.approvedOnly === false ? null : true,
+      is_default: opts.defaultOnly ? true : null
+    });
+    if (typeof fetch !== 'function') {
+      return Promise.resolve({ ok: false, error: 'No fetch available in this environment.',
+                               url: u });
+    }
+    return fetch(u).then(function (r) {
+      if (!r.ok) throw new Error('URDB returned HTTP ' + r.status);
+      return r.json();
+    }).then(function (data) {
+      var items = (data && data.items) || (data && data.outputs) || [];
+      if (!items.length) {
+        return { ok: false, url: u,
+                 error: 'No commercial tariffs returned for that location. Widen the ' +
+                        'search or check the address \u2014 nothing has been substituted.' };
+      }
+      return { ok: true, url: u, count: items.length,
+               rates: items.map(function (it) {
+                 return { label: it.label, name: it.name, utility: it.utility,
+                          sector: it.sector, startdate: it.startdate, raw: it };
+               }) };
+    }).catch(function (e) {
+      return { ok: false, url: u,
+               error: 'Could not reach the URDB: ' + (e && e.message) +
+                      '. No rates have been assumed.' };
+    });
+  }
+
+  E.urdb = { parse: parse, fetchRates: fetchRates, url: url, ENDPOINT: ENDPOINT,
+             tierRate: tierRate, scheduleUse: scheduleUse, rankPeriods: rankPeriods };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -118332,12 +118942,26 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       /* A trench is a band on a plan, not a line. Draw the excavation
          width as a closed outline with the raceway centreline inside it,
          so the sheet shows what is actually dug and what runs in it. */
+      /* sweep first, so the trench and the pipe share one centreline */
+      var _spec0 = RUN_SPEC[c.condType] || { material: 'PVC40', size: '4/0' };
+      var _fill0 = E.raceway ? E.raceway.sizeFor(_spec0.size, cablePer(c),
+                                _spec0.material, _spec0.insulation) : { ok: false };
+      var trenchPts = pts;
+      if (_fill0.ok && E.raceway.bendRadius) {
+        var _r0 = E.raceway.bendRadius(_fill0.trade);
+        if (_r0) {
+          var _sw0 = E.raceway.sweptPath(pts, _r0);
+          if (_sw0.pts.length >= 2) trenchPts = _sw0.pts;
+        }
+      }
       var trenched = isTrenched(c);
       if (c.route === 'trench' && !trenched) made.reclassified = (made.reclassified || 0) + 1;
       if (trenched) {
         E.ensureLayer('C-TRCH-EXCV', 8);
         var wIn = TRENCH_W[c.condType] || 24;
-        var band = E.bandPath(pts, wIn);
+        /* the excavation follows the swept pipe, not a square corner the
+           pipe never takes */
+        var band = E.bandPath(trenchPts, wIn);
         if (band && band.length > 3) {
           E.add(ST.doc, { t: 'pline', closed: true, layer: 'C-TRCH-EXCV', pts: band });
           made.trench = (made.trench || 0) + 1;
@@ -118352,26 +118976,44 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       var nCond = cablePer(c);
       var fill = E.raceway ? E.raceway.sizeFor(spec.size, nCond, spec.material, spec.insulation)
                            : { ok: false };
+
+      /* SWEEP THE BENDS. A conduit cannot turn a square corner: NEC Ch.9
+         Table 2 gives a 4 inch run a two foot radius. Drawing it square
+         puts the pipe where it cannot go and understates the trench at
+         every corner. */
+      var drawPts = pts, swept = null;
+      if (fill.ok && E.raceway.bendRadius) {
+        var rad = E.raceway.bendRadius(fill.trade);
+        if (rad) {
+          swept = E.raceway.sweptPath(pts, rad);
+          if (swept.pts.length >= 2) drawPts = swept.pts;
+          if (swept.tight && swept.tight.length) {
+            made.tightBends = (made.tightBends || 0) + swept.tight.length;
+          }
+        }
+      }
+
+      /* The centreline IS the conduit on a plan. Two walls at true outside
+         dimension and a conductor line each collapse into this same line at
+         any sheet scale, so they are overdraw, not detail. */
+      E.add(ST.doc, { t: 'pline', closed: false, layer: m[0], pts: drawPts });
+      made.runs++;
+
+      /* Conductor count goes on as slash ticks, which is how a plan shows
+         it and which reads at every scale. */
       if (fill.ok && nCond > 0) {
-        var geo = E.raceway.geometry(pts, { odIn: fill.odIn || 2, conductors: nCond, maxDrawn: 12 });
-        geo.walls.forEach(function (wall) {
-          if (wall && wall.length >= 2) {
-            E.add(ST.doc, { t: 'pline', closed: false, layer: m[0], pts: wall });
-          }
-        });
         E.ensureLayer('E-COND-WIRE', 2);
-        geo.conductors.forEach(function (cd) {
-          if (cd.path && cd.path.length >= 2) {
-            E.add(ST.doc, { t: 'pline', closed: false, layer: 'E-COND-WIRE', pts: cd.path });
-          }
+        var grounds = 1;
+        var hots = Math.max(1, nCond - grounds);
+        var marks = E.raceway.ticks(drawPts, { hots: hots, grounds: grounds,
+                                               textHeightIn: 24 });
+        marks.forEach(function (mk) {
+          E.add(ST.doc, { t: 'line', layer: 'E-COND-WIRE',
+                          x1: mk.x1, y1: mk.y1, x2: mk.x2, y2: mk.y2 });
         });
         made.pipes = (made.pipes || 0) + 1;
-        made.wires = (made.wires || 0) + geo.drawn;
+        made.wires = (made.wires || 0) + nCond;
       }
-      /* The centreline stays either way: it is what a run is picked and
-         measured by, and it is the only thing left if the fill failed. */
-      E.add(ST.doc, { t: 'pline', closed: false, layer: m[0], pts: pts });
-      made.runs++;
 
       /* the run's own callout, which is the thing that makes an imported
          trench readable as a trench rather than a stray polyline */
@@ -118465,8 +119107,14 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         (made.trench ? ' (' + made.trench + ' trenched)' : '') +
         ', ' + made.shapes + ' shape(s), ' + made.labels + ' label(s).');
     if (made.pipes) {
-      say('Raceway: ' + made.pipes + ' run(s) drawn as pipe with ' + made.wires +
-          ' conductor(s) inside, sized to NEC Chapter 9 fill.');
+      say('Raceway: ' + made.pipes + ' run(s) with ' + made.wires +
+          ' conductor(s) marked, sized to NEC Chapter 9 fill, bends swept to ' +
+          'Chapter 9 Table 2.');
+    }
+    if (made.tightBends) {
+      say(made.tightBends + ' corner(s) are too tight for the conduit\u2019s minimum ' +
+          'bend radius and were left square \u2014 the run needs a pull point or a ' +
+          'wider corner there.');
     }
     if (made.reclassified) {
       say(made.reclassified + ' run(s) were tagged as trench but use exposed raceway ' +
@@ -119258,9 +119906,30 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     renderSchem();
   }
   function schMode(m) {
-    if (m === SCH.mode) return;
-    SCH.mode = m; SCH.text = null; SCH.last = null;
+    /* Only reset the spec when the mode ACTUALLY changes — but always
+       re-render. Returning early when the mode already matched meant the
+       Riser button did nothing at all, because the panel already starts on
+       riser. */
+    if (m !== SCH.mode) { SCH.mode = m; SCH.text = null; SCH.last = null; }
     renderSchem();
+  }
+
+  /* Bring a panel into view and mark it, so a button that opens the
+     workspace lands somewhere visible rather than just opening the
+     workspace and leaving the reader to hunt down the sidebar. */
+  function focusPanel(which) {
+    var map = { schem: el.schem, review: el.review, piers: el.piers,
+                array: el.array, fit: el.fit, sched: el.sched };
+    var node = map[which];
+    if (!node) return false;
+    var head = node.previousElementSibling;
+    var target = (head && /arch-cat/.test(head.className || '')) ? head : node;
+    try { target.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {
+      try { target.scrollIntoView(); } catch (e2) {}
+    }
+    node.classList.add('arch-flash');
+    setTimeout(function () { node.classList.remove('arch-flash'); }, 1400);
+    return true;
   }
   function schNotesCSV() {
     if (!SCH.last || SCH.mode !== 'riser' || !SCH.last.notes) {
@@ -120613,6 +121282,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     setGeo: setGeo, geoStatus: geoStatus, geoExport: geoExport, geoImport: geoImport,
     review: runReview, reviewPick: reviewPick, reviewRes: function () { return RV.res; },
     schBuild: schBuild, schMode: schMode, schSample: schSample, schNotes: schNotesCSV,
+    focusPanel: focusPanel,
     schState: SCH,
     anchorFromPlacement: anchorFromPlacement,
     toGeoJSON: function () { return E.geo.toGeoJSON(ST.doc); },
@@ -120648,6 +121318,321 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
   }, 500);
 })();
 
+
+</script>
+<script id="omega-schem-tool-js">
+/* ====================================================================== *
+ *  OMEGA SCHEMATIC TOOL                                                  *
+ *  Riser diagrams and one-lines as their own tool, not a redirect into    *
+ *  the drafting workspace. A person clicking "Riser Diagram" wants a      *
+ *  riser: a spec, a preview, the checker's findings, and a file. Opening  *
+ *  a full CAD surface and leaving them to find a panel is not that.       *
+ *                                                                        *
+ *  It builds into its own document, so it neither needs Architecture      *
+ *  Mode nor disturbs whatever is drawn there. "Open in Architecture       *
+ *  Mode" is offered for editing, as a choice rather than the only way in. *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaSchematicTool) return;
+
+  /* Riser only. One-lines belong in the Schematic Editor, which already
+     draws them on a CAD canvas the AIC and conductor-schedule tools read.
+     The one-line DRC still exists as OmegaArchEngine.oneline.drc and now
+     runs against that editor's drawing rather than a second one here. */
+  var ST = { kind: 'riser', text: {}, res: null, doc: null };
+
+  function E() { return window.OmegaArchEngine; }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function el(id) { return document.getElementById(id); }
+
+  var SAMPLE = {
+    riser: {
+      rooms: [
+        { name: 'Main electrical room', devices: [
+          { id: 'MSB', kind: 'panel', label: 'PANEL\nMSB' },
+          { id: 'DS', kind: 'disco', label: 'DS' },
+          { id: 'M1', kind: 'meter' } ] },
+        { name: 'Corridor 200', devices: [
+          { id: 'MD', kind: 'panel', label: 'PANEL\nMD' },
+          { id: 'LCPD', kind: 'panel', label: 'PANEL\nLCPD' },
+          { id: 'TLCPD', kind: 'xfmr', label: 'TLCPD' } ] }
+      ],
+      feeders: [
+        { from: 'MSB', to: 'MD', note: 'f' },
+        { from: 'MD', to: 'TLCPD', note: 'g' },
+        { from: 'TLCPD', to: 'LCPD', note: 'x' }
+      ],
+      offsheet: [{ from: 'MD', to: 'MSB4-4', note: 'f' }],
+      gec: true, gecNote: 'gec', grounded: ['MSB', 'MD', 'LCPD'],
+      notes: [
+        { id: 'f', text: 'Provide 2"C \u2014 4 #3/0 & 1 #6 GND.' },
+        { id: 'g', text: 'Provide a #6 bare copper ground.' },
+        { id: 'x', text: 'Transformer secondary: 4 #4/0 & 1 #4 GND.' },
+        { id: 'gec', text: 'Grounding electrode conductor, continuous, no splices.' }
+      ]
+    },
+    oneline: {
+      nodes: [
+        { id: 'UTIL', kind: 'utility', label: 'Utility 13.8kV', volts: 13800, source: true },
+        { id: 'T1', kind: 'xfmr', label: 'T1 1500kVA', volts: 480, delta: true, wye: true },
+        { id: 'MSB', kind: 'switchgear', label: 'MSB 2000A', volts: 480, phases: 3, ocpdAmps: 2000 },
+        { id: 'CB1', kind: 'breaker', label: 'CB1 800A', volts: 480, ocpdAmps: 800 },
+        { id: 'PCS', kind: 'inverter', label: 'PCS 380kW', volts: 480 },
+        { id: 'BESS', kind: 'bess', label: 'BESS 760kWh', volts: 480 }
+      ],
+      edges: [
+        { from: 'UTIL', to: 'T1' },
+        { from: 'T1', to: 'MSB', conductor: '500', sets: 6, ocpdAmps: 2000 },
+        { from: 'MSB', to: 'CB1', conductor: '600', sets: 2, ocpdAmps: 800 },
+        { from: 'CB1', to: 'PCS', conductor: '600', sets: 2, ocpdAmps: 800 },
+        { from: 'PCS', to: 'BESS' }
+      ]
+    }
+  };
+
+  function specText() {
+    if (ST.text[ST.kind] != null) return ST.text[ST.kind];
+    return JSON.stringify(SAMPLE[ST.kind], null, 2);
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  BUILD into a scratch document                                      *
+   * ------------------------------------------------------------------ */
+  function build() {
+    var Eng = E();
+    if (!Eng) { alert('The drawing engine is not loaded in this build.'); return null; }
+    var box = el('omega-sch-spec');
+    var raw = box ? box.value : specText();
+    ST.text[ST.kind] = raw;
+    var spec;
+    try { spec = JSON.parse(raw); }
+    catch (e) {
+      ST.res = { err: 'That spec is not valid JSON: ' + (e && e.message) };
+      paint(); return null;
+    }
+    var doc = Eng.newDoc(), res;
+    try {
+      res = (ST.kind === 'oneline') ? Eng.oneline.build(doc, spec)
+                                    : Eng.riser.build(doc, spec);
+    } catch (e2) { ST.res = { err: String(e2 && e2.message) }; paint(); return null; }
+    if (!res || !res.ok) {
+      ST.res = { err: (res && res.error) || 'Nothing to build.' }; paint(); return null;
+    }
+    ST.doc = doc; ST.res = res;
+    paint();
+    return res;
+  }
+
+  function previewSVG() {
+    if (!ST.doc) return '';
+    var svg;
+    try { svg = E().toSVG(ST.doc, {}); } catch (e) { return ''; }
+    /* The exporter writes a width with no height, which leaves the aspect
+       to the consumer. Inside a fixed preview box that has to be pinned or
+       the drawing renders as a sliver. */
+    var m = svg.match(/viewBox="([\d.\s]+)"/);
+    if (m) {
+      var vb = m[1].split(/\s+/).map(Number);
+      svg = svg.replace(/width="\d+"/, 'width="100%" height="100%" ' +
+        'preserveAspectRatio="xMidYMid meet"');
+      if (!/height=/.test(svg)) svg = svg.replace('<svg ', '<svg height="100%" ');
+      void vb;
+    }
+    return svg;
+  }
+
+  function download(text, name, mime) {
+    var b = new Blob([text], { type: mime || 'text/plain' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1200);
+  }
+  function exportAs(kind) {
+    if (!ST.doc) { alert('Build the diagram first.'); return; }
+    var base = ST.kind === 'oneline' ? 'one-line' : 'riser';
+    try {
+      if (kind === 'dxf') download(E().toDXF(ST.doc, {}), base + '.dxf', 'application/dxf');
+      else if (kind === 'svg') download(E().toSVG(ST.doc, {}), base + '.svg', 'image/svg+xml');
+      else if (kind === 'notes') {
+        if (ST.kind !== 'riser' || !ST.res || !ST.res.notes) {
+          alert('Keyed notes come from a riser build.'); return;
+        }
+        var rows = E().riser.notesToRows(ST.res.notes);
+        download(rows.map(function (r) {
+          return r.map(function (c) {
+            var v = String(c == null ? '' : c);
+            return /[",]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+          }).join(',');
+        }).join('\n'), base + '-keyed-notes.csv', 'text/csv');
+      }
+    } catch (e) { alert('Export failed: ' + (e && e.message)); }
+  }
+
+  /* Hand the built diagram to the drafting workspace, for editing. */
+  function toArchMode() {
+    var A = window.OmegaArch;
+    if (!A) { alert('Architecture Mode is not available in this build.'); return; }
+    var spec;
+    try { spec = JSON.parse(el('omega-sch-spec').value); }
+    catch (e) { alert('Fix the spec before opening it for editing.'); return; }
+    try {
+      A.open();
+      setTimeout(function () {
+        try {
+          A.schMode(ST.kind);
+          var box = document.getElementById('omega-arch-schtext');
+          if (box) { box.value = JSON.stringify(spec, null, 2); }
+          if (A.schState) A.schState.text = JSON.stringify(spec, null, 2);
+          A.schBuild();
+          if (A.focusPanel) A.focusPanel('schem');
+        } catch (e2) {}
+      }, 240);
+      close();
+    } catch (e3) { alert('Could not open Architecture Mode: ' + (e3 && e3.message)); }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  UI                                                                 *
+   * ------------------------------------------------------------------ */
+  function close() { var d = el('omega-sch-modal'); if (d) d.remove(); }
+
+  function findingsHtml() {
+    var r = ST.res, h = '';
+    if (!r) return '<div style="color:#8FA3B8;font-size:11px">Build to see the checks.</div>';
+    if (r.err) {
+      return '<div style="color:#f0883e;font-size:11px;line-height:1.5">' + esc(r.err) + '</div>';
+    }
+    if (ST.kind === 'oneline' && r.drc) {
+      h += '<div style="font-size:11px;margin-bottom:6px">' +
+        '<b style="color:' + (r.drc.counts.fail ? '#f85149' : '#7ee787') + '">' +
+        r.drc.counts.fail + ' failure(s)</b> \u00B7 ' + r.drc.counts.warn + ' warning(s)</div>';
+      r.drc.findings.forEach(function (f) {
+        h += '<div style="font-size:11px;line-height:1.5;margin-bottom:5px;color:' +
+          (f.level === 'fail' ? '#f85149' : '#d29922') + '"><b>' + esc(f.code) + '</b> ' +
+          esc(f.msg) + '</div>';
+      });
+      if (!r.drc.findings.length) {
+        h += '<div style="font-size:11px;color:#7ee787">No design rule findings.</div>';
+      }
+    } else if (r.bands) {
+      h += '<div style="font-size:11px;margin-bottom:6px">' + r.bands.length +
+        ' room band(s) \u00B7 ' + r.notes.length + ' keyed note(s) \u00B7 ' +
+        (r.groundTaps || 0) + ' ground tap(s)</div>';
+      r.audit.findings.forEach(function (f) {
+        h += '<div style="font-size:11px;line-height:1.5;margin-bottom:5px;color:#d29922">' +
+          esc(f) + '</div>';
+      });
+      r.notes.forEach(function (nt) {
+        h += '<div style="font-size:11px;line-height:1.5;margin-bottom:3px">' +
+          '<b>(' + nt.number + ')</b> ' + esc(nt.text) +
+          (nt.uses > 1 ? ' <span style="color:#8FA3B8">\u00D7' + nt.uses + '</span>' : '') +
+          '</div>';
+      });
+    }
+    return h;
+  }
+
+  function paint() {
+    var pv = el('omega-sch-preview'), fi = el('omega-sch-find');
+    if (pv) pv.innerHTML = ST.doc && ST.res && !ST.res.err
+      ? previewSVG()
+      : '<div style="color:#8FA3B8;font-size:11px;padding:20px;text-align:center">' +
+        'Build to preview the drawing.</div>';
+    if (fi) fi.innerHTML = findingsHtml();
+  }
+
+  function setKind(k) {
+    if (k === ST.kind) return;
+    var box = el('omega-sch-spec');
+    if (box) ST.text[ST.kind] = box.value;   /* keep the other spec */
+    ST.kind = k; ST.res = null; ST.doc = null;
+    if (box) box.value = specText();
+    paint();
+  }
+
+  function open(kind) {
+    if (kind) ST.kind = kind;
+    close();
+    var d = document.createElement('div');
+    d.id = 'omega-sch-modal';
+    d.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(4,8,14,.7);' +
+      'display:flex;align-items:center;justify-content:center';
+    function tab(id, label) {
+      return '<button id="' + id + '" style="border:1px solid #24405e;color:#dbe6f2;' +
+        'border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:600;font-size:12px">' +
+        label + '</button>';
+    }
+    function b(id, label, pri) {
+      return '<button id="' + id + '" style="background:' + (pri ? '#1f6feb' : '#16233a') +
+        ';border:' + (pri ? '0' : '1px solid #24405e') + ';color:#dbe6f2;border-radius:6px;' +
+        'padding:7px 12px;cursor:pointer;font-size:12px' + (pri ? ';font-weight:600' : '') +
+        '">' + label + '</button>';
+    }
+    d.innerHTML =
+      '<div style="width:1120px;max-width:96vw;height:78vh;background:#0f1724;' +
+      'border:1px solid #24405e;border-radius:10px;display:flex;flex-direction:column;' +
+      'box-shadow:0 18px 60px rgba(0,0,0,.6);color:#dbe6f2;font-size:12px">' +
+        '<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;' +
+        'border-bottom:1px solid #1b2f45">' +
+          '<b style="font-size:13px">Riser diagram</b>' +
+          '<div style="flex:1"></div>' +
+          '<button id="omega-sch-x" style="background:none;border:0;color:#8FA3B8;' +
+          'font-size:16px;cursor:pointer">\u2715</button></div>' +
+        '<div style="flex:1;display:flex;min-height:0">' +
+          '<div style="width:360px;display:flex;flex-direction:column;' +
+          'border-right:1px solid #1b2f45;padding:12px;gap:8px">' +
+            '<div style="font-size:10px;color:#8FA3B8;text-transform:uppercase;' +
+            'letter-spacing:.04em">Specification</div>' +
+            '<textarea id="omega-sch-spec" spellcheck="false" style="flex:1;min-height:0;' +
+            'background:#0b1220;color:#dbe6f2;border:1px solid #24405e;border-radius:6px;' +
+            'padding:8px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;' +
+            'line-height:1.45;resize:none">' + esc(specText()) + '</textarea>' +
+            '<div style="display:flex;gap:6px">' + b('omega-sch-build', 'Build', true) +
+            b('omega-sch-reset', 'Reset') + '</div>' +
+          '</div>' +
+          '<div style="flex:1;display:flex;flex-direction:column;min-width:0">' +
+            '<div id="omega-sch-preview" style="flex:1;min-height:0;background:#080d16;' +
+            'margin:12px;border:1px solid #1b2f45;border-radius:6px;overflow:auto;' +
+            'display:flex;align-items:center;justify-content:center"></div>' +
+            '<div id="omega-sch-find" style="height:150px;overflow:auto;margin:0 12px 12px;' +
+            'padding:10px;background:#0b1220;border:1px solid #1b2f45;border-radius:6px"></div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;padding:12px 14px;border-top:1px solid #1b2f45;' +
+        'align-items:center">' +
+          b('omega-sch-dxf', 'Export DXF') + b('omega-sch-svg', 'Export SVG') +
+          b('omega-sch-notes', 'Keyed notes CSV') +
+          '<div style="flex:1"></div>' +
+          b('omega-sch-arch', 'Open in Architecture Mode') +
+        '</div></div>';
+    document.body.appendChild(d);
+    el('omega-sch-x').onclick = close;
+    d.addEventListener('click', function (ev) { if (ev.target === d) close(); });
+    el('omega-sch-build').onclick = build;
+    el('omega-sch-reset').onclick = function () {
+      ST.text[ST.kind] = null;
+      el('omega-sch-spec').value = specText();
+      ST.res = null; ST.doc = null; paint();
+    };
+    el('omega-sch-dxf').onclick = function () { exportAs('dxf'); };
+    el('omega-sch-svg').onclick = function () { exportAs('svg'); };
+    el('omega-sch-notes').onclick = function () { exportAs('notes'); };
+    el('omega-sch-arch').onclick = toArchMode;
+    paint();
+    build();          /* land on something drawn, not an empty box */
+    return d;
+  }
+
+  window.OmegaSchematicTool = {
+    open: open, build: build, setKind: setKind, close: close,
+    state: ST, exportAs: exportAs
+  };
+})();
 
 </script>
 <script id="omega-bill-reader-js">
@@ -122060,36 +123045,70 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
        are DELIVERABLES — a reader looks for them beside One-Line E2.0, not
        behind a drafting workspace on another tab. These open the workspace
        and land on the right panel, so the door is still one click. */
+    /* A riser and a one-line are DELIVERABLES. Opening a CAD drafting
+       workspace and leaving the reader to find a panel is a redirect, not a
+       tool — so these open their own dialog: a spec, a preview, the
+       checker's findings and a file. Editing on the drafting surface is
+       offered from inside it, as a choice rather than the only way in. */
     function jump(what) {
       return function () {
-        var A = window.OmegaArch;
-        if (!A) { alert('Architecture Mode is not loaded in this build.'); return; }
-        try { A.open(); }
-        catch (e) { alert('Could not open Architecture Mode: ' + (e && e.message)); return; }
-        setTimeout(function () {
-          try {
-            if (what === 'review') { A.review(); return; }
-            A.schMode(what === 'oneline' ? 'oneline' : 'riser');
-            var box = document.getElementById('omega-arch-schtext');
-            if (box) {
-              if (box.scrollIntoView) box.scrollIntoView({ block: 'center' });
-              box.focus();
-            }
-          } catch (e2) {}
-        }, 220);
+        if (what === 'review') {
+          var A = window.OmegaArch;
+          if (!A) { alert('Architecture Mode is not loaded in this build.'); return; }
+          try { A.open(); }
+          catch (e) { alert('Could not open Architecture Mode: ' + (e && e.message)); return; }
+          setTimeout(function () {
+            try { A.review(); if (A.focusPanel) A.focusPanel('review'); } catch (e2) {}
+          }, 240);
+          return;
+        }
+        var T = window.OmegaSchematicTool;
+        if (!T) { alert('The schematic tool is not loaded in this build.'); return; }
+        T.open(what === 'oneline' ? 'oneline' : 'riser');
       };
     }
 
     /* drawing deliverables, beside the other sheets */
     add(docs || reports, 'omega-btn-riser', '\u2338', 'Riser', 'Diagram',
       'Riser diagram \u2014 rooms banded, panels on a baseline with transformers above ' +
-      'them, keyed notes numbered by where they are placed, grounding taps. ' +
-      'Opens in Architecture Mode.', jump('riser'));
-    add(docs || reports, 'omega-btn-sld', '\u26A1', 'One-Line', 'Builder',
-      'One-line from a topology, with the electrical design rule check \u2014 ' +
-      'unenergised equipment, parallel sources without a tie, voltage mismatch, ' +
-      'overcurrent coordination, conductor against its device. ' +
-      'Opens in Architecture Mode.', jump('oneline'));
+      'them, keyed notes numbered by where they are placed, grounding taps.', jump('riser'));
+    /* No One-Line button. The app already has a Schematic Editor — a full
+       one-line CAD canvas with a symbol library and a netlist check, which
+       the AIC and conductor-schedule tools already read. A second one-line
+       builder beside it would be two places to draw the same drawing and
+       two drawings to keep in step. The design rule check that was the
+       point of it now runs ON that editor's drawing instead. */
+    /* The one-line check runs on the Schematic Editor's own drawing, so
+       there is one one-line and one place to check it. */
+    add(docs || reports, 'omega-btn-sldcheck', '\u26A1', 'Check', 'One-Line',
+      'Design rule check on the site one-line \u2014 unenergised equipment, two firm ' +
+      'sources with no tie, voltage change with no transformer, overcurrent ' +
+      'coordination, conductor against its device.',
+      function () {
+        var Eng = window.OmegaArchEngine;
+        if (!Eng || !Eng.oneline) { alert('The one-line engine is not loaded.'); return; }
+        var r = Eng.oneline.checkSite();
+        if (!r.ok) { alert(r.error); return; }
+        var d = r.drc;
+        var body = '<div style="font-size:12px;margin-bottom:10px">' +
+          r.counts.buses + ' bus(es), ' + r.counts.components + ' component(s), ' +
+          r.counts.branches + ' branch(es) checked.</div>' +
+          '<div style="font-size:13px;margin-bottom:10px"><b style="color:' +
+          (d.counts.fail ? '#f85149' : '#7ee787') + '">' + d.counts.fail +
+          ' failure(s)</b> \u00B7 ' + d.counts.warn + ' warning(s)</div>';
+        if (!d.findings.length) {
+          body += '<div style="color:#7ee787;font-size:12px">Nothing to flag on this ' +
+                  'one-line.</div>';
+        } else {
+          d.findings.forEach(function (f) {
+            body += '<div style="font-size:11.5px;line-height:1.55;margin-bottom:7px;color:' +
+              (f.level === 'fail' ? '#f85149' : '#d29922') + '"><b>' + f.code + '</b> ' +
+              String(f.msg).replace(/</g, '&lt;') + '</div>';
+          });
+        }
+        modal('One-line design rule check', body, function (close) { close(); }, 'Close');
+      });
+
     add(docs || reports, 'omega-btn-drc', '\u2713', 'Design', 'Review',
       'Screening pass over the drawing \u2014 equipment clashes, working-space ' +
       'encroachment, and whatever the pier, grading and array passes flagged. ' +
