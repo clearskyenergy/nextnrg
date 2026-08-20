@@ -116307,7 +116307,49 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
                INTERCONNECTION:[2000,8000], INTERCONNECTION_AGREEMENT:[0,0],
                AIR_ATC:[2000,8000], AIR_PTO:[0,0], FINAL_INSPECTION:[0,0],
                INCENTIVE:[0,0], EV_ACCESSIBILITY:[0,0] },
-      incentiveName: 'CPUC SGIP Incentive Application'
+      incentiveName: 'CPUC SGIP Incentive Application',
+      /* Per-permit fee notes and agency contacts, transcribed from the source
+         matrix. A fee with no note beside it is a number nobody can check. */
+      feeNotes: {
+        ZONING: 'Zoning clearance or minor use permit; verify with Planning',
+        CEQA: 'Notice of Exemption filing fee at the County Clerk',
+        BUILDING: 'Based on construction valuation per the Vista fee schedule',
+        ELECTRICAL: 'Electrical permit; a 1 MW system sits at a higher valuation band',
+        FIRE_CONSTRUCTION: 'CFC \u00A71207 construction permit; large-scale BESS review',
+        FIRE_OPERATIONAL: 'CFC \u00A71207 operational permit; annual renewal',
+        INTERCONNECTION: 'Rule 21 application fee only \u2014 grid upgrade costs are separate',
+        INTERCONNECTION_AGREEMENT: 'Included in the Rule 21 process; NGOM inspection',
+        HMBP: 'UPFP/HMBP modification; CERS annual certification',
+        AIR_ATC: 'ATC fee; time-and-material per SDAPCD rules',
+        AIR_PTO: 'Included in the ATC process; annual renewal',
+        FINAL_INSPECTION: 'Included in the building and electrical permits',
+        INCENTIVE: 'Application is free; the incentive is paid on the far side'
+      },
+      exclusions: ['Utility grid upgrade costs identified by the interconnection ' +
+                   'study are EXCLUDED from these figures and can exceed them.'],
+      contacts: [
+        { agency: 'City of Vista Planning Division', division: 'Community Development',
+          phone: '(760) 726-1340', web: 'cityofvista.com',
+          note: 'Pre-application meeting recommended to confirm the enclosure and setbacks' },
+        { agency: 'City of Vista Building Division', division: 'Community Development',
+          phone: '(760) 726-1340', web: 'cityofvista.com',
+          note: 'Confirm the AHJ \u2014 fire review may sit with a district rather than the city' },
+        { agency: 'City of Vista Fire Department', division: 'Fire Prevention Bureau',
+          phone: '(760) 940-0350', web: 'cityofvista.com/fire',
+          note: 'Confirm the BESS AHJ; large-scale UL 9540A test data is usually asked for' },
+        { agency: 'SDG&E \u2014 Rule 21 Interconnection', division: 'Distributed Energy Resources',
+          phone: '(800) 411-7343', web: 'sdge.com/rule21',
+          note: 'A Pre-Application Report is available before the full application' },
+        { agency: 'San Diego County DEH', division: 'Hazardous Materials Division (CUPA)',
+          phone: '(858) 505-6990', web: 'sandiegocounty.gov/dehq',
+          note: 'CERS online submission portal' },
+        { agency: 'SDAPCD', division: 'Permits and Engineering',
+          phone: '(858) 586-2600', web: 'sdapcd.org',
+          note: 'Accela Citizen Access for online permit applications' },
+        { agency: 'CPUC / SDG&E SGIP Program', division: 'SGIP Program Administration',
+          phone: '(866) 584-7436', web: 'selfgenca.com',
+          note: 'Step 1 reservation required before construction starts' }
+      ]
     }
   };
 
@@ -116400,6 +116442,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       if (!fee) gaps.push(key + ': fee');
       rows.push({
         key: key, id: id,
+        feeNote: (pack && pack.feeNotes && pack.feeNotes[key]) || null,
         name: (key === 'INCENTIVE' && pack && pack.incentiveName) ? pack.incentiveName : t.name,
         agency: agency, agencyConfirm: !agency,
         party: t.party, trigger: t.trigger, firedBy: why[key],
@@ -116432,6 +116475,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         : 'ESS permit threshold assumed at ' + thr + ' kWh (IFC/CFC §1207). Confirm ' +
           'the adopted code edition and threshold with the AHJ.',
       gaps: gaps,
+      contacts: (pack && pack.contacts) || [],
+      exclusions: (pack && pack.exclusions) || [],
       unverified: !pack
     };
   }
@@ -121345,11 +121390,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
                 'column.']);
     sheets.push({ name: 'BESS Sizing Sweep', rows: sRows });
 
-    /* ---- 8. Design parameters ---- */
-    var avgDaily = totKwh / totDays;
-    var avgKw = avgDaily / 24;
-    var peaks = months.map(function (m) { return +(m.peaks && m.peaks.any) || 0; });
-    var obsPeak = Math.max.apply(null, peaks);
+    /* The recommended size, computed here because the cost build-up prices
+       it and the design parameters quote it — one pick, used by both. */
     var pick = cfg.shaveKw || null, picked = null;
     if (!pick && sw.length) {
       /* Payback is close to flat across depth here, because savings and
@@ -121363,6 +121405,67 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       pick = picked ? picked.shaveKw : null;
     }
     var sized = pick ? t.sizeForShave(tariff, months, pick, opts) : null;
+
+    /* ---- 7b. Cost build-up ----
+       A client report ends with a price. The competitor workbook carries the
+       whole stack — equipment, controller, hard costs, overhead, margin —
+       and that is what a customer and a lender both read first. Every line
+       is a rate x a quantity taken from the sizing above, so changing the
+       battery changes the price. */
+    var cbRows = null;
+    if (sized) {
+      var kW = sized.shaveKw, kWh = sized.nameplateKwh;
+      var pvKw = +cfg.pvKwDc || 0;
+      var rate = {
+        pvPerW: cfg.pvPerW == null ? 2.50 : cfg.pvPerW,
+        bessPerKw: cfg.capexPerKw == null ? 165 : cfg.capexPerKw,
+        bessPerKwh: cfg.capexPerKwh == null ? 400 : cfg.capexPerKwh,
+        controller: cfg.controllerCost == null ? 0 : cfg.controllerCost,
+        sgaPct: cfg.sgaPct == null ? 0.10 : cfg.sgaPct,
+        profitPct: cfg.profitPct == null ? 0.05 : cfg.profitPct
+      };
+      var pv = pvKw * 1000 * rate.pvPerW;
+      var bkw = kW * rate.bessPerKw, bkwh = kWh * rate.bessPerKwh;
+      var hard = pv + bkw + bkwh + rate.controller;
+      var sga = hard * rate.sgaPct;
+      var profit = (hard + sga) * rate.profitPct;
+      var price = hard + sga + profit;
+      cbRows = [['COST BUILD-UP'], [],
+        ['Item', 'Quantity', 'Unit', 'Rate', 'Amount $']];
+      if (pvKw > 0) cbRows.push(['Solar PV', pvKw, 'kWdc', '$' + rate.pvPerW.toFixed(2) + '/W', n0(pv)]);
+      cbRows.push(['BESS power', kW, 'kW', '$' + rate.bessPerKw + '/kW', n0(bkw)]);
+      cbRows.push(['BESS energy', kWh, 'kWh', '$' + rate.bessPerKwh + '/kWh', n0(bkwh)]);
+      if (rate.controller > 0) {
+        cbRows.push(['Microgrid controller', 1, 'ea', '', n0(rate.controller)]);
+      }
+      cbRows.push(['Hard costs', '', '', '', n0(hard)]);
+      cbRows.push(['SG&A', '', '', (rate.sgaPct * 100).toFixed(0) + '%', n0(sga)]);
+      cbRows.push(['Profit', '', '', (rate.profitPct * 100).toFixed(0) + '%', n0(profit)]);
+      cbRows.push(['PRICE', '', '', '', n0(price)]);
+      cbRows.push([]);
+      cbRows.push(['$/kWh installed', '', '', '', kWh > 0 ? n2(price / kWh) : '']);
+      cbRows.push(['$/kW installed', '', '', '', kW > 0 ? n2(price / kW) : '']);
+      cbRows.push([]);
+      /* the payback the price actually implies, not the one from a bare
+         equipment cost */
+      var savYr = sized.demandSavingsYr;
+      cbRows.push(['Demand savings', '', '', '', n0(savYr) + ' $/yr']);
+      cbRows.push(['Simple payback on price', '', '', '',
+                   savYr > 0 ? n2(price / savYr) + ' yr' : 'never']);
+      cbRows.push([]);
+      cbRows.push(['Rates are the ones entered above. Equipment is priced off the sizing ' +
+                   'sweep pick, so a different shave depth reprices the job.']);
+      cbRows.push(['Demand savings only \u2014 energy arbitrage, incentives and any ' +
+                   'interconnection cost are NOT in this payback.']);
+      sheets.push({ name: 'Cost Build-Up', rows: cbRows });
+    }
+
+    /* ---- 8. Design parameters ---- */
+    var avgDaily = totKwh / totDays;
+    var avgKw = avgDaily / 24;
+    var peaks = months.map(function (m) { return +(m.peaks && m.peaks.any) || 0; });
+    var obsPeak = Math.max.apply(null, peaks);
+
     var gRows = [['Parameter', 'Value', 'Basis']];
     gRows.push(['Average daily electric load', n0(avgDaily) + ' kWh/day', 'bills']);
     gRows.push(['Average power draw', n2(avgKw) + ' kW', 'daily kWh / 24']);
@@ -121533,6 +121636,11 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       ['Rate / fee source', m.packSource || 'Not verified for this jurisdiction'],
       ['Date prepared', new Date().toISOString().slice(0, 10)],
       [''],
+      ['LEGEND'],
+      ['CRITICAL PATH = YES', 'Zero float. Any slip here moves the energisation date.'],
+      ['CRITICAL PATH = NO', 'Has float; the Float column says how many weeks.'],
+      ['Confirm with AHJ', 'No verified figure for this jurisdiction \u2014 it has not been guessed.'],
+      [''],
       ['HOW TO READ THIS'],
       ['The duration is computed from the dependency graph and the permit durations,'],
       ['not typed. The critical path is every permit with zero float. The low and high'],
@@ -121544,7 +121652,13 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
            'blank and marked \u201cConfirm with AHJ\u201d. The permits and their triggers ' +
            'still apply; the local facts do not.']
         : ['Fees and durations come from the source named above and should be re-confirmed ' +
-           'before they are relied on.']
+           'before they are relied on.'],
+      [''],
+      ['DISCLAIMER'],
+      ['Timelines and fees are estimates for planning. Agency requirements, fee schedules'],
+      ['and queue positions change. Confirm each with the authority having jurisdiction'],
+      ['before this schedule or budget is relied on. Utility grid upgrade costs are not'],
+      ['permit fees and are excluded throughout.']
     ] });
 
     /* ---- Master Permitting Matrix ---- */
@@ -121608,18 +121722,37 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     sheets.push({ name: 'Dependencies & Risk', rows: dr });
 
     /* ---- Fees ---- */
-    var fr = [['SECTION A \u2014 ESTIMATED FEES'],
-              ['Permit ID', 'Agency', 'Fee low', 'Fee high', 'Midpoint', 'Source']];
+    var fr = [['FEE SUMMARY & AGENCY CONTACTS'], [],
+              ['SECTION A \u2014 ESTIMATED FEE SUMMARY'],
+              ['Permit ID', 'Agency', 'Fee low ($)', 'Fee high ($)', 'Midpoint ($)', 'Notes']];
     m.rows.forEach(function (r) {
       fr.push([r.id, r.agency || 'Confirm with AHJ',
                r.fees ? r.fees[0] : '', r.fees ? r.fees[1] : '',
                r.fees ? (r.fees[0] + r.fees[1]) / 2 : '',
-               r.fees ? (m.packSource || 'pack') : 'not published \u2014 confirm']);
+               r.feeNote || (r.fees ? '' : 'No published fee \u2014 confirm with the AHJ')]);
     });
-    fr.push([]);
-    fr.push(['Total', '', feeLo, feeHi, (feeLo + feeHi) / 2,
+    fr.push(['TOTAL', 'All agencies', feeLo, feeHi, (feeLo + feeHi) / 2,
              unknownFees ? unknownFees + ' permit(s) carry no published fee' : '']);
-    sheets.push({ name: 'Fee Summary', rows: fr });
+    (m.exclusions || []).forEach(function (x) { fr.push([]); fr.push(['\u26A0  ' + x]); });
+    if (!m.exclusions || !m.exclusions.length) {
+      fr.push([]);
+      fr.push(['\u26A0  Utility grid upgrade costs are not permit fees and are not ' +
+               'included here. They are identified by the interconnection study and ' +
+               'can exceed the whole permitting budget.']);
+    }
+    fr.push([]);
+    fr.push(['SECTION B \u2014 AGENCY CONTACTS']);
+    if (m.contacts && m.contacts.length) {
+      fr.push(['Agency', 'Division', 'Phone', 'Website', 'Key notes']);
+      m.contacts.forEach(function (c) {
+        fr.push([c.agency, c.division || '', c.phone || '', c.web || '', c.note || '']);
+      });
+    } else {
+      fr.push(['No verified contact list for this jurisdiction. The agencies are named ' +
+               'in the matrix; their contact details have to be confirmed locally rather ' +
+               'than reproduced from another county.']);
+    }
+    sheets.push({ name: 'Fee Summary & Contacts', rows: fr });
 
     return { ok: true, sheets: sheets, matrix: m, range: rg, risks: rk };
   }
@@ -121905,30 +122038,72 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
   function graft() {
     if (el('omega-btn-permit-matrix')) return true;
     var caps = document.querySelectorAll('.ribbon-page[data-page="output"] .rpanel-cap');
-    var host = null;
+    var reports = null, docs = null;
     for (var i = 0; i < caps.length; i++) {
-      if (/^Reports$/i.test((caps[i].textContent || '').trim())) {
-        host = caps[i].parentNode.querySelector('.rpanel-body');
-        break;
-      }
+      var t = (caps[i].textContent || '').trim();
+      if (/^Reports$/i.test(t)) reports = caps[i].parentNode.querySelector('.rpanel-body');
+      if (/^Permit Documents$/i.test(t)) docs = caps[i].parentNode.querySelector('.rpanel-body');
     }
-    if (!host) return false;
-    function btn(id, icon, l1, l2, title, fn) {
+    if (!reports) return false;
+
+    function add(where, id, icon, l1, l2, title, fn) {
+      if (!where) return;
       var b = document.createElement('button');
       b.className = 'rbtn'; b.id = id; b.title = title;
       b.innerHTML = '<span class="rb-ico">' + icon + '</span>' +
                     '<span class="rb-lbl">' + l1 + '<br>' + l2 + '</span>';
       b.addEventListener('click', fn);
-      host.appendChild(b);
+      where.appendChild(b);
     }
-    btn('omega-btn-permit-matrix', '\u25A6', 'Permitting', 'Matrix',
-        'Permitting matrix from the drawn system \u2014 permits, dependencies, ' +
-        'computed critical path, fees and risks, as a workbook',
-        openPermitMatrix);
-    btn('omega-btn-bill-analysis', '\u25A4', 'Bill', 'Analysis',
-        'Utility bill analysis and BESS sizing sweep \u2014 demand components priced ' +
-        'separately, TOU spread, sizing curve, as a workbook',
-        openBillAnalysis);
+
+    /* Architecture Mode holds the drafting tools, but a riser and a one-line
+       are DELIVERABLES — a reader looks for them beside One-Line E2.0, not
+       behind a drafting workspace on another tab. These open the workspace
+       and land on the right panel, so the door is still one click. */
+    function jump(what) {
+      return function () {
+        var A = window.OmegaArch;
+        if (!A) { alert('Architecture Mode is not loaded in this build.'); return; }
+        try { A.open(); }
+        catch (e) { alert('Could not open Architecture Mode: ' + (e && e.message)); return; }
+        setTimeout(function () {
+          try {
+            if (what === 'review') { A.review(); return; }
+            A.schMode(what === 'oneline' ? 'oneline' : 'riser');
+            var box = document.getElementById('omega-arch-schtext');
+            if (box) {
+              if (box.scrollIntoView) box.scrollIntoView({ block: 'center' });
+              box.focus();
+            }
+          } catch (e2) {}
+        }, 220);
+      };
+    }
+
+    /* drawing deliverables, beside the other sheets */
+    add(docs || reports, 'omega-btn-riser', '\u2338', 'Riser', 'Diagram',
+      'Riser diagram \u2014 rooms banded, panels on a baseline with transformers above ' +
+      'them, keyed notes numbered by where they are placed, grounding taps. ' +
+      'Opens in Architecture Mode.', jump('riser'));
+    add(docs || reports, 'omega-btn-sld', '\u26A1', 'One-Line', 'Builder',
+      'One-line from a topology, with the electrical design rule check \u2014 ' +
+      'unenergised equipment, parallel sources without a tie, voltage mismatch, ' +
+      'overcurrent coordination, conductor against its device. ' +
+      'Opens in Architecture Mode.', jump('oneline'));
+    add(docs || reports, 'omega-btn-drc', '\u2713', 'Design', 'Review',
+      'Screening pass over the drawing \u2014 equipment clashes, working-space ' +
+      'encroachment, and whatever the pier, grading and array passes flagged. ' +
+      'Opens in Architecture Mode.', jump('review'));
+
+    /* workbooks, with the other reports */
+    add(reports, 'omega-btn-permit-matrix', '\u25A6', 'Permitting', 'Matrix',
+      'Permitting matrix from the drawn system \u2014 permits and their triggers, ' +
+      'dependencies, a computed critical path, fees and risks, as a workbook',
+      openPermitMatrix);
+    add(reports, 'omega-btn-bill-analysis', '\u25A4', 'Bill', 'Analysis',
+      'Utility bill analysis and BESS sizing sweep \u2014 every demand component ' +
+      'priced on its own window, the TOU spread, and a sizing curve, as a workbook',
+      openBillAnalysis);
     return true;
   }
 
