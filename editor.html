@@ -110114,6 +110114,19 @@ function omRunAll(p){
 #omega-arch .arch-rv b{ font-family:var(--font-mono); font-size:9.5px; letter-spacing:.03em }
 #omega-arch .arch-rv u{ display:block; text-decoration:none; color:var(--sub); font-size:9.5px; margin-top:2px }
 
+/* --- schematics spec editor -------------------------------------------- */
+#omega-arch .arch-spec{
+  width:100%; height:150px; margin:6px 0; padding:7px;
+  background:var(--panel-3); color:var(--text); border:1px solid var(--line);
+  border-radius:var(--radius-sm); font-family:var(--font-mono); font-size:10px;
+  line-height:1.45; resize:vertical;
+}
+#omega-arch .arch-seg{ display:flex; gap:4px; margin-bottom:6px }
+#omega-arch .arch-seg .arch-btn{ flex:1 }
+#omega-arch .arch-btn.on{ background:var(--accent); color:#06121f; border-color:var(--accent) }
+#omega-arch .arch-row{ display:flex; gap:4px }
+#omega-arch .arch-row .arch-btn{ flex:1 }
+
 </style>
 <!-- ===================================================================
      OMEGA CAD BLOCK  —  self-contained, no network, no build step
@@ -114077,6 +114090,1450 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script id="omega-arch-loadsum-js">
+/* ====================================================================== *
+ *  OMEGA LOAD SUMMARY  —  NEC 220 demand factors, and a table that foots *
+ *  ------------------------------------------------------------------    *
+ *  Modelled on the CarMax store 4010 riser sheet (E6.0, Craig L Molnar    *
+ *  P.E., rev 12), which carries four LOAD SUMMARY tables in the form      *
+ *                                                                         *
+ *      DESCRIPTION | CONNECTED LOAD | DEMAND FACTOR | DEMAND LOAD         *
+ *                                                                         *
+ *  and a TRANSFORMER SCHEDULE. Both are reproduced here, with the         *
+ *  demand factors applied from the code rather than typed in.             *
+ *                                                                         *
+ *  THE CHECK THAT MATTERS IS THE BORING ONE.                              *
+ *  On that sheet MSB1 and MSB4 foot exactly. MSB2's rows sum 39.8 kVA     *
+ *  above its stated total and MSB3's sum 67.2 kVA below it — on a sheet   *
+ *  released for construction, sizing four 1,000 A services. Nothing in a  *
+ *  drafting tool catches that, because the total is typed. So this engine *
+ *  computes the total AND re-adds the column, and says when the two       *
+ *  disagree.                                                              *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.loadsum) return;
+
+  /* ------------------------------------------------------------------ *
+   *  DEMAND FACTORS                                                     *
+   *  Each carries the article it comes from, so a reviewer can argue     *
+   *  with the rule rather than with the number.                          *
+   * ------------------------------------------------------------------ */
+  var RULES = {
+    lighting: {
+      label: 'Lighting', code: 'NEC 210.20(A) / 215.2(A)(1)',
+      text: '125%',
+      apply: function (kva) { return kva * 1.25; }
+    },
+    receptacles: {
+      label: 'Receptacles', code: 'NEC 220.44',
+      text: '1st 10 kVA @ 100% plus remainder @ 50%',
+      apply: function (kva) { return kva <= 10 ? kva : 10 + (kva - 10) * 0.5; }
+    },
+    motors: {
+      label: 'Motors', code: 'NEC 430.24',
+      text: '100% plus 25% of largest motor',
+      apply: function (kva, ctx) { return kva + 0.25 * ((ctx && ctx.largestMotorKva) || 0); }
+    },
+    cooling: {
+      label: 'Air Conditioning', code: 'NEC 220.60',
+      text: 'non-coincident with heating',
+      apply: function (kva, ctx) {
+        /* 220.60: where loads cannot operate at the same time, only the
+           larger is counted. The sheet writes this as a 0% factor on the
+           smaller of the pair, with a footnote. */
+        return (ctx && ctx.heatingKva > kva) ? 0 : kva;
+      }
+    },
+    heating: {
+      label: 'Heating', code: 'NEC 220.60',
+      text: 'non-coincident with air conditioning',
+      apply: function (kva, ctx) {
+        return (ctx && ctx.coolingKva > kva) ? 0 : kva;
+      }
+    },
+    misc: {
+      label: 'Miscellaneous', code: 'NEC 220.14',
+      text: '100%',
+      apply: function (kva) { return kva; }
+    },
+    ev: {
+      label: 'EV Chargers', code: 'NEC 625.42',
+      text: '125%',
+      apply: function (kva) { return kva * 1.25; }
+    }
+  };
+  var ORDER = ['lighting', 'receptacles', 'motors', 'cooling', 'heating', 'misc', 'ev'];
+
+  /* Amps from kVA. The convention is stated because the CarMax sheet's own
+     amps sit 0.17% above kVA/(480 x sqrt3) — consistent across all four
+     tables, so it is a house convention, not an error. Recording which one
+     is in use stops a reviewer chasing a rounding difference. */
+  function amps(kva, volts, phase) {
+    var v = volts || 480;
+    return phase === 1 ? (kva * 1000) / v : (kva * 1000) / (v * Math.sqrt(3));
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SUMMARY                                                            *
+   *  loads: { lighting, receptacles, motors, cooling, heating, misc, ev }
+   *         in kVA, plus largestMotorKva.
+   * ------------------------------------------------------------------ */
+  function summary(name, loads, opts) {
+    opts = opts || {};
+    var volts = opts.volts || 480, phase = opts.phase || 3;
+    var ctx = {
+      largestMotorKva: +loads.largestMotorKva || 0,
+      coolingKva: +loads.cooling || 0,
+      heatingKva: +loads.heating || 0
+    };
+    var rows = [], connected = 0, demand = 0;
+    ORDER.forEach(function (k) {
+      var c = +loads[k] || 0;
+      var r = RULES[k];
+      var d = r.apply(c, ctx);
+      connected += c; demand += d;
+      rows.push({
+        key: k, label: r.label, connectedKva: +c.toFixed(2),
+        factorText: (k === 'cooling' || k === 'heating')
+          ? (d === 0 && c > 0 ? '0% *' : '100%') : r.text,
+        code: r.code, demandKva: +d.toFixed(3)
+      });
+    });
+
+    /* 220.60 footnote earns its place only when a pair actually collides */
+    var notes = [];
+    if (ctx.coolingKva > 0 && ctx.heatingKva > 0) {
+      notes.push('* A/C and heat shall not operate simultaneously; the smaller ' +
+                 'is dropped under NEC 220.60.');
+    }
+    if (ctx.largestMotorKva <= 0 && (+loads.motors || 0) > 0) {
+      notes.push('No largest-motor value given, so NEC 430.24 added nothing. ' +
+                 'The motor demand is understated until one is entered.');
+    }
+
+    return {
+      name: name, rows: rows,
+      connectedKva: +connected.toFixed(2), demandKva: +demand.toFixed(2),
+      connectedAmps: +amps(connected, volts, phase).toFixed(1),
+      demandAmps: +amps(demand, volts, phase).toFixed(1),
+      volts: volts, phase: phase, notes: notes,
+      basis: 'kVA -> A at ' + volts + ' V' + (phase === 3 ? ', 3-phase (sqrt3)' : ', 1-phase')
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  FOOT THE TABLE                                                     *
+   *  Re-add a table that already carries stated totals, and report the   *
+   *  disagreement. This is what catches a typed total.                   *
+   * ------------------------------------------------------------------ */
+  function foot(table, opts) {
+    opts = opts || {};
+    var tol = opts.tolKva == null ? 0.15 : opts.tolKva;
+    var c = 0, d = 0;
+    (table.rows || []).forEach(function (r) {
+      c += +r.connectedKva || 0;
+      d += +r.demandKva || 0;
+    });
+    var sc = +table.statedConnectedKva, sd = +table.statedDemandKva;
+    var out = {
+      name: table.name || null,
+      sumConnectedKva: +c.toFixed(2), sumDemandKva: +d.toFixed(2),
+      statedConnectedKva: isFinite(sc) ? sc : null,
+      statedDemandKva: isFinite(sd) ? sd : null,
+      findings: []
+    };
+    if (isFinite(sc) && Math.abs(c - sc) > tol) {
+      out.findings.push({
+        column: 'connected', sum: +c.toFixed(2), stated: sc,
+        deltaKva: +(c - sc).toFixed(2),
+        message: (table.name || 'Table') + ': the connected column sums to ' +
+          c.toFixed(1) + ' kVA but the total says ' + sc.toFixed(1) + ' kVA (' +
+          (c > sc ? 'total is ' + (c - sc).toFixed(1) + ' kVA low'
+                  : 'total is ' + (sc - c).toFixed(1) + ' kVA high') + ').'
+      });
+    }
+    if (isFinite(sd) && Math.abs(d - sd) > tol) {
+      out.findings.push({
+        column: 'demand', sum: +d.toFixed(2), stated: sd,
+        deltaKva: +(d - sd).toFixed(2),
+        message: (table.name || 'Table') + ': the demand column sums to ' +
+          d.toFixed(1) + ' kVA but the total says ' + sd.toFixed(1) + ' kVA (' +
+          (d > sd ? 'total is ' + (d - sd).toFixed(1) + ' kVA low'
+                  : 'total is ' + (sd - d).toFixed(1) + ' kVA high') + ').'
+      });
+    }
+    /* Row-level: does each demand figure follow from its own factor? */
+    (table.rows || []).forEach(function (r) {
+      var rule = RULES[r.key];
+      if (!rule || r.demandKva == null) return;
+      var ctx = { largestMotorKva: table.largestMotorKva || 0,
+                  coolingKva: table.coolingKva || 0, heatingKva: table.heatingKva || 0 };
+      var want = rule.apply(+r.connectedKva || 0, ctx);
+      if (Math.abs(want - r.demandKva) > Math.max(0.05, Math.abs(want) * 0.002)) {
+        out.findings.push({
+          row: r.label, column: 'row',
+          sum: +want.toFixed(3), stated: +r.demandKva,
+          deltaKva: +(r.demandKva - want).toFixed(3),
+          message: (table.name || 'Table') + ' / ' + r.label + ': ' +
+            (+r.connectedKva).toFixed(1) + ' kVA at "' + rule.text + '" gives ' +
+            want.toFixed(2) + ' kVA, but the row says ' + (+r.demandKva).toFixed(2) + '.'
+        });
+      }
+    });
+    out.foots = out.findings.length === 0;
+    return out;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SERVICE ROLL-UP                                                    *
+   *  Several disconnects on one service: 230.71 allows up to six, and    *
+   *  the sum is what the service has to carry.                           *
+   * ------------------------------------------------------------------ */
+  function service(summaries, opts) {
+    opts = opts || {};
+    var c = 0, d = 0;
+    summaries.forEach(function (s) { c += s.connectedKva; d += s.demandKva; });
+    var volts = opts.volts || 480, phase = opts.phase || 3;
+    var out = {
+      disconnects: summaries.length,
+      connectedKva: +c.toFixed(2), demandKva: +d.toFixed(2),
+      connectedAmps: +amps(c, volts, phase).toFixed(1),
+      demandAmps: +amps(d, volts, phase).toFixed(1),
+      notes: []
+    };
+    if (summaries.length > 6) {
+      out.notes.push('NEC 230.71 permits at most six service disconnects; this is ' +
+                     summaries.length + '.');
+    }
+    if (E.wire && opts.sizeService !== false) {
+      var f = E.wire.sizeFeeder({ loadAmps: out.demandAmps, volts: volts, phase: phase,
+                                  continuous: false, terminationC: 75 });
+      if (f.ok) {
+        out.service = { size: f.size, sets: f.sets, ocpdAmps: f.ocpdAmps, egc: f.egcSize };
+      }
+    }
+    return out;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  TRANSFORMER SCHEDULE                                               *
+   * ------------------------------------------------------------------ */
+  var STD_KVA = [3, 6, 9, 15, 30, 45, 75, 112.5, 150, 225, 300, 500, 750, 1000];
+
+  function transformerSchedule(units, opts) {
+    opts = opts || {};
+    var rows = [], findings = [];
+    units.forEach(function (u) {
+      var kva = +u.kva || 0;
+      var loadKva = +u.loadKva || 0;
+      var r = {
+        mark: u.mark, kva: kva,
+        primary: u.primary || '480 DELTA',
+        secondary: u.secondary || '208Y/120',
+        k: u.k == null ? '' : u.k,
+        remarks: u.remarks || (u.mounting === 'floor' ? 'FLOOR MOUNTED'
+          : 'SUSPENDED FROM STRUCTURE VIA UNISTRUT AND THREADED RODS'),
+        loadKva: loadKva || null,
+        loadingPct: (kva > 0 && loadKva > 0) ? +(loadKva / kva * 100).toFixed(1) : null
+      };
+      if (kva > 0 && STD_KVA.indexOf(kva) < 0) {
+        findings.push(r.mark + ': ' + kva + ' kVA is not a standard dry-type rating.');
+      }
+      if (r.loadingPct != null && r.loadingPct > 100) {
+        findings.push(r.mark + ': loaded to ' + r.loadingPct + '% of nameplate.');
+      }
+      /* K-factor belongs on transformers feeding non-linear load; a panel of
+         electronic ballasts and chargers without one is worth a question. */
+      if ((u.nonLinear === true) && (u.k == null || u.k === '')) {
+        findings.push(r.mark + ': feeds non-linear load but carries no K-factor.');
+      }
+      rows.push(r);
+    });
+    return { rows: rows, findings: findings,
+             note: opts.tapNote ||
+               'ALL TRANSFORMERS SHALL HAVE 2 - 2 1/2% F.C.A.N. 2 1/2% F.C.B.N. ' +
+               'TAPS UNLESS NOTED OTHERWISE.' };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SHEET TABLES                                                       *
+   *  Rows in the order the CarMax sheet prints them, ready for the       *
+   *  schedule renderer or a workbook.                                    *
+   * ------------------------------------------------------------------ */
+  function toSheetRows(sum, subtitle) {
+    var rows = [['LOAD SUMMARY ' + sum.name + (subtitle ? '   (' + subtitle + ')' : '')],
+                ['DESCRIPTION', 'CONNECTED LOAD', 'DEMAND FACTOR', 'DEMAND LOAD']];
+    sum.rows.forEach(function (r) {
+      rows.push([r.label.toUpperCase(), r.connectedKva.toFixed(1),
+                 r.factorText, r.demandKva.toFixed(1)]);
+    });
+    rows.push(['TOTAL LOAD',
+               sum.connectedKva.toFixed(1) + ' KVA / ' + sum.connectedAmps.toFixed(1) + ' AMPS',
+               '---',
+               sum.demandKva.toFixed(1) + ' KVA / ' + sum.demandAmps.toFixed(1) + ' AMPS']);
+    sum.notes.forEach(function (nt) { rows.push([nt]); });
+    return rows;
+  }
+
+  E.loadsum = {
+    RULES: RULES, ORDER: ORDER, STD_KVA: STD_KVA,
+    amps: amps, summary: summary, foot: foot, service: service,
+    transformerSchedule: transformerSchedule, toSheetRows: toSheetRows
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-arch-panel-js">
+/* ====================================================================== *
+ *  OMEGA PANEL  —  panelboard and switchboard schedules                  *
+ *  ------------------------------------------------------------------    *
+ *  Format taken from CarMax store 4046, sheet E6.0A rev 5 (Craig L        *
+ *  Molnar P.E.): odd circuits down the left, even down the right, load    *
+ *  split across LTG / RCPT / MTR / A/C / HTG / MISC, breaker trip and     *
+ *  poles either side of a centre phase ladder, and a load summary that    *
+ *  applies the continuous factor and converts to amps.                    *
+ *                                                                         *
+ *  WHAT A SCHEDULE CAN GET WRONG THAT NOBODY SEES.                        *
+ *                                                                         *
+ *  1. Phase balance. A panel of two-pole loads lands on A-B, B-C, C-A in  *
+ *     turn and the imbalance is invisible until the neutral is measured.  *
+ *     It is arithmetic, so it is computed here.                           *
+ *  2. Pole placement. A two-pole breaker needs two consecutive positions  *
+ *     of the same parity, both free. Overlaps and runs off the end of the *
+ *     bus are silent on a plot.                                           *
+ *  3. The summary against the circuits. On the sheet above, EV1 prints    *
+ *     "MISC: 233.8 kVA x 1.25 = 375.8 kVA" — the multiplier gives 292.25. *
+ *     The amps line beside it (649.0 x 1.25 = 811.2 A) is right, and the  *
+ *     equipment is sized on that, so the panel is fine and the printed    *
+ *     kVA is not. Only re-adding the column finds it.                     *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.panel) return;
+
+  var CATS = ['ltg', 'rcpt', 'mtr', 'ac', 'htg', 'misc'];
+  var CAT_LABEL = { ltg: 'LTG', rcpt: 'RCPT', mtr: 'MTR', ac: 'A/C', htg: 'HTG', misc: 'MISC' };
+  var PHASES = ['A', 'B', 'C'];
+
+  /* Position -> phase. On a three-phase panelboard the bus alternates every
+     pair of positions: 1 and 2 land on A, 3 and 4 on B, 5 and 6 on C. */
+  function phaseOf(pos, phases) {
+    if ((phases || 3) < 3) return PHASES[Math.floor((pos - 1) / 2) % 2];
+    return PHASES[Math.floor((pos - 1) / 2) % 3];
+  }
+
+  function amps(kva, volts, phases) {
+    if (!(volts > 0)) return 0;
+    return phases === 1 ? (kva * 1000) / volts : (kva * 1000) / (volts * Math.sqrt(3));
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  BUILD A SCHEDULE                                                   *
+   *  cfg: { name, volts, phases, wires, positions, mains, busAmps,
+   *         mounting, faultDuty, circuits:[{ pos, serves, poles, trip,
+   *         load:{ misc: 16.7 }, note, continuous }] }
+   * ------------------------------------------------------------------ */
+  function schedule(cfg) {
+    cfg = cfg || {};
+    var positions = cfg.positions || 42;
+    var phases = cfg.phases || 3;
+    var volts = cfg.volts || 208;
+    var slots = {};          /* pos -> circuit or 'continuation'          */
+    var findings = [];
+    var circuits = (cfg.circuits || []).slice();
+
+    circuits.forEach(function (c) {
+      var poles = c.poles || 1, pos = c.pos;
+      if (!(pos >= 1 && pos <= positions)) {
+        findings.push('Circuit "' + (c.serves || '?') + '" is at position ' + pos +
+                      ', outside the ' + positions + '-position panel.');
+        return;
+      }
+      /* A multi-pole breaker takes consecutive positions of the SAME parity:
+         a two-pole at 1 occupies 1 and 3, not 1 and 2. */
+      var take = [];
+      for (var k = 0; k < poles; k++) take.push(pos + k * 2);
+      var last = take[take.length - 1];
+      if (last > positions) {
+        findings.push('A ' + poles + '-pole breaker at position ' + pos + ' would run to ' +
+                      last + ', past the end of a ' + positions + '-position panel.');
+        return;
+      }
+      var clash = take.filter(function (p) { return slots[p]; });
+      if (clash.length) {
+        findings.push('Position ' + clash.join(', ') + ' is taken twice — "' +
+                      (c.serves || '?') + '" overlaps "' +
+                      (slots[clash[0]].serves || slots[clash[0]].of.serves || '?') + '".');
+        return;
+      }
+      take.forEach(function (p, i) {
+        slots[p] = i === 0 ? c : { continuation: true, of: c };
+      });
+      c._positions = take;
+      c._phases = take.map(function (p) { return phaseOf(p, phases); });
+    });
+
+    /* ---- totals by category, and by phase ---- */
+    var byCat = {}, byPhase = { A: 0, B: 0, C: 0 }, connected = 0;
+    CATS.forEach(function (k) { byCat[k] = 0; });
+    circuits.forEach(function (c) {
+      if (!c._positions) return;
+      var l = c.load || {};
+      var sum = 0;
+      CATS.forEach(function (k) {
+        var v = +l[k] || 0;
+        byCat[k] += v; sum += v;
+      });
+      connected += sum;
+      /* a multi-pole load is shared equally across the phases it lands on */
+      var per = sum / c._phases.length;
+      c._phases.forEach(function (ph) { byPhase[ph] += per; });
+    });
+
+    /* ---- phase balance ---- */
+    var used = phases >= 3 ? ['A', 'B', 'C'] : ['A', 'B'];
+    var loads = used.map(function (p) { return byPhase[p]; });
+    var mx = Math.max.apply(null, loads), mn = Math.min.apply(null, loads);
+    var avg = loads.reduce(function (s, v) { return s + v; }, 0) / loads.length;
+    var imbalancePct = avg > 0 ? ((mx - mn) / avg) * 100 : 0;
+    if (avg > 0 && imbalancePct > (cfg.imbalanceLimitPct == null ? 10 : cfg.imbalanceLimitPct)) {
+      findings.push('Phase imbalance is ' + imbalancePct.toFixed(1) + '% (' +
+        used.map(function (p) { return p + ' ' + byPhase[p].toFixed(1); }).join(', ') +
+        ' kVA). Rearranging the two-pole breakers usually fixes it.');
+    }
+
+    /* ---- demand: continuous loads at 125% ---- */
+    var demand = 0, contKva = 0;
+    circuits.forEach(function (c) {
+      if (!c._positions) return;
+      var l = c.load || {}, sum = 0;
+      CATS.forEach(function (k) { sum += +l[k] || 0; });
+      var f = (c.continuous === false) ? 1 : 1.25;
+      if (c.continuous !== false) contKva += sum;
+      demand += sum * f;
+    });
+
+    var connAmps = amps(connected, volts, phases);
+    var demAmps = amps(demand, volts, phases);
+
+    /* ---- against the equipment ---- */
+    if (cfg.busAmps && demAmps > cfg.busAmps) {
+      findings.push('Demand is ' + demAmps.toFixed(0) + ' A against a ' + cfg.busAmps +
+                    ' A bus.');
+    }
+    if (cfg.mainsAmps && demAmps > cfg.mainsAmps) {
+      findings.push('Demand is ' + demAmps.toFixed(0) + ' A against a ' + cfg.mainsAmps +
+                    ' A main breaker.');
+    }
+    if (cfg.busAmps && cfg.mainsAmps && cfg.mainsAmps > cfg.busAmps) {
+      findings.push('The ' + cfg.mainsAmps + ' A main exceeds the ' + cfg.busAmps +
+                    ' A bus rating.');
+    }
+
+    var filled = Object.keys(slots).length;
+    return {
+      name: cfg.name || 'PANEL', volts: volts, phases: phases, wires: cfg.wires || 4,
+      positions: positions, mounting: cfg.mounting || null,
+      mainsAmps: cfg.mainsAmps || null, busAmps: cfg.busAmps || null,
+      faultDuty: cfg.faultDuty || null,
+      circuits: circuits, slots: slots,
+      byCategory: byCat, byPhase: byPhase,
+      connectedKva: +connected.toFixed(2), demandKva: +demand.toFixed(2),
+      continuousKva: +contKva.toFixed(2),
+      connectedAmps: +connAmps.toFixed(1), demandAmps: +demAmps.toFixed(1),
+      imbalancePct: +imbalancePct.toFixed(1),
+      spacesUsed: filled, spacesFree: positions - filled,
+      findings: findings
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  FOOT A SCHEDULE THAT ALREADY CARRIES TOTALS                        *
+   * ------------------------------------------------------------------ */
+  function foot(sch, stated, opts) {
+    opts = opts || {};
+    var tol = opts.tolKva == null ? 0.15 : opts.tolKva;
+    var out = [];
+    if (stated.totalKva != null && Math.abs(sch.connectedKva - stated.totalKva) > tol) {
+      out.push('Total load: the circuits sum to ' + sch.connectedKva.toFixed(2) +
+               ' kVA but the header says ' + (+stated.totalKva).toFixed(2) + ' kVA.');
+    }
+    CATS.forEach(function (k) {
+      if (stated[k] == null) return;
+      if (Math.abs(sch.byCategory[k] - stated[k]) > tol) {
+        out.push(CAT_LABEL[k] + ': the column sums to ' + sch.byCategory[k].toFixed(2) +
+                 ' kVA but the summary says ' + (+stated[k]).toFixed(2) + ' kVA.');
+      }
+    });
+    /* the "x 1.25 =" line, which is where a stale number hides */
+    if (stated.factored != null && stated.factoredFrom != null) {
+      var want = stated.factoredFrom * (stated.factor == null ? 1.25 : stated.factor);
+      if (Math.abs(want - stated.factored) > Math.max(tol, want * 0.002)) {
+        out.push('The summary prints ' + (+stated.factoredFrom).toFixed(1) + ' kVA \u00D7 ' +
+                 (stated.factor == null ? 1.25 : stated.factor) + ' = ' +
+                 (+stated.factored).toFixed(1) + ' kVA, but that multiplication gives ' +
+                 want.toFixed(2) + ' kVA.');
+      }
+    }
+    if (stated.amps != null && Math.abs(sch.connectedAmps - stated.amps) > 1) {
+      out.push('Connected amps: computed ' + sch.connectedAmps.toFixed(1) +
+               ' A, the sheet says ' + (+stated.amps).toFixed(1) + ' A.');
+    }
+    return { foots: out.length === 0, findings: out };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SHEET ROWS                                                         *
+   *  Odd left, even right, with the continuation rows marked the way the *
+   *  drawing hatches them.                                               *
+   * ------------------------------------------------------------------ */
+  function toSheetRows(sch) {
+    var rows = [];
+    rows.push(['PANELBOARD ' + sch.name + ' SCHEDULE']);
+    rows.push(['VOLTAGE: ' + sch.volts + 'V, ' + sch.phases + ' PH, ' + sch.wires + ' W',
+               'MAINS: ' + (sch.mainsAmps ? sch.mainsAmps + 'A MAIN BREAKER' : 'MLO'),
+               'MOUNTING: ' + (sch.mounting || '-'),
+               'FAULT DUTY: ' + (sch.faultDuty ? sch.faultDuty.toLocaleString() + 'A' : '-')]);
+    rows.push(['BUS SIZE: ' + (sch.busAmps ? sch.busAmps + 'A' : '-'),
+               'TOTAL LOAD: ' + sch.connectedKva.toFixed(2) + ' KVA',
+               'SPACES: ' + sch.spacesUsed + ' used / ' + sch.spacesFree + ' free', '']);
+    var head = ['NO', 'SERVES', 'NOTE'];
+    CATS.forEach(function (k) { head.push(CAT_LABEL[k]); });
+    head = head.concat(['TRIP', 'P', 'PH']);
+    head = head.concat(['PH', 'P', 'TRIP']);
+    CATS.slice().reverse().forEach(function (k) { head.push(CAT_LABEL[k]); });
+    head = head.concat(['NOTE', 'SERVES', 'NO']);
+    rows.push(head);
+
+    function side(pos) {
+      var s = sch.slots[pos];
+      if (!s) return ['', '', '', '', '', '', '', '', '', '', '', phaseOf(pos, sch.phases)];
+      if (s.continuation) {
+        return ['///', '', '', '', '', '', '', '', '///', '///', phaseOf(pos, sch.phases)]
+          .slice(0, 11).concat([phaseOf(pos, sch.phases)]).slice(0, 12);
+      }
+      var l = s.load || {};
+      var out = [s.serves || '', s.note || ''];
+      CATS.forEach(function (k) { out.push(l[k] ? (+l[k]).toFixed(1) : ''); });
+      out.push(s.trip == null ? '' : s.trip);
+      out.push(s.poles || 1);
+      out.push(phaseOf(pos, sch.phases));
+      return out;
+    }
+    for (var i = 1; i <= sch.positions; i += 2) {
+      var L = side(i), Rt = side(i + 1);
+      rows.push([i].concat(L).concat(Rt.slice().reverse()).concat([i + 1]));
+    }
+    rows.push([]);
+    rows.push(['LOAD SUMMARY'].concat(CATS.map(function (k) {
+      return CAT_LABEL[k] + ': ' + sch.byCategory[k].toFixed(1) + ' kVA'; })));
+    rows.push(['Connected', sch.connectedKva.toFixed(2) + ' kVA',
+               sch.connectedAmps.toFixed(1) + ' A']);
+    rows.push(['Demand (continuous at 125%)', sch.demandKva.toFixed(2) + ' kVA',
+               sch.demandAmps.toFixed(1) + ' A']);
+    rows.push(['Phase balance', 'A ' + sch.byPhase.A.toFixed(1) +
+               '  B ' + sch.byPhase.B.toFixed(1) + '  C ' + sch.byPhase.C.toFixed(1) + ' kVA',
+               sch.imbalancePct.toFixed(1) + '% imbalance']);
+    sch.findings.forEach(function (f) { rows.push(['', f]); });
+    return rows;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SWITCHBOARD                                                        *
+   *  One row per switch, load broken out the same way, so a switchboard  *
+   *  and the panels it feeds add up to the same numbers.                 *
+   * ------------------------------------------------------------------ */
+  function switchboard(cfg) {
+    cfg = cfg || {};
+    var volts = cfg.volts || 480, phases = cfg.phases || 3;
+    var rows = [], total = 0, byCat = {};
+    CATS.forEach(function (k) { byCat[k] = 0; });
+    (cfg.switches || []).forEach(function (s, i) {
+      var l = s.load || {}, sum = 0;
+      CATS.forEach(function (k) { var v = +l[k] || 0; byCat[k] += v; sum += v; });
+      total += sum;
+      rows.push({ no: s.no == null ? i + 1 : s.no, serves: s.serves || '',
+                  trip: s.trip == null ? null : s.trip, poles: s.poles || 3,
+                  load: l, totalKva: +sum.toFixed(2), spare: !!s.spare });
+    });
+    var findings = [];
+    var demAmps = amps(total, volts, phases);
+    if (cfg.busAmps && demAmps > cfg.busAmps) {
+      findings.push('Switchboard load is ' + demAmps.toFixed(0) + ' A against a ' +
+                    cfg.busAmps + ' A bus.');
+    }
+    /* a switchboard must actually carry the panels hung off it */
+    if (cfg.feeds && cfg.feeds.length) {
+      var fed = cfg.feeds.reduce(function (s2, p) { return s2 + (p.connectedKva || 0); }, 0);
+      if (Math.abs(fed - total) > Math.max(1, fed * 0.02)) {
+        findings.push('The switchboard schedule totals ' + total.toFixed(1) +
+          ' kVA but the panels it feeds total ' + fed.toFixed(1) + ' kVA.');
+      }
+    }
+    return { name: cfg.name || 'MSB', volts: volts, phases: phases,
+             busAmps: cfg.busAmps || null, faultDuty: cfg.faultDuty || null,
+             rows: rows, byCategory: byCat,
+             totalKva: +total.toFixed(2), totalAmps: +demAmps.toFixed(1),
+             findings: findings };
+  }
+
+  E.panel = {
+    CATS: CATS, CAT_LABEL: CAT_LABEL, phaseOf: phaseOf, amps: amps,
+    schedule: schedule, foot: foot, toSheetRows: toSheetRows, switchboard: switchboard
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-arch-riser-js">
+/* ====================================================================== *
+ *  OMEGA RISER  —  electrical riser diagrams                             *
+ *  ------------------------------------------------------------------    *
+ *  A riser is not a one-line. A one-line shows electrical topology with   *
+ *  no geography; a riser shows WHERE the equipment is — banded by room,   *
+ *  with feeders routed between bands and keyed notes carrying the         *
+ *  installation requirements that would otherwise clutter the diagram.    *
+ *                                                                         *
+ *  Conventions taken from CarMax store 4010, sheet E6.0 rev 12            *
+ *  (Craig L Molnar P.E.):                                                 *
+ *                                                                         *
+ *    - rooms are bordered vertical bands, name set in the top-left        *
+ *    - panels draw as a double-line box, transformers with a banded top   *
+ *    - feeders are DASHED; the grounding electrode conductor runs as one  *
+ *      continuous line across every band at the foot of the sheet         *
+ *    - keyed notes are numbers in ellipses, tied to a run by a leader     *
+ *      with a tick where the note applies                                 *
+ *    - off-sheet destinations are an arrow with the panel circuit named   *
+ *                                                                         *
+ *  THE CHECK THIS BRINGS.                                                 *
+ *  Keyed notes are the part of a riser that rots: notes get deleted and   *
+ *  bubbles keep pointing at the gap, or a note is written and never       *
+ *  placed. Both are invisible on a plot. Numbering is derived from use    *
+ *  here, and orphan bubbles and unused notes are reported.                *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.riser) return;
+
+  var IN = 12;
+
+  /* ------------------------------------------------------------------ *
+   *  LAYERS                                                             *
+   * ------------------------------------------------------------------ */
+  function layers() {
+    E.ensureLayer('E-RISR-BAND', 8);    /* room band borders              */
+    E.ensureLayer('E-RISR-EQPM', 2);    /* panels, transformers, meters   */
+    E.ensureLayer('E-RISR-FEED', 4);    /* feeders, dashed                */
+    E.ensureLayer('E-RISR-GRND', 3);    /* grounding electrode conductor  */
+    E.ensureLayer('E-RISR-NOTE', 1);    /* keyed note bubbles and leaders */
+    E.ensureLayer('E-RISR-TEXT', 7);    /* labels                         */
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  DEVICE GEOMETRY                                                    *
+   *  Drawn in inches at sheet scale — a riser is a schematic, so the     *
+   *  sizes are drafting sizes, not equipment footprints. That is the     *
+   *  one place a riser legitimately departs from true scale, and it is   *
+   *  worth saying so rather than leaving a reader to assume.             *
+   * ------------------------------------------------------------------ */
+  /* Tiers. On the sheet the panels sit on one baseline and the
+     transformers float on a tier above, each dropping straight into the
+     panel it feeds. Laying every device out in a single row loses that
+     relationship and forces every feeder up and over, which is what made
+     the first version read as a flat stack of lines rather than a riser. */
+  var TIER = { panel: 0, load: 0, bldg: 0, box: 0, steel: 0, gnd: 0,
+               xfmr: 1, meter: 1, ct: 1, disco: 1, ats: 1 };
+
+  var DEV = {
+    panel:  { w: 30, h: 48, label: 2 },
+    xfmr:   { w: 30, h: 26, label: 1 },
+    meter:  { w: 12, h: 12, label: 0 },
+    disco:  { w: 16, h: 20, label: 1 },
+    ct:     { w: 20, h: 16, label: 1 },
+    ats:    { w: 26, h: 22, label: 1 },
+    gnd:    { w: 14, h: 14, label: 0 },
+    steel:  { w: 10, h: 26, label: 0 },
+    box:    { w: 14, h: 12, label: 0 }
+  };
+
+  /* Break a label to a width, at spaces where possible. Character width is
+     about 0.6 of the text height for the plotted font. */
+  function wrapText(text, maxW, h) {
+    var per = Math.max(1, Math.floor(maxW / (h * 0.6)));
+    var words = String(text).split(/\s+/), lines = [], cur = '';
+    words.forEach(function (w) {
+      if (!cur) { cur = w; return; }
+      if ((cur + ' ' + w).length <= per) cur += ' ' + w;
+      else { lines.push(cur); cur = w; }
+    });
+    if (cur) lines.push(cur);
+    return lines.length ? lines : [''];
+  }
+
+  function drawDevice(doc, kind, x, y, label) {
+    var d = DEV[kind] || DEV.box;
+    var w = d.w, h = d.h, L = 'E-RISR-EQPM';
+    function rect(cx, cy, ww, hh, layer) {
+      E.add(doc, { t: 'pline', closed: true, layer: layer || L, pts: [
+        { x: cx - ww / 2, y: cy - hh / 2 }, { x: cx + ww / 2, y: cy - hh / 2 },
+        { x: cx + ww / 2, y: cy + hh / 2 }, { x: cx - ww / 2, y: cy + hh / 2 }] });
+    }
+    if (kind === 'panel') {
+      rect(x, y, w, h);
+      rect(x, y, w - 6, h - 6);                    /* the inner trim line */
+      /* corner mounting dots, as the sheet draws them */
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function (s) {
+        E.add(doc, { t: 'circle', layer: L,
+                     cx: x + s[0] * (w / 2 - 2), cy: y + s[1] * (h / 2 - 2), r: 0.8 });
+      });
+    } else if (kind === 'xfmr') {
+      rect(x, y, w, h);
+      /* the banded top that reads as a transformer on a riser */
+      E.add(doc, { t: 'pline', closed: true, layer: L, pts: [
+        { x: x - w / 2, y: y + h / 2 - 5 }, { x: x + w / 2, y: y + h / 2 - 5 },
+        { x: x + w / 2, y: y + h / 2 }, { x: x - w / 2, y: y + h / 2 }] });
+      E.add(doc, { t: 'line', layer: L, x1: x - w / 2 - 4, y1: y + h / 2 + 3,
+                   x2: x + w / 2 + 4, y2: y + h / 2 + 3 });
+    } else if (kind === 'meter') {
+      rect(x, y, w, h);
+      E.add(doc, { t: 'circle', layer: L, cx: x, cy: y, r: 4 });
+      E.add(doc, { t: 'text', layer: 'E-RISR-TEXT', x: x, y: y - 1.6, h: 4.4,
+                   rot: 0, s: 'M', mid: true });
+    } else if (kind === 'gnd') {
+      /* the earth stack */
+      E.add(doc, { t: 'line', layer: 'E-RISR-GRND', x1: x, y1: y + 7, x2: x, y2: y });
+      [[7, 0], [4.6, -3], [2.4, -6]].forEach(function (s) {
+        E.add(doc, { t: 'line', layer: 'E-RISR-GRND',
+                     x1: x - s[0], y1: y + s[1], x2: x + s[0], y2: y + s[1] });
+      });
+    } else if (kind === 'disco') {
+      /* a disconnect reads as the blade across the enclosure */
+      rect(x, y, w, h);
+      E.add(doc, { t: 'line', layer: L, x1: x - w / 2 + 2, y1: y - h / 2 + 2,
+                   x2: x + w / 2 - 2, y2: y + h / 2 - 2 });
+    } else if (kind === 'steel') {
+      rect(x, y, w, h);
+      E.add(doc, { t: 'line', layer: L, x1: x - w / 2, y1: y - h / 2, x2: x + w / 2, y2: y + h / 2 });
+    } else {
+      rect(x, y, w, h);
+    }
+    if (label && d.label > 0) {
+      /* The label has to fit the box it sits in. Shrink the lettering to the
+         longest line rather than letting it run past the device outline. */
+      var parts = String(label).split('\n');
+      var inner = w - 6;
+      var longest = parts.reduce(function (m, p) { return Math.max(m, p.length); }, 1);
+      var th = Math.max(3.0, Math.min(5.4, inner / (longest * 0.62)));
+      parts.forEach(function (p, i) {
+        E.add(doc, { t: 'text', layer: 'E-RISR-TEXT', x: x,
+                     y: y + ((parts.length - 1) / 2 - i) * (th * 1.5) - th / 2,
+                     h: th, rot: 0, s: p, mid: true });
+      });
+    }
+    return { x: x, y: y, w: w, h: h, kind: kind, label: label || null };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  KEYED NOTES                                                        *
+   *  Numbering is DERIVED from placement order, so a note cannot carry a *
+   *  number nothing points at, and a bubble cannot point at a gap.       *
+   * ------------------------------------------------------------------ */
+  function noteBook(defs) {
+    var byId = {}, order = [], used = {};
+    (defs || []).forEach(function (d) {
+      var id = d.id != null ? String(d.id) : String(order.length + 1);
+      byId[id] = { id: id, text: d.text || '', number: null };
+      order.push(id);
+    });
+    return {
+      byId: byId, order: order, used: used, seq: 0,
+      /* first use assigns the number */
+      number: function (id) {
+        var k = String(id);
+        var nt = byId[k];
+        if (!nt) { used[k] = (used[k] || 0) + 1; return null; }   /* orphan */
+        if (nt.number == null) { nt.number = ++this.seq; }
+        used[k] = (used[k] || 0) + 1;
+        return nt.number;
+      },
+      audit: function () {
+        var orphans = Object.keys(used).filter(function (k) { return !byId[k]; });
+        var unused = order.filter(function (k) { return !used[k]; });
+        var findings = [];
+        orphans.forEach(function (k) {
+          findings.push('A bubble points at keyed note "' + k + '", which is not in the ' +
+                        'note list — it would plot as a number with nothing behind it.');
+        });
+        unused.forEach(function (k) {
+          findings.push('Keyed note "' + k + '" is written but never placed on the diagram.');
+        });
+        return { orphans: orphans, unused: unused, findings: findings,
+                 placed: order.filter(function (k) { return !!used[k]; }).length,
+                 total: order.length };
+      },
+      list: function () {
+        return order.filter(function (k) { return byId[k].number != null; })
+          .sort(function (a, b) { return byId[a].number - byId[b].number; })
+          .map(function (k) { return { number: byId[k].number, id: k, text: byId[k].text,
+                                       uses: used[k] || 0 }; });
+      }
+    };
+  }
+
+  function drawBubble(doc, x, y, num, leaderTo) {
+    var rx = 7, ry = 4.6, i, pts = [];
+    for (i = 0; i <= 28; i++) {
+      var a = (i / 28) * Math.PI * 2;
+      pts.push({ x: x + rx * Math.cos(a), y: y + ry * Math.sin(a) });
+    }
+    E.add(doc, { t: 'pline', closed: true, layer: 'E-RISR-NOTE', pts: pts });
+    E.add(doc, { t: 'text', layer: 'E-RISR-NOTE', x: x, y: y - 1.7, h: 4.6, rot: 0,
+                 s: String(num), mid: true });
+    if (leaderTo) {
+      E.add(doc, { t: 'line', layer: 'E-RISR-NOTE',
+                   x1: x - rx, y1: y, x2: leaderTo.x, y2: leaderTo.y });
+      /* the tick on the run that says "here" */
+      E.add(doc, { t: 'line', layer: 'E-RISR-NOTE',
+                   x1: leaderTo.x - 2, y1: leaderTo.y - 2.6,
+                   x2: leaderTo.x + 2, y2: leaderTo.y + 2.6 });
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  BUILD                                                              *
+   *  spec = {
+   *    rooms:  [{ name, devices:[{ id, kind, label }] }],
+   *    feeders:[{ from, to, note, kind:'feeder'|'ground', label }],
+   *    offsheet:[{ from, to:'MSB4-4', note }],
+   *    notes:  [{ id, text }]
+   *  }
+   * ------------------------------------------------------------------ */
+  function build(doc, spec, opts) {
+    opts = opts || {};
+    if (!spec || !spec.rooms || !spec.rooms.length) {
+      return { ok: false, error: 'A riser needs at least one room band.' };
+    }
+    layers();
+    var gapX = opts.roomGapIn || 10;
+    var padX = opts.devicePitchIn || 52;
+    var bandH = opts.bandHeightIn || 210;
+    /* Panels sit INSIDE the room band, clear of its bottom edge; the
+       grounding electrode conductor is the only thing that runs below the
+       rooms. With the row datum negative the panels hung through the band
+       line, which reads as equipment outside the building. */
+    var devY = opts.deviceRowY == null ? 0 : opts.deviceRowY;
+    var notes = noteBook(spec.notes);
+    var placed = {}, bands = [], x = 0, made = {};
+
+    spec.rooms.forEach(function (room) {
+      var devs = room.devices || [];
+      var nBase = devs.filter(function (d) { return (TIER[d.kind || 'panel'] || 0) === 0; }).length;
+      var wide = Math.max(padX, nBase * padX);
+      var x0 = x, x1 = x + wide;
+      var bandPts = [];
+      /* baseline devices first, so an upper-tier device can be placed over
+         the one it feeds */
+      var base = devs.filter(function (d) { return (TIER[d.kind || 'panel'] || 0) === 0; });
+      var upper = devs.filter(function (d) { return (TIER[d.kind || 'panel'] || 0) > 0; });
+      var baseY = devY + 40;
+      var tierGap = opts.tierGapIn || 74;
+
+      base.forEach(function (d, i) {
+        var cx = x0 + padX * (i + 0.5);
+        var g = drawDevice(doc, d.kind || 'panel', cx, baseY, d.label);
+        placed[d.id] = { x: cx, y: baseY, dev: g, room: room.name, tier: 0 };
+      });
+      /* an upper-tier device sits directly above the device it feeds; with
+         nothing downstream it takes the next free column */
+      var fedBy = {};
+      (spec.feeders || []).forEach(function (f) {
+        if (!fedBy[f.from]) fedBy[f.from] = f.to;
+      });
+      var spare = base.length;
+      upper.forEach(function (d) {
+        var target = fedBy[d.id] && placed[fedBy[d.id]];
+        var cx = target ? target.x : x0 + padX * (spare++ + 0.5);
+        var g = drawDevice(doc, d.kind || 'panel', cx, baseY + tierGap, d.label);
+        placed[d.id] = { x: cx, y: baseY + tierGap, dev: g, room: room.name, tier: 1 };
+      });
+      var wideNeeded = Math.max(base.length, spare) * padX;
+      if (wideNeeded > wide) { wide = wideNeeded; x1 = x0 + wide; }
+      /* the band: three sides, open at the foot where the GEC runs. Drawn
+         last, because the width is not known until the devices are placed */
+      E.add(doc, { t: 'pline', closed: false, layer: 'E-RISR-BAND', pts: [
+        { x: x0, y: 0 }, { x: x0, y: bandH }, { x: x1, y: bandH }, { x: x1, y: 0 }] });
+      /* A room name must stay inside its own band. */
+      wrapText(String(room.name || '').toUpperCase(), wide - 12, 5.2)
+        .forEach(function (line, li) {
+          E.add(doc, { t: 'text', layer: 'E-RISR-TEXT', x: x0 + 6,
+                       y: bandH - 12 - li * 7.5, h: 5.2, rot: 0, s: line, mid: false });
+        });
+      bands.push({ name: room.name, x0: x0, x1: x1 });
+      x = x1 + gapX;
+    });
+
+    /* ---- feeders ---- */
+    var missing = [];
+    /* Parallel feeders routed at one height stack into a single line and
+       stop being readable as separate runs. Stagger the rise so each run
+       has its own corridor, the way a drafter would. */
+    var riseStep = opts.riseStepIn || 14, riseBase = opts.riseBaseIn || 20;
+    /* every cross-band run sits above the tallest tier, so feeders never
+       cut through a transformer */
+    var baselineTop = (opts.deviceRowY == null ? 0 : opts.deviceRowY) + 40 +
+                      (opts.tierGapIn || 74) + 30;
+    (spec.feeders || []).forEach(function (f, fi) {
+      var a = placed[f.from], b = placed[f.to];
+      if (!a || !b) {
+        missing.push((a ? '' : f.from + ' ') + (b ? '' : f.to + ' '));
+        return;
+      }
+      var lyr = f.kind === 'ground' ? 'E-RISR-GRND' : 'E-RISR-FEED';
+      var ah = (DEV[a.dev.kind] || DEV.box).h / 2, bh = (DEV[b.dev.kind] || DEV.box).h / 2;
+      var pts, yTop;
+      if (Math.abs(a.x - b.x) < 1e-6 && a.y !== b.y) {
+        /* a transformer straight above the panel it feeds drops vertically —
+           routing that up and over would be drawing a detour that is not
+           there */
+        var hi = a.y > b.y ? a : b, lo = a.y > b.y ? b : a;
+        var hiH = a.y > b.y ? ah : bh, loH = a.y > b.y ? bh : ah;
+        yTop = (hi.y - hiH + lo.y + loH) / 2;
+        pts = [{ x: a.x, y: hi.y - hiH }, { x: a.x, y: lo.y + loH }];
+      } else {
+        /* orthogonal route over the top of the device row */
+        yTop = baselineTop + (f.rise || (riseBase + (fi % 5) * riseStep));
+        pts = [{ x: a.x, y: a.y + ah }, { x: a.x, y: yTop },
+               { x: b.x, y: yTop }, { x: b.x, y: b.y + bh }];
+      }
+      E.add(doc, { t: 'pline', closed: false, layer: lyr, pts: pts, dashed: true });
+      if (f.note != null) {
+        var num = notes.number(f.note);
+        if (num != null) {
+          var mid = { x: (a.x + b.x) / 2, y: yTop };
+          drawBubble(doc, mid.x + 18, yTop + 16, num, mid);
+        }
+      }
+      if (f.label) {
+        E.add(doc, { t: 'text', layer: 'E-RISR-TEXT', x: (a.x + b.x) / 2, y: yTop + 4,
+                     h: 4, rot: 0, s: String(f.label).toUpperCase(), mid: true });
+      }
+    });
+
+    /* ---- off-sheet destinations ---- */
+    (spec.offsheet || []).forEach(function (o) {
+      var a = placed[o.from];
+      if (!a) { missing.push(o.from + ' '); return; }
+      /* an off-sheet run leaves above the tallest tier, like any other
+         cross-band feeder, rather than cutting through the transformers */
+      var y = o.rise != null ? a.y + (DEV[a.dev.kind] || DEV.box).h / 2 + o.rise
+                             : baselineTop + 30;
+      E.add(doc, { t: 'pline', closed: false, layer: 'E-RISR-FEED', dashed: true,
+                   pts: [{ x: a.x, y: a.y + (DEV[a.dev.kind] || DEV.box).h / 2 },
+                         { x: a.x, y: y }, { x: a.x + 60, y: y }] });
+      /* the solid arrow head the sheet uses for an off-sheet run */
+      E.add(doc, { t: 'pline', closed: true, layer: 'E-RISR-FEED', pts: [
+        { x: a.x + 60, y: y }, { x: a.x + 52, y: y + 3 }, { x: a.x + 52, y: y - 3 }] });
+      E.add(doc, { t: 'text', layer: 'E-RISR-TEXT', x: a.x + 66, y: y - 2, h: 4.6,
+                   rot: 0, s: String(o.to).toUpperCase(), mid: false });
+      if (o.note != null) {
+        var nm = notes.number(o.note);
+        if (nm != null) drawBubble(doc, a.x - 22, y + 14, nm, { x: a.x, y: y });
+      }
+    });
+
+    /* ---- the grounding electrode conductor, one run under every band ---- */
+    if (spec.gec !== false && bands.length) {
+      /* Below the panels, not through them. The grounding electrode
+         conductor runs under the whole sheet; drawn at a fixed height it
+         cut straight across every panel box. */
+      var panelBottom = (opts.deviceRowY == null ? 0 : opts.deviceRowY) + 40
+                        - DEV.panel.h / 2;
+      var gy = opts.gecY == null ? panelBottom - 26 : opts.gecY;
+      E.add(doc, { t: 'pline', closed: false, layer: 'E-RISR-GRND', pts: [
+        { x: bands[0].x0, y: gy }, { x: bands[bands.length - 1].x1, y: gy }] });
+      bands.forEach(function (b) {
+        if (spec.gecNote != null) {
+          var nm2 = notes.number(spec.gecNote);
+          if (nm2 != null) drawBubble(doc, (b.x0 + b.x1) / 2, gy + 16,
+                                      nm2, { x: (b.x0 + b.x1) / 2, y: gy });
+        }
+      });
+      /* Equipment has to actually reach the electrode conductor. A bus drawn
+         under the sheet with nothing bonded to it is a line, not a grounding
+         system — the taps are what make it one. */
+      (spec.grounded || []).forEach(function (id) {
+        var g = placed[id];
+        if (!g) { missing.push(id + ' '); return; }
+        var bot = g.y - (DEV[g.dev.kind] || DEV.box).h / 2;
+        E.add(doc, { t: 'pline', closed: false, layer: 'E-RISR-GRND',
+                     pts: [{ x: g.x, y: bot }, { x: g.x, y: gy }] });
+        /* the bonding point on the bus */
+        E.add(doc, { t: 'circle', layer: 'E-RISR-GRND', cx: g.x, cy: gy, r: 2.2 });
+        made.grounds = (made.grounds || 0) + 1;
+      });
+    }
+
+    var audit = notes.audit();
+    if (missing.length) {
+      audit.findings.push(missing.length + ' feeder end point(s) name a device that is not ' +
+        'placed in any room: ' + missing.join(', ').trim() + '.');
+    }
+    return { ok: true, bands: bands, placed: placed, notes: notes.list(),
+             audit: audit, width: x - gapX, height: bandH,
+             groundTaps: made.grounds || 0 };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  DIVISION OF RESPONSIBILITY                                         *
+   *  The matrix the sheet carries beside the riser: who furnishes and    *
+   *  who installs each part of the service. Every row must be claimed by *
+   *  somebody, because an unclaimed row is the one nobody buys.          *
+   * ------------------------------------------------------------------ */
+  var DOR_ROWS = ['Primary conduit', 'Primary conductors', 'Transformer', 'Pad',
+                  'CT enclosure', 'CTs', 'Bollards', 'Meter',
+                  'Secondary conduit', 'Secondary conductors'];
+
+  function responsibility(assign, opts) {
+    opts = opts || {};
+    var parties = opts.parties || ['Electrical contractor', 'Utility'];
+    var rows = [], findings = [];
+    DOR_ROWS.forEach(function (r) {
+      var a = (assign || {})[r] || (assign || {})[r.toLowerCase()] || null;
+      var cells = parties.map(function (p) {
+        return (a && (a === p || (Array.isArray(a) && a.indexOf(p) >= 0))) ? 'X' : '';
+      });
+      if (!a) findings.push('"' + r + '" is not assigned to anybody.');
+      else if (Array.isArray(a) && a.length > 1) {
+        findings.push('"' + r + '" is assigned to more than one party.');
+      }
+      rows.push([r].concat(cells));
+    });
+    return { header: ['Item'].concat(parties), rows: rows, findings: findings };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SHEET ROWS                                                         *
+   * ------------------------------------------------------------------ */
+  function notesToRows(list) {
+    var rows = [['#', 'KEYED NOTE', 'USES']];
+    list.forEach(function (nt) { rows.push([nt.number, nt.text, nt.uses]); });
+    return rows;
+  }
+
+  E.riser = {
+    DEV: DEV, DOR_ROWS: DOR_ROWS,
+    build: build, noteBook: noteBook, drawDevice: drawDevice, drawBubble: drawBubble,
+    responsibility: responsibility, notesToRows: notesToRows, layers: layers
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-arch-oneline-js">
+/* ====================================================================== *
+ *  OMEGA ONELINE  —  one-line diagrams from a topology                   *
+ *  ------------------------------------------------------------------    *
+ *  A one-line is the electrical topology with the geography removed: what *
+ *  feeds what, through which device, at what voltage. Give it the graph   *
+ *  and it places, routes and draws — and then checks the result against   *
+ *  rules that are electrical rather than cosmetic.                        *
+ *                                                                         *
+ *  WHY THIS IS NOT A NODE-GRAPH LIBRARY.                                  *
+ *  The obvious build is JointJS or GoJS. JointJS core is MPL-2.0 and GoJS *
+ *  is a paid proprietary licence; the CAD kit in this product was already *
+ *  restricted to MIT / BSL / Apache for exactly that reason, so neither    *
+ *  can ship. They also draw coloured rectangles, and a rectangle labelled *
+ *  "XFMR" is a block diagram, not a one-line. Here a transformer draws as *
+ *  two coupled windings, a breaker as a breaker, and the output is CAD    *
+ *  geometry on real layers that exports to DXF.                           *
+ *                                                                         *
+ *  THE DESIGN RULE CHECK IS THE POINT.                                    *
+ *  Floating-node detection is graph hygiene and worth little. What is     *
+ *  worth having is: equipment with no path back to a source, two sources  *
+ *  feeding one bus with nothing to tie them, a voltage change with no     *
+ *  transformer in it, an overcurrent device larger than the one upstream, *
+ *  and a conductor smaller than the device protecting it.                 *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.oneline) return;
+
+  function layers() {
+    E.ensureLayer('E-SLD-SYMB', 2);
+    E.ensureLayer('E-SLD-BUS', 7);
+    E.ensureLayer('E-SLD-FEED', 4);
+    E.ensureLayer('E-SLD-TEXT', 7);
+    E.ensureLayer('E-SLD-DATA', 5);
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SYMBOLS                                                            *
+   *  Drawn to IEEE 315 conventions rather than as labelled boxes.        *
+   * ------------------------------------------------------------------ */
+  var SYM = {
+    utility: { w: 40, h: 40 }, xfmr: { w: 44, h: 52 }, breaker: { w: 26, h: 26 },
+    fused: { w: 26, h: 34 }, switchgear: { w: 90, h: 30 }, panel: { w: 76, h: 26 },
+    meter: { w: 26, h: 26 }, ats: { w: 40, h: 34 }, load: { w: 34, h: 30 },
+    inverter: { w: 44, h: 40 }, bess: { w: 48, h: 40 }, pv: { w: 44, h: 36 },
+    genset: { w: 44, h: 40 }, ct: { w: 22, h: 22 }, ground: { w: 24, h: 20 }
+  };
+
+  function drawSymbol(doc, kind, x, y, opts) {
+    opts = opts || {};
+    var L = 'E-SLD-SYMB', s = SYM[kind] || SYM.load;
+    function line(x1, y1, x2, y2, ly) {
+      E.add(doc, { t: 'line', layer: ly || L, x1: x1, y1: y1, x2: x2, y2: y2 });
+    }
+    function circ(cx, cy, r, ly) {
+      E.add(doc, { t: 'circle', layer: ly || L, cx: cx, cy: cy, r: r });
+    }
+    function rect(cx, cy, w, h, ly) {
+      E.add(doc, { t: 'pline', closed: true, layer: ly || L, pts: [
+        { x: cx - w / 2, y: cy - h / 2 }, { x: cx + w / 2, y: cy - h / 2 },
+        { x: cx + w / 2, y: cy + h / 2 }, { x: cx - w / 2, y: cy + h / 2 }] });
+    }
+
+    if (kind === 'utility') {
+      circ(x, y, 16);
+      /* the arrow that says power enters here */
+      line(x - 7, y + 8, x, y - 6); line(x, y - 6, x + 7, y + 8);
+      line(x, y - 6, x, y + 10);
+    } else if (kind === 'xfmr') {
+      /* two coupled windings, not a box */
+      circ(x, y + 10, 13); circ(x, y - 10, 13);
+      line(x, y + 23, x, y + 30); line(x, y - 23, x, y - 30);
+      if (opts.delta) { /* delta primary */
+        line(x - 6, y + 15, x + 6, y + 15); line(x - 6, y + 15, x, y + 5);
+        line(x + 6, y + 15, x, y + 5);
+      }
+      if (opts.wye) {   /* wye secondary with the neutral brought out */
+        line(x, y - 4, x, y - 14); line(x, y - 14, x - 7, y - 20);
+        line(x, y - 14, x + 7, y - 20);
+      }
+    } else if (kind === 'breaker') {
+      rect(x, y, 20, 20);
+      line(x - 9, y - 9, x + 9, y + 9);        /* the contact stroke */
+      line(x, y + 10, x, y + 16); line(x, y - 10, x, y - 16);
+    } else if (kind === 'fused') {
+      rect(x, y, 14, 22);
+      line(x, y + 11, x, y + 18); line(x, y - 11, x, y - 18);
+    } else if (kind === 'switchgear' || kind === 'panel') {
+      /* a bus is a heavy line, with the enclosure around it */
+      rect(x, y, s.w, s.h);
+      E.add(doc, { t: 'line', layer: 'E-SLD-BUS',
+                   x1: x - s.w / 2 + 4, y1: y, x2: x + s.w / 2 - 4, y2: y });
+    } else if (kind === 'meter') {
+      circ(x, y, 12);
+      E.add(doc, { t: 'text', layer: 'E-SLD-TEXT', x: x, y: y - 4, h: 9, rot: 0,
+                   s: 'M', mid: true });
+    } else if (kind === 'ct') {
+      circ(x, y, 9);
+      line(x - 14, y, x + 14, y);
+    } else if (kind === 'ats') {
+      rect(x, y, s.w, s.h);
+      line(x - 12, y - 10, x + 2, y + 8);      /* the transferring contact */
+      line(x + 12, y - 10, x + 2, y + 8);
+    } else if (kind === 'inverter') {
+      rect(x, y, s.w, s.h);
+      line(x - 16, y + 14, x + 16, y - 14);    /* the DC/AC diagonal */
+      /* dc side: a straight line over a dashed one */
+      line(x - 13, y + 6, x - 5, y + 6); line(x - 13, y + 2, x - 5, y + 2);
+      /* ac side: a sine */
+      var i, prev = null;
+      for (i = 0; i <= 12; i++) {
+        var px = x + 4 + i, py = y - 6 + Math.sin(i / 12 * Math.PI * 2) * 4;
+        if (prev) line(prev.x, prev.y, px, py);
+        prev = { x: px, y: py };
+      }
+    } else if (kind === 'bess') {
+      rect(x, y, s.w, s.h);
+      /* battery cells: long plate, short plate */
+      [-8, 0, 8].forEach(function (dx) {
+        line(x + dx, y - 10, x + dx, y + 10);
+        line(x + dx + 4, y - 5, x + dx + 4, y + 5);
+      });
+    } else if (kind === 'pv') {
+      rect(x, y, s.w, s.h);
+      line(x - 22, y + 18, x + 22, y - 18);
+      line(x - 8, y - 6, x + 2, y - 6); line(x - 8, y - 10, x + 2, y - 10);
+    } else if (kind === 'genset') {
+      circ(x, y, 17);
+      E.add(doc, { t: 'text', layer: 'E-SLD-TEXT', x: x, y: y - 5, h: 11, rot: 0,
+                   s: 'G', mid: true });
+    } else if (kind === 'ground') {
+      line(x, y + 10, x, y);
+      [[10, 0], [6.5, -4], [3, -8]].forEach(function (g) {
+        line(x - g[0], y + g[1], x + g[0], y + g[1]);
+      });
+    } else {
+      /* a load is an arrow into the equipment it serves */
+      line(x, y + 15, x, y - 4);
+      line(x - 7, y - 4, x + 7, y - 4); line(x - 7, y - 4, x, y - 15);
+      line(x + 7, y - 4, x, y - 15);
+    }
+    return { x: x, y: y, w: s.w, h: s.h, kind: kind };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  LAYOUT                                                             *
+   *  Rank by the LONGEST path from a source, so every transformer at the *
+   *  same electrical depth lines up. Ranking by shortest path lets a     *
+   *  panel that is also fed directly from the main jump a level and the  *
+   *  drawing stops reading as a hierarchy.                               *
+   * ------------------------------------------------------------------ */
+  function rank(nodes, edges) {
+    var byId = {}, up = {}, down = {};
+    nodes.forEach(function (n) { byId[n.id] = n; up[n.id] = []; down[n.id] = []; });
+    edges.forEach(function (e) {
+      if (!byId[e.from] || !byId[e.to]) return;
+      down[e.from].push(e.to); up[e.to].push(e.from);
+    });
+    var r = {}, state = {}, cyc = null;
+    function depth(id, stack) {
+      if (state[id] === 1) { cyc = stack.concat(id); return 0; }
+      if (r[id] != null) return r[id];
+      state[id] = 1;
+      var d = 0;
+      up[id].forEach(function (p) { d = Math.max(d, depth(p, stack.concat(id)) + 1); });
+      state[id] = 2; r[id] = d;
+      return d;
+    }
+    nodes.forEach(function (n) { depth(n.id, []); });
+    return { rank: r, up: up, down: down, cycle: cyc };
+  }
+
+  function layout(nodes, edges, opts) {
+    opts = opts || {};
+    var rowH = opts.rowHeightIn || 110, colW = opts.colWidthIn || 130;
+    var rk = rank(nodes, edges);
+    if (rk.cycle) {
+      return { ok: false, error: 'The topology loops: ' + rk.cycle.join(' -> ') +
+               '. A radial one-line cannot have a ring in it.' };
+    }
+    var rows = {};
+    nodes.forEach(function (n) {
+      var d = rk.rank[n.id] || 0;
+      (rows[d] = rows[d] || []).push(n);
+    });
+    /* order each row by the average position of its parents, so feeders do
+       not cross more than they must */
+    var pos = {};
+    Object.keys(rows).map(Number).sort(function (a, b) { return a - b; })
+      .forEach(function (d) {
+        var row = rows[d];
+        row.sort(function (a, b) {
+          function key(n) {
+            var ps = rk.up[n.id].filter(function (p) { return pos[p]; });
+            if (!ps.length) return 0;
+            return ps.reduce(function (s, p) { return s + pos[p].x; }, 0) / ps.length;
+          }
+          return key(a) - key(b);
+        });
+        var total = row.length;
+        row.forEach(function (n, i) {
+          pos[n.id] = { x: (i - (total - 1) / 2) * colW, y: -d * rowH };
+        });
+      });
+    return { ok: true, pos: pos, rank: rk.rank, up: rk.up, down: rk.down, rows: rows };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  DESIGN RULE CHECK                                                  *
+   * ------------------------------------------------------------------ */
+  function drc(nodes, edges, opts) {
+    opts = opts || {};
+    var byId = {}, up = {}, down = {}, findings = [];
+    nodes.forEach(function (n) { byId[n.id] = n; up[n.id] = []; down[n.id] = []; });
+    edges.forEach(function (e) {
+      if (!byId[e.from]) { findings.push({ level:'fail', code:'DANGLING',
+        msg: 'A feeder starts at "' + e.from + '", which is not in the diagram.' }); return; }
+      if (!byId[e.to]) { findings.push({ level:'fail', code:'DANGLING',
+        msg: 'A feeder ends at "' + e.to + '", which is not in the diagram.' }); return; }
+      down[e.from].push(e); up[e.to].push(e);
+    });
+
+    /* R1 — energised: every node must trace back to a source */
+    var sources = nodes.filter(function (n) {
+      return n.kind === 'utility' || n.kind === 'genset' || n.source === true;
+    });
+    var seen = {};
+    (function walk(ids) {
+      ids.forEach(function (id) {
+        if (seen[id]) return;
+        seen[id] = true;
+        down[id].forEach(function (e) { walk([e.to]); });
+      });
+    })(sources.map(function (n) { return n.id; }));
+    nodes.forEach(function (n) {
+      if (seen[n.id]) return;
+      var isolated = up[n.id].length === 0 && down[n.id].length === 0;
+      findings.push({ level: 'fail', code: isolated ? 'FLOATING' : 'UNENERGISED', ids: [n.id],
+        msg: '"' + (n.label || n.id) + '" ' + (isolated
+          ? 'has no connections at all.'
+          : 'has no path back to a source — it is drawn but never energised.') });
+    });
+    if (!sources.length) {
+      findings.push({ level: 'fail', code: 'NO-SOURCE',
+        msg: 'Nothing on the diagram is a source, so nothing is energised.' });
+    }
+
+    /* R2 — two sources onto one bus with nothing to tie them */
+    nodes.forEach(function (n) {
+      if (up[n.id].length < 2) return;
+      var tie = n.kind === 'ats' || n.tie === true || n.paralleling === true;
+      if (!tie) {
+        findings.push({ level: 'fail', code: 'PARALLEL-SOURCE', ids: [n.id],
+          msg: '"' + (n.label || n.id) + '" is fed from ' + up[n.id].length +
+               ' sources with no transfer switch or paralleling gear between them.' });
+      }
+    });
+
+    /* R3 — a voltage change with no transformer in it */
+    edges.forEach(function (e) {
+      var a = byId[e.from], b = byId[e.to];
+      if (!a || !b || a.volts == null || b.volts == null) return;
+      if (a.volts === b.volts) return;
+      if (a.kind === 'xfmr' || b.kind === 'xfmr') return;
+      findings.push({ level: 'fail', code: 'VOLTAGE', ids: [e.from, e.to],
+        msg: '"' + (a.label || a.id) + '" at ' + a.volts + ' V feeds "' +
+             (b.label || b.id) + '" at ' + b.volts + ' V with no transformer between them.' });
+    });
+
+    /* R4 — overcurrent coordination: a device must not be larger than the
+       one upstream of it */
+    edges.forEach(function (e) {
+      var a = byId[e.from], b = byId[e.to];
+      if (!a || !b || !(a.ocpdAmps > 0) || !(b.ocpdAmps > 0)) return;
+      if (b.ocpdAmps > a.ocpdAmps) {
+        findings.push({ level: 'fail', code: 'COORDINATION', ids: [e.from, e.to],
+          msg: '"' + (b.label || b.id) + '" is protected at ' + b.ocpdAmps +
+               ' A downstream of "' + (a.label || a.id) + '" at ' + a.ocpdAmps +
+               ' A — the downstream device is the larger of the two.' });
+      }
+    });
+
+    /* R5 — the conductor against the device protecting it */
+    edges.forEach(function (e) {
+      if (!e.conductor || !e.ocpdAmps) return;
+      if (!E.wire || !E.wire.CU75) return;
+      var amp = E.wire.CU75[String(e.conductor)];
+      if (amp == null) return;
+      var sets = e.sets || 1;
+      if (amp * sets < e.ocpdAmps) {
+        findings.push({ level: 'fail', code: 'AMPACITY', ids: [e.from, e.to],
+          msg: 'The feeder from "' + (byId[e.from].label || e.from) + '" is ' + sets +
+               ' \u00D7 ' + e.conductor + ' (' + (amp * sets) + ' A at 75 \u00B0C) but is ' +
+               'protected at ' + e.ocpdAmps + ' A.' });
+      }
+    });
+
+    /* R6 — a load beyond the device feeding it */
+    nodes.forEach(function (n) {
+      if (!(n.loadKw > 0) || !(n.volts > 0)) return;
+      var fed = up[n.id][0];
+      if (!fed || !(fed.ocpdAmps > 0)) return;
+      var a = (n.loadKw * 1000) / (n.volts * (n.phases === 1 ? 1 : Math.sqrt(3)));
+      if (a > fed.ocpdAmps) {
+        findings.push({ level: 'warn', code: 'OVERLOAD', ids: [n.id],
+          msg: '"' + (n.label || n.id) + '" draws ' + a.toFixed(0) + ' A but its feeder is ' +
+               'protected at ' + fed.ocpdAmps + ' A.' });
+      }
+    });
+
+    /* R7 — a transformer with no secondary protection (240.21(C)) */
+    nodes.forEach(function (n) {
+      if (n.kind !== 'xfmr') return;
+      var outs = down[n.id];
+      if (!outs.length) return;
+      var protectedOut = outs.some(function (e) {
+        var t = byId[e.to];
+        return (e.ocpdAmps > 0) || (t && t.ocpdAmps > 0) || t.kind === 'breaker' ||
+               t.kind === 'switchgear' || t.kind === 'panel';
+      });
+      if (!protectedOut) {
+        findings.push({ level: 'warn', code: 'XFMR-SECONDARY', ids: [n.id],
+          msg: '"' + (n.label || n.id) + '" has no secondary overcurrent device shown ' +
+               '(NEC 240.21(C) tap rules apply).' });
+      }
+    });
+
+    /* R8 — a system with generation and no means of disconnect at the point
+       of interconnection */
+    var hasGen = nodes.some(function (n) {
+      return n.kind === 'pv' || n.kind === 'bess' || n.kind === 'genset' || n.kind === 'inverter';
+    });
+    if (hasGen && !nodes.some(function (n) { return n.kind === 'breaker' || n.disconnect === true; })) {
+      findings.push({ level: 'warn', code: 'NO-DISCONNECT',
+        msg: 'The diagram has generation but shows no disconnecting means.' });
+    }
+
+    var counts = { fail: 0, warn: 0 };
+    findings.forEach(function (f) { if (counts[f.level] != null) counts[f.level]++; });
+    return { findings: findings, counts: counts, clean: findings.length === 0 };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  BUILD                                                              *
+   * ------------------------------------------------------------------ */
+  function build(doc, spec, opts) {
+    opts = opts || {};
+    var nodes = (spec && spec.nodes) || [], edges = (spec && spec.edges) || [];
+    if (!nodes.length) return { ok: false, error: 'A one-line needs at least one device.' };
+    layers();
+    var lay = layout(nodes, edges, opts);
+    if (!lay.ok) return lay;
+
+    var placed = {};
+    nodes.forEach(function (n) {
+      var p = lay.pos[n.id];
+      var g = drawSymbol(doc, n.kind || 'load', p.x, p.y,
+                         { delta: n.delta, wye: n.wye });
+      placed[n.id] = { x: p.x, y: p.y, g: g };
+      var lines = [];
+      if (n.label) lines.push(String(n.label).toUpperCase());
+      if (n.rating) lines.push(String(n.rating));
+      else if (n.volts) lines.push(n.volts + 'V' + (n.phases ? ' ' + n.phases + '\u00D8' : ''));
+      lines.forEach(function (t, i) {
+        E.add(doc, { t: 'text', layer: 'E-SLD-TEXT', x: p.x + g.w / 2 + 8,
+                     y: p.y + 4 - i * 11, h: 8, rot: 0, s: t, mid: false });
+      });
+    });
+
+    /* feeders: down out of the parent, across, up into the child */
+    edges.forEach(function (e) {
+      var a = placed[e.from], b = placed[e.to];
+      if (!a || !b) return;
+      var lyr = e.kind === 'data' ? 'E-SLD-DATA' : 'E-SLD-FEED';
+      var y0 = a.y - a.g.h / 2, y1 = b.y + b.g.h / 2;
+      var mid = (y0 + y1) / 2;
+      var pts = (Math.abs(a.x - b.x) < 1e-9)
+        ? [{ x: a.x, y: y0 }, { x: b.x, y: y1 }]
+        : [{ x: a.x, y: y0 }, { x: a.x, y: mid }, { x: b.x, y: mid }, { x: b.x, y: y1 }];
+      E.add(doc, { t: 'pline', closed: false, layer: lyr, pts: pts,
+                   dashed: e.kind === 'data' });
+      if (e.conductor || e.label) {
+        var txt = e.label || ((e.sets && e.sets > 1 ? e.sets + '\u00D7' : '') +
+                  e.conductor + (e.ocpdAmps ? ' / ' + e.ocpdAmps + 'A' : ''));
+        E.add(doc, { t: 'text', layer: 'E-SLD-TEXT', x: (a.x + b.x) / 2 + 6,
+                     y: mid + 4, h: 7.5, rot: 0, s: String(txt).toUpperCase(), mid: false });
+      }
+    });
+
+    var check = drc(nodes, edges, opts);
+    return { ok: true, placed: placed, layout: lay, drc: check,
+             ranks: Object.keys(lay.rows).length };
+  }
+
+  E.oneline = {
+    SYM: SYM, drawSymbol: drawSymbol, rank: rank, layout: layout,
+    drc: drc, build: build, layers: layers
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script id="omega-arch-solar-js">
 /* ====================================================================== *
  *  OMEGA SOLAR  —  performance / energy model                            *
@@ -114352,6 +115809,881 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     poaDaily: poaDaily, h0Daily: h0Daily, declination: declination,
     erbsDiffuseFraction: erbsDiffuseFraction, cellTemp: cellTemp,
     rbDaily: rbDaily, LOSSES: LOSSES, DAYS: DAYS
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-arch-tariff-js">
+/* ====================================================================== *
+ *  OMEGA TARIFF  —  multi-component demand charges and TOU energy        *
+ *  ------------------------------------------------------------------    *
+ *  A commercial tariff does not have "a demand charge". SDG&E AL-TOU-2    *
+ *  on the M2 Ingredients bill has three, measured on three different      *
+ *  windows and billed at three different rates:                           *
+ *                                                                         *
+ *    Time of Use Demand    679.2 kW x $57.79  = $39,251   TOU period max  *
+ *    Non-Coincident Demand 680.4 kW x $23.07  = $15,697   any hour, month *
+ *    Winter On-Peak Demand 674.4 kW x $ 0.98  = $   661   4-9pm window    *
+ *                                              --------                   *
+ *                                              $55,609 in one month       *
+ *                                                                         *
+ *  Collapsing that to one rate is the difference between a $153k/yr and a *
+ *  $216k/yr savings claim on the same 220 kW shave — and which is right   *
+ *  depends on WHEN the battery discharges, because each component is       *
+ *  measured over different hours.                                         *
+ *                                                                         *
+ *  On this site every monthly peak lands between 1pm and 4pm, which in    *
+ *  SDG&E winter is Super Off-Peak / Off-Peak — NOT the 4-9pm on-peak      *
+ *  window. So a battery that shaves the mid-day peak cuts the             *
+ *  non-coincident charge and may miss the on-peak one entirely. The       *
+ *  engine works that out from the peaks rather than assuming it.          *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.tariff) return;
+
+  /* ------------------------------------------------------------------ *
+   *  TARIFF DEFINITIONS                                                 *
+   *  Transcribed from a bill, with the bill named, so the provenance of  *
+   *  every rate is checkable rather than folklore.                       *
+   * ------------------------------------------------------------------ */
+  var TARIFFS = {
+    'SDGE-AL-TOU-2': {
+      name: 'SDG&E AL-TOU-2 Commercial (Coastal)',
+      source: 'M2 Ingredients Inc, acct 2100 0014 7992 4, bill dated 2026-06-10',
+      voltage: 'Secondary',
+      demand: [
+        { id: 'tou',  label: 'Time of Use Demand',   window: 'tou',
+          rate: { summer: 57.79, winter: 57.79 },
+          note: 'billed on the maximum inside the TOU period' },
+        { id: 'nc',   label: 'Non-Coincident Demand', window: 'any',
+          rate: { summer: 23.07, winter: 23.07 },
+          note: 'billed on the monthly maximum in any hour' },
+        { id: 'onpk', label: 'On-Peak Demand',        window: 'onpeak',
+          rate: { summer: 0.98, winter: 0.98 },
+          note: 'billed on the maximum inside the on-peak window' }
+      ],
+      /* Delivery is flat across periods on this tariff; the CCA generation
+         is where the whole TOU spread lives. Both are carried because a
+         battery arbitrages the sum, not one of them. */
+      energy: {
+        delivery: { onpeak: 0.01315, offpeak: 0.01315, superoff: 0.01315 },
+        generation: { onpeak: 0.28259, offpeak: 0.12474, superoff: 0.07892 },
+        volumetric: [
+          { id: 'pcia', label: 'PCIA 2023', rate: 0.02265 },
+          { id: 'wf',   label: 'Wildfire Fund Charge', rate: 0.00591 },
+          { id: 'ipca', label: 'Incremental Procurement Cost Adj', rate: 0.00012 },
+          { id: 'cip',  label: 'Clean Impact Plus', rate: 0.001 },
+          { id: 'srf',  label: 'State Regulatory Fee', rate: 0.001 }
+        ]
+      },
+      periods: {
+        winter: { months: [11, 12, 1, 2, 3, 4, 5],
+                  onpeak: '16:00-21:00', superoff: '00:00-06:00,10:00-14:00' },
+        summer: { months: [6, 7, 8, 9, 10],
+                  onpeak: '16:00-21:00', superoff: '00:00-06:00,10:00-14:00' }
+      },
+      fixed: { customerCharge: 749.39 }
+    }
+  };
+
+  function seasonOf(tariff, month) {
+    var p = tariff.periods || {};
+    if (p.summer && p.summer.months && p.summer.months.indexOf(month) >= 0) return 'summer';
+    return 'winter';
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  DEMAND SAVINGS                                                     *
+   *  peaks: the measured maximum for each window, in kW.                 *
+   *  A shave only reduces a component if the battery is discharging      *
+   *  during the hours that component is measured over.                   *
+   * ------------------------------------------------------------------ */
+  /* RATES CHANGE, AND A REPORT MUST USE THE RATE THAT WAS BILLED.
+     On this account the TOU demand rate moved from $47.58 to $57.79 between
+     March and April. Pricing four months at one rate overstated the annual
+     demand charge by $43k against the customer's own totals. A per-month
+     override takes precedence over the tariff default, and the caller is
+     told which was used. */
+  function demandBill(tariff, peaks, month, rateOverride) {
+    var season = seasonOf(tariff, month), out = [], total = 0;
+    tariff.demand.forEach(function (c) {
+      var kw = +peaks[c.window];
+      if (!(kw > 0)) return;
+      var ov = rateOverride && rateOverride[c.id];
+      var rate = (ov != null && isFinite(ov)) ? +ov : c.rate[season];
+      var fromBill = (ov != null && isFinite(ov));
+      var amt = kw * rate;
+      total += amt;
+      out.push({ id: c.id, label: c.label, window: c.window, kw: kw,
+                 rate: rate, amount: amt, rateFromBill: fromBill });
+    });
+    return { season: season, components: out, total: total };
+  }
+
+  /* dispatch: which windows the battery actually discharges into.
+     'global'  chase the monthly maximum wherever it falls
+     'onpeak'  hold the battery for the on-peak window only
+     'both'    split, limited by energy — reported, not assumed */
+  function demandSavings(tariff, peaks, month, shaveKw, opts) {
+    opts = opts || {};
+    var rateOverride = opts.rates || null;
+    var dispatch = opts.dispatch || 'global';
+    var season = seasonOf(tariff, month);
+    var reduced = {}, notes = [];
+
+    /* The battery can only lower a window's maximum if it discharges in
+       that window. Chasing the global max lowers 'any'; whether it also
+       lowers 'tou' or 'onpeak' depends on whether those maxima happen at
+       the same time — which the peaks themselves tell us. */
+    var anyKw = +peaks.any || 0;
+    var touKw = +peaks.tou || 0;
+    var onpkKw = +peaks.onpeak || 0;
+    var tol = opts.coincidenceTolKw == null ? 5 : opts.coincidenceTolKw;
+
+    /* YOU CANNOT SHAVE BELOW THE AVERAGE.
+       A battery flattens a peak toward the average; it cannot take the site
+       below what it actually consumes, because there would be nothing left
+       to recharge from. Without this bound the sweep happily "shaves" 700 kW
+       off a 723 kW peak on a site whose average draw is 420 kW, and reports
+       the entire demand bill as savings. */
+    var floorKw = +opts.avgKw || 0;
+    var headroom = floorKw > 0 ? Math.max(0, anyKw - floorKw) : Infinity;
+    var capped = false;
+    if (shaveKw > headroom) { shaveKw = headroom; capped = true; }
+
+    if (dispatch === 'global' || dispatch === 'both') {
+      reduced.any = Math.min(shaveKw, anyKw);
+      /* If the TOU maximum is within a few kW of the global maximum they
+         are almost certainly the same event, so the same discharge lowers
+         both. If it is well below, it is a different hour and is not
+         touched by this dispatch. */
+      reduced.tou = (touKw > 0 && anyKw - touKw <= tol) ? Math.min(shaveKw, touKw) : 0;
+      reduced.onpeak = (onpkKw > 0 && anyKw - onpkKw <= tol) ? Math.min(shaveKw, onpkKw) : 0;
+      if (touKw > 0 && anyKw - touKw > tol) {
+        notes.push('The TOU-period maximum (' + touKw.toFixed(1) + ' kW) is ' +
+          (anyKw - touKw).toFixed(1) + ' kW below the monthly maximum, so it is a ' +
+          'different hour — chasing the monthly peak does not reduce it.');
+      }
+    }
+    if (dispatch === 'onpeak' || dispatch === 'both') {
+      var onR = Math.min(shaveKw, onpkKw);
+      var touR = Math.min(shaveKw, touKw);
+      reduced.onpeak = Math.max(reduced.onpeak || 0, onR);
+      reduced.tou = Math.max(reduced.tou || 0, touR);
+      if (dispatch === 'onpeak') {
+        /* holding for the on-peak window means the mid-day maximum stands */
+        reduced.any = (anyKw - onpkKw <= tol) ? onR : 0;
+        if (anyKw - onpkKw > tol) {
+          notes.push('Holding the battery for the on-peak window leaves the ' +
+            anyKw.toFixed(1) + ' kW mid-day maximum in place, so the non-coincident ' +
+            'charge is unchanged.');
+        }
+      }
+    }
+
+    var before = demandBill(tariff, peaks, month, rateOverride);
+    var saved = 0, lines = [];
+    before.components.forEach(function (c) {
+      var r = +reduced[c.window] || 0;
+      var amt = r * c.rate;
+      saved += amt;
+      lines.push({ id: c.id, label: c.label, window: c.window,
+                   rateePerKw: c.rate, reducedKw: r, saved: amt,
+                   billedBefore: c.amount, billedAfter: c.amount - amt });
+    });
+    if (capped) {
+      notes.push('Shave limited to ' + headroom.toFixed(0) + ' kW: the site averages ' +
+        floorKw.toFixed(0) + ' kW against a ' + anyKw.toFixed(0) + ' kW peak, and a ' +
+        'battery cannot take demand below the average draw.');
+    }
+    return { season: season, dispatch: dispatch, shaveKw: shaveKw,
+             requestedKw: opts._requested == null ? shaveKw : opts._requested,
+             cappedByAverage: capped, headroomKw: isFinite(headroom) ? headroom : null,
+             before: before.total, after: before.total - saved,
+             saved: saved, lines: lines, notes: notes };
+  }
+
+  /* The stacked rate, for the cases where one event drives every window.
+     Useful as a sanity ceiling, not as an assumption. */
+  function stackedRate(tariff, month) {
+    var season = seasonOf(tariff, month), s = 0;
+    tariff.demand.forEach(function (c) { s += c.rate[season] || 0; });
+    return s;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  ENERGY                                                             *
+   * ------------------------------------------------------------------ */
+  function allInRate(tariff, period) {
+    var e = tariff.energy || {};
+    var r = (e.delivery && e.delivery[period] || 0) + (e.generation && e.generation[period] || 0);
+    (e.volumetric || []).forEach(function (v) { r += v.rate || 0; });
+    return r;
+  }
+  /* What a kWh moved from one period to another is worth, after the round
+     trip. Buying low costs more than the low price because you must buy
+     1/RTE kWh to deliver one. */
+  function arbitrageValue(tariff, from, to, rte) {
+    var hi = allInRate(tariff, to), lo = allInRate(tariff, from);
+    var eff = hi - lo / (rte == null ? 0.88 : rte);
+    return { dischargeInto: to, chargeFrom: from,
+             rateHigh: +hi.toFixed(5), rateLow: +lo.toFixed(5),
+             spread: +(hi - lo).toFixed(5),
+             netPerKwh: +eff.toFixed(5),
+             rteCost: +(lo / (rte == null ? 0.88 : rte) - lo).toFixed(5) };
+  }
+
+  function energyBill(tariff, kwhByPeriod) {
+    var lines = [], total = 0;
+    Object.keys(kwhByPeriod).forEach(function (p) {
+      var kwh = +kwhByPeriod[p] || 0;
+      if (!kwh) return;
+      var r = allInRate(tariff, p);
+      lines.push({ period: p, kwh: kwh, ratePerKwh: +r.toFixed(5), amount: kwh * r });
+      total += kwh * r;
+    });
+    return { lines: lines, total: total,
+             blendedPerKwh: (function () {
+               var k = 0; Object.keys(kwhByPeriod).forEach(function (p) { k += +kwhByPeriod[p] || 0; });
+               return k > 0 ? +(total / k).toFixed(5) : 0;
+             })() };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SIZE FROM THE TARIFF                                               *
+   *  What the battery has to be to hold a shave through the peak event,  *
+   *  and what that shave is worth once every demand component is         *
+   *  evaluated on its own window.                                        *
+   * ------------------------------------------------------------------ */
+  function sizeForShave(tariff, months, shaveKw, opts) {
+    opts = opts || {};
+    var eventH = opts.eventHours == null ? 4 : opts.eventHours;
+    var dod = opts.dod == null ? 0.90 : opts.dod;
+    var rte = opts.rte == null ? 0.88 : opts.rte;
+    var dispatch = opts.dispatch || 'global';
+
+    var perMonth = [], annualSaved = 0;
+    months.forEach(function (m) {
+      var _avg = m.avgKw != null ? m.avgKw
+               : (m.kwh && m.days ? m.kwh / (m.days * 24) : 0);
+      var d = demandSavings(tariff, m.peaks, m.month, shaveKw,
+                            { dispatch: dispatch, rates: m.rates || null,
+                              avgKw: _avg, _requested: shaveKw });
+      annualSaved += d.saved;
+      perMonth.push({ month: m.month, label: m.label || null, saved: d.saved,
+                      before: d.before, after: d.after, lines: d.lines, notes: d.notes,
+                      effectiveShaveKw: d.shaveKw, cappedByAverage: d.cappedByAverage,
+                      headroomKw: d.headroomKw, avgKw: _avg });
+    });
+    /* extrapolate to a year when fewer than twelve months are given, and
+       say that is what happened */
+    var extrapolated = months.length < 12;
+    var annual = extrapolated ? annualSaved / months.length * 12 : annualSaved;
+
+    var usableKwh = shaveKw * eventH;
+    var nameplateKwh = usableKwh / dod;
+    return {
+      shaveKw: shaveKw, eventHours: eventH,
+      usableKwh: +usableKwh.toFixed(0), nameplateKwh: +nameplateKwh.toFixed(0),
+      cRate: +(shaveKw / nameplateKwh).toFixed(3),
+      demandSavingsYr: +annual.toFixed(0),
+      perMonth: perMonth, dispatch: dispatch,
+      extrapolated: extrapolated, monthsGiven: months.length,
+      dod: dod, rte: rte
+    };
+  }
+
+  /* Sweep shave depth and report the curve, so the knee is visible rather
+     than a single recommended number. */
+  function sweep(tariff, months, opts) {
+    opts = opts || {};
+    /* Stop the sweep at the tightest month's headroom rather than at the
+       biggest peak — past that point every extra kW of battery buys nothing
+       and the curve tells a story that cannot happen. */
+    var heads = months.map(function (m) {
+      var avg = m.avgKw != null ? m.avgKw : (m.kwh && m.days ? m.kwh / (m.days * 24) : 0);
+      var pk = +m.peaks.any || 0;
+      return avg > 0 ? Math.max(0, pk - avg) : pk;
+    });
+    var maxKw = opts.maxKw || Math.min.apply(null, heads);
+    var step = opts.stepKw || Math.max(5, Math.round(maxKw / 40));
+    var out = [];
+    for (var kw = step; kw <= maxKw; kw += step) {
+      var r = sizeForShave(tariff, months, kw, opts);
+      var capex = r.nameplateKwh * (opts.capexPerKwh == null ? 400 : opts.capexPerKwh) +
+                  kw * (opts.capexPerKw == null ? 165 : opts.capexPerKw);
+      out.push({ shaveKw: kw, nameplateKwh: r.nameplateKwh,
+                 savingsYr: r.demandSavingsYr, capex: capex,
+                 paybackYr: r.demandSavingsYr > 0 ? +(capex / r.demandSavingsYr).toFixed(2) : null,
+                 savingsPerKwh: r.nameplateKwh > 0
+                   ? +(r.demandSavingsYr / r.nameplateKwh).toFixed(2) : 0 });
+    }
+    return out;
+  }
+
+  E.tariff = {
+    TARIFFS: TARIFFS, seasonOf: seasonOf,
+    demandBill: demandBill, demandSavings: demandSavings, stackedRate: stackedRate,
+    allInRate: allInRate, arbitrageValue: arbitrageValue, energyBill: energyBill,
+    sizeForShave: sizeForShave, sweep: sweep
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="omega-arch-permit-js">
+/* ====================================================================== *
+ *  OMEGA PERMIT  —  permitting matrix from what is on the map            *
+ *  ------------------------------------------------------------------    *
+ *  Which permits a project needs follows from what has been drawn: a      *
+ *  battery over the fire-code threshold pulls a CFC/IFC 1207 permit, a    *
+ *  grid-parallel inverter pulls an interconnection application, a         *
+ *  combustion genset pulls an air-district ATC. So the matrix is derived  *
+ *  from the site rather than assembled by hand.                           *
+ *                                                                         *
+ *  TWO THINGS THIS WILL NOT DO.                                           *
+ *                                                                         *
+ *  It will not invent an agency, a fee or a timeline. Those are           *
+ *  jurisdiction facts. Where a verified pack exists they are used and     *
+ *  the pack names its source; everywhere else the permit still appears —  *
+ *  with its trigger and its code citation — and the agency, fee and       *
+ *  duration are left blank and marked for confirmation with the AHJ. A    *
+ *  made-up fee range in a permitting matrix is the same defect as a       *
+ *  made-up IRR in a pro forma.                                            *
+ *                                                                         *
+ *  And it will not let anybody type the critical path. That column is     *
+ *  computed from the dependency graph and the durations. On the M2        *
+ *  Ingredients matrix the typed sequence starts the SDG&E Rule 21         *
+ *  application in week 2, while the dependency map says it waits on the   *
+ *  electrical permit that finishes in week 10 — a contradiction no        *
+ *  spreadsheet catches, and one that moves the energisation date.         *
+ * ====================================================================== */
+(function (root) {
+  'use strict';
+  var E = root.OmegaArchEngine;
+  if (!E || E.permit) return;
+
+  /* ------------------------------------------------------------------ *
+   *  PERMIT TEMPLATES                                                   *
+   *  The trigger and the code reference are general. Agency, fee and     *
+   *  duration are jurisdiction facts and come from a pack.               *
+   * ------------------------------------------------------------------ */
+  var TEMPLATES = {
+    ZONING: {
+      name: 'Planning / Zoning Clearance',
+      trigger: 'Outdoor equipment enclosure or pad on the site',
+      docs: 'Zoning clearance application, site plan, equipment elevations, setbacks',
+      party: 'Owner / Project Architect', dependsOn: []
+    },
+    CEQA: {
+      name: 'CEQA Categorical Exemption — Notice of Exemption',
+      trigger: 'Discretionary approval by a California lead agency',
+      code: 'CEQA Guidelines §15301 / §15303',
+      docs: 'CEQA exemption notice, project description',
+      party: 'Owner / Environmental Consultant', dependsOn: [], states: ['CA']
+    },
+    BUILDING: {
+      name: 'Building Permit — Structural / Equipment Pad',
+      trigger: 'Equipment pad, foundation or seismic anchorage',
+      code: 'IBC Ch. 16 / ASCE 7 seismic anchorage',
+      docs: 'Stamped structural drawings, foundation design, anchorage calculations',
+      party: 'Licensed General Contractor', dependsOn: ['ZONING']
+    },
+    ELECTRICAL: {
+      name: 'Electrical Permit',
+      trigger: 'Any permanent electrical work',
+      code: 'NEC / NFPA 70',
+      docs: 'Electrical permit application, one-line diagram, load calculations, panel schedules',
+      party: 'Licensed Electrical Contractor', dependsOn: ['ZONING']
+    },
+    FIRE_CONSTRUCTION: {
+      name: 'Fire Department — ESS Construction Permit',
+      trigger: 'Energy storage above the adopted fire-code threshold',
+      code: 'IFC/CFC §1207; NFPA 855',
+      docs: 'ESS permit application, UL 9540 listing, UL 9540A test report, ' +
+            'hazard mitigation analysis, spacing and ventilation plan',
+      party: 'Project Engineer / Fire Protection Engineer', dependsOn: ['BUILDING']
+    },
+    FIRE_OPERATIONAL: {
+      name: 'Fire Department — ESS Operational Permit',
+      trigger: 'Operation of a permitted energy storage system',
+      code: 'IFC/CFC §105.5',
+      docs: 'Completed inspection, emergency response plan, signage, commissioning report',
+      party: 'Owner / Facility Manager', dependsOn: ['FIRE_CONSTRUCTION', 'FINAL_INSPECTION'],
+      renewable: true
+    },
+    HMBP: {
+      name: 'Hazardous Materials Business Plan update',
+      trigger: 'Battery chemistry reportable as a hazardous material',
+      code: 'State hazardous materials reporting programme (CA: HSC §25500 / CERS)',
+      docs: 'Updated HMBP, chemical inventory, site map, emergency response plan',
+      party: 'Owner / EHS', dependsOn: ['CEQA']
+    },
+    INTERCONNECTION: {
+      name: 'Utility Interconnection Application',
+      trigger: 'Grid-parallel generation or storage',
+      code: 'IEEE 1547; state interconnection rule (CA: Rule 21)',
+      docs: 'Interconnection application, single-line diagram, inverter certification, ' +
+            'site plan, generation profile',
+      party: 'System Integrator / Owner', dependsOn: ['ELECTRICAL']
+    },
+    INTERCONNECTION_AGREEMENT: {
+      name: 'Interconnection Agreement and Permission to Operate',
+      trigger: 'Completion of the interconnection study',
+      docs: 'Signed interconnection agreement, witness test, as-built single-line',
+      party: 'Owner / Legal Counsel', dependsOn: ['INTERCONNECTION', 'FINAL_INSPECTION']
+    },
+    AIR_ATC: {
+      name: 'Air District Authority to Construct',
+      trigger: 'Combustion generation, or a change to how existing units run',
+      docs: 'Air permit application, engine data, emissions calculations, hours of operation',
+      party: 'Owner / Environmental Consultant', dependsOn: ['INTERCONNECTION']
+    },
+    AIR_PTO: {
+      name: 'Air District Permit to Operate',
+      trigger: 'Follows the Authority to Construct and construction completion',
+      docs: 'Construction completion notice, source test if required',
+      party: 'Owner / Facility Manager', dependsOn: ['AIR_ATC']
+    },
+    FINAL_INSPECTION: {
+      name: 'Final Building / Electrical Inspection',
+      trigger: 'All permitted construction complete',
+      docs: 'Inspection request, as-built drawings, commissioning records',
+      party: 'General Contractor', dependsOn: ['BUILDING', 'ELECTRICAL', 'FIRE_CONSTRUCTION']
+    },
+    INCENTIVE: {
+      name: 'Storage Incentive Application',
+      trigger: 'Programme available for storage in this territory',
+      docs: 'Incentive application, project cost documentation, equipment listing',
+      party: 'Owner / Developer', dependsOn: []
+    },
+    EV_ACCESSIBILITY: {
+      name: 'Accessible EV Charging Review',
+      trigger: 'Public or employee EV charging spaces',
+      code: 'ADA / state accessibility code (CA: CBC 11B-812)',
+      docs: 'Accessible route plan, stall dimensions, signage schedule',
+      party: 'Project Architect', dependsOn: ['ZONING']
+    }
+  };
+
+  /* ------------------------------------------------------------------ *
+   *  JURISDICTION PACKS                                                 *
+   *  Every number here is transcribed from a named source. Nothing is    *
+   *  interpolated to a neighbouring city.                                *
+   * ------------------------------------------------------------------ */
+  var PACKS = {
+    'CA/San Diego/Vista/SDGE': {
+      match: { state: 'CA', county: 'San Diego', city: 'Vista' },
+      source: 'M2 Ingredients BESS + Microgrid permitting matrix, Vista CA, Aug 2026',
+      essThresholdKwh: 10,
+      thresholdNote: 'Vista applies a 10 kWh ESS permit threshold per the source matrix; ' +
+                     'IFC/CFC §1207 Table 1207.1.1 is commonly 20 kWh. Confirm with the AHJ.',
+      agencies: {
+        ZONING: 'City of Vista Planning Division',
+        CEQA: 'City of Vista (Lead Agency)',
+        BUILDING: 'City of Vista Community Development',
+        ELECTRICAL: 'City of Vista Community Development',
+        FIRE_CONSTRUCTION: 'City of Vista Fire Department',
+        FIRE_OPERATIONAL: 'City of Vista Fire Department',
+        HMBP: 'San Diego County DEH — Hazardous Materials Division',
+        INTERCONNECTION: 'San Diego Gas & Electric (Rule 21)',
+        INTERCONNECTION_AGREEMENT: 'San Diego Gas & Electric',
+        AIR_ATC: 'San Diego Air Pollution Control District',
+        AIR_PTO: 'San Diego Air Pollution Control District',
+        FINAL_INSPECTION: 'City of Vista Community Development',
+        INCENTIVE: 'CPUC / SDG&E — SGIP',
+        EV_ACCESSIBILITY: 'City of Vista Building Division'
+      },
+      /* [low, high] weeks and dollars, from the source matrix */
+      weeks: { ZONING:[2,4], CEQA:[2,4], BUILDING:[3,6], ELECTRICAL:[3,6],
+               FIRE_CONSTRUCTION:[4,8], FIRE_OPERATIONAL:[2,4], HMBP:[2,6],
+               INTERCONNECTION:[16,40], INTERCONNECTION_AGREEMENT:[4,8],
+               AIR_ATC:[6,16], AIR_PTO:[4,8], FINAL_INSPECTION:[2,4],
+               INCENTIVE:[4,8], EV_ACCESSIBILITY:[2,4] },
+      fees:  { ZONING:[500,2000], CEQA:[200,500], BUILDING:[2000,6000],
+               ELECTRICAL:[3000,8000], FIRE_CONSTRUCTION:[1500,4000],
+               FIRE_OPERATIONAL:[500,1500], HMBP:[500,2000],
+               INTERCONNECTION:[2000,8000], INTERCONNECTION_AGREEMENT:[0,0],
+               AIR_ATC:[2000,8000], AIR_PTO:[0,0], FINAL_INSPECTION:[0,0],
+               INCENTIVE:[0,0], EV_ACCESSIBILITY:[0,0] },
+      incentiveName: 'CPUC SGIP Incentive Application'
+    }
+  };
+
+  function findPack(site) {
+    var keys = Object.keys(PACKS);
+    for (var i = 0; i < keys.length; i++) {
+      var m = PACKS[keys[i]].match, ok = true;
+      Object.keys(m).forEach(function (k) {
+        if (String(site[k] || '').toLowerCase() !== String(m[k]).toLowerCase()) ok = false;
+      });
+      if (ok) return { id: keys[i], pack: PACKS[keys[i]] };
+    }
+    return null;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  WHICH PERMITS APPLY                                                *
+   * ------------------------------------------------------------------ */
+  function applicable(site, opts) {
+    site = site || {}; opts = opts || {};
+    var found = findPack(site);
+    var pack = found ? found.pack : null;
+    var thr = (pack && pack.essThresholdKwh) != null ? pack.essThresholdKwh
+            : (opts.essThresholdKwh == null ? 20 : opts.essThresholdKwh);
+
+    var want = {}, why = {};
+    function need(key, reason) {
+      want[key] = true;
+      (why[key] = why[key] || []).push(reason);
+    }
+
+    var bessKwh = +site.bessKwh || 0, bessKw = +site.bessKw || 0;
+    var solarKw = +site.solarKwAc || +site.solarKwDc || 0;
+    var gensetKw = +site.gensetKw || 0;
+    var evKw = +site.evChargerKw || 0, evCount = +site.evChargerCount || 0;
+    var anyDer = bessKw > 0 || solarKw > 0 || gensetKw > 0;
+
+    if (site.outdoor !== false && (bessKwh > 0 || solarKw > 0 || gensetKw > 0 || evKw > 0)) {
+      need('ZONING', 'Outdoor equipment placed on the site plan');
+    }
+    if (String(site.state || '').toUpperCase() === 'CA' && anyDer) {
+      need('CEQA', 'California lead-agency discretionary approval');
+    }
+    if (bessKwh > 0 || gensetKw > 0 || solarKw > 0) {
+      need('BUILDING', 'Equipment pad / seismic anchorage');
+    }
+    if (anyDer || evKw > 0) need('ELECTRICAL', 'Permanent electrical work');
+
+    if (bessKwh > thr) {
+      need('FIRE_CONSTRUCTION', bessKwh.toLocaleString() + ' kWh of storage exceeds the ' +
+           thr + ' kWh threshold in effect');
+      need('FIRE_OPERATIONAL', 'Operation of a permitted energy storage system');
+    }
+    if (bessKwh > 0 && /li|lithium|lfp|nmc/i.test(String(site.chemistry || 'lithium'))) {
+      need('HMBP', 'Lithium battery inventory is reportable');
+    }
+    if (site.gridParallel !== false && anyDer) {
+      need('INTERCONNECTION', 'Grid-parallel ' +
+           (bessKw > 0 ? bessKw.toLocaleString() + ' kW storage' : 'generation'));
+      need('INTERCONNECTION_AGREEMENT', 'Completion of the interconnection study');
+    }
+    if (gensetKw > 0 && /diesel|gas|natural|propane|combust/i.test(String(site.gensetFuel || 'diesel'))) {
+      need('AIR_ATC', gensetKw.toLocaleString() + ' kW combustion generation on site');
+      need('AIR_PTO', 'Follows the Authority to Construct');
+    }
+    if (evKw > 0 || evCount > 0) {
+      need('EV_ACCESSIBILITY', (evCount || '') + ' EV charging position(s)');
+    }
+    if (Object.keys(want).length) need('FINAL_INSPECTION', 'Close-out of permitted construction');
+    if (bessKwh > 0 && pack && pack.incentiveName) {
+      need('INCENTIVE', 'Storage incentive programme available in this territory');
+    }
+
+    /* build the rows, in a stable order */
+    var order = ['ZONING','CEQA','BUILDING','ELECTRICAL','FIRE_CONSTRUCTION',
+                 'FIRE_OPERATIONAL','HMBP','INTERCONNECTION','INTERCONNECTION_AGREEMENT',
+                 'AIR_ATC','AIR_PTO','EV_ACCESSIBILITY','FINAL_INSPECTION','INCENTIVE'];
+    var rows = [], gaps = [], seq = 0;
+    order.forEach(function (key) {
+      if (!want[key]) return;
+      var t = TEMPLATES[key];
+      if (t.states && t.states.indexOf(String(site.state || '').toUpperCase()) < 0) return;
+      seq++;
+      var id = 'P-' + (seq < 10 ? '0' : '') + seq;
+      var agency = pack && pack.agencies[key] ? pack.agencies[key] : null;
+      var wk = pack && pack.weeks[key] ? pack.weeks[key].slice() : null;
+      var fee = pack && pack.fees[key] ? pack.fees[key].slice() : null;
+      if (!agency) gaps.push(key + ': agency');
+      if (!wk) gaps.push(key + ': duration');
+      if (!fee) gaps.push(key + ': fee');
+      rows.push({
+        key: key, id: id,
+        name: (key === 'INCENTIVE' && pack && pack.incentiveName) ? pack.incentiveName : t.name,
+        agency: agency, agencyConfirm: !agency,
+        party: t.party, trigger: t.trigger, firedBy: why[key],
+        code: t.code || null, docs: t.docs,
+        weeks: wk, weeksConfirm: !wk,
+        fees: fee, feesConfirm: !fee,
+        dependsOnKeys: (t.dependsOn || []).filter(function (d) { return !!want[d]; }),
+        renewable: !!t.renewable, status: 'Not started'
+      });
+    });
+    /* resolve dependency keys to ids */
+    var byKey = {};
+    rows.forEach(function (r) { byKey[r.key] = r.id; });
+    rows.forEach(function (r) {
+      r.dependsOn = r.dependsOnKeys.map(function (k) { return byKey[k]; });
+      r.unlocks = [];
+    });
+    rows.forEach(function (r) {
+      r.dependsOn.forEach(function (d) {
+        var up = rows.filter(function (x) { return x.id === d; })[0];
+        if (up) up.unlocks.push(r.id);
+      });
+    });
+
+    return {
+      rows: rows, pack: found ? found.id : null,
+      packSource: pack ? pack.source : null,
+      essThresholdKwh: thr,
+      thresholdNote: pack && pack.thresholdNote ? pack.thresholdNote
+        : 'ESS permit threshold assumed at ' + thr + ' kWh (IFC/CFC §1207). Confirm ' +
+          'the adopted code edition and threshold with the AHJ.',
+      gaps: gaps,
+      unverified: !pack
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  CRITICAL PATH                                                      *
+   *  Forward and backward pass. Anything with zero float is on the path. *
+   *  Nobody types this column.                                           *
+   * ------------------------------------------------------------------ */
+  function schedule(rows, opts) {
+    opts = opts || {};
+    var which = opts.use === 'low' ? 0 : 1;          /* pessimistic by default */
+    var byId = {}, order = [];
+    rows.forEach(function (r) { byId[r.id] = r; });
+
+    /* topological order, with cycle detection */
+    var state = {}, cyc = null;
+    function visit(id, stack) {
+      if (state[id] === 2) return;
+      if (state[id] === 1) { cyc = stack.concat(id); return; }
+      state[id] = 1;
+      (byId[id] ? byId[id].dependsOn : []).forEach(function (d) {
+        if (byId[d]) visit(d, stack.concat(id));
+      });
+      state[id] = 2; order.push(id);
+    }
+    rows.forEach(function (r) { visit(r.id, []); });
+    if (cyc) {
+      return { ok: false, error: 'The dependencies contain a cycle: ' + cyc.join(' -> ') +
+               '. Nothing can start.' };
+    }
+
+    var dur = {}, es = {}, ef = {};
+    rows.forEach(function (r) {
+      dur[r.id] = r.weeks ? r.weeks[which] : (opts.unknownWeeks == null ? 0 : opts.unknownWeeks);
+    });
+    order.forEach(function (id) {
+      var s = 0;
+      byId[id].dependsOn.forEach(function (d) { if (ef[d] > s) s = ef[d]; });
+      es[id] = s; ef[id] = s + dur[id];
+    });
+    var total = 0;
+    order.forEach(function (id) { if (ef[id] > total) total = ef[id]; });
+
+    /* backward pass */
+    var lf = {}, ls = {};
+    order.slice().reverse().forEach(function (id) {
+      var succ = rows.filter(function (r) { return r.dependsOn.indexOf(id) >= 0; });
+      lf[id] = succ.length ? Math.min.apply(null, succ.map(function (r) { return ls[r.id]; }))
+                           : total;
+      ls[id] = lf[id] - dur[id];
+    });
+
+    var out = rows.map(function (r) {
+      var fl = ls[r.id] - es[r.id];
+      return { id: r.id, name: r.name, durationWeeks: dur[r.id],
+               earliestStart: es[r.id], earliestFinish: ef[r.id],
+               latestStart: ls[r.id], latestFinish: lf[r.id],
+               floatWeeks: +fl.toFixed(2), critical: Math.abs(fl) < 1e-9,
+               durationUnknown: !r.weeks };
+    });
+    return { ok: true, totalWeeks: total, tasks: out,
+             criticalPath: out.filter(function (t) { return t.critical; })
+                              .sort(function (a, b) { return a.earliestStart - b.earliestStart; })
+                              .map(function (t) { return t.id; }),
+             basis: which === 0 ? 'optimistic (low end of each range)'
+                                : 'conservative (high end of each range)' };
+  }
+
+  /* Both ends of every range, which is the honest way to quote a duration. */
+  function range(rows) {
+    var lo = schedule(rows, { use: 'low' }), hi = schedule(rows, { use: 'high' });
+    if (!lo.ok) return lo;
+    return { ok: true, lowWeeks: lo.totalWeeks, highWeeks: hi.totalWeeks,
+             criticalPath: hi.criticalPath, low: lo, high: hi };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  AUDIT A MATRIX                                                     *
+   *  Given a matrix somebody has already written, check it against its   *
+   *  own graph.                                                          *
+   * ------------------------------------------------------------------ */
+  function audit(rows, opts) {
+    opts = opts || {};
+    var findings = [];
+    var ids = {};
+    rows.forEach(function (r) {
+      if (ids[r.id]) findings.push('Duplicate permit id ' + r.id + '.');
+      ids[r.id] = true;
+    });
+    rows.forEach(function (r) {
+      (r.dependsOn || []).forEach(function (d) {
+        if (!ids[d]) findings.push(r.id + ' depends on ' + d + ', which is not in the matrix.');
+      });
+    });
+    var sch = schedule(rows, { use: 'high' });
+    if (!sch.ok) { findings.push(sch.error); return { ok: false, findings: findings }; }
+
+    /* a typed critical-path column against the computed one */
+    rows.forEach(function (r) {
+      if (r.criticalPathStated == null) return;
+      var t = sch.tasks.filter(function (x) { return x.id === r.id; })[0];
+      var stated = /^y/i.test(String(r.criticalPathStated));
+      if (stated !== t.critical) {
+        findings.push(r.id + ' is marked "' + (stated ? 'YES' : 'NO') + '" on the critical path, ' +
+          'but it has ' + t.floatWeeks + ' weeks of float against its own dependencies — ' +
+          'computed it is ' + (t.critical ? 'critical' : 'not critical') + '.');
+      }
+    });
+
+    /* a hand-written schedule against the graph */
+    (opts.statedSchedule || []).forEach(function (s) {
+      var t = sch.tasks.filter(function (x) { return x.id === s.id; })[0];
+      if (!t) return;
+      if (s.startWeek != null && s.startWeek < t.earliestStart - 1e-9) {
+        findings.push(s.id + ' is scheduled to start in week ' + s.startWeek +
+          ', but its dependencies do not clear until week ' + t.earliestStart + '.');
+      }
+    });
+    if (opts.statedTotalWeeks != null) {
+      var lo = schedule(rows, { use: 'low' });
+      if (opts.statedTotalWeeks < lo.totalWeeks - 1e-9 ||
+          opts.statedTotalWeeks > sch.totalWeeks + 1e-9) {
+        findings.push('The stated duration of ' + opts.statedTotalWeeks + ' weeks sits outside ' +
+          'the ' + lo.totalWeeks + '-' + sch.totalWeeks + ' weeks the dependencies and durations give.');
+      }
+    }
+    var unknown = sch.tasks.filter(function (t) { return t.durationUnknown; });
+    if (unknown.length) {
+      findings.push(unknown.length + ' permit(s) have no duration, so the schedule treats them ' +
+        'as instant: ' + unknown.map(function (t) { return t.id; }).join(', ') + '.');
+    }
+    return { ok: true, findings: findings, schedule: sch };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  RISKS                                                              *
+   * ------------------------------------------------------------------ */
+  var RISK_RULES = [
+    { key: 'INTERCONNECTION', id: 'R-01', prob: 'High', impact: 'High',
+      text: 'Interconnection queue delay — study timelines dominate the schedule',
+      mitigation: 'Submit the application at project start, before construction permits' },
+    { key: 'INTERCONNECTION', id: 'R-02', prob: 'Medium', impact: 'High',
+      text: 'Grid upgrade cost identified by the interconnection study',
+      mitigation: 'Request a pre-application report to screen circuit capacity first' },
+    { key: 'FIRE_CONSTRUCTION', id: 'R-03', prob: 'Medium', impact: 'High',
+      text: 'Fire AHJ requires UL 9540A large-scale test data or a hazard mitigation analysis',
+      mitigation: 'Select a system with an existing UL 9540A report before ordering' },
+    { key: 'AIR_ATC', id: 'R-04', prob: 'Medium', impact: 'Medium',
+      text: 'Air permit triggers best-available-control-technology review on existing engines',
+      mitigation: 'Audit the existing generator permit and hours of operation early' },
+    { key: 'HMBP', id: 'R-05', prob: 'Low', impact: 'Medium',
+      text: 'Hazardous materials filing out of date at the facility',
+      mitigation: 'Audit the current filing before the battery inventory is added' },
+    { key: 'INCENTIVE', id: 'R-06', prob: 'Medium', impact: 'Low',
+      text: 'Incentive funding exhausted before the reservation is filed',
+      mitigation: 'File the reservation in the earliest available step' },
+    { key: 'FINAL_INSPECTION', id: 'R-07', prob: 'Low', impact: 'Medium',
+      text: 'Final inspection punch list delays utility witness test',
+      mitigation: 'Schedule the final inspection ahead of the utility inspection date' }
+  ];
+
+  function risks(rows) {
+    var have = {};
+    rows.forEach(function (r) { have[r.key] = r.id; });
+    return RISK_RULES.filter(function (rr) { return have[rr.key]; })
+      .map(function (rr) {
+        return { id: rr.id, risk: rr.text, affects: have[rr.key],
+                 probability: rr.prob, impact: rr.impact, mitigation: rr.mitigation };
+      });
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  READ THE SITE                                                      *
+   * ------------------------------------------------------------------ */
+  function fromSite(opts) {
+    opts = opts || {};
+    var out = { bessKw: 0, bessKwh: 0, solarKwDc: 0, solarKwAc: 0,
+                gensetKw: 0, evChargerKw: 0, evChargerCount: 0,
+                gridParallel: true, outdoor: true, source: [] };
+    /* Read the shared fleet collector FIRST and directly. Going through the
+       value-stack module made this depend on another module being present:
+       with it absent the matrix read zero equipment and produced a permit
+       list for an empty site. Same lesson as the Value Stack itself —
+       everything that needs the drawn battery goes to _ppCollectFleet. */
+    try {
+      if (typeof root._ppCollectFleet === 'function') {
+        var f = root._ppCollectFleet();
+        if (f && (f.totalKwh > 0 || f.totalKw > 0)) {
+          out.bessKw = +f.totalKw || 0;
+          out.bessKwh = +f.totalKwh || 0;
+          out.source.push('placed fleet on the sitemap');
+        }
+      }
+    } catch (e) {}
+    try {
+      if (!out.bessKwh && root.OmegaValueStack && root.OmegaValueStack.readSite) {
+        var s = root.OmegaValueStack.readSite();
+        if (s && s.kwh) { out.bessKw = s.kw; out.bessKwh = s.kwh;
+                          out.source = out.source.concat(s.source || []); }
+      }
+      if (root.OmegaValueStack && root.OmegaValueStack.readSite) {
+        var s2 = root.OmegaValueStack.readSite();
+        if (s2 && s2.solarKwDc) out.solarKwDc = s2.solarKwDc;
+      }
+    } catch (e) {}
+    /* solar straight off the site shapes, for the same reason */
+    try {
+      var St0 = root.S || null;
+      if (!out.solarKwDc && St0 && St0.shapes) {
+        St0.shapes.forEach(function (sh) {
+          if (sh && /solar|dersolar/i.test(String(sh.kind || '')) && +sh.kw) {
+            out.solarKwDc += +sh.kw;
+          }
+        });
+      }
+    } catch (e) {}
+    try {
+      var St = root.S || null;
+      if (St && St.elements) {
+        St.elements.forEach(function (el) {
+          var role = el.bgbRole || el.evKind || el.eqId || '';
+          if (/genset|generator/.test(role)) out.gensetKw += +el.kw || 0;
+          if (/charger|evse|dcfc/.test(role)) { out.evChargerCount++; out.evChargerKw += +el.kw || 0; }
+        });
+      }
+    } catch (e) {}
+    ['state', 'county', 'city', 'utility', 'chemistry', 'gensetFuel'].forEach(function (k) {
+      if (opts[k]) out[k] = opts[k];
+    });
+    /* latitude and longitude locate the project but do not name a
+       jurisdiction — that has to be supplied or looked up, not guessed */
+    try {
+      var doc = opts.doc || (root.OmegaArch && root.OmegaArch.doc && root.OmegaArch.doc());
+      if (doc && E.geo && E.geo.hasAnchor(doc)) {
+        out.lat = doc.geo.lat; out.lng = doc.geo.lng;
+        out.source.push('geographic anchor on the drawing');
+      }
+    } catch (e) {}
+    if (!out.state) {
+      out.jurisdictionUnknown = true;
+      out.note = 'No jurisdiction given. Coordinates locate the site but do not name the ' +
+                 'city, county, utility or air district — supply them to pick up a ' +
+                 'verified fee and timeline pack.';
+    }
+    return out;
+  }
+
+  E.permit = {
+    TEMPLATES: TEMPLATES, PACKS: PACKS, RISK_RULES: RISK_RULES,
+    findPack: findPack, applicable: applicable,
+    schedule: schedule, range: range, audit: audit, risks: risks, fromSite: fromSite
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -115372,7 +117704,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 
   function refresh() {
     renderLayers(); renderProps(); renderBom(); renderArray();
-    renderSpec(); renderSched(); renderPiers(); renderFit(); renderReview();
+    renderSpec(); renderSched(); renderPiers(); renderFit(); renderReview(); renderSchem();
     renderModes(); updateCoords(); draw();
   }
 
@@ -116765,6 +119097,200 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     refresh();
   }
 
+
+  /* ------------------------------------------------------------------ *
+   *  SCHEMATICS  —  riser and one-line from a spec                      *
+   *  The diagram is data, not a canvas: a spec you can keep, diff and    *
+   *  regenerate. Building it reports what the checkers found rather than *
+   *  drawing quietly and leaving the reader to spot the gaps.            *
+   * ------------------------------------------------------------------ */
+  var SCH = { mode: 'riser', text: null, last: null };
+
+  var SCH_SAMPLE = {
+    riser: {
+      rooms: [
+        { name: 'Main electrical room', devices: [
+          { id: 'MSB', kind: 'panel', label: 'PANEL\nMSB' },
+          { id: 'DS', kind: 'disco', label: 'DS' },
+          { id: 'M1', kind: 'meter' } ] },
+        { name: 'Corridor 200', devices: [
+          { id: 'MD', kind: 'panel', label: 'PANEL\nMD' },
+          { id: 'LCPD', kind: 'panel', label: 'PANEL\nLCPD' },
+          { id: 'TLCPD', kind: 'xfmr', label: 'TLCPD' } ] }
+      ],
+      feeders: [
+        { from: 'MSB', to: 'MD', note: 'f' },
+        { from: 'MD', to: 'TLCPD', note: 'g' },
+        { from: 'TLCPD', to: 'LCPD', note: 'x' }
+      ],
+      offsheet: [{ from: 'MD', to: 'MSB4-4', note: 'f' }],
+      gec: true, gecNote: 'gec', grounded: ['MSB', 'MD', 'LCPD'],
+      notes: [
+        { id: 'f', text: 'Provide 2"C \u2014 4 #3/0 & 1 #6 GND.' },
+        { id: 'g', text: 'Provide a #6 bare copper ground.' },
+        { id: 'x', text: 'Transformer secondary: 4 #4/0 & 1 #4 GND.' },
+        { id: 'gec', text: 'Grounding electrode conductor, continuous, no splices.' }
+      ]
+    },
+    oneline: {
+      nodes: [
+        { id: 'UTIL', kind: 'utility', label: 'Utility 13.8kV', volts: 13800, source: true },
+        { id: 'T1', kind: 'xfmr', label: 'T1 1500kVA', volts: 480, delta: true, wye: true },
+        { id: 'MSB', kind: 'switchgear', label: 'MSB 2000A', volts: 480, phases: 3, ocpdAmps: 2000 },
+        { id: 'CB1', kind: 'breaker', label: 'CB1 800A', volts: 480, ocpdAmps: 800 },
+        { id: 'PCS', kind: 'inverter', label: 'PCS 380kW', volts: 480 },
+        { id: 'BESS', kind: 'bess', label: 'BESS 760kWh', volts: 480 }
+      ],
+      edges: [
+        { from: 'UTIL', to: 'T1' },
+        { from: 'T1', to: 'MSB', conductor: '500', sets: 6, ocpdAmps: 2000 },
+        { from: 'MSB', to: 'CB1', conductor: '600', sets: 2, ocpdAmps: 800 },
+        { from: 'CB1', to: 'PCS', conductor: '600', sets: 2, ocpdAmps: 800 },
+        { from: 'PCS', to: 'BESS' }
+      ]
+    }
+  };
+
+  function schSpecText() {
+    if (SCH.text != null) return SCH.text;
+    return JSON.stringify(SCH_SAMPLE[SCH.mode], null, 2);
+  }
+
+  function schBuild() {
+    var raw = el.schText ? el.schText.value : schSpecText();
+    /* Keep what was typed BEFORE trying to parse it. Re-rendering the panel
+       on a parse error used to redraw the box from the last good spec, so a
+       typo threw away the edit that caused it. */
+    SCH.text = raw;
+    var spec;
+    try { spec = JSON.parse(raw); }
+    catch (e) {
+      var msg = 'That spec is not valid JSON: ' + (e && e.message);
+      say(msg);
+      SCH.last = { err: msg };
+      renderSchem(); return null;
+    }
+    push();
+    var before = ST.doc.ents.length;
+    var res;
+    try {
+      res = (SCH.mode === 'oneline')
+        ? E.oneline.build(ST.doc, spec)
+        : E.riser.build(ST.doc, spec);
+    } catch (e2) {
+      ST.hist.pop();
+      say('Could not build: ' + (e2 && e2.message));
+      SCH.last = { err: String(e2 && e2.message) };
+      renderSchem(); return null;
+    }
+    if (!res || !res.ok) {
+      ST.hist.pop();
+      say((res && res.error) || 'Nothing to build.');
+      SCH.last = { err: (res && res.error) || 'Nothing to build.' };
+      renderSchem(); return null;
+    }
+    SCH.last = res;
+    var made = ST.doc.ents.length - before;
+    if (SCH.mode === 'oneline') {
+      var c = res.drc.counts;
+      say('One-line built \u2014 ' + spec.nodes.length + ' device(s), ' + made +
+          ' object(s). Design rule check: ' + c.fail + ' failure(s), ' + c.warn + ' warning(s).');
+      res.drc.findings.forEach(function (f) {
+        if (f.level === 'fail') say('  FAIL  ' + f.msg);
+      });
+    } else {
+      say('Riser built \u2014 ' + res.bands.length + ' room band(s), ' + res.notes.length +
+          ' keyed note(s), ' + (res.groundTaps || 0) + ' ground tap(s), ' + made + ' object(s).');
+      res.audit.findings.forEach(function (f) { say('  ' + f); });
+    }
+    zoomExtents(); refresh();
+    return res;
+  }
+
+  function schSample() {
+    SCH.text = JSON.stringify(SCH_SAMPLE[SCH.mode], null, 2);
+    SCH.last = null;
+    renderSchem();
+  }
+  function schMode(m) {
+    if (m === SCH.mode) return;
+    SCH.mode = m; SCH.text = null; SCH.last = null;
+    renderSchem();
+  }
+  function schNotesCSV() {
+    if (!SCH.last || SCH.mode !== 'riser' || !SCH.last.notes) {
+      say('Build a riser first \u2014 the note numbers come from where they are placed.');
+      return;
+    }
+    var rows = E.riser.notesToRows(SCH.last.notes);
+    dl(rows.map(function (r) {
+      return r.map(function (c) {
+        var v = String(c == null ? '' : c);
+        return /[",]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+      }).join(',');
+    }).join('\n'), safeName() + '-keyed-notes.csv', 'text/csv');
+    say('Keyed notes exported, numbered in the order they are placed on the sheet.');
+  }
+
+  function renderSchem() {
+    if (!el.schem) return;
+    var h = '';
+    h += '<div class="arch-seg">' +
+      '<button class="arch-btn' + (SCH.mode === 'riser' ? ' on' : '') +
+        '" data-arch-act="sch-riser">Riser</button>' +
+      '<button class="arch-btn' + (SCH.mode === 'oneline' ? ' on' : '') +
+        '" data-arch-act="sch-oneline">One-line</button></div>';
+    h += '<div class="arch-note">' + (SCH.mode === 'riser'
+      ? 'Rooms band left to right; panels sit on a baseline with transformers above ' +
+        'them. Keyed notes are numbered by where they are placed, so a bubble cannot ' +
+        'point at a note that is not there.'
+      : 'Devices are ranked by the longest path from a source, so the hierarchy reads ' +
+        'true. The design rule check runs on every build.') + '</div>';
+    h += '<textarea id="omega-arch-schtext" spellcheck="false" class="arch-spec">' +
+         esc(schSpecText()) + '</textarea>';
+    h += '<div class="arch-row">' +
+      '<button class="arch-btn arch-go" data-arch-act="sch-build">Build ' +
+        (SCH.mode === 'oneline' ? 'one-line' : 'riser') + '</button>' +
+      '<button class="arch-btn" data-arch-act="sch-sample">Reset spec</button></div>';
+    if (SCH.mode === 'riser') {
+      h += '<button class="arch-btn arch-wide" data-arch-act="sch-notes">Export keyed notes</button>';
+    }
+
+    var r = SCH.last;
+    if (r && r.err) {
+      h += '<div class="arch-rv"><i style="background:var(--red)"></i><div>' +
+           esc(r.err) + '</div></div>';
+    } else if (r && SCH.mode === 'oneline' && r.drc) {
+      h += '<div class="arch-tot" style="margin-top:6px">' +
+        '<div><span>Failures</span><b style="color:' + (r.drc.counts.fail ? 'var(--red)' : 'inherit') +
+        '">' + r.drc.counts.fail + '</b></div>' +
+        '<div><span>Warnings</span><b>' + r.drc.counts.warn + '</b></div></div>';
+      r.drc.findings.forEach(function (f) {
+        h += '<div class="arch-rv"><i style="background:' +
+          (f.level === 'fail' ? 'var(--red)' : 'var(--amber)') + '"></i><div><b>' +
+          esc(f.code) + '</b> ' + esc(f.msg) + '</div></div>';
+      });
+    } else if (r && SCH.mode === 'riser') {
+      h += '<div class="arch-tot" style="margin-top:6px">' +
+        '<div><span>Bands</span><b>' + r.bands.length + '</b></div>' +
+        '<div><span>Keyed notes</span><b>' + r.notes.length + '</b></div>' +
+        '<div><span>Ground taps</span><b>' + (r.groundTaps || 0) + '</b></div></div>';
+      r.audit.findings.forEach(function (f) {
+        h += '<div class="arch-rv"><i style="background:var(--amber)"></i><div>' +
+             esc(f) + '</div></div>';
+      });
+      r.notes.forEach(function (nt) {
+        h += '<div class="arch-rv"><i style="background:var(--accent)"></i><div><b>(' +
+          nt.number + ')</b> ' + esc(nt.text) + (nt.uses > 1 ? ' \u00D7' + nt.uses : '') +
+          '</div></div>';
+      });
+    }
+    el.schem.innerHTML = h;
+    var ta = document.getElementById('omega-arch-schtext');
+    if (ta) ta.addEventListener('input', function () { SCH.text = ta.value; });
+    el.schText = ta;
+  }
+
   /* ------------------------------------------------------------------ *
    *  ARRAY LAYOUT  —  parametric PV                                     *
    *  Pick a module and a mounting system, set tilt and azimuth, and the  *
@@ -117767,6 +120293,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
           '<div id="omega-arch-spec"></div>' +
           '<div class="arch-cat">Conduit schedule</div>' +
           '<div id="omega-arch-sched"></div>' +
+          '<div class="arch-cat">Schematics</div>' +
+          '<div id="omega-arch-schem"></div>' +
           '<div class="arch-cat">Design review</div>' +
           '<div id="omega-arch-review"></div>' +
           '<div class="arch-cat">Pier schedule</div>' +
@@ -117811,6 +120339,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     el.array = r.querySelector('#omega-arch-array');
     el.piers = r.querySelector('#omega-arch-piers');
     el.review = r.querySelector('#omega-arch-review');
+    el.schem = r.querySelector('#omega-arch-schem');
     el.hist = r.querySelector('#omega-arch-hist');
     el.input = r.querySelector('#omega-arch-input');
     el.prompt = r.querySelector('#omega-arch-prompt');
@@ -117851,6 +120380,11 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         else if (act === 'pr-run') runPiers();
         else if (act === 'pr-csv') pierCSV();
         else if (act === 'rv-run') runReview();
+        else if (act === 'sch-build') schBuild();
+        else if (act === 'sch-sample') schSample();
+        else if (act === 'sch-notes') schNotesCSV();
+        else if (act === 'sch-riser') schMode('riser');
+        else if (act === 'sch-oneline') schMode('oneline');
         else if (act === 'geojson') geoExport('geojson');
         else if (act === 'kml') geoExport('kml');
         else if (act === 'geoin') geoImport();
@@ -118033,6 +120567,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     piers: runPiers, pierCSV: pierCSV, pierSet: pierSet,
     setGeo: setGeo, geoStatus: geoStatus, geoExport: geoExport, geoImport: geoImport,
     review: runReview, reviewPick: reviewPick, reviewRes: function () { return RV.res; },
+    schBuild: schBuild, schMode: schMode, schSample: schSample, schNotes: schNotesCSV,
+    schState: SCH,
     anchorFromPlacement: anchorFromPlacement,
     toGeoJSON: function () { return E.geo.toGeoJSON(ST.doc); },
     toKML: function () { return E.geo.toKML(ST.doc); },
@@ -118618,6 +121154,792 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
   setInterval(function () {
     try { graft(); } catch (e) { if (window.console) console.warn(TAG, e && e.message); }
   }, 700);
+})();
+
+</script>
+<script id="omega-bill-report-js">
+/* ====================================================================== *
+ *  OMEGA BILL ANALYSIS REPORT                                            *
+ *  ------------------------------------------------------------------    *
+ *  A multi-sheet workbook in the shape a developer or lender expects:     *
+ *  monthly usage, the demand peaks that actually drive the bill, each     *
+ *  demand component priced separately, the TOU spread, the sizing sweep   *
+ *  and the design parameters — with every rate traced to the bill it came *
+ *  from.                                                                  *
+ *                                                                         *
+ *  It reuses the workbook writer already in the app rather than adding a  *
+ *  second spreadsheet path, and reuses OmegaArchEngine.tariff for the     *
+ *  arithmetic so the workbook and the sizer cannot disagree.              *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaBillReport) return;
+
+  function E() { return window.OmegaArchEngine; }
+  function T() { var e = E(); return e && e.tariff; }
+
+  function n2(v) { return v == null || !isFinite(v) ? '' : Math.round(v * 100) / 100; }
+  function n0(v) { return v == null || !isFinite(v) ? '' : Math.round(v); }
+  var MON = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+             'July', 'August', 'September', 'October', 'November', 'December'];
+
+  /* ------------------------------------------------------------------ *
+   *  BUILD THE SHEETS                                                   *
+   *  months: [{ month, label, days, kwh, tou:{onpeak,offpeak,superoff},
+   *             peaks:{any,tou,onpeak}, peakWhen, delivery, generation,
+   *             gasTherms, gasCost }]
+   * ------------------------------------------------------------------ */
+  function build(cfg) {
+    cfg = cfg || {};
+    var t = T();
+    if (!t) return { ok: false, error: 'Tariff engine not loaded.' };
+    var tariff = cfg.tariff || t.TARIFFS['SDGE-AL-TOU-2'];
+    var months = cfg.months || [];
+    if (!months.length) {
+      return { ok: false, error: 'No billing months supplied. The report is built from ' +
+               'bills, not from assumptions.' };
+    }
+    var sheets = [];
+
+    /* ---- 1. Cover / provenance ---- */
+    sheets.push({ name: 'Cover', rows: [
+      [cfg.customer || 'Customer', ''],
+      ['Service address', cfg.address || ''],
+      ['Account', cfg.account || ''],
+      ['Utility / tariff', tariff.name],
+      ['Rate source', tariff.source || 'entered by hand'],
+      ['Billing months analysed', months.length],
+      ['Prepared', new Date().toISOString().slice(0, 10)],
+      [''],
+      ['Every rate in this workbook is transcribed from the bill named above.'],
+      ['Figures extrapolated from fewer than twelve months are labelled as such'],
+      ['on the sheet where they appear.']
+    ] });
+
+    /* ---- 2. Monthly usage ---- */
+    var uRows = [['Billing month', 'Days', 'Total kWh', 'On-peak kWh', 'Off-peak kWh',
+                  'Super off-peak kWh', 'Daily avg kWh', 'Avg demand kW', 'Peak demand kW',
+                  'Load factor', 'Peak-to-average kW']];
+    var totKwh = 0, totDays = 0;
+    months.forEach(function (m) {
+      var days = +m.days || 30, kwh = +m.kwh || 0;
+      var avgKw = kwh / (days * 24);
+      var peak = +(m.peaks && m.peaks.any) || 0;
+      totKwh += kwh; totDays += days;
+      uRows.push([m.label || MON[m.month] || m.month, days, n0(kwh),
+        n0(m.tou && m.tou.onpeak), n0(m.tou && m.tou.offpeak), n0(m.tou && m.tou.superoff),
+        n0(kwh / days), n2(avgKw), n2(peak),
+        peak > 0 ? n2(avgKw / peak) : '', peak > 0 ? n2(peak - avgKw) : '']);
+    });
+    uRows.push([months.length + '-month total', totDays, n0(totKwh), '', '', '',
+                n0(totKwh / totDays), '', '', '', '']);
+    if (months.length < 12) {
+      uRows.push(['Annualised (x' + (12 / months.length).toFixed(2) + ')', 365,
+                  n0(totKwh / totDays * 365), '', '', '', '', '', '', '', '']);
+      uRows.push(['NOTE: annualised from ' + months.length + ' months of bills, not measured.']);
+    }
+    sheets.push({ name: 'Monthly Usage', rows: uRows });
+
+    /* ---- 3. Demand peaks ---- */
+    var pRows = [['Month', 'Monthly max kW (any hour)', 'TOU-period max kW',
+                  'On-peak window max kW', 'Peak hour', 'Monthly max minus on-peak max kW']];
+    months.forEach(function (m) {
+      var p = m.peaks || {};
+      pRows.push([m.label || MON[m.month], n2(p.any), n2(p.tou), n2(p.onpeak),
+                  m.peakWhen || '', (p.any != null && p.onpeak != null) ? n2(p.any - p.onpeak) : '']);
+    });
+    if (cfg.maxAnnualKw) {
+      pRows.push(['Max annual (trailing 12)', n2(cfg.maxAnnualKw), '', '', '', '']);
+    }
+    pRows.push(['']);
+    pRows.push(['Why the last column matters: each demand charge is measured over ' +
+                'different hours.']);
+    pRows.push(['Where the monthly maximum falls outside the on-peak window, a battery ' +
+                'that chases']);
+    pRows.push(['the monthly peak does not reduce the on-peak demand charge, and vice versa.']);
+    sheets.push({ name: 'Demand Peaks', rows: pRows });
+
+    /* ---- 4. Demand charges, component by component ---- */
+    var dRows = [['Month', 'Component', 'Measured on', 'Billed kW', 'Rate $/kW', 'Charge $',
+                  'Rate source']];
+    var annualDemand = 0;
+    months.forEach(function (m) {
+      var b = t.demandBill(tariff, m.peaks || {}, m.month, m.rates || null);
+      b.components.forEach(function (c) {
+        dRows.push([m.label || MON[m.month], c.label, c.window, n2(c.kw), n2(c.rate),
+                    n0(c.amount), c.rateFromBill ? 'as billed' : 'tariff default']);
+      });
+      dRows.push([m.label || MON[m.month], 'TOTAL DEMAND', '', '', '', n0(b.total)]);
+      annualDemand += b.total;
+    });
+    dRows.push(['']);
+    dRows.push([months.length + '-month demand total', '', '', '', '', n0(annualDemand)]);
+    dRows.push(['Annualised demand charges', '', '', '', '',
+                n0(annualDemand / months.length * 12)]);
+    dRows.push(['Stacked rate if one event drives every component', '', '', '',
+                n2(t.stackedRate(tariff, months[0].month)), '$/kW-month']);
+    sheets.push({ name: 'Demand Charges', rows: dRows });
+
+    /* ---- 5. Energy and the TOU spread ---- */
+    var eRows = [['Period', 'Delivery $/kWh', 'Generation $/kWh', 'Volumetric adders $/kWh',
+                  'All-in $/kWh']];
+    ['onpeak', 'offpeak', 'superoff'].forEach(function (p) {
+      var d = (tariff.energy.delivery || {})[p] || 0;
+      var g = (tariff.energy.generation || {})[p] || 0;
+      var v = (tariff.energy.volumetric || []).reduce(function (s, x) { return s + x.rate; }, 0);
+      eRows.push([p, d, g, n2(v * 10000) / 10000, n2(t.allInRate(tariff, p) * 10000) / 10000]);
+    });
+    eRows.push(['']);
+    var arb = t.arbitrageValue(tariff, 'superoff', 'onpeak', cfg.rte || 0.88);
+    eRows.push(['Arbitrage, super off-peak into on-peak', '', '', '', '']);
+    eRows.push(['Gross spread $/kWh', arb.spread]);
+    eRows.push(['Round-trip cost $/kWh at RTE ' + (cfg.rte || 0.88), arb.rteCost]);
+    eRows.push(['Net value $/kWh', arb.netPerKwh]);
+    eRows.push(['']);
+    eRows.push(['Volumetric adders included:']);
+    (tariff.energy.volumetric || []).forEach(function (v) {
+      eRows.push(['', v.label, v.rate]);
+    });
+    sheets.push({ name: 'Energy Rates', rows: eRows });
+
+    /* ---- 6. Monthly cost roll-up ---- */
+    var cRows = [['Month', 'Electric delivery $', 'Generation / CCA $', 'Total electric $',
+                  'Gas $', 'Total bill $', 'Blended $/kWh electric']];
+    var sumD = 0, sumG = 0, sumGas = 0;
+    months.forEach(function (m) {
+      var d = +m.delivery || 0, g = +m.generation || 0, gas = +m.gasCost || 0;
+      sumD += d; sumG += g; sumGas += gas;
+      cRows.push([m.label || MON[m.month], n0(d), n0(g), n0(d + g), n0(gas), n0(d + g + gas),
+                  m.kwh ? n2((d + g) / m.kwh * 10000) / 10000 : '']);
+    });
+    cRows.push([months.length + '-month total', n0(sumD), n0(sumG), n0(sumD + sumG),
+                n0(sumGas), n0(sumD + sumG + sumGas), '']);
+    cRows.push(['Monthly average', n0(sumD / months.length), n0(sumG / months.length),
+                n0((sumD + sumG) / months.length), n0(sumGas / months.length),
+                n0((sumD + sumG + sumGas) / months.length), '']);
+    cRows.push(['Annualised', n0(sumD / months.length * 12), n0(sumG / months.length * 12),
+                n0((sumD + sumG) / months.length * 12), n0(sumGas / months.length * 12),
+                n0((sumD + sumG + sumGas) / months.length * 12), '']);
+    sheets.push({ name: 'Monthly Costs', rows: cRows });
+
+    /* ---- 7. The sizing sweep ---- */
+    var opts = {
+      eventHours: cfg.eventHours || 4, dod: cfg.dod || 0.90, rte: cfg.rte || 0.88,
+      dispatch: cfg.dispatch || 'global',
+      capexPerKwh: cfg.capexPerKwh || 400, capexPerKw: cfg.capexPerKw || 165,
+      stepKw: cfg.stepKw || 25
+    };
+    var sw = t.sweep(tariff, months, opts);
+    var sRows = [['Shave kW', 'Nameplate kWh', 'C-rate', 'Demand savings $/yr',
+                  'Capex $', 'Simple payback yr', '$ saved per kWh installed']];
+    sw.forEach(function (p) {
+      sRows.push([p.shaveKw, p.nameplateKwh,
+                  p.nameplateKwh ? n2(p.shaveKw / p.nameplateKwh * 1000) / 1000 : '',
+                  n0(p.savingsYr), n0(p.capex), p.paybackYr, p.savingsPerKwh]);
+    });
+    sRows.push(['']);
+    sRows.push(['Held for ' + opts.eventHours + ' hours, ' + (opts.dod * 100) +
+                '% depth of discharge, dispatch: ' + opts.dispatch]);
+    sRows.push(['Capex basis $' + opts.capexPerKwh + '/kWh + $' + opts.capexPerKw + '/kW']);
+    sRows.push(['Demand savings only. Energy arbitrage and any incentive are NOT in this ' +
+                'column.']);
+    sheets.push({ name: 'BESS Sizing Sweep', rows: sRows });
+
+    /* ---- 8. Design parameters ---- */
+    var avgDaily = totKwh / totDays;
+    var avgKw = avgDaily / 24;
+    var peaks = months.map(function (m) { return +(m.peaks && m.peaks.any) || 0; });
+    var obsPeak = Math.max.apply(null, peaks);
+    var pick = cfg.shaveKw || null, picked = null;
+    if (!pick && sw.length) {
+      /* Payback is close to flat across depth here, because savings and
+         capex both scale with the shave — so "best payback" degenerates to
+         the smallest battery on the curve, which is not a recommendation.
+         Take the DEEPEST shave that still meets the target instead. */
+      var target = cfg.targetPaybackYr == null ? 5 : cfg.targetPaybackYr;
+      var elig = sw.filter(function (p) { return p.paybackYr != null && p.paybackYr <= target; });
+      picked = elig.length ? elig[elig.length - 1]
+                           : sw.slice().sort(function (a, b) { return a.paybackYr - b.paybackYr; })[0];
+      pick = picked ? picked.shaveKw : null;
+    }
+    var sized = pick ? t.sizeForShave(tariff, months, pick, opts) : null;
+    var gRows = [['Parameter', 'Value', 'Basis']];
+    gRows.push(['Average daily electric load', n0(avgDaily) + ' kWh/day', 'bills']);
+    gRows.push(['Average power draw', n2(avgKw) + ' kW', 'daily kWh / 24']);
+    gRows.push(['Observed peak demand', n2(obsPeak) + ' kW', 'highest monthly maximum']);
+    if (cfg.maxAnnualKw) {
+      gRows.push(['Trailing 12-month peak', n2(cfg.maxAnnualKw) + ' kW', 'bill']);
+    }
+    gRows.push(['Load factor', n2(avgKw / obsPeak), 'average / peak']);
+    gRows.push(['Blended electric rate', n2((sumD + sumG) / totKwh * 10000) / 10000 + ' $/kWh',
+                'total electric / kWh']);
+    gRows.push(['TOU arbitrage, net of round trip', arb.netPerKwh + ' $/kWh',
+                'super off-peak into on-peak']);
+    gRows.push(['Annualised utility spend', '$' + n0((sumD + sumG + sumGas) / months.length * 12),
+                'extrapolated from ' + months.length + ' months']);
+    if (sized) {
+      gRows.push(['']);
+      gRows.push(['Indicative BESS', '', '']);
+      gRows.push(['  Shave depth', sized.shaveKw + ' kW',
+                  'deepest shave inside a ' + (cfg.targetPaybackYr == null ? 5 : cfg.targetPaybackYr) +
+                  ' year simple payback']);
+      gRows.push(['  Nameplate energy', sized.nameplateKwh + ' kWh',
+                  sized.eventHours + ' h event / ' + (sized.dod * 100) + '% DoD']);
+      gRows.push(['  C-rate', sized.cRate, 'kW / kWh']);
+      gRows.push(['  Demand savings', '$' + n0(sized.demandSavingsYr) + '/yr',
+                  'every demand component priced on its own window']);
+      if (sized.extrapolated) {
+        gRows.push(['  NOTE', 'annualised from ' + sized.monthsGiven + ' months',
+                    'not a measured year']);
+      }
+    }
+    gRows.push(['']);
+    gRows.push(['Design notes']);
+    var offPeakMonths = months.filter(function (m) {
+      var p = m.peaks || {};
+      return p.any != null && p.onpeak != null && (p.any - p.onpeak) > 5;
+    });
+    if (offPeakMonths.length) {
+      gRows.push(['', offPeakMonths.length + ' of ' + months.length +
+        ' months peak outside the on-peak window. A battery held for the ' +
+        'on-peak window will not reduce the non-coincident demand charge, and one ' +
+        'chasing the monthly peak will not reduce the on-peak charge. Pick a ' +
+        'dispatch and price it, rather than claiming both.']);
+    }
+    gRows.push(['', 'Demand charges are ' +
+      n0(annualDemand / months.length * 12 / ((sumD + sumG) / months.length * 12) * 100) +
+      '% of the electric bill on this tariff, so peak shaving is the dominant value, ' +
+      'not energy arbitrage.']);
+    sheets.push({ name: 'Design Parameters', rows: gRows });
+
+    return { ok: true, sheets: sheets, tariff: tariff, sweep: sw, sized: sized,
+             totals: { kwh: totKwh, days: totDays, demandYr: annualDemand / months.length * 12,
+                       electricYr: (sumD + sumG) / months.length * 12,
+                       billYr: (sumD + sumG + sumGas) / months.length * 12 } };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  OUTPUT                                                             *
+   * ------------------------------------------------------------------ */
+  function toCSV(res) {
+    if (!res || !res.ok) return null;
+    var out = '';
+    res.sheets.forEach(function (s) {
+      out += '### ' + s.name + '\n';
+      s.rows.forEach(function (r) {
+        out += r.map(function (c) {
+          var v = c == null ? '' : String(c);
+          return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+        }).join(',') + '\n';
+      });
+      out += '\n';
+    });
+    return out;
+  }
+
+  function download(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }
+
+  /* Reuses the app's own workbook writer and its lazy CDN load, so there is
+     one spreadsheet path rather than two. Falls back to CSV when the
+     library cannot be reached, rather than failing silently. */
+  function exportXlsx(cfg) {
+    var res = build(cfg);
+    if (!res.ok) { alert(res.error); return Promise.resolve(res); }
+    var base = (cfg && cfg.filename) || 'bill-analysis';
+    if (typeof window._d4LoadXlsx === 'function' && typeof window._d4Xlsx === 'function') {
+      return window._d4LoadXlsx().then(function () {
+        download(window._d4Xlsx(res.sheets), base + '.xlsx');
+        return res;
+      }).catch(function () {
+        download(new Blob([toCSV(res)], { type: 'text/csv' }), base + '.csv');
+        return res;
+      });
+    }
+    download(new Blob([toCSV(res)], { type: 'text/csv' }), base + '.csv');
+    return Promise.resolve(res);
+  }
+
+  window.OmegaBillReport = { build: build, toCSV: toCSV, exportXlsx: exportXlsx };
+})();
+
+</script>
+<script id="omega-permit-report-js">
+/* ====================================================================== *
+ *  OMEGA PERMIT REPORT  —  the five-sheet matrix workbook                *
+ *  Cover, Master Permitting Matrix, Gantt Timeline, Dependencies & Risk  *
+ *  Register, Fee Summary. Structure follows the M2 Ingredients matrix;   *
+ *  every cell is computed from the drawn system and the dependency       *
+ *  graph, and anything the jurisdiction pack cannot supply is left blank *
+ *  and marked for confirmation rather than filled with a plausible guess.*
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaPermitReport) return;
+  function E() { return window.OmegaArchEngine; }
+
+  function money(r) {
+    if (!r) return 'Confirm with AHJ';
+    if (r[0] === 0 && r[1] === 0) return 'Included';
+    return '$' + r[0].toLocaleString() + '\u2013$' + r[1].toLocaleString();
+  }
+  function wk(r) { return r ? r[0] + '\u2013' + r[1] : 'Confirm with AHJ'; }
+
+  function build(cfg) {
+    cfg = cfg || {};
+    var P = E() && E().permit;
+    if (!P) return { ok: false, error: 'Permit engine not loaded.' };
+    var site = cfg.site;
+    if (!site) return { ok: false, error: 'No site given. The matrix is derived from what is drawn.' };
+    var m = P.applicable(site, cfg);
+    if (!m.rows.length) {
+      return { ok: false, error: 'Nothing on the site triggers a permit yet. Place the ' +
+               'battery, generation or charging equipment first.' };
+    }
+    var rg = P.range(m.rows);
+    var hi = rg.high, lo = rg.low;
+    var byId = {}; hi.tasks.forEach(function (t) { byId[t.id] = t; });
+    var rk = P.risks(m.rows);
+    var sheets = [];
+
+    /* ---- Cover ---- */
+    var feeLo = 0, feeHi = 0, unknownFees = 0;
+    m.rows.forEach(function (r) {
+      if (r.fees) { feeLo += r.fees[0]; feeHi += r.fees[1]; } else unknownFees++;
+    });
+    sheets.push({ name: 'Cover', rows: [
+      [cfg.projectName || 'Permitting Matrix'],
+      [cfg.customer || '', cfg.address || ''],
+      [''],
+      ['PROJECT SUMMARY'],
+      ['System', (site.bessKw ? site.bessKw.toLocaleString() + ' kW / ' : '') +
+                 (site.bessKwh ? site.bessKwh.toLocaleString() + ' kWh storage' : '') +
+                 (site.solarKwDc ? '; ' + site.solarKwDc.toLocaleString() + ' kWdc solar' : '') +
+                 (site.gensetKw ? '; ' + site.gensetKw.toLocaleString() + ' kW generation' : '')],
+      ['Location', [site.city, site.county, site.state].filter(Boolean).join(', ') || 'Not given'],
+      ['Utility', site.utility || 'Not given'],
+      ['Permits triggered', m.rows.length],
+      ['Total duration (computed)', rg.lowWeeks + '\u2013' + rg.highWeeks + ' weeks'],
+      ['Critical path', rg.criticalPath.join(' \u2192 ')],
+      ['Estimated permit fees', unknownFees === m.rows.length ? 'Confirm with AHJ'
+        : '$' + feeLo.toLocaleString() + '\u2013$' + feeHi.toLocaleString() +
+          (unknownFees ? '  (excludes ' + unknownFees + ' permit(s) with no published fee)' : '')],
+      ['Jurisdiction pack', m.pack || 'None \u2014 generic template'],
+      ['Rate / fee source', m.packSource || 'Not verified for this jurisdiction'],
+      ['Date prepared', new Date().toISOString().slice(0, 10)],
+      [''],
+      ['HOW TO READ THIS'],
+      ['The duration is computed from the dependency graph and the permit durations,'],
+      ['not typed. The critical path is every permit with zero float. The low and high'],
+      ['ends are the optimistic and conservative ends of each permit\u2019s own range.'],
+      [''],
+      [m.thresholdNote],
+      m.unverified
+        ? ['NO VERIFIED PACK for this jurisdiction. Agencies, fees and durations are ' +
+           'blank and marked \u201cConfirm with AHJ\u201d. The permits and their triggers ' +
+           'still apply; the local facts do not.']
+        : ['Fees and durations come from the source named above and should be re-confirmed ' +
+           'before they are relied on.']
+    ] });
+
+    /* ---- Master Permitting Matrix ---- */
+    var mm = [['Permit ID', 'Permit / Review Name', 'Agency', 'Responsible Party',
+               'Trigger / Condition', 'What fired it on this project', 'Required Documents',
+               'Code Reference', 'Est. Timeline (wks)', 'Est. Fees', 'Depends On', 'Unlocks',
+               'Critical Path', 'Float (wks)', 'Status']];
+    m.rows.forEach(function (r) {
+      var t = byId[r.id];
+      mm.push([r.id, r.name, r.agency || 'Confirm with AHJ', r.party, r.trigger,
+               (r.firedBy || []).join('; '), r.docs, r.code || '',
+               wk(r.weeks), money(r.fees),
+               r.dependsOn.join('; ') || 'None', r.unlocks.join('; ') || 'None',
+               t.critical ? 'YES' : 'NO', t.floatWeeks, r.status]);
+    });
+    sheets.push({ name: 'Master Permitting Matrix', rows: mm });
+
+    /* ---- Gantt ---- */
+    var weeks = Math.max(1, Math.ceil(rg.highWeeks));
+    var head = ['Permit ID', 'Permit Name', 'Start wk', 'Finish wk', 'Float'];
+    for (var w = 1; w <= weeks; w++) head.push(w);
+    var gr = [['GANTT TIMELINE \u2014 conservative (high end of each range)'], head];
+    m.rows.forEach(function (r) {
+      var t = byId[r.id];
+      var row = [r.id, r.name, t.earliestStart, t.earliestFinish, t.floatWeeks];
+      for (var w2 = 1; w2 <= weeks; w2++) {
+        row.push((w2 > t.earliestStart && w2 <= t.earliestFinish)
+          ? (t.critical ? 'C' : 'X') : '');
+      }
+      gr.push(row);
+    });
+    gr.push([]);
+    gr.push(['C = on the critical path (zero float). X = has float.']);
+    sheets.push({ name: 'Gantt Timeline', rows: gr });
+
+    /* ---- Dependencies & Risk ---- */
+    var dr = [['SECTION A \u2014 CRITICAL PATH, COMPUTED'],
+              ['Order', 'Permit ID', 'Permit', 'Start wk', 'Finish wk', 'Duration wk']];
+    rg.criticalPath.forEach(function (id, i) {
+      var t = byId[id];
+      dr.push([i + 1, id, t.name, t.earliestStart, t.earliestFinish, t.durationWeeks]);
+    });
+    dr.push([]);
+    dr.push(['Total, conservative', rg.highWeeks + ' weeks']);
+    dr.push(['Total, optimistic', rg.lowWeeks + ' weeks']);
+    dr.push([]);
+    dr.push(['SECTION B \u2014 DEPENDENCY MAP']);
+    dr.push(['Permit ID', 'Permit', 'Depends on (upstream)', 'Unlocks (downstream)',
+             'Earliest start', 'Latest start', 'Float']);
+    m.rows.forEach(function (r) {
+      var t = byId[r.id];
+      dr.push([r.id, r.name, r.dependsOn.join('; ') || 'None',
+               r.unlocks.join('; ') || 'None', t.earliestStart, t.latestStart, t.floatWeeks]);
+    });
+    dr.push([]);
+    dr.push(['SECTION C \u2014 RISK REGISTER']);
+    dr.push(['Risk ID', 'Risk', 'Affected permit', 'Probability', 'Impact', 'Mitigation']);
+    rk.forEach(function (r) {
+      dr.push([r.id, r.risk, r.affects, r.probability, r.impact, r.mitigation]);
+    });
+    sheets.push({ name: 'Dependencies & Risk', rows: dr });
+
+    /* ---- Fees ---- */
+    var fr = [['SECTION A \u2014 ESTIMATED FEES'],
+              ['Permit ID', 'Agency', 'Fee low', 'Fee high', 'Midpoint', 'Source']];
+    m.rows.forEach(function (r) {
+      fr.push([r.id, r.agency || 'Confirm with AHJ',
+               r.fees ? r.fees[0] : '', r.fees ? r.fees[1] : '',
+               r.fees ? (r.fees[0] + r.fees[1]) / 2 : '',
+               r.fees ? (m.packSource || 'pack') : 'not published \u2014 confirm']);
+    });
+    fr.push([]);
+    fr.push(['Total', '', feeLo, feeHi, (feeLo + feeHi) / 2,
+             unknownFees ? unknownFees + ' permit(s) carry no published fee' : '']);
+    sheets.push({ name: 'Fee Summary', rows: fr });
+
+    return { ok: true, sheets: sheets, matrix: m, range: rg, risks: rk };
+  }
+
+  function toCSV(res) {
+    if (!res || !res.ok) return null;
+    var out = '';
+    res.sheets.forEach(function (s) {
+      out += '### ' + s.name + '\n';
+      s.rows.forEach(function (r) {
+        out += (r || []).map(function (c) {
+          var v = c == null ? '' : String(c);
+          return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+        }).join(',') + '\n';
+      });
+      out += '\n';
+    });
+    return out;
+  }
+
+  function download(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }
+
+  function exportXlsx(cfg) {
+    var res = build(cfg);
+    if (!res.ok) { alert(res.error); return Promise.resolve(res); }
+    var base = (cfg && cfg.filename) || 'permitting-matrix';
+    if (typeof window._d4LoadXlsx === 'function' && typeof window._d4Xlsx === 'function') {
+      return window._d4LoadXlsx().then(function () {
+        download(window._d4Xlsx(res.sheets), base + '.xlsx'); return res;
+      }).catch(function () {
+        download(new Blob([toCSV(res)], { type: 'text/csv' }), base + '.csv'); return res;
+      });
+    }
+    download(new Blob([toCSV(res)], { type: 'text/csv' }), base + '.csv');
+    return Promise.resolve(res);
+  }
+
+  window.OmegaPermitReport = { build: build, toCSV: toCSV, exportXlsx: exportXlsx };
+})();
+
+</script>
+<script id="omega-output-panel-js">
+/* ====================================================================== *
+ *  OMEGA OUTPUT PANEL                                                    *
+ *  Puts the two workbook generators on the Output ribbon, where the rest  *
+ *  of the deliverables live. Until now they existed only as console       *
+ *  calls, which is not a product.                                         *
+ *                                                                         *
+ *  Both read the drawn system. Where a report needs something the drawing *
+ *  cannot supply — the utility tariff, the city and county — it asks,     *
+ *  rather than defaulting to a jurisdiction and quietly producing a       *
+ *  matrix for the wrong one.                                              *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaOutputPanel) return;
+  var TAG = '[OmegaOutputPanel]';
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function el(id) { return document.getElementById(id); }
+
+  /* ---- a small modal, styled off the app's own dialog classes -------- */
+  function modal(title, bodyHtml, onOk, okLabel) {
+    var prev = el('omega-out-modal');
+    if (prev) prev.remove();
+    var d = document.createElement('div');
+    d.id = 'omega-out-modal';
+    d.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(4,8,14,.66);' +
+      'display:flex;align-items:center;justify-content:center';
+    d.innerHTML =
+      '<div style="width:560px;max-width:94vw;max-height:88vh;overflow:auto;' +
+      'background:#0f1724;border:1px solid #24405e;border-radius:10px;' +
+      'box-shadow:0 18px 60px rgba(0,0,0,.55);color:#dbe6f2;font-size:12px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;' +
+        'padding:12px 14px;border-bottom:1px solid #1b2f45">' +
+          '<b style="font-size:13px">' + esc(title) + '</b>' +
+          '<button id="omega-out-x" style="background:none;border:0;color:#8FA3B8;' +
+          'font-size:16px;cursor:pointer">\u2715</button></div>' +
+        '<div style="padding:14px" id="omega-out-body">' + bodyHtml + '</div>' +
+        '<div style="padding:12px 14px;border-top:1px solid #1b2f45;text-align:right">' +
+          '<button id="omega-out-cancel" style="background:#16233a;border:1px solid #24405e;' +
+          'color:#dbe6f2;border-radius:6px;padding:7px 12px;cursor:pointer">Cancel</button> ' +
+          '<button id="omega-out-ok" style="background:#1f6feb;border:0;color:#fff;' +
+          'border-radius:6px;padding:7px 14px;cursor:pointer;font-weight:600">' +
+          esc(okLabel || 'Generate') + '</button></div></div>';
+    document.body.appendChild(d);
+    function close() { d.remove(); }
+    el('omega-out-x').onclick = close;
+    el('omega-out-cancel').onclick = close;
+    el('omega-out-ok').onclick = function () {
+      try { if (onOk(close) !== false) { /* onOk closes when it is ready */ } }
+      catch (e) { alert('Could not generate: ' + (e && e.message)); }
+    };
+    d.addEventListener('click', function (ev) { if (ev.target === d) close(); });
+    return { close: close };
+  }
+
+  function field(id, label, value, ph) {
+    return '<div style="display:flex;flex-direction:column;gap:3px;margin-bottom:9px">' +
+      '<label style="font-size:10px;color:#8FA3B8;text-transform:uppercase;' +
+      'letter-spacing:.04em">' + esc(label) + '</label>' +
+      '<input id="' + id + '" value="' + esc(value == null ? '' : value) + '" ' +
+      'placeholder="' + esc(ph || '') + '" style="background:#0b1220;border:1px solid #24405e;' +
+      'color:#dbe6f2;border-radius:5px;padding:7px 9px;font-size:12px"></div>';
+  }
+  function note(t) {
+    return '<div style="font-size:11px;color:#8FA3B8;line-height:1.5;margin:6px 0 10px">' +
+      esc(t) + '</div>';
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  PERMITTING MATRIX                                                  *
+   * ------------------------------------------------------------------ */
+  function readDrawnSystem() {
+    var s = { bessKw: 0, bessKwh: 0, solarKwDc: 0, gensetKw: 0,
+              evChargerKw: 0, evChargerCount: 0, source: [] };
+    try {
+      var E = window.OmegaArchEngine;
+      if (E && E.permit && E.permit.fromSite) {
+        var f = E.permit.fromSite();
+        ['bessKw','bessKwh','solarKwDc','gensetKw','evChargerKw','evChargerCount']
+          .forEach(function (k) { if (f[k]) s[k] = f[k]; });
+        s.source = f.source || [];
+        s.lat = f.lat; s.lng = f.lng;
+      }
+    } catch (e) {}
+    return s;
+  }
+
+  function openPermitMatrix() {
+    var E = window.OmegaArchEngine;
+    if (!E || !E.permit || !window.OmegaPermitReport) {
+      alert('The permitting engine is not loaded in this build.'); return;
+    }
+    var s = readDrawnSystem();
+    var found = (s.bessKwh > 0 || s.solarKwDc > 0 || s.gensetKw > 0 || s.evChargerKw > 0);
+    var summary = found
+      ? [(s.bessKw ? s.bessKw.toLocaleString() + ' kW / ' + s.bessKwh.toLocaleString() + ' kWh storage' : null),
+         (s.solarKwDc ? s.solarKwDc.toLocaleString() + ' kWdc solar' : null),
+         (s.gensetKw ? s.gensetKw.toLocaleString() + ' kW generation' : null),
+         (s.evChargerCount ? s.evChargerCount + ' EV position(s)' : null)]
+        .filter(Boolean).join(' \u00B7 ')
+      : null;
+
+    var body =
+      '<div style="background:#0b1220;border:1px solid #1b2f45;border-radius:6px;' +
+      'padding:10px;margin-bottom:12px">' +
+        '<div style="font-size:10px;color:#8FA3B8;text-transform:uppercase">Read from the site map</div>' +
+        '<div style="margin-top:4px;font-size:12px;color:' + (found ? '#7ee787' : '#f0883e') + '">' +
+        esc(summary || 'Nothing on the map triggers a permit yet.') + '</div>' +
+        (s.source.length ? '<div style="font-size:10px;color:#8FA3B8;margin-top:4px">via ' +
+          esc(s.source.join(', ')) + '</div>' : '') +
+      '</div>' +
+      note('Which permits apply is worked out from the system above. The jurisdiction ' +
+           'cannot be — coordinates locate the site but do not name the city, county or ' +
+           'utility, and a matrix built for the wrong agency is worse than none. Fill ' +
+           'these in and any verified fee and timeline pack will be picked up; leave them ' +
+           'blank and the permits still appear with their triggers and code references, ' +
+           'marked for confirmation with the AHJ.') +
+      field('omega-pm-name', 'Project name', (window.S && window.S.projectName) || '') +
+      field('omega-pm-addr', 'Site address', '') +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+        field('omega-pm-city', 'City', '') +
+        field('omega-pm-county', 'County', '') +
+        field('omega-pm-state', 'State', '', 'CA') +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+        field('omega-pm-util', 'Utility', '') +
+        field('omega-pm-fuel', 'Generator fuel', s.gensetKw ? 'diesel' : '') +
+      '</div>';
+
+    modal('Permitting Matrix', body, function (close) {
+      var site = {
+        state: (el('omega-pm-state').value || '').trim().toUpperCase(),
+        county: (el('omega-pm-county').value || '').trim(),
+        city: (el('omega-pm-city').value || '').trim(),
+        utility: (el('omega-pm-util').value || '').trim(),
+        gensetFuel: (el('omega-pm-fuel').value || '').trim(),
+        bessKw: s.bessKw, bessKwh: s.bessKwh, solarKwDc: s.solarKwDc,
+        gensetKw: s.gensetKw, evChargerKw: s.evChargerKw,
+        evChargerCount: s.evChargerCount,
+        chemistry: 'lithium', gridParallel: true, outdoor: true
+      };
+      window.OmegaPermitReport.exportXlsx({
+        projectName: el('omega-pm-name').value || 'Permitting Matrix',
+        address: el('omega-pm-addr').value || '',
+        site: site,
+        filename: 'permitting-matrix'
+      }).then(function (r) {
+        if (r && r.ok) {
+          close();
+          if (typeof window.toast === 'function') {
+            window.toast(r.matrix.rows.length + ' permit(s), ' +
+              r.range.lowWeeks + '\u2013' + r.range.highWeeks + ' weeks' +
+              (r.matrix.unverified ? ' \u2014 no verified pack for this jurisdiction' : ''));
+          }
+        }
+      });
+    }, 'Generate workbook');
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  BILL ANALYSIS                                                      *
+   * ------------------------------------------------------------------ */
+  function openBillAnalysis() {
+    if (!window.OmegaBillReport) {
+      alert('The bill report engine is not loaded in this build.'); return;
+    }
+    var body =
+      note('This workbook is built from bills, not from the drawing: monthly usage, the ' +
+           'demand peaks that actually drive the charge, every demand component priced ' +
+           'on its own window, the TOU spread and a sizing sweep. Paste the monthly ' +
+           'figures below, one month per line.') +
+      '<div style="font-size:10px;color:#8FA3B8;text-transform:uppercase;margin-bottom:4px">' +
+      'Month, days, kWh, peak kW, TOU-period kW, on-peak kW, delivery $, generation $, gas $</div>' +
+      '<textarea id="omega-ba-rows" spellcheck="false" style="width:100%;height:150px;' +
+      'background:#0b1220;color:#dbe6f2;border:1px solid #24405e;border-radius:6px;' +
+      'padding:9px;font-family:ui-monospace,Menlo,monospace;font-size:11px" ' +
+      'placeholder="Feb,28,261808,682.8,682.8,664.8,61277,39275,12361&#10;' +
+      'Mar,31,319674,723.6,721.2,708.0,66640,45950,14390"></textarea>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' +
+        field('omega-ba-cust', 'Customer', '') +
+        field('omega-ba-addr', 'Service address', '') +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+        field('omega-ba-max', 'Trailing 12-mo peak kW', '') +
+        field('omega-ba-hrs', 'Peak event hours', '4') +
+        field('omega-ba-kwh', 'Installed $/kWh', '400') +
+      '</div>';
+
+    modal('Bill Analysis and BESS Sizing', body, function (close) {
+      var MON = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+      var months = [], bad = [];
+      String(el('omega-ba-rows').value || '').split('\n').forEach(function (ln, i) {
+        var t = ln.trim(); if (!t) return;
+        var c = t.split(/[,\t]+/).map(function (x) { return x.trim(); });
+        var mk = MON[String(c[0]).slice(0, 3).toLowerCase()];
+        if (!mk || c.length < 4) { bad.push(i + 1); return; }
+        months.push({
+          month: mk, label: c[0], days: +c[1] || 30, kwh: +c[2] || 0,
+          peaks: { any: +c[3] || 0, tou: +c[4] || +c[3] || 0, onpeak: +c[5] || +c[3] || 0 },
+          delivery: +c[6] || 0, generation: +c[7] || 0, gasCost: +c[8] || 0
+        });
+      });
+      if (bad.length) {
+        alert('Line' + (bad.length > 1 ? 's' : '') + ' ' + bad.join(', ') +
+              ' could not be read. Each needs at least: month, days, kWh, peak kW.');
+        return false;
+      }
+      if (!months.length) { alert('No billing months entered.'); return false; }
+      window.OmegaBillReport.exportXlsx({
+        customer: el('omega-ba-cust').value || '', address: el('omega-ba-addr').value || '',
+        months: months,
+        maxAnnualKw: +el('omega-ba-max').value || null,
+        eventHours: +el('omega-ba-hrs').value || 4,
+        capexPerKwh: +el('omega-ba-kwh').value || 400,
+        filename: 'bill-analysis'
+      }).then(function (r) {
+        if (r && r.ok) {
+          close();
+          if (typeof window.toast === 'function') {
+            window.toast(months.length + ' month(s) analysed' +
+              (months.length < 12 ? ' \u2014 annualised, not measured' : ''));
+          }
+        }
+      });
+    }, 'Generate workbook');
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  GRAFT THE BUTTONS                                                  *
+   *  Into the Output page's Reports panel, beside the other             *
+   *  deliverables, rather than a floating control of their own.          *
+   * ------------------------------------------------------------------ */
+  function graft() {
+    if (el('omega-btn-permit-matrix')) return true;
+    var caps = document.querySelectorAll('.ribbon-page[data-page="output"] .rpanel-cap');
+    var host = null;
+    for (var i = 0; i < caps.length; i++) {
+      if (/^Reports$/i.test((caps[i].textContent || '').trim())) {
+        host = caps[i].parentNode.querySelector('.rpanel-body');
+        break;
+      }
+    }
+    if (!host) return false;
+    function btn(id, icon, l1, l2, title, fn) {
+      var b = document.createElement('button');
+      b.className = 'rbtn'; b.id = id; b.title = title;
+      b.innerHTML = '<span class="rb-ico">' + icon + '</span>' +
+                    '<span class="rb-lbl">' + l1 + '<br>' + l2 + '</span>';
+      b.addEventListener('click', fn);
+      host.appendChild(b);
+    }
+    btn('omega-btn-permit-matrix', '\u25A6', 'Permitting', 'Matrix',
+        'Permitting matrix from the drawn system \u2014 permits, dependencies, ' +
+        'computed critical path, fees and risks, as a workbook',
+        openPermitMatrix);
+    btn('omega-btn-bill-analysis', '\u25A4', 'Bill', 'Analysis',
+        'Utility bill analysis and BESS sizing sweep \u2014 demand components priced ' +
+        'separately, TOU spread, sizing curve, as a workbook',
+        openBillAnalysis);
+    return true;
+  }
+
+  window.OmegaOutputPanel = {
+    graft: graft, permitMatrix: openPermitMatrix, billAnalysis: openBillAnalysis
+  };
+
+  /* the ribbon is rebuilt on tab changes, so keep re-checking */
+  setInterval(function () {
+    try { graft(); } catch (e) { if (window.console) console.warn(TAG, e && e.message); }
+  }, 800);
 })();
 
 </script>
