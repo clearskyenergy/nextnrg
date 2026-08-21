@@ -65115,11 +65115,25 @@ window._elecPrint=function(){
    any estimator overrides) into localStorage and opens the workbook tool,
    which maps the lines into the utility application and customer proposal.
    ---------------------------------------------------------------------- */
-/* The editor is served to every tenant through the shared rewrite, but the
-   cost workbook lives only on the internal OMEGA portal. Show the button
-   there and nowhere else, so a tenant never sees a control that leads to a
-   locked page. */
+/* The editor is served to every tenant through the shared rewrite. The cost
+   workbook used to be internal-only, so the button was shown on the OMEGA
+   portal and nowhere else — a tenant who found it got a locked page.
+
+   Tenants are now licensed to run the workbook, so the button follows the
+   licence: the internal portal, plus any tenant portal on the
+   <name>.csebuilders.com family. The workbook still checks identity at the
+   door, so showing the button is not granting anything — it only stops a
+   licensed tenant being told the tool does not exist. */
 var _EV_WB_HOSTS  = ['alpha.clearskyomega.com','localhost','127.0.0.1'];
+/* Tenant portals are <tenant>.csebuilders.com OR <tenant>.clearskyomega.com
+   — the same pair _slugFromHost() already keys tenancy off, and the reason
+   concordenergyusa.clearskyomega.com saw no button when this matched only
+   the csebuilders family. A bare platform domain is not a tenant, so a
+   sub-domain label is required. */
+function _evTenantHost(h){
+  h=String(h||'').toLowerCase();
+  return /(^|\.)(csebuilders|clearskyomega)\.com$/.test(h) && h.split('.').length>=3;
+}
 /* The workbook lives on the shared tools host with everything else, and the
    console has no rewrite for it — so this is an absolute URL. */
 var _EV_WB_ORIGIN = 'https://tools.csebuilders.com';
@@ -65127,6 +65141,7 @@ var _EV_WB_URL    = _EV_WB_ORIGIN + '/ev-cost-workbook.html';
 window._elecWorkbookHost = function(){
   var h = String(location.hostname||'').toLowerCase(), i;
   for(i=0;i<_EV_WB_HOSTS.length;i++){ if(h===_EV_WB_HOSTS[i]) return true; }
+  if(_evTenantHost(h)) return true;
   return false;
 };
 
@@ -110389,7 +110404,24 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
      reader most wants formatted. So the fill and the number format are
      separate axes and every pairing has an index. */
   var S = { NORMAL: 0, HEADER: 1, BOLD: 2, HILITE: 3, BODY: 4, NUM: 5, MONEY: 6,
-            TITLE: 7, HILITE_NUM: 8, HILITE_MONEY: 9, BOLD_NUM: 10, BOLD_MONEY: 11 };
+            TITLE: 7, HILITE_NUM: 8, HILITE_MONEY: 9, BOLD_NUM: 10, BOLD_MONEY: 11,
+            /* the template's own vocabulary */
+            TITLE_BAR: 12, SUB_BAR: 13, SECTION: 14,
+            KEY_A: 15, KEY_B: 16, VAL_A: 17, VAL_B: 18,
+            BAND_A: 19, BAND_B: 20, CRIT: 21, CRIT_BOLD: 22,
+            BAR_CRIT: 23, BAR_SOFT: 24, BAR_EMPTY: 25,
+            NOTE: 26, WEEKNO: 27, MONTHHDR: 28,
+            CRIT_NUM: 29, CRIT_MONEY: 30, BAND_A_MONEY: 31, BAND_B_MONEY: 32 };
+
+  /* Palette lifted from the reference workbook so the two are the same
+     document, not two documents that look similar. */
+  var C = {
+    NAVY: '1F3864', BLUE: '2E75B6',
+    KEYA: 'D6E4F0', KEYB: 'BDD7EE', VALA: 'EBF3FA', VALB: 'DDEEFF',
+    BANDA: 'F2F2F2', BANDB: 'FFFFFF',
+    CRIT: 'FFCCCC', BARCRIT: 'FF0000', BARSOFT: 'FF8C00',
+    NOTE: 'FFF2CC', WARN: 'FFEB9C'
+  };
 
   function stylesXml(opts) {
     var headerBg = (opts && opts.headerBg) || '1F3864';
@@ -110400,19 +110432,31 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 '<numFmt numFmtId="164" formatCode="#,##0"/>' +
 '<numFmt numFmtId="165" formatCode="&quot;$&quot;#,##0"/>' +
 '</numFmts>' +
-'<fonts count="4">' +
-'<font><sz val="10"/><name val="Calibri"/></font>' +
-'<font><b/><color rgb="FFFFFFFF"/><sz val="10"/><name val="Calibri"/></font>' +
-'<font><b/><sz val="10"/><name val="Calibri"/></font>' +
-'<font><b/><sz val="13"/><name val="Calibri"/></font>' +
+'<fonts count="8">' +
+/*0*/ '<font><sz val="10"/><name val="Calibri"/></font>' +
+/*1*/ '<font><b/><color rgb="FFFFFFFF"/><sz val="10"/><name val="Calibri"/></font>' +
+/*2*/ '<font><b/><sz val="10"/><name val="Calibri"/></font>' +
+/*3*/ '<font><b/><sz val="13"/><name val="Calibri"/></font>' +
+/*4*/ '<font><b/><color rgb="FFFFFFFF"/><sz val="22"/><name val="Calibri"/></font>' +
+/*5*/ '<font><b/><color rgb="FFFFFFFF"/><sz val="14"/><name val="Calibri"/></font>' +
+/*6*/ '<font><b/><color rgb="FF' + C.NAVY + '"/><sz val="10"/><name val="Calibri"/></font>' +
+/*7*/ '<font><i/><sz val="9"/><name val="Calibri"/></font>' +
 '</fonts>' +
-'<fills count="4">' +
+'<fills count="14">' +
 '<fill><patternFill patternType="none"/></fill>' +
 '<fill><patternFill patternType="gray125"/></fill>' +
-'<fill><patternFill patternType="solid"><fgColor rgb="FF' + headerBg + '"/>' +
-'<bgColor indexed="64"/></patternFill></fill>' +
-'<fill><patternFill patternType="solid"><fgColor rgb="FF' + hiliteBg + '"/>' +
-'<bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + headerBg + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + hiliteBg + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.BLUE + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.KEYA + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.KEYB + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.VALA + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.VALB + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.BANDA + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.CRIT + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.BARCRIT + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.BARSOFT + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.NOTE + '"/><bgColor indexed="64"/></patternFill></fill>' +
 '</fills>' +
 '<borders count="2">' +
 '<border><left/><right/><top/><bottom/><diagonal/></border>' +
@@ -110422,7 +110466,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 '<bottom style="thin"><color rgb="FFD9D9D9"/></bottom><diagonal/></border>' +
 '</borders>' +
 '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-'<cellXfs count="12">' +
+'<cellXfs count="33">' +
 /* 0 normal   */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="0" borderId="0"/>' +
 /* 1 header   */ '<xf xfId="0" numFmtId="0" fontId="1" fillId="2" borderId="1" applyFont="1" ' +
                  'applyFill="1" applyBorder="1" applyAlignment="1">' +
@@ -110447,6 +110491,27 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
                  'applyNumberFormat="1" applyFont="1" applyBorder="1"/>' +
 /*11 bold+mny */ '<xf xfId="0" numFmtId="165" fontId="2" fillId="0" borderId="1" ' +
                  'applyNumberFormat="1" applyFont="1" applyBorder="1"/>' +
+/*12 title bar  */ '<xf xfId="0" numFmtId="0" fontId="4" fillId="2" borderId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+/*13 sub bar    */ '<xf xfId="0" numFmtId="0" fontId="5" fillId="4" borderId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+/*14 section    */ '<xf xfId="0" numFmtId="0" fontId="1" fillId="2" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+/*15 key A      */ '<xf xfId="0" numFmtId="0" fontId="6" fillId="5" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+/*16 key B      */ '<xf xfId="0" numFmtId="0" fontId="6" fillId="6" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+/*17 val A      */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="7" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+/*18 val B      */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="8" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+/*19 band A     */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="9" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+/*20 band B     */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="0" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+/*21 crit       */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="10" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+/*22 crit bold  */ '<xf xfId="0" numFmtId="0" fontId="2" fillId="10" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+/*23 bar crit   */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="11" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+/*24 bar soft   */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="12" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+/*25 bar empty  */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="0" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+/*26 note       */ '<xf xfId="0" numFmtId="0" fontId="7" fillId="13" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+/*27 week no    */ '<xf xfId="0" numFmtId="0" fontId="2" fillId="2" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+/*28 month hdr  */ '<xf xfId="0" numFmtId="0" fontId="1" fillId="4" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+/*29 crit num   */ '<xf xfId="0" numFmtId="164" fontId="0" fillId="10" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
+/*30 crit money */ '<xf xfId="0" numFmtId="165" fontId="0" fillId="10" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
+/*31 bandA money*/ '<xf xfId="0" numFmtId="165" fontId="0" fillId="9" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
+/*32 bandB money*/ '<xf xfId="0" numFmtId="165" fontId="0" fillId="0" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
 '</cellXfs>' +
 '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
 '</styleSheet>';
@@ -110477,10 +110542,27 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
              '" customWidth="1"/>';
     }).join('') + '</cols>';
 
+    /* A cell may carry its own style index, so a report can lay out a
+       document rather than a table. styles[ri][ci] wins over every rule
+       below; anything not named falls through to the automatic behaviour. */
+    var explicit = sheet.styles || null;
     var body = rows.map(function (r, ri) {
       var cells = (r || []).map(function (v, ci) {
-        if (v == null || v === '') return '';
+        var forced = explicit && explicit[ri] ? explicit[ri][ci] : null;
+        /* an empty cell still needs painting when it is part of a filled
+           band or an empty Gantt slot */
+        if ((v == null || v === '') && forced == null) return '';
         var ref = colName(ci) + (ri + 1);
+        if (forced != null) {
+          if (v == null || v === '') {
+            return '<c r="' + ref + '" s="' + forced + '"/>';
+          }
+          if (typeof v === 'number' && isFinite(v)) {
+            return '<c r="' + ref + '" s="' + forced + '"><v>' + v + '</v></c>';
+          }
+          return '<c r="' + ref + '" s="' + forced + '" t="inlineStr">' +
+                 '<is><t xml:space="preserve">' + esc(v) + '</t></is></c>';
+        }
         var numeric = typeof v === 'number' && isFinite(v);
         var money = !!moneyCols[ci];
         var hi = !!hiliteRows[ri];
@@ -110500,7 +110582,9 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
                esc(v) + '</t></is></c>';
       }).join('');
       var attrs = ' r="' + (ri + 1) + '"';
-      if (ri === 0 && sheet.headerRow !== false) attrs += ' ht="28" customHeight="1"';
+      var h = sheet.rowHeights && sheet.rowHeights[ri];
+      if (h > 0) attrs += ' ht="' + h + '" customHeight="1"';
+      else if (ri === 0 && sheet.headerRow !== false) attrs += ' ht="28" customHeight="1"';
       return '<row' + attrs + '>' + cells + '</row>';
     }).join('');
 
@@ -110510,12 +110594,21 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
         '" activePane="bottomRight" state="frozen"/>'
       : '';
 
+    /* Merges come last in the part, and Excel refuses the file if the
+       element is present but empty. */
+    var merges = (sheet.merges && sheet.merges.length)
+      ? '<mergeCells count="' + sheet.merges.length + '">' +
+        sheet.merges.map(function (m) {
+          return '<mergeCell ref="' + esc(m) + '"/>'; }).join('') +
+        '</mergeCells>'
+      : '';
+
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
 '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
 '<sheetViews><sheetView' + (opts.gridLines === false ? ' showGridLines="0"' : '') +
 ' workbookViewId="0">' + pane + '</sheetView></sheetViews>' +
 '<sheetFormatPr defaultRowHeight="14"/>' + cols +
-'<sheetData>' + body + '</sheetData></worksheet>';
+'<sheetData>' + body + '</sheetData>' + merges + '</worksheet>';
   }
 
   /* ------------------------------------------------------------------ *
@@ -110537,7 +110630,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
       return { name: safeName(s.name, used), rows: s.rows || [],
                freeze: s.freeze, hiliteRows: s.hiliteRows, boldRows: s.boldRows,
                moneyCols: s.moneyCols, colWidths: s.colWidths,
-               headerRow: s.headerRow };
+               headerRow: s.headerRow, styles: s.styles, merges: s.merges,
+               rowHeights: s.rowHeights };
     });
 
     var files = [
@@ -119463,101 +119557,297 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
    *  The trigger and the code reference are general. Agency, fee and     *
    *  duration are jurisdiction facts and come from a pack.               *
    * ------------------------------------------------------------------ */
+  /* ------------------------------------------------------------------ *
+   *  REVIEW TYPE  —  the distinction the whole schedule turns on          *
+   *                                                                       *
+   *  DISCRETIONARY: a judgment call. Public notice, a hearing, a vote by   *
+   *  a planning commission or zoning board, and the authority to approve,  *
+   *  condition, or DENY. Battery storage is an unlisted use in most US     *
+   *  counties, so the entitlement path is almost always discretionary.     *
+   *  This is the project's critical path; everything downstream is gated   *
+   *  by it, and it is driven by politics, community sentiment and the      *
+   *  AHJ's familiarity with BESS as much as by technical compliance.       *
+   *                                                                       *
+   *  MINISTERIAL: administrative. Building, grading, electrical, driveway. *
+   *  Staff issue them when the application meets the code. They FOLLOW     *
+   *  the discretionary approval; they never precede it.                    *
+   *                                                                       *
+   *  Treating a CUP as a clearance is the single biggest error a           *
+   *  permitting schedule can make, because it puts a six-month hearing     *
+   *  process on the same footing as a two-week counter permit.             *
+   *  Source: Carina Energy, BESS Permitting Guide, June 2026.              *
+   * ------------------------------------------------------------------ */
+  var DISCRETIONARY = 'discretionary', MINISTERIAL = 'ministerial';
+
   var TEMPLATES = {
-    ZONING: {
-      name: 'Planning / Zoning Clearance',
-      trigger: 'Outdoor equipment enclosure or pad on the site',
-      docs: 'Zoning clearance application, site plan, equipment elevations, setbacks',
-      party: 'Owner / Project Architect', dependsOn: []
+    /* ---- 1. before anything is designed ---------------------------- */
+    FATAL_FLAW: {
+      name: 'Fatal flaw screening and AHJ intelligence',
+      review: 'diligence',
+      trigger: 'Before a land option is signed',
+      docs: 'Zoning confirmation, precedent search, moratorium check, fire ' +
+            'water supply, interconnection proximity, buildable area model',
+      party: 'Developer / permitting advisor', dependsOn: [],
+      note: 'A database query cannot tell you whether the planning director ' +
+            'has seen a BESS application before, whether a moratorium is being ' +
+            'drafted for next month, or whether the fire marshal has ever ' +
+            'reviewed an NFPA 855 submittal. Those facts decide the outcome ' +
+            'and they come from direct AHJ outreach.'
+    },
+    OEM_FIRE_BASIS: {
+      name: 'OEM selection and fire safety design basis',
+      review: 'design gate',
+      trigger: 'Storage on site \u2014 before any site plan is drawn',
+      code: 'UL 9540A; NFPA 855; NFPA 68/69',
+      docs: 'OEM RFI responses, UL 9540A test data, unit-to-unit propagation, ' +
+            'separation distances, explosion control method, water supply ' +
+            'duration and flow, sound power levels per component',
+      party: 'Fire protection engineer', dependsOn: ['FATAL_FLAW'],
+      note: 'UL 9540A results are OEM-specific: a report for one manufacturer ' +
+            'does not apply to another even at the same cell chemistry. ' +
+            'Drawing a site plan before this is fixed is what produces a ' +
+            'redesign cascade \u2014 new fire envelope, redrawn civil, amended ' +
+            'AHJ submissions, and a possible new hearing.'
+    },
+
+    /* ---- 2. entitlement: the critical path -------------------------- */
+    CUP: {
+      name: 'Conditional / Special Use Permit',
+      review: DISCRETIONARY,
+      trigger: 'Battery storage is an unlisted or conditional use in the zone',
+      code: 'Local zoning ordinance; state environmental review where adopted',
+      docs: 'Site plan, project narrative, permitting matrix, sound study, ' +
+            'hazard mitigation analysis, emergency response plan, ' +
+            'decommissioning plan, environmental reports',
+      party: 'Developer / land use counsel',
+      dependsOn: ['OEM_FIRE_BASIS'],
+      hearing: true,
+      note: 'Public notice, a hearing, and a vote that can approve, condition ' +
+            'or deny. This is the critical path. Conditions of approval are ' +
+            'binding and routinely add setbacks, screening, sound limits, ' +
+            'decommissioning bonding and fire department training.'
     },
     CEQA: {
-      name: 'CEQA Categorical Exemption — Notice of Exemption',
-      trigger: 'Discretionary approval by a California lead agency',
-      code: 'CEQA Guidelines §15301 / §15303',
-      docs: 'CEQA exemption notice, project description',
-      party: 'Owner / Environmental Consultant', dependsOn: [], states: ['CA']
+      name: 'State environmental review',
+      review: DISCRETIONARY,
+      trigger: 'A discretionary approval by a state or local lead agency',
+      code: 'CEQA (CA) / SEPA (WA) / SEQRA (NY) and equivalents',
+      docs: 'Initial study, exemption notice or environmental document',
+      party: 'Environmental consultant', dependsOn: ['CUP'],
+      states: ['CA', 'WA', 'NY']
     },
-    BUILDING: {
-      name: 'Building Permit — Structural / Equipment Pad',
-      trigger: 'Equipment pad, foundation or seismic anchorage',
-      code: 'IBC Ch. 16 / ASCE 7 seismic anchorage',
-      docs: 'Stamped structural drawings, foundation design, anchorage calculations',
-      party: 'Licensed General Contractor', dependsOn: ['ZONING']
-    },
-    ELECTRICAL: {
-      name: 'Electrical Permit',
-      trigger: 'Any permanent electrical work',
-      code: 'NEC / NFPA 70',
-      docs: 'Electrical permit application, one-line diagram, load calculations, panel schedules',
-      party: 'Licensed Electrical Contractor', dependsOn: ['ZONING']
-    },
+
+    /* ---- 3. fire: an independent authority -------------------------- */
     FIRE_CONSTRUCTION: {
-      name: 'Fire Department — ESS Construction Permit',
+      name: 'Fire department \u2014 ESS construction permit',
+      review: 'independent authority',
       trigger: 'Energy storage above the adopted fire-code threshold',
-      code: 'IFC/CFC §1207; NFPA 855',
-      docs: 'ESS permit application, UL 9540 listing, UL 9540A test report, ' +
-            'hazard mitigation analysis, spacing and ventilation plan',
-      party: 'Project Engineer / Fire Protection Engineer', dependsOn: ['BUILDING']
+      code: 'IFC/CFC \u00A71207; NFPA 855',
+      docs: 'UL 9540 listing, UL 9540A test report, hazard mitigation ' +
+            'analysis, emergency response plan, spacing and ventilation plan, ' +
+            'fire apparatus access, water supply',
+      party: 'Fire protection engineer', dependsOn: ['OEM_FIRE_BASIS'],
+      note: 'The fire authority is a SEPARATE approval layer. A project can ' +
+            'hold zoning approval and still be stopped here. The HMA and ERP ' +
+            'are increasingly conditions of the zoning approval or ' +
+            'prerequisites for the building permit \u2014 not post-construction ' +
+            'paperwork. Develop them WITH the fire chief, not for them.'
     },
     FIRE_OPERATIONAL: {
-      name: 'Fire Department — ESS Operational Permit',
-      trigger: 'Operation of a permitted energy storage system',
-      code: 'IFC/CFC §105.5',
-      docs: 'Completed inspection, emergency response plan, signage, commissioning report',
-      party: 'Owner / Facility Manager', dependsOn: ['FIRE_CONSTRUCTION', 'FINAL_INSPECTION'],
-      renewable: true
+      name: 'Fire department \u2014 ESS operational permit',
+      review: MINISTERIAL,
+      trigger: 'Operating a permitted energy storage system',
+      code: 'IFC/CFC \u00A7105.5',
+      docs: 'Completed inspection, emergency response plan, signage, ' +
+            'commissioning report',
+      party: 'Owner / facility manager',
+      dependsOn: ['FIRE_CONSTRUCTION', 'FINAL_INSPECTION'], renewable: true
     },
-    HMBP: {
-      name: 'Hazardous Materials Business Plan update',
-      trigger: 'Battery chemistry reportable as a hazardous material',
-      code: 'State hazardous materials reporting programme (CA: HSC §25500 / CERS)',
-      docs: 'Updated HMBP, chemical inventory, site map, emergency response plan',
-      party: 'Owner / EHS', dependsOn: ['CEQA']
+
+    /* ---- 4. ministerial cascade ------------------------------------- */
+    BUILDING: {
+      name: 'Building permit \u2014 structural and anchorage',
+      review: MINISTERIAL,
+      trigger: 'Equipment pads, foundations or seismic anchorage',
+      code: 'IBC Ch.16 / ASCE 7',
+      docs: 'Stamped structural drawings, foundation design, anchorage calcs',
+      party: 'Licensed general contractor', dependsOn: ['CUP', 'FIRE_CONSTRUCTION']
     },
+    ELECTRICAL: {
+      name: 'Electrical permit',
+      review: MINISTERIAL,
+      trigger: 'Any permanent electrical work',
+      code: 'NEC / NFPA 70; NEC 690, 705, 706',
+      docs: 'One-line diagram, load calculations, panel schedules',
+      party: 'Licensed electrical contractor', dependsOn: ['CUP']
+    },
+    GRADING: {
+      name: 'Grading permit',
+      review: MINISTERIAL,
+      trigger: 'Earthworks for pads, access road or stormwater',
+      docs: 'Grading plan, cut/fill quantities, erosion control',
+      party: 'Civil engineer', dependsOn: ['CUP']
+    },
+
+    /* ---- 5. environmental ------------------------------------------ */
+    PHASE_I_ESA: {
+      name: 'Phase I Environmental Site Assessment',
+      review: 'diligence',
+      trigger: 'Project finance on any site',
+      code: 'ASTM E1527-21',
+      docs: 'Recognized environmental conditions, historical land use',
+      party: 'Environmental consultant', dependsOn: ['FATAL_FLAW'],
+      note: 'A lender deliverable before it is a regulatory one. A clean ' +
+            'Phase I is a prerequisite for financing.'
+    },
+    NPDES: {
+      name: 'NPDES construction stormwater permit',
+      review: MINISTERIAL,
+      trigger: 'Construction disturbing more than one acre',
+      code: 'Clean Water Act \u00A7402, state-administered',
+      docs: 'Notice of Intent, Stormwater Pollution Prevention Plan',
+      party: 'Civil engineer', dependsOn: ['CUP']
+    },
+    STORMWATER: {
+      name: 'Post-construction stormwater management plan',
+      review: MINISTERIAL,
+      trigger: 'Impervious coverage above the local threshold',
+      docs: 'Detention or retention design for the FULL buildout',
+      party: 'Civil engineer', dependsOn: ['CUP'],
+      note: 'Size it for the augmentation buildout, not the initial ' +
+            'installation. A project that slips under the threshold on day ' +
+            'one and over it at augmentation faces a retrofit mid-operations.'
+    },
+    SPCC: {
+      name: 'Spill Prevention, Control and Countermeasure plan',
+      review: MINISTERIAL,
+      trigger: 'Oil-filled transformer or fuel storage above the threshold',
+      code: 'Clean Water Act; 1,320 gal aboveground aggregate',
+      docs: 'SPCC plan, secondary containment design',
+      party: 'Environmental consultant', dependsOn: ['CUP']
+    },
+    HABITAT: {
+      name: 'Wetlands, species and cultural resources review',
+      review: 'diligence',
+      trigger: 'Desktop screening flags wetlands, listed species or resources',
+      code: 'ESA / state T&E; \u00A7404 where wetlands cannot be avoided; SHPO',
+      docs: 'Wetland delineation, T&E survey, cultural desktop review',
+      party: 'Environmental consultant', dependsOn: ['FATAL_FLAW'],
+      note: 'A species can be state-listed but not federally listed, so a ' +
+            'project that clears the federal screen can still be stopped by ' +
+            'the state finding.'
+    },
+
+    /* ---- 6. acoustic ------------------------------------------------ */
+    SOUND_STUDY: {
+      name: 'Pre-development sound modelling study',
+      review: 'diligence',
+      trigger: 'Storage or generation near noise-sensitive receivers',
+      code: 'ISO 9613-2; local ordinance limit',
+      docs: 'Octave-band sound power per component, propagation model, ' +
+            'receiver levels against the ordinance limit',
+      party: 'Acoustic consultant', dependsOn: ['OEM_FIRE_BASIS'],
+      note: 'Sound power is OEM-specific and comes from the same RFI as the ' +
+            'fire data, which is why it belongs after OEM selection. Most ' +
+            'jurisdictions require the study as a hearing exhibit.'
+    },
+
+    /* ---- 7. interconnection ---------------------------------------- */
     INTERCONNECTION: {
-      name: 'Utility Interconnection Application',
+      name: 'Utility interconnection application',
+      review: 'utility',
       trigger: 'Grid-parallel generation or storage',
-      code: 'IEEE 1547; state interconnection rule (CA: Rule 21)',
-      docs: 'Interconnection application, single-line diagram, inverter certification, ' +
-            'site plan, generation profile',
-      party: 'System Integrator / Owner', dependsOn: ['ELECTRICAL']
+      code: 'IEEE 1547; state rule (CA: Rule 21); FERC Order 2023',
+      docs: 'Application, single-line, inverter certification, site plan, ' +
+            'generation profile',
+      party: 'System integrator / owner', dependsOn: ['ELECTRICAL'],
+      note: 'Runs on its own clock, with its own milestones and deposits. A ' +
+            'permitting-driven change to the electrical configuration can ' +
+            'trigger a material modification restudy \u2014 12 to 24 months, and ' +
+            'in a cluster process it can displace the project to a later ' +
+            'study cycle.'
     },
     INTERCONNECTION_AGREEMENT: {
-      name: 'Interconnection Agreement and Permission to Operate',
+      name: 'Interconnection agreement and permission to operate',
+      review: 'utility',
       trigger: 'Completion of the interconnection study',
-      docs: 'Signed interconnection agreement, witness test, as-built single-line',
-      party: 'Owner / Legal Counsel', dependsOn: ['INTERCONNECTION', 'FINAL_INSPECTION']
+      docs: 'Signed agreement, witness test, as-built single-line',
+      party: 'Owner / legal counsel',
+      dependsOn: ['INTERCONNECTION', 'FINAL_INSPECTION']
     },
+
+    /* ---- 8. air ------------------------------------------------------ */
     AIR_ATC: {
-      name: 'Air District Authority to Construct',
-      trigger: 'Combustion generation, or a change to how existing units run',
-      docs: 'Air permit application, engine data, emissions calculations, hours of operation',
-      party: 'Owner / Environmental Consultant', dependsOn: ['INTERCONNECTION']
+      name: 'Air district authority to construct',
+      review: MINISTERIAL,
+      trigger: 'Combustion generation, or a change to existing units',
+      docs: 'Engine data, emissions calculations, hours of operation',
+      party: 'Environmental consultant', dependsOn: ['CUP']
     },
     AIR_PTO: {
-      name: 'Air District Permit to Operate',
-      trigger: 'Follows the Authority to Construct and construction completion',
+      name: 'Air district permit to operate',
+      review: MINISTERIAL,
+      trigger: 'Follows the authority to construct',
       docs: 'Construction completion notice, source test if required',
-      party: 'Owner / Facility Manager', dependsOn: ['AIR_ATC']
+      party: 'Owner / facility manager', dependsOn: ['AIR_ATC']
     },
+
+    /* ---- 9. hazardous materials -------------------------------------- */
+    HMBP: {
+      name: 'Hazardous materials business plan',
+      review: MINISTERIAL,
+      trigger: 'Battery chemistry reportable as a hazardous material',
+      code: 'State reporting programme (CA: HSC \u00A725500 / CERS)',
+      docs: 'Chemical inventory, site map, emergency response plan',
+      party: 'Owner / EHS', dependsOn: ['CUP']
+    },
+
+    /* ---- 10. transport ----------------------------------------------- */
+    TRANSPORT: {
+      name: 'Oversize / overweight transport permits',
+      review: MINISTERIAL,
+      trigger: 'Container, transformer or switchgear delivery',
+      docs: 'Route survey, bridge load ratings, overhead clearances, ' +
+            'turning radii',
+      party: 'EPC contractor / hauler', dependsOn: ['CUP'],
+      note: 'Route feasibility belongs in the fatal flaw screen, not in ' +
+            'the week before delivery.'
+    },
+
+    /* ---- 11. close-out and end of life -------------------------------- */
     FINAL_INSPECTION: {
-      name: 'Final Building / Electrical Inspection',
-      trigger: 'All permitted construction complete',
-      docs: 'Inspection request, as-built drawings, commissioning records',
-      party: 'General Contractor', dependsOn: ['BUILDING', 'ELECTRICAL', 'FIRE_CONSTRUCTION']
+      name: 'Final building and electrical inspection',
+      review: MINISTERIAL,
+      trigger: 'Permitted construction complete',
+      docs: 'Inspection request, as-builts, commissioning records',
+      party: 'General contractor', dependsOn: ['BUILDING', 'ELECTRICAL']
+    },
+    DECOMMISSIONING: {
+      name: 'Decommissioning plan and financial assurance',
+      review: MINISTERIAL,
+      trigger: 'Almost universally a condition of the discretionary approval',
+      docs: 'Removal narrative, timeline, hazardous material management, ' +
+            'cost estimate, surety bond or letter of credit',
+      party: 'Owner / developer', dependsOn: ['CUP'],
+      note: 'Typically bonded at 100\u2013125% of projected cost, reviewed ' +
+            'every 3 to 5 years. Most ordinances treat 12 consecutive months ' +
+            'without storage activity as abandonment. Most jurisdictions ' +
+            'refuse to credit salvage value against the cost.'
     },
     INCENTIVE: {
-      name: 'Storage Incentive Application',
-      trigger: 'Programme available for storage in this territory',
-      docs: 'Incentive application, project cost documentation, equipment listing',
-      party: 'Owner / Developer', dependsOn: []
+      name: 'Storage incentive application',
+      review: MINISTERIAL,
+      trigger: 'Programme available in this territory',
+      docs: 'Application, project cost documentation, equipment listing',
+      party: 'Owner / developer', dependsOn: []
     },
     EV_ACCESSIBILITY: {
-      name: 'Accessible EV Charging Review',
-      trigger: 'Public or employee EV charging spaces',
+      name: 'Accessible EV charging review',
+      review: MINISTERIAL,
+      trigger: 'Public or employee charging spaces',
       code: 'ADA / state accessibility code (CA: CBC 11B-812)',
       docs: 'Accessible route plan, stall dimensions, signage schedule',
-      party: 'Project Architect', dependsOn: ['ZONING']
+      party: 'Project architect', dependsOn: ['CUP']
     }
   };
 
@@ -119574,7 +119864,7 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
       thresholdNote: 'Vista applies a 10 kWh ESS permit threshold per the source matrix; ' +
                      'IFC/CFC §1207 Table 1207.1.1 is commonly 20 kWh. Confirm with the AHJ.',
       agencies: {
-        ZONING: 'City of Vista Planning Division',
+        CUP: 'City of Vista Planning Division',
         CEQA: 'City of Vista (Lead Agency)',
         BUILDING: 'City of Vista Community Development',
         ELECTRICAL: 'City of Vista Community Development',
@@ -119590,12 +119880,21 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
         EV_ACCESSIBILITY: 'City of Vista Building Division'
       },
       /* [low, high] weeks and dollars, from the source matrix */
-      weeks: { ZONING:[2,4], CEQA:[2,4], BUILDING:[3,6], ELECTRICAL:[3,6],
+      /* CUP HAS NO DURATION HERE ON PURPOSE.
+         The 2-4 weeks originally transcribed described a ministerial zoning
+         CLEARANCE. Reclassifying the row as a discretionary conditional use
+         permit changed what the row means \u2014 public notice, a hearing,
+         a commission vote \u2014 and the transcribed figure no longer
+         describes it. Carrying it forward would put a two-week number on the
+         one step that decides the programme. It is left blank and reported
+         as Confirm with AHJ, which is the honest answer until somebody rings
+         the planning department. */
+      weeks: { CEQA:[2,4], BUILDING:[3,6], ELECTRICAL:[3,6],
                FIRE_CONSTRUCTION:[4,8], FIRE_OPERATIONAL:[2,4], HMBP:[2,6],
                INTERCONNECTION:[16,40], INTERCONNECTION_AGREEMENT:[4,8],
                AIR_ATC:[6,16], AIR_PTO:[4,8], FINAL_INSPECTION:[2,4],
                INCENTIVE:[4,8], EV_ACCESSIBILITY:[2,4] },
-      fees:  { ZONING:[500,2000], CEQA:[200,500], BUILDING:[2000,6000],
+      fees:  { CEQA:[200,500], BUILDING:[2000,6000],
                ELECTRICAL:[3000,8000], FIRE_CONSTRUCTION:[1500,4000],
                FIRE_OPERATIONAL:[500,1500], HMBP:[500,2000],
                INTERCONNECTION:[2000,8000], INTERCONNECTION_AGREEMENT:[0,0],
@@ -119605,7 +119904,7 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
       /* Per-permit fee notes and agency contacts, transcribed from the source
          matrix. A fee with no note beside it is a number nobody can check. */
       feeNotes: {
-        ZONING: 'Zoning clearance or minor use permit; verify with Planning',
+        CUP: 'Zoning clearance or minor use permit; verify with Planning',
         CEQA: 'Notice of Exemption filing fee at the County Clerk',
         BUILDING: 'Based on construction valuation per the Vista fee schedule',
         ELECTRICAL: 'Electrical permit; a 1 MW system sits at a higher valuation band',
@@ -119681,11 +119980,58 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     var evKw = +site.evChargerKw || 0, evCount = +site.evChargerCount || 0;
     var anyDer = bessKw > 0 || solarKw > 0 || gensetKw > 0;
 
-    if (site.outdoor !== false && (bessKwh > 0 || solarKw > 0 || gensetKw > 0 || evKw > 0)) {
-      need('ZONING', 'Outdoor equipment placed on the site plan');
+    /* Nothing is designed before the site is screened and the OEM is fixed.
+       These are not paperwork; they are the inputs everything downstream
+       depends on, and leaving them out is what lets a schedule show a site
+       plan being drawn before the fire envelope that constrains it. */
+    if (anyDer || evKw > 0) {
+      need('FATAL_FLAW', 'Before a land option is signed on any site');
+      need('PHASE_I_ESA', 'Lender and tax-equity diligence');
+      need('HABITAT', 'Desktop environmental screening');
     }
-    if (String(site.state || '').toUpperCase() === 'CA' && anyDer) {
-      need('CEQA', 'California lead-agency discretionary approval');
+    if (bessKwh > 0) {
+      need('OEM_FIRE_BASIS',
+           'Storage on site \u2014 UL 9540A data is OEM-specific and fixes the ' +
+           'fire envelope the site plan must be drawn inside');
+      need('SOUND_STUDY',
+           'Sound power comes from the same OEM RFI and is a hearing exhibit');
+    }
+    /* Entitlement. Battery storage is an unlisted use in most US counties,
+       so this is a DISCRETIONARY approval with a hearing and denial risk,
+       not a counter clearance. */
+    if (site.outdoor !== false && (bessKwh > 0 || solarKw > 0 || gensetKw > 0 || evKw > 0)) {
+      need('CUP', bessKwh > 0
+        ? 'Battery storage is rarely an enumerated use; expect a conditional ' +
+          'or special use permit with a public hearing'
+        : 'Outdoor equipment placed on the site plan');
+    }
+    if (bessKwh > 0) {
+      need('DECOMMISSIONING',
+           'Almost universally a condition of the discretionary approval');
+    }
+    /* These are triggered by GROUND DISTURBANCE, which requires something to
+       be built. Testing only "the figure was not given" fired them on an
+       empty site, so a project with nothing on it came back with a
+       stormwater permit and a final inspection. A missing figure is a
+       reason to ASK, not a reason to assume construction. */
+    if (anyDer || evKw > 0) {
+      if (site.disturbedAcres == null || +site.disturbedAcres > 1) {
+        need('NPDES', site.disturbedAcres == null
+          ? 'Disturbed area not given; over one acre triggers this'
+          : 'Construction disturbs more than one acre');
+      }
+      if (site.imperviousSqFt == null || +site.imperviousSqFt > 20000) {
+        need('STORMWATER', site.imperviousSqFt == null
+          ? 'Impervious area not given; 20,000 sq ft is a common trigger'
+          : 'Impervious coverage above the common 20,000 sq ft threshold');
+      }
+    }
+    if (bessKwh > 0 || gensetKw > 0) {
+      need('SPCC', 'Oil-filled transformer or fuel storage on site');
+      need('TRANSPORT', 'Container, transformer and switchgear delivery');
+    }
+    if (['CA','WA','NY'].indexOf(String(site.state||'').toUpperCase())>-1 && anyDer) {
+      need('CEQA', 'A discretionary approval by a state lead agency');
     }
     if (bessKwh > 0 || gensetKw > 0 || solarKw > 0) {
       need('BUILDING', 'Equipment pad / seismic anchorage');
@@ -119718,9 +120064,36 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     }
 
     /* build the rows, in a stable order */
-    var order = ['ZONING','CEQA','BUILDING','ELECTRICAL','FIRE_CONSTRUCTION',
-                 'FIRE_OPERATIONAL','HMBP','INTERCONNECTION','INTERCONNECTION_AGREEMENT',
-                 'AIR_ATC','AIR_PTO','EV_ACCESSIBILITY','FINAL_INSPECTION','INCENTIVE'];
+    /* THE ORDER IS THE SEQUENCE, and it is a second list of keys that has
+       to be kept in step with TEMPLATES. A template not named here is
+       silently dropped no matter what triggered it \u2014 which is how a
+       rewritten template set can produce the old matrix unchanged. There is
+       an assertion below that catches exactly that. */
+    var order = [
+      /* screen before committing */
+      'FATAL_FLAW','PHASE_I_ESA','HABITAT',
+      /* fix the fire envelope before anything is drawn */
+      'OEM_FIRE_BASIS','SOUND_STUDY',
+      /* entitlement: the critical path */
+      'CUP','CEQA',
+      /* fire, an independent authority */
+      'FIRE_CONSTRUCTION',
+      /* ministerial cascade, which FOLLOWS entitlement */
+      'BUILDING','ELECTRICAL','GRADING',
+      'NPDES','STORMWATER','SPCC','HMBP','TRANSPORT',
+      'AIR_ATC','AIR_PTO','EV_ACCESSIBILITY',
+      /* utility */
+      'INTERCONNECTION',
+      /* close-out */
+      'FINAL_INSPECTION','FIRE_OPERATIONAL','INTERCONNECTION_AGREEMENT',
+      'DECOMMISSIONING','INCENTIVE'];
+    /* every template must be placed, or it can never appear */
+    Object.keys(TEMPLATES).forEach(function (k) {
+      if (order.indexOf(k) < 0 && root.console) {
+        root.console.warn('[OmegaPermit] template "' + k + '" is not in the ' +
+          'order list, so it can never be emitted.');
+      }
+    });
     var rows = [], gaps = [], seq = 0;
     order.forEach(function (key) {
       if (!want[key]) return;
@@ -119739,7 +120112,11 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
         feeNote: (pack && pack.feeNotes && pack.feeNotes[key]) || null,
         name: (key === 'INCENTIVE' && pack && pack.incentiveName) ? pack.incentiveName : t.name,
         agency: agency, agencyConfirm: !agency,
+        review: t.review || 'ministerial',
+        discretionary: t.review === 'discretionary',
+        hearing: !!t.hearing,
         party: t.party, trigger: t.trigger, firedBy: why[key],
+        note: t.note || null,
         code: t.code || null, docs: t.docs,
         weeks: wk, weeksConfirm: !wk,
         fees: fee, feesConfirm: !fee,
@@ -119803,9 +120180,18 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
                '. Nothing can start.' };
     }
 
-    var dur = {}, es = {}, ef = {};
+    /* A PERMIT WITH NO DURATION IS NOT INSTANT.
+       Defaulting an unknown to zero collapsed the matrix: every diligence
+       and design-gate step landed at week 0, drew no bar on the Gantt, and
+       the critical path ran through a chain of zero-length tasks, so the
+       programme read shorter than it is. Unknown stays unknown \u2014 the
+       task is carried and flagged, and the total is reported as a FLOOR
+       with a count of what is missing rather than as a duration. */
+    var dur = {}, es = {}, ef = {}, unknown = [];
     rows.forEach(function (r) {
-      dur[r.id] = r.weeks ? r.weeks[which] : (opts.unknownWeeks == null ? 0 : opts.unknownWeeks);
+      if (r.weeks) { dur[r.id] = r.weeks[which]; return; }
+      unknown.push(r.id);
+      dur[r.id] = opts.unknownWeeks == null ? 0 : opts.unknownWeeks;
     });
     order.forEach(function (id) {
       var s = 0;
@@ -119833,6 +120219,7 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
                durationUnknown: !r.weeks };
     });
     return { ok: true, totalWeeks: total, tasks: out,
+             unknownDurations: unknown, totalIsFloor: unknown.length > 0,
              criticalPath: out.filter(function (t) { return t.critical; })
                               .sort(function (a, b) { return a.earliestStart - b.earliestStart; })
                               .map(function (t) { return t.id; }),
@@ -119845,7 +120232,14 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     var lo = schedule(rows, { use: 'low' }), hi = schedule(rows, { use: 'high' });
     if (!lo.ok) return lo;
     return { ok: true, lowWeeks: lo.totalWeeks, highWeeks: hi.totalWeeks,
-             criticalPath: hi.criticalPath, low: lo, high: hi };
+             criticalPath: hi.criticalPath, low: lo, high: hi,
+             unknownDurations: hi.unknownDurations,
+             totalIsFloor: hi.totalIsFloor,
+             floorNote: hi.totalIsFloor
+               ? hi.unknownDurations.length + ' permit(s) carry no duration, so ' +
+                 'they contribute nothing to these totals. The programme is at ' +
+                 'least this long and no shorter \u2014 it is a floor, not an estimate.'
+               : null };
   }
 
   /* ------------------------------------------------------------------ *
@@ -120019,7 +120413,125 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     return out;
   }
 
+  /* ------------------------------------------------------------------ *
+   *  RISKS THE SCHEDULE CANNOT SEE                                      *
+   *  A Gantt shows durations. It does not show that the jurisdiction may *
+   *  stop accepting applications altogether, or that a design change     *
+   *  after the interconnection study restarts a two-year clock.          *
+   * ------------------------------------------------------------------ */
+  var STRUCTURAL_RISKS = [
+    { id: 'R-MORATORIUM',
+      risk: 'A moratorium is enacted before the application is filed',
+      affects: 'CUP',
+      probability: 'Moderate and rising',
+      impact: '6 to 18 months, sometimes converted into a permanent ' +
+              'restrictive ordinance',
+      mitigation: 'Track board agendas, planning commission minutes and local ' +
+                  'news in the jurisdiction from before the option is signed. ' +
+                  'Moratoriums pass in a single board meeting and reach ' +
+                  'databases weeks later.' },
+    { id: 'R-DENIAL',
+      risk: 'The discretionary approval is denied or conditioned into ' +
+            'infeasibility',
+      affects: 'CUP',
+      probability: 'Real \u2014 this is a vote, not a review',
+      impact: 'Project stops, or setbacks and screening conditions make the ' +
+              'parcel too small',
+      mitigation: 'Pre-application meeting, early fire department engagement, ' +
+                  'stakeholder mapping inside the notification radius, and a ' +
+                  'safety narrative built on the UL 9540A data rather than a ' +
+                  'promise to address fire safety later.' },
+    { id: 'R-OEM-SWAP',
+      risk: 'The OEM changes after the fire envelope is set',
+      affects: 'OEM_FIRE_BASIS',
+      probability: 'Common where FEOC eligibility is checked late',
+      impact: '6 to 12 months. New UL 9540A data, revised fire envelope, ' +
+              'redrawn civil, amended AHJ submissions, possibly a new hearing',
+      mitigation: 'Filter the OEM shortlist for FEOC compliance BEFORE the ' +
+                  'RFI, not during tax diligence.' },
+    { id: 'R-MATMOD',
+      risk: 'A permitting-driven design change triggers an interconnection ' +
+            'material modification',
+      affects: 'INTERCONNECTION',
+      probability: 'Whenever conditions of approval move equipment',
+      impact: '12 to 24 months of restudy, and in a cluster process the ' +
+              'project can drop to a later study cycle',
+      mitigation: 'Track conditions of approval against the interconnection ' +
+                  'agreement milestones continuously, and hold the electrical ' +
+                  'configuration at the point of interconnection fixed.' },
+    { id: 'R-FIRE-VETO',
+      risk: 'The fire authority refuses after zoning approval is in hand',
+      affects: 'FIRE_CONSTRUCTION',
+      probability: 'Higher where the marshal has not seen NFPA 855 before',
+      impact: 'Redesign of spacing, water supply or access after entitlement',
+      mitigation: 'Engage the fire authority during the fatal flaw screen. ' +
+                  'Develop the hazard mitigation analysis and emergency ' +
+                  'response plan with the fire chief rather than submitting ' +
+                  'them to the fire chief.' },
+    { id: 'R-AUGMENT',
+      risk: 'Augmentation is treated as a new land use',
+      affects: 'CUP',
+      probability: 'Unsettled in most ordinances',
+      impact: 'A second hearing years into operation',
+      mitigation: 'Show the full augmentation buildout in the initial site ' +
+                  'plan, and size stormwater for it, so the approved footprint ' +
+                  'already contemplates it.' }
+  ];
+
+  function structuralRisks(m) {
+    var keys = {};
+    (m && m.rows ? m.rows : []).forEach(function (r) { keys[r.key] = r.id; });
+    return STRUCTURAL_RISKS.filter(function (r) { return keys[r.affects]; })
+      .map(function (r) {
+        var o = {}; Object.keys(r).forEach(function (k) { o[k] = r[k]; });
+        o.affectsId = keys[r.affects];
+        return o;
+      });
+  }
+
+  /* Is there a state siting board that could bypass local zoning entirely? */
+  var STATE_SITING = {
+    NY: { law: 'Section 94-c', board: 'Office of Renewable Energy Siting',
+          thresholdMw: 25 },
+    OH: { law: 'OPSB', board: 'Ohio Power Siting Board', thresholdMw: 50 },
+    MI: { law: 'PA 233', board: 'Michigan Public Service Commission',
+          thresholdMw: 50, thresholdMwh: 200,
+          note: 'Unless the local government has adopted a Compatible ' +
+                'Renewable Energy Ordinance.' },
+    CA: { law: 'SB 379', board: 'California Energy Commission', optIn: true },
+    WA: { law: 'EFSEC', board: 'Energy Facility Site Evaluation Council' }
+  };
+  function sitingPath(site) {
+    site = site || {};
+    var st = String(site.state || '').toUpperCase();
+    var f = STATE_SITING[st];
+    if (!f) {
+      return { ok: true, available: false,
+               note: 'No state siting board found for ' + (st || 'this state') +
+                     '. Local zoning is the only path, so a hostile AHJ has ' +
+                     'no alternative route around it.' };
+    }
+    var mw = (+site.bessKw || 0) / 1000;
+    var mwh = (+site.bessKwh || 0) / 1000;
+    var over = f.optIn ? true
+      : (f.thresholdMw ? mw >= f.thresholdMw : false) &&
+        (f.thresholdMwh ? mwh >= f.thresholdMwh : true);
+    return { ok: true, available: !!over, state: st, law: f.law, board: f.board,
+             thresholdMw: f.thresholdMw || null, projectMw: +mw.toFixed(1),
+             note: over
+               ? 'At ' + mw.toFixed(1) + ' MW this project can go to the ' +
+                 f.board + ' under ' + f.law + ', bypassing local zoning. ' +
+                 (f.note ? f.note + ' ' : '') +
+                 'Whether that is faster depends on the local AHJ\u2019s posture ' +
+                 'and the board\u2019s queue \u2014 it is a judgment, not a default.'
+               : 'Below the ' + f.law + ' threshold of ' + f.thresholdMw +
+                 ' MW, so local zoning is the path.' };
+  }
+
   E.permit = {
+    STRUCTURAL_RISKS: STRUCTURAL_RISKS, structuralRisks: structuralRisks,
+    STATE_SITING: STATE_SITING, sitingPath: sitingPath,
+    DISCRETIONARY: DISCRETIONARY, MINISTERIAL: MINISTERIAL,
     TEMPLATES: TEMPLATES, PACKS: PACKS, RISK_RULES: RISK_RULES,
     findPack: findPack, applicable: applicable,
     schedule: schedule, range: range, audit: audit, risks: risks, fromSite: fromSite
@@ -126710,7 +127222,9 @@ challengeRow(s) +
       [],
       ['Permits triggered', m.rows.length],
       ['Duration, optimistic', rg.lowWeeks + ' weeks'],
-      ['Duration, conservative', rg.highWeeks + ' weeks'],
+      ['Duration, conservative', rg.highWeeks + ' weeks' +
+        (rg.totalIsFloor ? '  (a floor \u2014 ' + rg.unknownDurations.length +
+                           ' permit(s) have no duration)' : '')],
       ['Critical path', rg.criticalPath.join(' \u2192 ')],
       ['Permit fees', unknownFees === m.rows.length ? 'Confirm with AHJ'
         : '$' + feeLo.toLocaleString() + '\u2013$' + feeHi.toLocaleString() +
@@ -126740,17 +127254,22 @@ challengeRow(s) +
     ] });
 
     /* ---- Master Permitting Matrix ---- */
-    var mm = [['Permit ID', 'Permit / Review Name', 'Agency', 'Responsible Party',
+    /* Review type is the first thing a reader needs, because a discretionary
+       approval and a counter permit are not the same kind of object and
+       should never be read down the same column as equals. */
+    var mm = [['Permit ID', 'Review Type', 'Hearing', 'Permit / Review Name',
+               'Agency', 'Responsible Party',
                'Trigger / Condition', 'What fired it on this project', 'Required Documents',
                'Code Reference', 'Est. Timeline (wks)', 'Est. Fees', 'Depends On', 'Unlocks',
-               'Critical Path', 'Float (wks)', 'Status']];
+               'Critical Path', 'Float (wks)', 'Status', 'Note']];
     m.rows.forEach(function (r) {
       var t = byId[r.id];
-      mm.push([r.id, r.name, r.agency || 'Confirm with AHJ', r.party, r.trigger,
+      mm.push([r.id, r.review || 'ministerial', r.hearing ? 'YES' : '',
+               r.name, r.agency || 'Confirm with AHJ', r.party, r.trigger,
                (r.firedBy || []).join('; '), r.docs, r.code || '',
                wk(r.weeks), money(r.fees),
                r.dependsOn.join('; ') || 'None', r.unlocks.join('; ') || 'None',
-               t.critical ? 'YES' : 'NO', t.floatWeeks, r.status]);
+               t.critical ? 'YES' : 'NO', t.floatWeeks, r.status, r.note || '']);
     });
     sheets.push({ name: 'Master Permitting Matrix', rows: mm });
 
@@ -126766,10 +127285,25 @@ challengeRow(s) +
     for (var mi = 1; mi <= months; mi++) gr[0].push('M' + mi);
     m.rows.forEach(function (r) {
       var t = byId[r.id];
-      var row = [r.id, r.name, t.earliestStart, t.earliestFinish,
-                 t.durationWeeks, t.floatWeeks, t.critical ? 'YES' : ''];
+      var row = [r.id, r.name,
+                 r.weeks ? t.earliestStart : 'TBC',
+                 r.weeks ? t.earliestFinish : 'TBC',
+                 r.weeks ? t.durationWeeks : 'TBC',
+                 r.weeks ? t.floatWeeks : 'TBC',
+                 t.critical ? 'YES' : ''];
+      /* A permit with NO duration must not draw a blank row. Blank reads as
+         "nothing happens here", when what it means is "nobody has told us
+         how long this takes" \u2014 and on this matrix that is eleven rows
+         including the entitlement that decides the programme. Mark it at
+         its earliest start so the reader sees an open question, not a gap. */
+      var noDur = !r.weeks;
       for (var mm = 1; mm <= months; mm++) {
         var mStart = (mm - 1) * 4.345, mEnd = mm * 4.345;
+        if (noDur) {
+          /* one marker in the month it could start */
+          row.push(t.earliestStart >= mStart && t.earliestStart < mEnd ? '?' : '');
+          continue;
+        }
         /* a bar wherever the task overlaps the month at all, so a two-week
            permit does not vanish between month boundaries */
         var on = t.earliestStart < mEnd && t.earliestFinish > mStart;
@@ -126778,8 +127312,15 @@ challengeRow(s) +
       gr.push(row);
     });
     gr.push([]);
-    gr.push(['\u2588 on the critical path (zero float)   \u2591 has float']);
+    gr.push(['\u2588 on the critical path (zero float)   \u2591 has float   ' +
+             '? duration not yet confirmed']);
     gr.push(['Months are 4.345 weeks. Exact weeks are in the Start and Finish columns.']);
+    if (rg.totalIsFloor) {
+      gr.push([rg.floorNote]);
+      gr.push(['A ? row is placed at the month it could start. It has no bar ' +
+               'because nobody has stated how long it takes \u2014 not because ' +
+               'nothing happens.']);
+    }
     sheets.push({ name: 'Gantt Timeline', rows: gr });
 
     /* ---- Critical path, dependencies and risks: ONE TABLE PER SHEET ----
@@ -126816,10 +127357,18 @@ challengeRow(s) +
 
     var rk2 = [['Risk ID', 'Risk', 'Affected permit', 'Probability', 'Impact',
                 'Mitigation']];
+    /* The structural risks first: a Gantt shows durations, not the fact that
+       the jurisdiction may stop accepting applications altogether or that a
+       design change restarts a two-year interconnection clock. */
+    var sr = (E().permit.structuralRisks ? E().permit.structuralRisks(m) : []);
+    sr.forEach(function (r) {
+      rk2.push([r.id, r.risk, r.affectsId || r.affects, r.probability, r.impact,
+                r.mitigation]);
+    });
     rk.forEach(function (r) {
       rk2.push([r.id, r.risk, r.affects, r.probability, r.impact, r.mitigation]);
     });
-    if (rk.length === 0) rk2.push(['No risks apply to the permits triggered here.']);
+    if (rk2.length === 1) rk2.push(['No risks apply to the permits triggered here.']);
     sheets.push({ name: 'Risk Register', rows: rk2 });
 
     /* ---- Fees, and contacts, as two sheets for the same reason ---- */
@@ -126840,6 +127389,52 @@ challengeRow(s) +
       'permitting budget.']).forEach(function (x) { fr.push(['\u26A0  ' + x]); });
     sheets.push({ name: 'Fee Summary', rows: fr });
 
+    /* ---- Sequence and siting path ----
+       The two things that decide a BESS permitting outcome and appear on no
+       Gantt: whether the design decisions were made in dependency order, and
+       whether local zoning is even the right venue. */
+    var sp = E().permit.sitingPath ? E().permit.sitingPath(site) : null;
+    var sq = [['Step', 'Decision', 'Why it comes here', 'What breaks if it is late']];
+    sq.push([1, 'Fatal flaw screening and AHJ outreach',
+      'Before a land option is signed',
+      'Capital committed to a site that cannot be permitted. A screening ' +
+      'costs under $5,000; engineering a site that should never have been ' +
+      'optioned costs orders of magnitude more.']);
+    sq.push([2, 'FEOC screen of the OEM shortlist',
+      'Before the RFI, not during tax diligence',
+      'An OEM swap after the fire envelope is set redoes the fire analysis, ' +
+      'the civil site plan and every AHJ submission: 6 to 12 months.']);
+    sq.push([3, 'OEM selection and UL 9540A data',
+      'Fire code is OEM-specific; a report for one manufacturer does not ' +
+      'apply to another even at the same chemistry',
+      'The fire envelope cannot be defined, so the site plan is drawn on ' +
+      'generic assumptions and redrawn later.']);
+    sq.push([4, 'Fire safety design basis',
+      'Spacing, blast walls, exposure setbacks and water supply come from ' +
+      'the selected OEM\u2019s test data',
+      'The civil engineer designs outside the envelope and the plan fails ' +
+      'fire review after entitlement.']);
+    sq.push([5, 'Civil site plan',
+      'Inside the fire envelope and the confirmed zoning setbacks',
+      'A site plan change that alters the electrical configuration can ' +
+      'trigger an interconnection material modification: 12 to 24 months.']);
+    sq.push([6, 'Pre-application meeting with the AHJ',
+      'Informal, non-binding, and one of the most valuable hours available',
+      'Issues surface at the public hearing instead, in front of the ' +
+      'opposition.']);
+    sq.push([7, 'Discretionary application and public hearing',
+      'The critical path. Everything downstream is gated by it',
+      'Nothing ministerial can be issued until this is approved.']);
+    sq.push([8, 'Ministerial cascade',
+      'Building, grading, electrical, stormwater, transport',
+      'These follow entitlement; scheduling them in parallel with it ' +
+      'understates the programme.']);
+    sq.push([]);
+    sq.push(['Siting path', sp ? (sp.available ? sp.board + ' under ' + sp.law
+                                               : 'Local zoning') : 'Local zoning',
+             sp ? sp.note : '', '']);
+    sheets.push({ name: 'Sequence & Siting', rows: sq });
+
     var ct = [['Agency', 'Division', 'Phone', 'Website', 'Key notes']];
     if (m.contacts && m.contacts.length) {
       m.contacts.forEach(function (c) {
@@ -126852,7 +127447,7 @@ challengeRow(s) +
     }
     sheets.push({ name: 'Agency Contacts', rows: ct });
 
-    return { ok: true, sheets: sheets, matrix: m, range: rg, risks: rk };
+    return { ok: true, matrix: m, range: rg, site: site, sheets: sheets, matrix: m, range: rg, risks: rk };
   }
 
   function toCSV(res) {
@@ -126880,27 +127475,230 @@ challengeRow(s) +
 
   /* Which rows and columns carry meaning, said once per report rather
      than smeared through the sheet builders. */
-  function style(sheets) {
-    var X = window.OmegaXlsx;
-    return sheets.map(function (sh) {
-      var out = { name: sh.name, rows: sh.rows,
-                  freeze: sh.name === 'Cover' ? 'B2' : 'C2' };
-      var hdr = (sh.rows[0] || []).map(function (c) { return String(c == null ? '' : c); });
-      var money = {};
-      hdr.forEach(function (h, i) { if (/\$|fee/i.test(h)) money[i] = 1; });
-      out.moneyCols = money;
-      if (X) {
-        X.markRows(out, 'Critical', 'YES');
-        X.markRows(out, 'Critical Path', 'YES');
-        X.boldWhereFirstCell(out, /^(TOTAL|Total,)/);
+  /* ------------------------------------------------------------------ *
+   *  LAYOUT  —  the reference workbook's own vocabulary                   *
+   *  A title bar, a sub bar, section headers, a banded key/value cover,   *
+   *  criticality-shaded matrix rows, and a week-resolution Gantt with     *
+   *  merged month headers. Built as an explicit style map rather than     *
+   *  inferred: a document is laid out, not guessed at.                    *
+   * ------------------------------------------------------------------ */
+  function laidOut(res, cfg) {
+    var X = window.OmegaXlsx; if (!X) return null;
+    var S = X.STYLE, m = res.matrix, rg = res.range, site = res.site || {};
+    var byId = {}; ((rg.high && rg.high.tasks) || []).forEach(function (t) { byId[t.id] = t; });
+    var out = [];
+    var title = (cfg && cfg.projectName) || 'Permitting Matrix';
+    var sub = [cfg && cfg.customer, cfg && cfg.address, site.utility]
+                .filter(Boolean).join('  |  ');
+
+    /* Put the title and sub bar on top of a built sheet, shifting every
+       style, merge and height that was indexed before they existed. */
+    function withBars(sheet, W) {
+      var st = {}, ht = {}, mg = [];
+      Object.keys(sheet.styles).forEach(function (k) { st[+k + 3] = sheet.styles[k]; });
+      Object.keys(sheet.rowHeights).forEach(function (k) { ht[+k + 3] = sheet.rowHeights[k]; });
+      (sheet.merges || []).forEach(function (r) {
+        mg.push(r.replace(/(\d+)/g, function (d) { return +d + 3; }));
+      });
+      st[0] = { 0: S.TITLE_BAR }; st[1] = { 0: S.SUB_BAR };
+      ht[0] = 50; ht[1] = 32; ht[2] = 10;
+      var last = X.colName(W - 1);
+      mg.unshift('A1:' + last + '1', 'A2:' + last + '2');
+      sheet.rows.unshift([title], [sub], []);
+      sheet.styles = st; sheet.rowHeights = ht; sheet.merges = mg;
+      return sheet;
+    }
+
+    /* ---- COVER ---- */
+    (function () {
+      var W = 10, rows = [], st = {}, mg = [], ht = {}, r = 0, band = 0;
+      function section(t) {
+        rows.push([t]); st[r] = { 0: S.SECTION };
+        mg.push('A' + (r + 1) + ':' + X.colName(W - 1) + (r + 1)); ht[r] = 22;
+        r++; band = 0;
       }
-      if (sh.name === 'Gantt Timeline') {
-        out.colWidths = hdr.map(function (h, i) { return i < 7 ? null : 4; });
+      function kv(k, v) {
+        rows.push([k, '', v]);
+        var a = band % 2 === 0;
+        st[r] = { 0: a ? S.KEY_A : S.KEY_B, 1: a ? S.KEY_A : S.KEY_B,
+                  2: a ? S.VAL_A : S.VAL_B };
+        mg.push('A' + (r + 1) + ':B' + (r + 1),
+                'C' + (r + 1) + ':' + X.colName(W - 1) + (r + 1));
+        ht[r] = 20; band++; r++;
       }
-      if (sh.name === 'Cover') out.colWidths = [30, 78];
-      return out;
-    });
+      function gap() { rows.push([]); ht[r] = 10; r++; band = 0; }
+
+      var sysBits = [
+        site.bessKw ? String(+(site.bessKw / 1000).toFixed(2)) + ' MW / ' +
+                      String(+((site.bessKwh || 0) / 1000).toFixed(2)) + ' MWh storage' : null,
+        site.solarKwDc ? site.solarKwDc.toLocaleString() + ' kWdc solar' : null,
+        site.gensetKw ? site.gensetKw.toLocaleString() + ' kW generation' : null
+      ].filter(Boolean).join(' + ');
+      var lo = 0, hi = 0, unk = 0;
+      m.rows.forEach(function (x) {
+        if (x.fees) { lo += x.fees[0]; hi += x.fees[1]; } else unk++;
+      });
+
+      section('PROJECT SUMMARY');
+      kv('Project Name', title);
+      kv('Customer', (cfg && cfg.customer) || '\u2014');
+      kv('System', sysBits || 'Nothing placed');
+      kv('Location', [site.city, site.state, site.county ? '(' + site.county + ')' : null]
+                       .filter(Boolean).join(', ') || '\u2014');
+      kv('Utility', site.utility || '\u2014');
+      kv('Permits Triggered', String(m.rows.length));
+      kv('Total Permitting Duration', rg.lowWeeks + '\u2013' + rg.highWeeks + ' weeks' +
+        (rg.totalIsFloor ? '   (a floor \u2014 ' + rg.unknownDurations.length +
+                           ' permit(s) carry no duration)' : ''));
+      kv('Total Estimated Permit Fees', unk === m.rows.length ? 'Confirm with AHJ'
+        : '$' + lo.toLocaleString() + '\u2013$' + hi.toLocaleString() +
+          (unk ? '   (excludes ' + unk + ' with no published fee)' : '') +
+          '   \u2014 excludes utility grid upgrade costs');
+      kv('Lead Jurisdiction', m.pack || 'No verified pack \u2014 confirm with AHJ');
+      kv('Date Prepared', new Date().toLocaleDateString('en-US',
+          { month: 'long', year: 'numeric' }));
+      gap();
+
+      section('REVIEW TYPE LEGEND');
+      kv('DISCRETIONARY', 'A judgment call. Public notice, a hearing, and a vote that ' +
+        'can approve, condition or deny. This is the critical path \u2014 everything ' +
+        'downstream is gated by it.');
+      kv('MINISTERIAL', 'Administrative. Staff issue it when the application meets the ' +
+        'code. It FOLLOWS the discretionary approval; it never precedes it.');
+      kv('INDEPENDENT AUTHORITY', 'The fire authority approves separately. A project can ' +
+        'hold zoning approval and still be stopped here.');
+      kv('DESIGN GATE / DILIGENCE', 'Not an agency approval \u2014 a decision whose ' +
+        'output is an input to everything after it.');
+      gap();
+
+      section('COLOUR LEGEND');
+      kv('RED \u2014 Critical Path', 'Zero float. A slip here moves the energisation ' +
+        'date one for one.');
+      kv('ORANGE \u2014 Has Float', 'Can slip up to the float shown without moving the ' +
+        'overall programme.');
+      kv('Confirm with AHJ / TBC', 'No verified figure for this jurisdiction. Left blank ' +
+        'rather than guessed.');
+      gap();
+
+      rows.push(['DISCLAIMER']); st[r] = { 0: S.SECTION };
+      mg.push('A' + (r + 1) + ':' + X.colName(W - 1) + (r + 1)); ht[r] = 22; r++;
+      rows.push(['All timelines and fees are estimates for planning. Agency schedules, ' +
+        'queue positions and requirements change, and must be verified with each agency ' +
+        'before submission. Utility interconnection timelines are highly queue-dependent ' +
+        'and may differ significantly. Utility grid upgrade costs are NOT permit fees and ' +
+        'are excluded throughout. This matrix is not legal, engineering or regulatory ' +
+        'advice \u2014 engage licensed professionals for all permit applications.']);
+      st[r] = { 0: S.NOTE };
+      mg.push('A' + (r + 1) + ':' + X.colName(W - 1) + (r + 1)); ht[r] = 62; r++;
+
+      out.push(withBars({ name: 'Cover', headerRow: false, rows: rows, styles: st,
+                          merges: mg, rowHeights: ht, freeze: null,
+                          colWidths: [22, 8, 30, 20, 18, 12, 14, 12, 12, 12] }, W));
+    })();
+
+    /* ---- MASTER MATRIX ---- */
+    (function () {
+      var hdr = ['Permit ID', 'Review Type', 'Hearing', 'Permit / Review Name', 'Agency',
+                 'Responsible Party', 'Trigger / Condition', 'What Fired It',
+                 'Required Documents', 'Code Reference', 'Est. Timeline (wks)',
+                 'Est. Fees', 'Depends On', 'Unlocks', 'Critical Path', 'Float (wks)'];
+      var W = hdr.length, rows = [hdr], st = {}, ht = {}, band = 0;
+      st[0] = {}; hdr.forEach(function (_, i) { st[0][i] = S.HEADER; }); ht[0] = 42;
+      m.rows.forEach(function (rr, i) {
+        var t = byId[rr.id] || {};
+        rows.push([rr.id, rr.review || 'ministerial', rr.hearing ? 'YES' : '',
+                   rr.name, rr.agency || 'Confirm with AHJ', rr.party, rr.trigger,
+                   (rr.firedBy || []).join('; '), rr.docs, rr.code || '',
+                   rr.weeks ? rr.weeks[0] + '\u2013' + rr.weeks[1] : 'Confirm with AHJ',
+                   rr.fees ? '$' + rr.fees[0].toLocaleString() + '\u2013$' +
+                             rr.fees[1].toLocaleString() : 'Confirm with AHJ',
+                   rr.dependsOn.join('; ') || 'None',
+                   rr.unlocks.join('; ') || 'None',
+                   t.critical ? 'YES' : 'NO',
+                   rr.weeks ? t.floatWeeks : 'TBC']);
+        var base = t.critical ? S.CRIT : (band % 2 === 0 ? S.BAND_A : S.BAND_B);
+        var row = {}; hdr.forEach(function (_, ci) { row[ci] = base; });
+        row[0] = t.critical ? S.CRIT_BOLD : S.BOLD;
+        st[i + 1] = row; ht[i + 1] = 74; band++;
+      });
+      out.push(withBars({ name: 'Master Permitting Matrix', headerRow: false, rows: rows,
+        styles: st, merges: [], rowHeights: ht, freeze: 'D4',
+        colWidths: [8, 16, 8, 28, 26, 20, 30, 26, 34, 16, 13, 17, 12, 12, 10, 9] }, W));
+    })();
+
+    /* ---- GANTT: week columns, merged month headers ---- */
+    (function () {
+      var weeks = Math.max(4, Math.ceil(rg.highWeeks));
+      var months = Math.ceil(weeks / 4);
+      weeks = months * 4;
+      var LEAD = 2, W = LEAD + weeks;
+      var rows = [], st = {}, ht = {}, mg = [];
+
+      var mrow = ['Month', 'Permit'], wrow = ['Week #', 'Name'], k;
+      for (k = 1; k <= weeks; k++) {
+        mrow.push((k - 1) % 4 === 0 ? 'Month ' + Math.ceil(k / 4) : '');
+        wrow.push(k);
+      }
+      rows.push(mrow, wrow);
+      st[0] = {}; st[1] = {};
+      for (k = 0; k < W; k++) {
+        st[0][k] = k < LEAD ? S.HEADER : S.MONTHHDR;
+        st[1][k] = k < LEAD ? S.HEADER : S.WEEKNO;
+      }
+      ht[0] = 20; ht[1] = 18;
+      for (k = 0; k < months; k++) {
+        mg.push(X.colName(LEAD + k * 4) + '1:' + X.colName(LEAD + k * 4 + 3) + '1');
+      }
+
+      m.rows.forEach(function (rr, i) {
+        var t = byId[rr.id] || {};
+        var row = [rr.id, rr.name];
+        var srow = { 0: t.critical ? S.CRIT_BOLD : S.BOLD,
+                     1: t.critical ? S.CRIT : (i % 2 ? S.BAND_B : S.BAND_A) };
+        var noDur = !rr.weeks;
+        var mark = Math.max(1, Math.ceil(t.earliestStart || 0) + 1);
+        for (var w = 1; w <= weeks; w++) {
+          if (noDur) {
+            /* A ? is NOT "has float" \u2014 it is "nobody has said". Painting it
+               the same orange as a float bar would let a reader scan the
+               chart and conclude the entitlement has slack, when what it
+               has is an unanswered question. */
+            row.push(w === mark ? '?' : '');
+            srow[LEAD + w - 1] = w === mark ? S.NOTE : S.BAR_EMPTY;
+          } else {
+            var on = t.earliestStart < w && t.earliestFinish >= w - 0.0001;
+            row.push('');
+            srow[LEAD + w - 1] = on ? (t.critical ? S.BAR_CRIT : S.BAR_SOFT) : S.BAR_EMPTY;
+          }
+        }
+        rows.push(row); st[i + 2] = srow; ht[i + 2] = 16;
+      });
+
+      var n = rows.length;
+      rows.push([]); ht[n] = 8;
+      rows.push(['LEGEND      RED = critical path (zero float)      ' +
+                 'ORANGE = has float      YELLOW ? = duration not yet confirmed']);
+      st[n + 1] = { 0: S.SECTION }; ht[n + 1] = 20;
+      mg.push('A' + (n + 2) + ':' + X.colName(W - 1) + (n + 2));
+      if (rg.totalIsFloor) {
+        rows.push([rg.floorNote + ' A ? sits at the week the task could start; it has no ' +
+                   'bar because nobody has stated how long it takes, not because nothing ' +
+                   'happens.']);
+        st[n + 2] = { 0: S.NOTE }; ht[n + 2] = 34;
+        mg.push('A' + (n + 3) + ':' + X.colName(W - 1) + (n + 3));
+      }
+
+      var cw = [8, 30]; for (k = 0; k < weeks; k++) cw.push(2.8);
+      out.push(withBars({ name: 'Gantt Timeline', headerRow: false, rows: rows,
+        styles: st, merges: mg, rowHeights: ht, colWidths: cw, freeze: 'C5' }, W));
+    })();
+
+    return out;
   }
+
+  /* One style() only. A second, identical definition sat above this one
+     and was silently shadowed by it — harmless because they matched,
+     but the next edit to one of them would not have been. */
 
   /* Which rows and columns carry meaning, said once per report rather
      than smeared through the sheet builders. */
@@ -126936,7 +127734,13 @@ challengeRow(s) +
        never looked like the one that was designed. */
     if (window.OmegaXlsx && window.OmegaXlsx.blob) {
       try {
-        var b = window.OmegaXlsx.blob(style(res.sheets), { gridLines: false });
+        /* Lay the first three sheets out to the reference workbook; the rest
+           keep the plain table treatment, which is right for them. */
+        var laid = laidOut(res, cfg) || [];
+        var names = {}; laid.forEach(function (x) { names[x.name] = 1; });
+        var restSheets = res.sheets.filter(function (x) { return !names[x.name]; });
+        var pack = laid.concat(style(restSheets));
+        var b = window.OmegaXlsx.blob(pack, { gridLines: false });
         if (b) { download(b, base + '.xlsx'); return Promise.resolve(res); }
       } catch (e) {
         if (window.console) console.warn('[OmegaXlsx] fell back:', e && e.message);
@@ -126953,7 +127757,8 @@ challengeRow(s) +
     return Promise.resolve(res);
   }
 
-  window.OmegaPermitReport = { build: build, toCSV: toCSV, exportXlsx: exportXlsx };
+  window.OmegaPermitReport = {
+    laidOutForTest: laidOut, build: build, toCSV: toCSV, exportXlsx: exportXlsx };
 })();
 
 </script>
