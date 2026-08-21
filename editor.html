@@ -110411,7 +110411,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
             BAND_A: 19, BAND_B: 20, CRIT: 21, CRIT_BOLD: 22,
             BAR_CRIT: 23, BAR_SOFT: 24, BAR_EMPTY: 25,
             NOTE: 26, WEEKNO: 27, MONTHHDR: 28,
-            CRIT_NUM: 29, CRIT_MONEY: 30, BAND_A_MONEY: 31, BAND_B_MONEY: 32 };
+            CRIT_NUM: 29, CRIT_MONEY: 30, BAND_A_MONEY: 31, BAND_B_MONEY: 32,
+            HAVE: 33, PARTIAL: 34, MISSING: 35 };
 
   /* Palette lifted from the reference workbook so the two are the same
      document, not two documents that look similar. */
@@ -110420,7 +110421,9 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     KEYA: 'D6E4F0', KEYB: 'BDD7EE', VALA: 'EBF3FA', VALB: 'DDEEFF',
     BANDA: 'F2F2F2', BANDB: 'FFFFFF',
     CRIT: 'FFCCCC', BARCRIT: 'FF0000', BARSOFT: 'FF8C00',
-    NOTE: 'FFF2CC', WARN: 'FFEB9C'
+    NOTE: 'FFF2CC', WARN: 'FFEB9C',
+    /* readiness status: have / partial / missing */
+    HAVE: 'D9EAD3', PART: 'FFF2CC', MISS: 'F4CCCC'
   };
 
   function stylesXml(opts) {
@@ -110442,7 +110445,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 /*6*/ '<font><b/><color rgb="FF' + C.NAVY + '"/><sz val="10"/><name val="Calibri"/></font>' +
 /*7*/ '<font><i/><sz val="9"/><name val="Calibri"/></font>' +
 '</fonts>' +
-'<fills count="14">' +
+'<fills count="16">' +
 '<fill><patternFill patternType="none"/></fill>' +
 '<fill><patternFill patternType="gray125"/></fill>' +
 '<fill><patternFill patternType="solid"><fgColor rgb="FF' + headerBg + '"/><bgColor indexed="64"/></patternFill></fill>' +
@@ -110457,6 +110460,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 '<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.BARCRIT + '"/><bgColor indexed="64"/></patternFill></fill>' +
 '<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.BARSOFT + '"/><bgColor indexed="64"/></patternFill></fill>' +
 '<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.NOTE + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.HAVE + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.MISS + '"/><bgColor indexed="64"/></patternFill></fill>' +
 '</fills>' +
 '<borders count="2">' +
 '<border><left/><right/><top/><bottom/><diagonal/></border>' +
@@ -110466,7 +110471,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 '<bottom style="thin"><color rgb="FFD9D9D9"/></bottom><diagonal/></border>' +
 '</borders>' +
 '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-'<cellXfs count="33">' +
+'<cellXfs count="36">' +
 /* 0 normal   */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="0" borderId="0"/>' +
 /* 1 header   */ '<xf xfId="0" numFmtId="0" fontId="1" fillId="2" borderId="1" applyFont="1" ' +
                  'applyFill="1" applyBorder="1" applyAlignment="1">' +
@@ -110512,6 +110517,9 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 /*30 crit money */ '<xf xfId="0" numFmtId="165" fontId="0" fillId="10" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
 /*31 bandA money*/ '<xf xfId="0" numFmtId="165" fontId="0" fillId="9" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
 /*32 bandB money*/ '<xf xfId="0" numFmtId="165" fontId="0" fillId="0" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>' +
+/*33 have     */ '<xf xfId="0" numFmtId="0" fontId="2" fillId="14" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+/*34 partial  */ '<xf xfId="0" numFmtId="0" fontId="2" fillId="13" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+/*35 missing  */ '<xf xfId="0" numFmtId="0" fontId="2" fillId="15" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
 '</cellXfs>' +
 '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
 '</styleSheet>';
@@ -120528,7 +120536,318 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
                  ' MW, so local zoning is the path.' };
   }
 
+  /* ------------------------------------------------------------------ *
+   *  TWO REGISTERS  —  internal, and agency-facing                       *
+   *  ------------------------------------------------------------------  *
+   *  A permitting matrix is an AGENCY-FACING artifact. It goes to county
+   *  planning, the fire marshal, the air district and the utility, and in
+   *  most states everything sent to those bodies can be pulled by a third
+   *  party through a public-records request. Competitors, journalists and
+   *  opposing landowners read them.
+   *
+   *  The matrix as built carries the customer's name, the full system
+   *  capacity, and a fee range that is the applicant's cost basis. None of
+   *  that is required by any filing, and all of it is useful to somebody
+   *  who does not want the project to happen.
+   *
+   *  So there are two registers. INTERNAL is the full picture and never
+   *  leaves. AGENCY-FACING is scrubbed, and it is the default for anything
+   *  that could reach an agency or utility. When in doubt, produce to the
+   *  agency register.
+   *
+   *  Method from the open-records discipline in the data-centre site-plan
+   *  skill. The scrub there was a hand-written find/replace list for one
+   *  project; this generalises the RULES so a new project does not need a
+   *  new list \u2014 a list only scrubs what somebody remembered to add to it.
+   * ------------------------------------------------------------------ */
+  var SCRUB_RULES = [
+    { id: 'tenant', label: 'Customer / end-user identity',
+      why: 'A named offtaker tells a competitor who to approach and tells an ' +
+           'opponent who to organise against. No filing requires it.' },
+    { id: 'capacity', label: 'Capacity above the phase being filed',
+      why: 'An ultimate-buildout figure in an external document becomes the ' +
+           'number the community argues about, and it never comes back down ' +
+           'across drafts.' },
+    { id: 'financial', label: 'Fee totals, cost basis and financial terms',
+      why: 'Permit fees per agency are fine \u2014 that agency set them. A ' +
+           'project-wide cost basis is the applicant\u2019s commercial position.' },
+    { id: 'partners', label: 'JV, vendor and equipment partner names',
+      why: 'Names a competitor can call, and a supply chain an opponent can ' +
+           'pressure.' },
+    { id: 'internal', label: 'Internal posture and unresolved conflicts',
+      why: 'Notes written for a developer read very differently to a reviewer ' +
+           'deciding whether to trust the applicant.' }
+  ];
+
+  function scrub(m, cfg) {
+    cfg = cfg || {};
+    if (!m || !m.rows) return { ok: false, error: 'No matrix to scrub.' };
+    var removed = [];
+    function note(id, what) { removed.push({ rule: id, what: what }); }
+
+    var out = { rows: [], pack: m.pack, packSource: m.packSource,
+                unverified: m.unverified, essThresholdKwh: m.essThresholdKwh,
+                thresholdNote: m.thresholdNote, contacts: m.contacts,
+                exclusions: m.exclusions, register: 'agency-facing' };
+
+    m.rows.forEach(function (r) {
+      var c = {};
+      Object.keys(r).forEach(function (k) { c[k] = r[k]; });
+      /* fees per agency stay \u2014 that agency published them. The project
+         total does not, and it is removed on the cover rather than here. */
+      /* internal notes are written for a developer, not a reviewer */
+      if (c.note) { note('internal', r.id + ' note'); c.note = null; }
+      /* "what fired it on this project" exposes the system size row by row */
+      if (c.firedBy && c.firedBy.length) {
+        note('capacity', r.id + ' trigger detail');
+        c.firedBy = ['Per the submitted site plan'];
+      }
+      out.rows.push(c);
+    });
+
+    /* the cover facts */
+    var cover = {
+      projectName: cfg.projectName || 'Permitting Matrix',
+      customer: null, address: cfg.address || null,
+      systemLine: null, feeTotal: null
+    };
+    if (cfg.customer) { note('tenant', 'customer name'); }
+    if (cfg.systemLine) {
+      note('capacity', 'system capacity line');
+      cover.systemLine = 'Per the submitted application';
+    }
+    note('financial', 'project fee total');
+
+    return { ok: true, matrix: out, cover: cover, removed: removed,
+             rules: SCRUB_RULES,
+             stamp: 'AGENCY-FACING REGISTER \u2014 scrubbed for public-records ' +
+                    'disclosure. Customer identity, buildout capacity beyond the ' +
+                    'filed phase, and project cost basis are removed by design, ' +
+                    'not omitted by accident.',
+             gate: SCRUB_RULES.map(function (x) { return x.label; }) };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  BASIS GATE                                                         *
+   *  How much of this matrix rests on something checked? A confident     *
+   *  package built on a thin base sends a developer to spend money on a  *
+   *  fiction, so the document reports its own footing rather than        *
+   *  reading the same either way.                                       *
+   * ------------------------------------------------------------------ */
+  function basis(m, rg) {
+    var checks = [];
+    checks.push({ id: 'jurisdiction', ok: !m.unverified,
+      label: 'Verified jurisdiction pack',
+      detail: m.unverified
+        ? 'No verified pack for this jurisdiction. Permits and code references ' +
+          'apply; agencies, fees and durations do not and read Confirm with AHJ.'
+        : 'Agencies, fees and durations from ' + (m.packSource || m.pack) + '.' });
+    var withDur = m.rows.filter(function (r) { return !!r.weeks; }).length;
+    checks.push({ id: 'durations', ok: withDur === m.rows.length,
+      label: 'Durations stated', 
+      detail: withDur + ' of ' + m.rows.length + ' permits carry a duration.' +
+        (withDur < m.rows.length
+          ? ' The programme total is a floor, not an estimate.' : '') });
+    var withFees = m.rows.filter(function (r) { return !!r.fees; }).length;
+    checks.push({ id: 'fees', ok: withFees === m.rows.length,
+      label: 'Fees stated',
+      detail: withFees + ' of ' + m.rows.length + ' permits carry a published fee.' });
+    var disc = m.rows.filter(function (r) { return r.discretionary; });
+    checks.push({ id: 'entitlement', ok: disc.length > 0,
+      label: 'Entitlement path identified',
+      detail: disc.length
+        ? disc.map(function (r) { return r.id; }).join(', ') +
+          ' \u2014 discretionary, with a hearing.'
+        : 'No discretionary approval on this matrix. For battery storage that ' +
+          'is unusual and worth confirming: it is an unlisted use in most ' +
+          'counties.' });
+    var passed = checks.filter(function (c) { return c.ok; }).length;
+    return { ok: true, checks: checks, passed: passed, total: checks.length,
+             provisional: passed < checks.length,
+             stamp: passed < checks.length
+               ? 'PROVISIONAL \u2014 built without ' +
+                 checks.filter(function (c) { return !c.ok; })
+                       .map(function (c) { return c.label.toLowerCase(); })
+                       .join(', ') + '.'
+               : 'All basis checks passed.' };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  SUBMISSION READINESS  —  a different axis from "which permits"       *
+   *                                                                       *
+   *  The matrix answers WHAT is required. It never answered ARE WE READY   *
+   *  TO FILE, which is the question that decides whether a submission      *
+   *  comes back with comments or comes back rejected.                      *
+   *                                                                       *
+   *  The requirement list is precedent-driven rather than invented: these  *
+   *  are the items an industrial civil submission is repeatedly measured   *
+   *  against in a mature corridor, and each carries the reviewer comment   *
+   *  pattern that produced it. Status is have / partial / missing, and     *
+   *  the point of the sheet is the ACTION TO CLOSE column, not the status. *
+   *                                                                       *
+   *  Source: datacenter-site-plan-architect skill, AHJ submission          *
+   *  requirements, July 2026.                                             *
+   * ------------------------------------------------------------------ */
+  var READINESS = [
+    { no: 1, req: 'Spatially-accurate civil DWG, georeferenced',
+      why: 'Reviewers comment on this by name. A loose PDF is not a submission; ' +
+           'the CAD has to be in the right coordinate system and line up with ' +
+           'the county GIS.',
+      auto: 'dxf' },
+    { no: 2, req: 'NOI / NPDES construction stormwater evidence',
+      why: 'Notice of Intent, or the draft, plus the coverage path. Triggered by ' +
+           'disturbance over one acre.', permit: 'NPDES' },
+    { no: 3, req: 'Concrete washout location shown ON the plan',
+      why: 'Left as a contractor note it comes back as a comment every time. It ' +
+           'belongs on the ESPC sheet as a located item.' },
+    { no: 4, req: 'Utility general and specific note blocks',
+      why: 'The water and sewer authority\u2019s own standard notes, verbatim.' },
+    { no: 5, req: 'Water-line details \u2014 tap, gate valve, meter, backflow, DIP',
+      why: 'The most scrutinised sheet in an industrial filing. Meter size and ' +
+           'backflow size MUST match, backflow called out as RPCVA, restrained-' +
+           'joint DIP from the tap to the backflows, everything past the backflow ' +
+           'labelled private.' },
+    { no: 6, req: 'Fire access, fire line, hydrants and fire-flow',
+      why: 'Fire review lags the rest and needs coordinating early. Fire-lane ' +
+           'loop, apparatus turning, hydrant plan, fire-flow demand, FDC ' +
+           'locations, and access to the substation, generator and BESS yards.',
+      permit: 'FIRE_CONSTRUCTION' },
+    { no: 7, req: 'Detention and drainage calculations',
+      why: 'Pre and post runoff, detention sizing, water-quality treatment, ' +
+           'outfalls \u2014 sized for the full buildout, not the first phase.',
+      permit: 'STORMWATER' },
+    { no: 8, req: 'ESPC / erosion control plan',
+      why: 'Construction entrance, silt fence and inlet protection, limits of ' +
+           'disturbance, stockpiles, stabilisation schedule, SWPPP narrative, ' +
+           'laydown areas.', permit: 'NPDES' },
+    { no: 9, req: 'Utility tie-in details',
+      why: 'Water, sewer, storm, gas, fibre and electric connection details.' },
+    { no: 10, req: 'As-built commitment',
+      why: 'A stated commitment to provide record drawings. Cheap to include, ' +
+           'and a comment if it is missing.' },
+    { no: 11, req: 'Environmental constraint overlay',
+      why: 'Required even on a filing that is nominally "just a site plan".',
+      permit: 'HABITAT' },
+    { no: 12, req: 'GIS, address and parcel consistency',
+      why: 'The addresses, parcel IDs and the GIS base all have to agree with ' +
+           'one another. They frequently do not.', auto: 'geo' }
+  ];
+
+  /* Status is inferred where the drawing can answer it, and left BLANK where
+     it cannot. A readiness matrix that guesses "have" is worse than an empty
+     one, because it stops anyone checking. */
+  function readiness(m, opts) {
+    opts = opts || {};
+    var have = opts.have || {};
+    var keys = {};
+    (m && m.rows ? m.rows : []).forEach(function (r) { keys[r.key] = r.id; });
+    var rows = READINESS.map(function (x) {
+      var st = have[x.no] || null;
+      if (!st && x.permit && !keys[x.permit]) st = 'n/a';
+      return { no: x.no, requirement: x.req, why: x.why,
+               status: st, permitId: x.permit ? (keys[x.permit] || null) : null,
+               action: st === 'have' ? '' : null,
+               source: x.auto || null };
+    });
+    var counted = rows.filter(function (r) { return r.status !== 'n/a'; });
+    var known = counted.filter(function (r) { return r.status; });
+    return { ok: true, rows: rows,
+             total: counted.length, answered: known.length,
+             unanswered: counted.length - known.length,
+             note: known.length === 0
+               ? 'Nothing here has been assessed yet. Every row is blank on ' +
+                 'purpose \u2014 a readiness matrix that guesses "have" is worse ' +
+                 'than an empty one, because it stops anyone checking.'
+               : (counted.length - known.length) + ' of ' + counted.length +
+                 ' requirements have not been assessed.' };
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  OPEN RECORDS SCRUB                                                  *
+   *  Anything routed to an agency or a regulated utility can be pulled by *
+   *  a third party through a public-records request. Competitors,         *
+   *  journalists and opposing landowners read these. A permitting matrix  *
+   *  IS an agency-facing artifact, so it gets checked before it leaves.   *
+   * ------------------------------------------------------------------ */
+  var SCRUB = [
+    { id: 'TENANT', label: 'Tenant or end-user name',
+      test: /\b(hyperscal\w+|anchor tenant|end[- ]user is|tenant:)\b/i,
+      fix: 'Refer to "the end user", "the load" or "the campus".' },
+    { id: 'CAPITAL', label: 'Capital structure or financial terms',
+      test: /\b(capital stack|equity\s*\/\s*debt|IRR|cap rate|lease rate|\$\s*per\s*acre|purchase price|escalator)\b/i,
+      fix: 'No capital stack, lease economics or purchase price in an ' +
+           'agency-facing document.' },
+    { id: 'JV', label: 'Joint venture or equipment partner named',
+      test: /\b(joint venture with|JV partner|in partnership with)\b/i,
+      fix: 'No JV, vendor or financing partners by name.' },
+    { id: 'BUILDOUT', label: 'Ultimate buildout capacity above the public figure',
+      test: null,          /* numeric, handled below */
+      fix: 'Do not let an ultimate-buildout figure appear in an external ' +
+           'submission, and do not let the delivery figure creep upward ' +
+           'across drafts.' }
+  ];
+
+  function scrub_leak(sheets, opts) {
+    opts = opts || {};
+    var findings = [];
+    var publicMw = opts.publicMw;                /* the figure you have stated */
+    (sheets || []).forEach(function (sh) {
+      (sh.rows || []).forEach(function (row, ri) {
+        (row || []).forEach(function (cell, ci) {
+          var v = String(cell == null ? '' : cell);
+          if (!v) return;
+          SCRUB.forEach(function (rule) {
+            if (rule.test && rule.test.test(v)) {
+              findings.push({ rule: rule.id, label: rule.label, sheet: sh.name,
+                              row: ri + 1, col: ci + 1,
+                              text: v.slice(0, 90), fix: rule.fix });
+            }
+          });
+          if (publicMw > 0) {
+            var mm = v.match(/([\d,.]+)\s*MW\b/gi) || [];
+            mm.forEach(function (t) {
+              var num = parseFloat(String(t).replace(/[^\d.]/g, ''));
+              if (num > publicMw) {
+                findings.push({ rule: 'BUILDOUT',
+                  label: 'Capacity above the public figure',
+                  sheet: sh.name, row: ri + 1, col: ci + 1, text: v.slice(0, 90),
+                  fix: 'This document states ' + num + ' MW against a public ' +
+                       'figure of ' + publicMw + ' MW.' });
+              }
+            });
+          }
+        });
+      });
+    });
+    return { ok: true, clean: findings.length === 0, findings: findings,
+             checked: (sheets || []).length,
+             note: findings.length === 0
+               ? 'Nothing on the scrub list found. This is a keyword pass, not ' +
+                 'a substitute for reading the document \u2014 it cannot see a ' +
+                 'tenant identified by description rather than by name.'
+               : findings.length + ' item(s) to review before this leaves for an ' +
+                 'agency. Anything routed to an agency or a regulated utility can ' +
+                 'be pulled by a public-records request.' };
+  }
+
+  /* One READINESS list and one readiness(). A second pair was added here
+     with an incompatible signature — readiness(status) against the
+     existing readiness(matrix, opts) — and shadowed the original, so the
+     report passed a matrix where a status map was expected and every row
+     came back blank. The original is the better one: it ties each
+     requirement to the permit that triggers it and marks a row n/a when
+     that permit is not on this project. */
   E.permit = {
+    READINESS: READINESS, readiness: readiness,
+    /* NOT `scrub`. This engine already HAS a scrub(m, cfg) that removes
+       sensitive content from the matrix and returns a scrubbed copy, and
+       naming this one the same silently discarded it — a duplicate key in
+       an object literal loses to the later one, with no error anywhere.
+       The two do different jobs and both are worth having: scrub() strips
+       KNOWN FIELDS, leakScan() reads the finished sheets as text and catches
+       what someone typed into a project name. */
+    LEAK_RULES: SCRUB, leakScan: scrub_leak,
+    SCRUB_RULES: SCRUB_RULES, scrub: scrub, basis: basis,
     STRUCTURAL_RISKS: STRUCTURAL_RISKS, structuralRisks: structuralRisks,
     STATE_SITING: STATE_SITING, sitingPath: sitingPath,
     DISCRETIONARY: DISCRETIONARY, MINISTERIAL: MINISTERIAL,
@@ -127177,6 +127496,17 @@ challengeRow(s) +
   }
   function wk(r) { return r ? r[0] + '\u2013' + r[1] : 'Confirm with AHJ'; }
 
+  /* Anything that could reach an agency or a utility defaults to the
+     scrubbed register. The caller opts INTO the internal one. */
+  function applyRegister(m, cfg) {
+    if (!cfg || !cfg.agencyFacing) return { m: m, stamp: null, removed: [] };
+    var P = E().permit;
+    if (!P.scrub) return { m: m, stamp: null, removed: [] };
+    var sc = P.scrub(m, cfg);
+    if (!sc.ok) return { m: m, stamp: null, removed: [] };
+    return { m: sc.matrix, stamp: sc.stamp, removed: sc.removed, cover: sc.cover };
+  }
+
   function build(cfg) {
     cfg = cfg || {};
     var P = E() && E().permit;
@@ -127184,6 +127514,9 @@ challengeRow(s) +
     var site = cfg.site;
     if (!site) return { ok: false, error: 'No site given. The matrix is derived from what is drawn.' };
     var m = P.applicable(site, cfg);
+    var reg = applyRegister(m, cfg);
+    var scrubStamp = reg.stamp, scrubRemoved = reg.removed;
+    m = reg.m;
     if (!m.rows.length) {
       return { ok: false, error: 'Nothing on the site triggers a permit yet. Place the ' +
                'battery, generation or charging equipment first.' };
@@ -127192,7 +127525,7 @@ challengeRow(s) +
     var hi = rg.high, lo = rg.low;
     var byId = {}; hi.tasks.forEach(function (t) { byId[t.id] = t; });
     var rk = P.risks(m.rows);
-    var sheets = [];
+    var sheets = [], res_scrub = null, rd = null;
 
     /* ---- Cover ----
        Was 33 rows, most of it prose in column A. A cover is read in ten
@@ -127447,7 +127780,54 @@ challengeRow(s) +
     }
     sheets.push({ name: 'Agency Contacts', rows: ct });
 
-    return { ok: true, matrix: m, range: rg, site: site, sheets: sheets, matrix: m, range: rg, risks: rk };
+    /* ---- Submission readiness ----
+       A different axis from "which permits are required": are we ready to
+       FILE. The point of the sheet is the Action to Close column. */
+    rd = E().permit.readiness ? E().permit.readiness(m, cfg && cfg.readiness) : null;
+    if (rd) {
+      var rr2 = [['#', 'Requirement', 'Status', 'Action to Close', 'Precedent / Ref',
+                  'Why it is on this list', 'Related permit']];
+      rd.rows.forEach(function (x) {
+        rr2.push([x.no, x.requirement, x.status || '', x.action || '', '',
+                  x.why, x.permitId || '']);
+      });
+      rr2.push([]);
+      rr2.push([rd.note]);
+      rr2.push(['Status is have / partial / missing. Rows are blank where the ' +
+                'drawing cannot answer them \u2014 filling one in as "have" ' +
+                'without checking is how a submission comes back rejected ' +
+                'rather than commented.']);
+      sheets.push({ name: 'Submission Readiness', rows: rr2 });
+    }
+
+    /* ---- Open records gate ----
+       This workbook is an agency-facing artifact and can be pulled through a
+       public-records request. Check it before it leaves. */
+    res_scrub = E().permit.leakScan
+      ? E().permit.leakScan(sheets, { publicMw: cfg && cfg.publicMw }) : null;
+    if (res_scrub) {
+      var sr = [['Rule', 'What was found', 'Sheet', 'Cell', 'Text', 'What to do']];
+      res_scrub.findings.forEach(function (f) {
+        sr.push([f.rule, f.label, f.sheet, 'R' + f.row + 'C' + f.col, f.text, f.fix]);
+      });
+      if (!res_scrub.findings.length) {
+        sr.push(['\u2014', 'Nothing on the scrub list found', '', '', '', '']);
+      }
+      sr.push([]);
+      sr.push([res_scrub.note]);
+      sr.push(['Anything routed to a government agency or a regulated utility ' +
+               'can be pulled by a third party through a public-records request. ' +
+               'Competitors, journalists and opposing landowners read these. ' +
+               'Keep two registers: the internal one with the full picture, and ' +
+               'this agency-facing one.']);
+      sheets.push({ name: 'Open Records Check', rows: sr });
+    }
+
+    return { ok: true, matrix: m, range: rg, site: site,
+             basis: E().permit.basis ? E().permit.basis(m, rg) : null,
+             scrubStamp: scrubStamp, scrubRemoved: scrubRemoved,
+             readiness: rd, leakScan: res_scrub,
+             sheets: sheets, risks: rk };
   }
 
   function toCSV(res) {
@@ -127488,8 +127868,16 @@ challengeRow(s) +
     var byId = {}; ((rg.high && rg.high.tasks) || []).forEach(function (t) { byId[t.id] = t; });
     var out = [];
     var title = (cfg && cfg.projectName) || 'Permitting Matrix';
-    var sub = [cfg && cfg.customer, cfg && cfg.address, site.utility]
+    /* THE SUB BAR IS THE LEAK. The scrub cleared the customer out of the
+       matrix rows and the cover facts, and then this rebuilt it straight
+       from cfg \u2014 so the name a public-records request would pull was
+       printed across the top of every sheet. A scrub that only reaches the
+       body of a document has not scrubbed the document. */
+    var agency = !!(cfg && cfg.agencyFacing);
+    var sub = [agency ? null : (cfg && cfg.customer),
+               cfg && cfg.address, site.utility]
                 .filter(Boolean).join('  |  ');
+    if (agency && !sub) sub = 'Agency-facing register';
 
     /* Put the title and sub bar on top of a built sheet, shifting every
        style, merge and height that was indexed before they existed. */
@@ -127541,8 +127929,10 @@ challengeRow(s) +
 
       section('PROJECT SUMMARY');
       kv('Project Name', title);
-      kv('Customer', (cfg && cfg.customer) || '\u2014');
-      kv('System', sysBits || 'Nothing placed');
+      kv('Customer', agency ? 'Withheld \u2014 agency-facing register'
+                            : ((cfg && cfg.customer) || '\u2014'));
+      kv('System', agency ? 'Per the submitted application'
+                          : (sysBits || 'Nothing placed'));
       kv('Location', [site.city, site.state, site.county ? '(' + site.county + ')' : null]
                        .filter(Boolean).join(', ') || '\u2014');
       kv('Utility', site.utility || '\u2014');
@@ -127550,7 +127940,9 @@ challengeRow(s) +
       kv('Total Permitting Duration', rg.lowWeeks + '\u2013' + rg.highWeeks + ' weeks' +
         (rg.totalIsFloor ? '   (a floor \u2014 ' + rg.unknownDurations.length +
                            ' permit(s) carry no duration)' : ''));
-      kv('Total Estimated Permit Fees', unk === m.rows.length ? 'Confirm with AHJ'
+      kv('Total Estimated Permit Fees', agency
+        ? 'Per-agency fees are listed on the Fee Summary sheet'
+        : unk === m.rows.length ? 'Confirm with AHJ'
         : '$' + lo.toLocaleString() + '\u2013$' + hi.toLocaleString() +
           (unk ? '   (excludes ' + unk + ' with no published fee)' : '') +
           '   \u2014 excludes utility grid upgrade costs');
@@ -127558,6 +127950,36 @@ challengeRow(s) +
       kv('Date Prepared', new Date().toLocaleDateString('en-US',
           { month: 'long', year: 'numeric' }));
       gap();
+
+      /* The document reports its own footing. A confident package built on a
+         thin base sends somebody to spend money on a fiction. */
+      var bs = E().permit.basis ? E().permit.basis(m, rg) : null;
+      if (bs) {
+        section('BASIS OF THIS MATRIX  \u2014  ' + bs.passed + ' of ' + bs.total +
+                ' checks passed');
+        bs.checks.forEach(function (c) {
+          var detail = c.detail;
+          /* The jurisdiction check quotes its SOURCE, and a source is a
+             document title that can carry a customer name straight through
+             a scrub that only looked at the fields it expected. Scrubbing
+             the fields you thought of is not scrubbing. */
+          if (agency && cfg && cfg.customer) {
+            detail = String(detail).split(cfg.customer).join('the applicant');
+          }
+          kv((c.ok ? '\u2713  ' : '\u2715  ') + c.label, detail);
+        });
+        if (bs.provisional) {
+          rows.push([bs.stamp]); st[r] = { 0: S.NOTE };
+          mg.push('A' + (r + 1) + ':' + X.colName(W - 1) + (r + 1)); ht[r] = 26; r++;
+        }
+        gap();
+      }
+      if (cfg && cfg.agencyFacing) {
+        section('REGISTER');
+        kv('AGENCY-FACING', (res.scrubStamp || '') + ' Keep the internal register ' +
+           'for anything that stays inside the company.');
+        gap();
+      }
 
       section('REVIEW TYPE LEGEND');
       kv('DISCRETIONARY', 'A judgment call. Public notice, a hearing, and a vote that ' +
@@ -127693,6 +128115,22 @@ challengeRow(s) +
         styles: st, merges: mg, rowHeights: ht, colWidths: cw, freeze: 'C5' }, W));
     })();
 
+    /* FINAL SWEEP. Everything above scrubs a field it knew about. This
+       catches the ones it did not \u2014 a pack name, a source title, a note
+       somebody adds next year. A scrub that trusts its own completeness is
+       the one that leaks. */
+    if (agency && cfg && cfg.customer) {
+      var needle = String(cfg.customer);
+      out.forEach(function (sh) {
+        sh.rows = sh.rows.map(function (row) {
+          return (row || []).map(function (cell) {
+            return (typeof cell === 'string' && cell.indexOf(needle) > -1)
+              ? cell.split(needle).join('the applicant') : cell;
+          });
+        });
+      });
+    }
+
     return out;
   }
 
@@ -127720,6 +128158,22 @@ challengeRow(s) +
         out.colWidths = hdr.map(function (h, i) { return i < 7 ? null : 4; });
       }
       if (sh.name === 'Cover') out.colWidths = [30, 78];
+      /* Traffic-light the readiness status. A readiness matrix read as plain
+         text is a list, not a status. An UNANSWERED row is left uncoloured
+         on purpose: colouring it red would say "we checked and it is
+         missing" when nobody has looked at it yet. */
+      if (sh.name === 'Submission Readiness' && X) {
+        out.colWidths = [6, 40, 11, 40, 20, 46, 12];
+        var st2 = {};
+        sh.rows.forEach(function (r2, i2) {
+          if (i2 === 0) return;
+          var v = String((r2 || [])[2] || '').toLowerCase();
+          if (v === 'have') st2[i2] = { 2: X.STYLE.HAVE };
+          else if (v === 'partial') st2[i2] = { 2: X.STYLE.PARTIAL };
+          else if (v === 'missing') st2[i2] = { 2: X.STYLE.MISSING };
+        });
+        out.styles = st2;
+      }
       return out;
     });
   }
@@ -127887,6 +128341,10 @@ challengeRow(s) +
            'blank and the permits still appear with their triggers and code references, ' +
            'marked for confirmation with the AHJ.') +
       field('omega-pm-name', 'Project name', (window.S && window.S.projectName) || '') +
+      /* The cover's sub bar reads "Customer | Address | Utility". Without a
+         customer field the dialog could not fill a third of it, so the
+         workbook came out anonymous no matter what was typed. */
+      field('omega-pm-cust', 'Customer', (window.S && window.S.customer) || '') +
       field('omega-pm-addr', 'Site address', '') +
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
         field('omega-pm-city', 'City', '') +
@@ -127896,7 +128354,22 @@ challengeRow(s) +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
         field('omega-pm-util', 'Utility', '') +
         field('omega-pm-fuel', 'Generator fuel', s.gensetKw ? 'diesel' : '') +
-      '</div>';
+      '</div>' +
+      /* A permitting matrix is an agency-facing artifact. In most states
+         everything sent to county planning, a fire marshal or a utility can
+         be pulled through a public-records request, and competitors and
+         opposing landowners read them. */
+      '<div style="margin-top:10px;padding:9px 11px;background:#141d2e;' +
+      'border:1px solid #24405e;border-radius:6px">' +
+      '<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">' +
+      '<input type="checkbox" id="omega-pm-agency" style="margin-top:2px">' +
+      '<span><b style="font-size:12px">Agency-facing register</b>' +
+      '<span style="display:block;font-size:10.5px;color:#8FA3B8;line-height:1.5;' +
+      'margin-top:3px">Strips the customer name, the buildout capacity beyond the ' +
+      'filed phase, the project cost basis and internal notes. Per-agency fees ' +
+      'stay \u2014 that agency published them. Use this for anything that goes to ' +
+      'a county, a fire marshal or a utility; keep the internal register for ' +
+      'what stays inside the company.</span></span></label></div>';
 
     modal('Permitting Matrix', body, function (close) {
       var site = {
@@ -127912,6 +128385,13 @@ challengeRow(s) +
       };
       window.OmegaPermitReport.exportXlsx({
         projectName: el('omega-pm-name').value || 'Permitting Matrix',
+        customer: (el('omega-pm-cust').value || '').trim(),
+        agencyFacing: !!(el('omega-pm-agency') && el('omega-pm-agency').checked),
+        systemLine: [
+          s.bessKw ? String(+(s.bessKw / 1000).toFixed(2)) + ' MW / ' +
+                     String(+((s.bessKwh || 0) / 1000).toFixed(2)) + ' MWh' : null,
+          s.gensetKw ? s.gensetKw.toLocaleString() + ' kW generation' : null
+        ].filter(Boolean).join(' + '),
         address: el('omega-pm-addr').value || '',
         site: site,
         filename: 'permitting-matrix'
