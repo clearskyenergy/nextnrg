@@ -116742,13 +116742,19 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
       if (/load/i.test(cp.component_type || '')) b.loadKw += +np.kw || 0;
       if (+np.aic_a) b.aicAmps = +np.aic_a;
     });
+    /* THE EXPORTER CALLS THEM from_key AND to_key.
+       Reading from_node_key gave undefined on every branch, so every bus
+       looked unconnected and the check reported a fully wired site as
+       "no connections at all" — with the branch COUNT printed correctly
+       right above it, which is the tell. Accept both spellings so a
+       rename on either side cannot silently disconnect the graph again. */
     var branches = (graph.branches || []).map(function (br) {
-      return { from: br.from_node_key, to: br.to_node_key,
+      return { from: (br.from_key != null ? br.from_key : br.from_node_key), to: (br.to_key != null ? br.to_key : br.to_node_key),
                conductor: (br.conductor && br.conductor.size) || null,
                sets: (br.conductor && br.conductor.sets) || 1,
-               lengthFt: +br.length_ft || 0,
-               transformerKva: +br.transformer_kva || 0,
-               transformerZPct: +br.transformer_z_pct || 0 };
+               lengthFt: +(br.length_ft != null ? br.length_ft : br.lengthFt) || 0,
+               transformerKva: +(br.transformer_kva != null ? br.transformer_kva : br.kva) || 0,
+               transformerZPct: +(br.transformer_z_pct != null ? br.transformer_z_pct : br.z_pct) || 0 };
     });
     return { ok: true, buses: buses, branches: branches };
   }
@@ -118278,6 +118284,20 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
       var k = CT_KIND[String(cp.component_type || '').toLowerCase()];
       if (k === 'xfmr' && cp.node_key) busHasXfmr[cp.node_key] = true;
     });
+    /* A transformer can be a BRANCH type as well as a component on a bus.
+       The exporter emits addBranch(poi, main, 'transformer', ...) for the
+       main step-down, so a rule that only looked at bus-mounted
+       transformers reported "13.8 kV feeds 480 V with no transformer" on a
+       site whose transformer sat on the branch between them. Collected here,
+       BEFORE the buses are built, because the flag is read as each bus is
+       created — setting it afterwards is setting it too late. */
+    (graph.branches || []).forEach(function (b) {
+      if (!/xfmr|transformer/i.test(String(b.branch_type || b.type || ''))) return;
+      var fk = (b.from_key != null ? b.from_key : b.from_node_key);
+      var tk = (b.to_key != null ? b.to_key : b.to_node_key);
+      if (fk) busHasXfmr[fk] = true;
+      if (tk) busHasXfmr[tk] = true;
+    });
 
     var nodes = [], edges = [], seen = {};
     graph.nodes.forEach(function (nd) {
@@ -118323,9 +118343,15 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
         }
       }
     });
+    /* THE EXPORTER CALLS THEM from_key AND to_key.
+       Reading from_node_key gave undefined on every branch, so every bus
+       looked unconnected and the check reported a fully wired site as
+       "no connections at all" — with the branch COUNT printed correctly
+       right above it, which is the tell. Accept both spellings so a
+       rename on either side cannot silently disconnect the graph again. */
     (graph.branches || []).forEach(function (b) {
-      if (!seen[b.from_node_key] || !seen[b.to_node_key]) return;
-      edges.push({ from: b.from_node_key, to: b.to_node_key,
+      if (!seen[(b.from_key != null ? b.from_key : b.from_node_key)] || !seen[(b.to_key != null ? b.to_key : b.to_node_key)]) return;
+      edges.push({ from: (b.from_key != null ? b.from_key : b.from_node_key), to: (b.to_key != null ? b.to_key : b.to_node_key),
                    conductor: (b.conductor && b.conductor.size) || null,
                    sets: (b.conductor && b.conductor.sets) || 1,
                    ocpdAmps: +b.rating_a || null });
