@@ -1729,7 +1729,12 @@ window.onerror = function(msg, src, line, col, err) {
     <!-- Sizing / configuration tools -->
     <div class="rpanel">
       <div class="rpanel-body">
-        <button class="rbtn" onclick="openBessModal(null)" title="BESS Config &mdash; size the battery, set chemistry, run the value stack. Being retired; the BESS Sizer replaces it." style="position:relative"><span class="rb-ico" style="color:#00D4FF">&#9881;</span><span class="rb-lbl">BESS<br>Config</span><span style="position:absolute;top:2px;right:3px;font-size:6.5px;font-weight:800;letter-spacing:.3px;background:rgba(239,68,68,.9);color:#FFF1F1;padding:1px 3px;border-radius:3px;line-height:1.2">LEAVING SOON</span></button>
+        <!-- BESS Config: hidden from the ribbon, NOT removed. openBessModal() is
+     still reached from the Build flyout and called from other code, so
+     deleting the button would be fine but deleting the tool would not.
+     It was already marked LEAVING SOON and the BESS Sizer beside it does
+     the same job; the ribbon slot is worth more than the second door. -->
+        <button class="rbtn" id="rb-bess-config" hidden aria-hidden="true" onclick="openBessModal(null)" title="BESS Config &mdash; size the battery, set chemistry, run the value stack. Being retired; the BESS Sizer replaces it." style="display:none;position:relative"><span class="rb-ico" style="color:#00D4FF">&#9881;</span><span class="rb-lbl">BESS<br>Config</span><span style="position:absolute;top:2px;right:3px;font-size:6.5px;font-weight:800;letter-spacing:.3px;background:rgba(239,68,68,.9);color:#FFF1F1;padding:1px 3px;border-radius:3px;line-height:1.2">LEAVING SOON</span></button>
         <button class="rbtn" onclick="openBessSizer()" title="BESS Sizer &mdash; size, screen and qualify a site from the utility bill and site details. Analysis only, nothing is placed." style="position:relative"><span class="rb-ico" style="color:#00D4FF">&#9878;</span><span class="rb-lbl">BESS<br>Sizer</span></button>
         <button class="rbtn" onclick="openSolarBessSizer()" title="Solar &rarr; BESS Sizer &mdash; size storage from the solar drawn on the sitemap"><span class="rb-ico" style="color:#FBBF24">&#9788;</span><span class="rb-lbl">Solar BESS<br>Sizer</span></button>
         <button class="rbtn" onclick="homeStartWizard('BTM')" title="Behind-the-meter guided flow &mdash; coming soon" style="display:none;position:relative;opacity:.72"><span class="rb-ico">&#9644;</span><span class="rb-lbl">BESS<br>BTM</span><span style="position:absolute;top:2px;right:3px;font-size:6.5px;font-weight:800;letter-spacing:.3px;background:rgba(245,158,11,.9);color:#1A1206;padding:1px 3px;border-radius:3px;line-height:1.2">SOON</span></button>
@@ -10097,7 +10102,8 @@ function _padAsmToggle(){ /* reserved: could disable fence/bollards when assembl
 function _doPlaceBesPad(p,spec,opts){
   opts=opts||{};
   var ppf=(S.pxPerFt && S.pxPerFt>0) ? S.pxPerFt : null;
-  var scale = ppf || 6;
+  /* `ppf || 6` again: 6 px/ft matches no map at any zoom. Ask the map. */
+  var scale = ppf || (window.OmegaScale ? OmegaScale.pxPerFt() : 6);
   var wPx = spec.lf*scale, hPx = spec.wf*scale;
   if(!opts.assembly && !opts.fence && !opts.bollards){
     /* plain pad only -- still stamp electrical/cost so it counts in the summary */
@@ -11668,7 +11674,7 @@ function _rerouteShapeConduits(sh){
       var laneY2 = by + halfH + 14;
       c.pts=[ {x:edgeX,y:by+d},{x:edgeX,y:laneY2+d},{x:ex+d,y:laneY2+d},{x:ex+d,y:ey+d} ];
     }
-    c.pxLen=_polyLen(c.pts); c.ftLen=+(c.pxLen/(S.pxPerFt||6)).toFixed(1);
+    c.pxLen=_polyLen(c.pts); c.ftLen=+(c.pxLen/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1);
     /* Rebuilt pts need a rebuilt anchor, or the next map idle drags this
        run back to the route it had before the BESS moved. */
     try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
@@ -51747,7 +51753,7 @@ function _trenchToEms(bx, by, ems, idx, bessShape){
     ];
     var pxLen=_polyLen(pts);
     var c={ id:uid(), condType:o.t, pts:pts, pxLen:pxLen,
-            ftLen:+(pxLen/(S.pxPerFt||6)).toFixed(1),
+            ftLen:+(pxLen/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
             fromId:null, toId:ems.id, cluster:true,
             fromShapeId:(bessShape?bessShape.id:null),
             emsEdgeOff:o.d, exitRight:exitRight, halfW:halfW, halfH:halfH,
@@ -51786,7 +51792,7 @@ function _trenchClusterSpine(placed, ems, rows, cols, cellW, cellH, ppf, spec){
       for(var k=0;k<offs.length;k++){ var o=offs[k];
         var tapPts=[ {x:unit.cx+o.d, y:rowCy+halfH-2+o.d}, {x:unit.cx+o.d, y:laneY+o.d} ];
         var tc={ id:uid(), condType:o.t, pts:tapPts, pxLen:_polyLen(tapPts),
-                 ftLen:+(_polyLen(tapPts)/(S.pxPerFt||6)).toFixed(1),
+                 ftLen:+(_polyLen(tapPts)/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
                  cluster:true, tap:true, fromShapeId:unit.shape?unit.shape.id:null,
                  laneY:laneY, emsEdgeOff:o.d, halfW:halfW, halfH:halfH, labelHidden:true };
         S.conduits.push(tc); if(typeof renderConduit==='function') renderConduit(tc);
@@ -51796,7 +51802,7 @@ function _trenchClusterSpine(placed, ems, rows, cols, cellW, cellH, ppf, spec){
     for(var k2=0;k2<offs.length;k2++){ var o2=offs[k2];
       var spinePts=[ {x:minX+o2.d, y:laneY+o2.d}, {x:ex+o2.d, y:laneY+o2.d}, {x:ex+o2.d, y:ey+o2.d} ];
       var sc={ id:uid(), condType:o2.t, pts:spinePts, pxLen:_polyLen(spinePts),
-               ftLen:+(_polyLen(spinePts)/(S.pxPerFt||6)).toFixed(1),
+               ftLen:+(_polyLen(spinePts)/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
                cluster:true, spine:true, toId:ems.id, emsEdgeOff:o2.d,
                laneY:laneY, spineMinX:minX, labelDx:70+idx*4, labelDy:-28 };
       S.conduits.push(sc);
@@ -51825,7 +51831,7 @@ function _rerouteEmsConduits(ems){
         var start=c.pts[0];
         c.pts=[{x:start.x,y:start.y},{x:ex+d,y:start.y},{x:ex+d,y:ey+d}];
       }
-      c.pxLen=_polyLen(c.pts); c.ftLen=+(c.pxLen/(S.pxPerFt||6)).toFixed(1);
+      c.pxLen=_polyLen(c.pts); c.ftLen=+(c.pxLen/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1);
       /* Rebuilt pts need a rebuilt anchor -- otherwise the spine snaps
          back to the EMS node's previous position at the next map idle. */
       try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
@@ -51944,7 +51950,7 @@ function trenchWire(fromEl, toEl, condType, label){
   var pts=routeToTrench(fromEl, toEl, condType);
   if(!pts) return null;
   var c={ id:uid(), condType:condType, pts:pts, pxLen:_polyLen(pts),
-          ftLen:+(_polyLen(pts)/(S.pxPerFt||6)).toFixed(1),
+          ftLen:+(_polyLen(pts)/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
           fromId:fromEl.id, toId:toEl?toEl.id:null,
           route:'trench', trenchIn:(S._trench&&S._trench.in)||'soil',
           onSpine:true, spineOff:_trenchOff(condType),
@@ -51969,7 +51975,7 @@ function rerouteTrenchConduits(){
     }
     if(!fromEl) continue;
     var pts=routeToTrench(fromEl, toEl, c.condType); if(!pts) continue;
-    c.pts=pts; c.pxLen=_polyLen(pts); c.ftLen=+(c.pxLen/(S.pxPerFt||6)).toFixed(1);
+    c.pts=pts; c.pxLen=_polyLen(pts); c.ftLen=+(c.pxLen/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1);
     /* Re-anchor the rebuilt spine route. Without this the run reprojects
        to its pre-move path on the next pan or zoom. */
     try{ if(typeof _geoRestampOne==='function') _geoRestampOne(c); }catch(e){}
@@ -52072,7 +52078,7 @@ function placeDcClusterAt(p){
       var tx=centers[i].x, ty=centers[i].y;
       var pts=[{x:ex,y:ey},{x:tx,y:ty}];
       var c1={ id:uid(), condType:'RMC-AC', pts:pts, pxLen:_polyLen(pts),
-               ftLen:+(_polyLen(pts)/(S.pxPerFt||6)).toFixed(1),
+               ftLen:+(_polyLen(pts)/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
                dcFeed:true, toDcIdx:i, runLabel:'DC feed (from EMS)',
                labelDx:40, labelDy:-24 };
       S.conduits.push(c1); if(typeof renderConduit==='function') renderConduit(c1);
@@ -52184,7 +52190,7 @@ function _trenchUtilityToBess(srcEl){
   var pts=[{x:sx,y:sy},{x:sx,y:ty},{x:tx,y:ty}];
   var pxLen=_polyLen(pts);
   var c={ id:uid(), condType:'MV-UG', pts:pts, pxLen:pxLen,
-          ftLen:+(pxLen/(S.pxPerFt||6)).toFixed(1),
+          ftLen:+(pxLen/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
           fromId:srcEl.id, toId:target, mv:true,
           label:'MV Trench '+cable.kv+' \u00b7 '+cable.cable+' \u00b7 '+cable.conduit,
           mvCable:cable, labelDx:0, labelDy:-40 };
@@ -52366,7 +52372,7 @@ function _connectToEms(ems, el, eqId){
   if(pts[pts.length-1]) pts[pts.length-1].elId=el.id;
   var pxLen=_polyLen(pts);
   var c={ id:uid(), condType:ctype, pts:pts, pxLen:pxLen,
-          ftLen:+(pxLen/(S.pxPerFt||6)).toFixed(1),
+          ftLen:+(pxLen/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
           fromId:ems.id, toId:el.id, fromElId:ems.id, toElId:el.id,
           chainFromEms:true, labelDx:50, labelDy:-28 };
   S.conduits.push(c);
@@ -52754,13 +52760,13 @@ function placeDerBuildAt(p){
       if(cfg.src==='pv' && invEl){
         var dcPts=[{x:cx+blkW/2,y:cy+blkH,elId:null},{x:invCx,y:invCy-pcsW/2,elId:invEl.id}];
         var dc={ id:uid(), condType:'RMC-DC', pts:dcPts, pxLen:_polyLen(dcPts),
-                 ftLen:+(_polyLen(dcPts)/(S.pxPerFt||6)).toFixed(1),
+                 ftLen:+(_polyLen(dcPts)/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
                  fromElId:invEl.id, toElId:invEl.id, derCollector:true,
                  labelHidden:(n!==0), runLabel:'PV DC', labelDx:24, labelDy:-16 };
         S.conduits.push(dc); if(typeof renderConduit==='function') renderConduit(dc);
         var acPts=[{x:invCx,y:invCy+pcsW/2,elId:invEl.id},{x:cx+blkW/2,y:xfmrY,elId:xel.id}];
         var ac={ id:uid(), condType:'RMC-AC', pts:acPts, pxLen:_polyLen(acPts),
-                 ftLen:+(_polyLen(acPts)/(S.pxPerFt||6)).toFixed(1),
+                 ftLen:+(_polyLen(acPts)/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
                  fromElId:invEl.id, toElId:xel.id, derCollector:true,
                  labelHidden:true, runLabel:'PV AC' };
         S.conduits.push(ac); if(typeof renderConduit==='function') renderConduit(ac);
@@ -52779,7 +52785,7 @@ function placeDerBuildAt(p){
       var xe=xfmrEls[i];
       var pts=[{x:xe.cx,y:xe.cy,elId:xe.el.id},{x:xe.cx,y:py},{x:px,y:py,elId:poi.id}];
       var cc={ id:uid(), condType:'RMC-AC', pts:pts, pxLen:_polyLen(pts),
-               ftLen:+(_polyLen(pts)/(S.pxPerFt||6)).toFixed(1),
+               ftLen:+(_polyLen(pts)/(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))).toFixed(1),
                fromElId:xe.el.id, toElId:poi.id, derCollector:true,
                labelHidden:(i!==0), runLabel:'DER collector', labelDx:40, labelDy:-24 };
       S.conduits.push(cc); if(typeof renderConduit==='function') renderConduit(cc);
@@ -52804,7 +52810,7 @@ function _derBuildBlock(cfg, spec, cx, cy, blkW, blkH, idx){
        function of the zoom this block happened to be built at; feet are the
        thing that is actually true about the site, and they give the
        reprojector a fallback when no corner anchor exists yet. */
-    var _bppf=(S.pxPerFt||6);
+    var _bppf=(window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6));
     sh={ id:uid(), kind:'dersolar', mount:'ground', pts:[{x:cx,y:cy}], wPx:blkW, hPx:blkH,
          wFt:+(blkW/_bppf).toFixed(2), hFt:+(blkH/_bppf).toFixed(2),
          sqft:Math.round((blkW/_bppf)*(blkH/_bppf)), kw:spec.blockKw, color:SHAPE_STROKE };
@@ -60430,7 +60436,7 @@ function _l2Bollards(el, idx){
      conventionally drawn legible rather than to scale; 14 px keeps it
      readable on the printed sheet without pretending the post is bigger
      than it is. The pad hatch behind it still carries the real footprint. */
-  var r=Math.max(14, Math.round((S.pxPerFt||6)*0.5));
+  var r=Math.max(14, Math.round((window.OmegaScale?OmegaScale.pxPerFt():(S.pxPerFt||6))*0.5));
   addEl({ type:'eq', eqId:'bollard', label:'', spec:'',
           x:Math.round(b.cx+b.hw+10-r/2), y:Math.round(b.cy-r/2), w:r, rot:0 });
 }
@@ -110666,6 +110672,125 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
 })();
 
 </script>
+<script id="omega-scale-js">
+/* ====================================================================== *
+ *  OMEGA SCALE RESOLVER                                                  *
+ *  ------------------------------------------------------------------    *
+ *  S.pxPerFt is set when the map is calibrated. Eight places fall back to *
+ *  `S.pxPerFt || 6` when it is not — a hardcoded 6 pixels per foot that   *
+ *  matches no map at any zoom a project is ever drawn at.                 *
+ *                                                                        *
+ *  It goes wrong in BOTH directions at once, which is why the result      *
+ *  looks like chaos rather than a consistent error:                       *
+ *                                                                        *
+ *    PLACEMENT  the guided build wants equipment 50 ft apart, converts    *
+ *               at 6 px/ft to 300 px, and on a zoom-19 map 300 px is 294  *
+ *               real feet. Equipment lands almost six times too far       *
+ *               apart, scattered across neighbouring properties.          *
+ *                                                                        *
+ *    LENGTH     a drawn run of 6268 px is labelled 6268/6 = 1045 ft,      *
+ *               while the map says it is really 6145 ft. The label        *
+ *               understates what was drawn.                               *
+ *                                                                        *
+ *  So the customer sees equipment strewn across a block, carrying         *
+ *  conduit labels that look plausible. Both come from the same 6.         *
+ *                                                                        *
+ *  The map already knows its own scale. Web Mercator ground resolution is *
+ *  156543.03392 * cos(latitude) / 2^zoom metres per pixel, and Google     *
+ *  gives us both. Ask the map; fall back only when there is no map, and   *
+ *  say so when that happens.                                             *
+ * ====================================================================== */
+(function () {
+  'use strict';
+  if (window.OmegaScale) return;
+  var TAG = '[OmegaScale]';
+  var FALLBACK = 6;                      /* what the old code assumed */
+  var warned = false;
+
+  function mapPxPerFt() {
+    var m = window._gmap;
+    if (!m || typeof m.getZoom !== 'function' || typeof m.getCenter !== 'function') {
+      return null;
+    }
+    var z, c;
+    try { z = m.getZoom(); c = m.getCenter(); } catch (e) { return null; }
+    if (!(z > 0) || !c) return null;
+    var lat = typeof c.lat === 'function' ? c.lat() : c.lat;
+    if (!isFinite(lat)) return null;
+    var mPerPx = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, z);
+    if (!(mPerPx > 0)) return null;
+    return 0.3048 / mPerPx;              /* feet per metre, inverted */
+  }
+
+  /* The one place anything should ask "how many pixels is a foot". */
+  function pxPerFt(opts) {
+    opts = opts || {};
+    var S = window.S;
+    if (S && S.pxPerFt > 0) return S.pxPerFt;
+    var fromMap = mapPxPerFt();
+    if (fromMap > 0) {
+      /* cache it so placement and measurement agree for the rest of the
+         session, and so the value is visible to anything that reads S */
+      if (S && opts.cache !== false) { S.pxPerFt = fromMap; S._ppfSource = 'live map'; }
+      return fromMap;
+    }
+    if (!warned) {
+      warned = true;
+      if (window.console) {
+        console.warn(TAG, 'No calibrated scale and no live map. Falling back to ' +
+          FALLBACK + ' px/ft, which matches no real map \u2014 placement and ' +
+          'lengths will both be wrong until the map is placed or the drawing ' +
+          'is calibrated.');
+      }
+    }
+    return FALLBACK;
+  }
+
+  /* Is the number we are about to use actually trustworthy? */
+  function status() {
+    var S = window.S;
+    if (S && S.pxPerFt > 0) {
+      /* Report where the number CAME FROM, not merely that one exists.
+         Caching a map-derived scale into S and then calling it "calibrated"
+         tells the user the drawing was measured when it was inferred. */
+      return { ok: true, pxPerFt: S.pxPerFt,
+               source: S._ppfSource || 'calibrated' };
+    }
+    var m = mapPxPerFt();
+    if (m > 0) return { ok: true, pxPerFt: m, source: 'live map' };
+    return { ok: false, pxPerFt: FALLBACK, source: 'fallback',
+             why: 'No drawing scale and no live map. Everything placed or ' +
+                  'measured now uses ' + FALLBACK + ' px/ft, which is not the ' +
+                  'scale of any map \u2014 equipment will be spread out and ' +
+                  'conduit lengths will not match the drawing.' };
+  }
+
+  /* Recompute every conduit length against the resolved scale, for a
+     drawing that was built while the fallback was in force. */
+  function repair() {
+    var S = window.S;
+    if (!S || !S.conduits) return { ok: false, error: 'No site to repair.' };
+    var st = status();
+    if (!st.ok) return { ok: false, error: st.why };
+    var fixed = [];
+    S.conduits.forEach(function (c) {
+      if (!(c.pxLen > 0)) return;
+      var was = c.ftLen;
+      var now = +(c.pxLen / st.pxPerFt).toFixed(1);
+      if (was == null || Math.abs(was - now) > 0.5) {
+        c.ftLen = now;
+        fixed.push({ label: c.label || c.condType, wasFt: was, nowFt: now });
+      }
+    });
+    return { ok: true, pxPerFt: st.pxPerFt, source: st.source,
+             fixed: fixed, count: fixed.length };
+  }
+
+  window.OmegaScale = { pxPerFt: pxPerFt, mapPxPerFt: mapPxPerFt,
+                        status: status, repair: repair, FALLBACK: FALLBACK };
+})();
+
+</script>
 <script id="omega-arch-engine-js">
 /* ====================================================================== *
  *  OMEGA ARCHITECTURE MODE  —  ENGINE                                    *
@@ -120903,14 +121028,61 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
   /* ------------------------------------------------------------------ *
    *  RENDER                                                             *
    * ------------------------------------------------------------------ */
-  function sizeCanvas() {
-    if (!el.cv) return;
+  /* The backing store has to match the box, ALWAYS.
+     This ran on window resize only. The canvas box also changes without
+     the window changing at all: the command log fills and .arch-cmd is
+     flex-shrink:0, so the drawing area gives up the height; a side panel
+     grows; the browser zoom moves devicePixelRatio. When that happens the
+     bitmap keeps its old size and the browser squashes it into the new box
+     — an 1800px-tall bitmap in a 100px box is a 9x vertical squash, which
+     is a band of converging lines and piled-up rotated text along the
+     bottom of the screen. It looks like a rendering bug in the drawing.
+     It is a stale backing store. */
+  var _lastSize = { w: 0, h: 0, dpr: 0 };
+  function sizeCanvas(force) {
+    if (!el.cv) return false;
     var dpr = window.devicePixelRatio || 1;
-    var w = el.cv.clientWidth || 900, h = el.cv.clientHeight || 600;
+    var w = el.cv.clientWidth, h = el.cv.clientHeight;
+    /* A zero here means the workspace is hidden or mid-layout. Falling back
+       to 900x600 then would bake in a size that matches nothing, so leave
+       the bitmap alone and re-size when it has a real box. */
+    if (!(w > 0) || !(h > 0)) return false;
+    if (!force && w === _lastSize.w && h === _lastSize.h && dpr === _lastSize.dpr) {
+      return false;
+    }
+    _lastSize = { w: w, h: h, dpr: dpr };
     el.cv.width = Math.round(w * dpr);
     el.cv.height = Math.round(h * dpr);
     var ctx = el.cv.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return true;
+  }
+
+  /* Watch the BOX, not the window. */
+  function watchCanvasBox() {
+    if (!el.cv || ST._roAttached) return;
+    var target = el.cv.parentNode || el.cv;
+    if (typeof ResizeObserver === 'function') {
+      ST._ro = new ResizeObserver(function () {
+        if (sizeCanvas()) draw();
+      });
+      try { ST._ro.observe(target); ST._roAttached = true; } catch (e) {}
+    }
+    /* devicePixelRatio does not fire the observer, and browser zoom changes
+       it. matchMedia on the resolution is the documented way to hear it. */
+    if (typeof window.matchMedia === 'function') {
+      var arm = function () {
+        var mq = window.matchMedia('(resolution: ' +
+                 (window.devicePixelRatio || 1) + 'dppx)');
+        var on = function () {
+          if (sizeCanvas(true)) draw();
+          arm();                     /* the query is for the OLD ratio; re-arm */
+        };
+        if (mq.addEventListener) mq.addEventListener('change', on, { once: true });
+        else if (mq.addListener) mq.addListener(on);
+      };
+      try { arm(); } catch (e) {}
+    }
   }
 
   function gridStep() {
@@ -124073,7 +124245,7 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     el.cv.addEventListener('dblclick', function () { zoomExtents(); });
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('resize', function () {
-      if (el.root && el.root.classList.contains('on')) { sizeCanvas(); draw(); }
+      if (el.root && el.root.classList.contains('on')) { sizeCanvas(true); draw(); }
     });
 
     setLayer(ST.doc.layer);
@@ -124089,7 +124261,8 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     el.root.classList.add('on');
     el.root.style.display = 'flex';
     setTimeout(function () {
-      sizeCanvas();
+      sizeCanvas(true);
+      watchCanvasBox();
       if (!ST.doc.ents.length) { ST.V = { x: 0, y: 0, z: 0.06 }; } else zoomExtents();
       refresh();
       if (el.input) el.input.focus();
@@ -124160,6 +124333,7 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
        entry point without either, so a command can be driven by a script
        or a test the way a person drives it with the mouse. */
     pick: function (x, y) { addPoint({ x: +x, y: +y }); return ST.cmd; },
+    sizeCanvasForTest: function (f) { return sizeCanvas(f); },
     drawPreviewForTest: function (ctx) { return drawPreview(ctx); },
     importSite: importSite, zoomExtents: zoomExtents,
     placeOnMap: placeOnMap, unplace: unplace, siteFit: siteFit, stamp: stamp,
