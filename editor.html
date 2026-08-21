@@ -95799,12 +95799,25 @@ button[style*="linear-gradient"][aria-disabled="true"]{
 .omega-beta-tag{ color:#1A1206; background:var(--amber) }
 /* NEW is a signpost, not a warning — the accent, quieter than amber. */
 .omega-new-tag{ color:var(--on-accent); background:var(--accent) }
-.rbtn.omega-beta .rb-lbl{ padding-top:1px }
+/* A TAG IS ABSOLUTELY POSITIONED, SO IT NEEDS NO LAYOUT SPACE.
+   These rules used to give it 3px anyway — 1px of label padding and 2px of
+   icon margin — and .rpanel-body .rbtn is capped at (--ribbon-h - 22px)
+   with the label set to overflow:hidden. So a tagged button clipped its
+   second label line THREE PIXELS BEFORE a plain one did, and since
+   --ribbon-h is set at runtime from the UI scale, a user below 100% lost
+   "Sheet Manager", "Permit Sheet" and "Takeoff & Budget" to it while the
+   untagged buttons beside them stayed readable.
 
-/* A tagged button needs room for the badge; without this the corner tag
-   sits on top of the label on a narrow button. */
+   The horizontal padding is kept: the tag really does occupy the top-right
+   corner and a narrow button needs the room. The vertical space does not
+   exist and is no longer reserved. */
 .rbtn.omega-beta{ padding-right:6px }
-.rbtn.omega-beta .rb-ico{ margin-top:2px }
+
+/* And a floor under the label itself. The cap exists so an oversized icon
+   cannot eat the panel caption; it was never meant to eat the label. Two
+   lines of 9px text need about 22px, so the icon gives way first. */
+.rpanel-body .rbtn .rb-lbl{ min-height:2.3em; flex:0 0 auto }
+.rpanel-body .rbtn .rb-ico{ min-height:0; overflow:hidden }
 
 </style>
 <script id="omega-ui-js">
