@@ -131002,8 +131002,23 @@ function readSite(){
    once instead of one more special case. */
   var WPSF = 20;
   out.items.forEach(function(i2){
-    if(!i2.kw || i2.kw <= 0) return;
     if(!ARCH[i2.arch] || ARCH[i2.arch].group !== 'solar') return;
+
+    /* MODULE BUDGET.
+       The drawn outline is the AREA AVAILABLE, not the area covered. A
+       512 kW canopy traced over a 328x322 ft lot occupies about 30,000 of
+       those 105,000 sqft — the rest is aisle, setback and untouched
+       asphalt. Filling the whole outline therefore drew roughly three
+       times the PV the design actually contains, which is both wrong to
+       look at and wrong to show a customer.
+
+       kW is the reliable figure, so it sets how much module gets built:
+       module sqft = kW * 1000 / 20 W-per-sqft. Builders lay geometry until
+       that budget is spent and then stop, which makes the render agree
+       with the design by construction rather than by coincidence. */
+    i2.moduleBudgetSqft = (i2.kw > 0) ? (i2.kw * 1000 / WPSF) : 0;
+
+    if(!i2.kw || i2.kw <= 0) return;
     var g2 = (i2.gcr > 0) ? i2.gcr : 0.5;
     var wantSqft = (i2.kw * 1000 / WPSF) / g2;
     var gotSqft  = i2.wf * i2.lf;
@@ -131372,17 +131387,26 @@ function buildSolarGround(it, arch){
   var tW    = it.tableWft || 20;
   var tD    = it.tableHft || 12;
 
+  /* Module budget: how much PV this array actually contains. Geometry
+     stops when it is spent, so the render never shows more panel than the
+     design. Zero means unknown, which means no limit. */
+  var budget = it.moduleBudgetSqft > 0 ? it.moduleBudgetSqft : Infinity;
+  var spent = 0;
+
   /* --- the layout the drawing actually produced --------------------- */
   if(it.tables && it.tables.length){
     var stride = it.tables.length > 900 ? Math.ceil(it.tables.length/900) : 1;
     for(var k=0;k<it.tables.length;k++){
       if(k % stride) continue;
       var t = it.tables[k];
-      var tb = pvTable(Math.max(1, t.wf||tW), Math.max(1, t.lf||tD), tilt, clear);
+      var tw2 = Math.max(1, t.wf||tW), td2 = Math.max(1, t.lf||tD);
+      var tb = pvTable(tw2, td2, tilt, clear);
       tb.position.set(t.x - it.x, 0, t.z - it.z);
       if(t.a) tb.rotation.y = -t.a;            /* table azimuth, radians */
       g.add(tb);
+      spent += tw2 * td2 * stride;
     }
+    it._builtSqft = spent;
     return g;
   }
 
@@ -131413,12 +131437,16 @@ function buildSolarGround(it, arch){
       } else {
         if(Math.abs(wx) > (it.wf/2 - sb) || Math.abs(wz) > (it.lf/2 - sb)) continue;
       }
+      if(spent >= budget) break;
       var tbl = pvTable(tW*0.94, tD, tilt, clear);
       tbl.position.set(wx, 0, wz);
       tbl.rotation.y = -ang;
       g.add(tbl); made++;
+      spent += tW*0.94 * tD;
     }
+    if(spent >= budget) break;
   }
+  it._builtSqft = spent;
   return g;
 }
 
@@ -131506,6 +131534,9 @@ function buildSolarRoof(it, arch, roofY, implied){
   var ang   = (it.angleDeg || 0) * Math.PI/180;
   var ca = Math.cos(ang), sa = Math.sin(ang);
 
+  var budget = it.moduleBudgetSqft > 0 ? it.moduleBudgetSqft : Infinity;
+  var spent = 0;
+
   /* If the layout produced real tables, lay those. */
   if(it.tables && it.tables.length){
     var st = it.tables.length > 900 ? Math.ceil(it.tables.length/900) : 1;
@@ -131521,7 +131552,9 @@ function buildSolarRoof(it, arch, roofY, implied){
       pvT.position.set(t.x - it.x, stand + Math.sin(tiltR)*(t.lf||rowD)/2, t.z - it.z);
       pvT.castShadow = true; pvT.receiveShadow = true;
       arr.add(pvT);
+      spent += Math.max(1,t.wf||tW) * Math.max(1,t.lf||rowD) * st;
     }
+    it._builtSqft = spent;
     return g;
   }
 
@@ -131545,6 +131578,7 @@ function buildSolarRoof(it, arch, roofY, implied){
       } else {
         if(Math.abs(wx) > bw/2 || Math.abs(wz) > bl/2) continue;
       }
+      if(spent >= budget) break;
       var pv = new THREE.Mesh(
         new THREE.BoxGeometry(tW*0.96, 0.18, rowD/Math.cos(tiltR)), pm);
       pv.rotation.x = -tiltR;
@@ -131552,6 +131586,7 @@ function buildSolarRoof(it, arch, roofY, implied){
       pv.position.set(wx, stand + Math.sin(tiltR)*rowD/2, wz);
       pv.castShadow = true; pv.receiveShadow = true;
       arr.add(pv);
+      spent += tW*0.96 * rowD;
       /* ballast trays — what actually holds a flat-roof array down */
       var bal = box(tW*0.9, 0.28, 0.7, MAT.concrete);
       bal.rotation.y = -ang;
@@ -131559,7 +131594,9 @@ function buildSolarRoof(it, arch, roofY, implied){
       arr.add(bal);
       made++;
     }
+    if(spent >= budget) break;
   }
+  it._builtSqft = spent;
   return g;
 }
 
@@ -131673,7 +131710,9 @@ function buildCarport(it, arch){
   var ROW     = Math.min(18, DECK_D/2 - 1);       /* one parking row  */
   /* Per-array geometry when Array Geometry set it; a canopy needs real
      drive-under clearance, so the floor is 10 ft whatever it says. */
-  var CLEAR   = Math.max(10, (it.clearFt != null) ? it.clearFt : 12);
+  /* 14 ft clear is the commercial norm (the reference decks sit at
+     5.5 m); 12 ft read as low and made the deck look undersized. */
+  var CLEAR   = Math.max(10, (it.clearFt != null) ? it.clearFt : 14);
   var TILT    = ((it.tiltDeg != null) ? Math.min(12, it.tiltDeg) : 7) * Math.PI/180;
   var rise    = Math.tan(TILT) * DECK_D;
   var deckMid = CLEAR + rise/2;
@@ -131683,6 +131722,14 @@ function buildCarport(it, arch){
   var gcr   = Math.min(0.95, Math.max(0.45, it.gcr > 0 ? it.gcr : 0.85));
   var pitch = Math.max(DECK_D + 6, DECK_D / gcr);
   var runs  = Math.max(1, Math.round(A / pitch));
+
+  /* MODULE BUDGET — the fix for a canopy that filled its whole outline.
+     A canopy deck is essentially all module, so deck area IS module area.
+     Runs are laid until the array's kW is accounted for and then stop,
+     leaving the rest of the traced lot as plain parking. That is what the
+     design says is there. */
+  var budget = it.moduleBudgetSqft > 0 ? it.moduleBudgetSqft : Infinity;
+  var spent = 0;
 
   var SEG = 12;                      /* clip resolution along a run */
   /* Detail budget. A T-column is 6 meshes and a car is 7, so an
@@ -131708,6 +131755,7 @@ function buildCarport(it, arch){
   }
 
   for(var r=0; r<runs; r++){
+    if(spent >= budget) break;
     var zc = -A/2 + pitch*(r + 0.5);
     if(runs === 1) zc = 0;
 
@@ -131743,6 +131791,19 @@ function buildCarport(it, arch){
       if(len < 6) continue;
       if(len < 20) len = Math.min(20, Math.max(L, 12));
       var cx = (a0 + b0) / 2;
+
+      /* Trim the last run so the total lands on the budget rather than
+         overshooting by a whole run. A canopy that stops mid-lot is what
+         a partially built lot looks like; one that covers 3x its kW is
+         not a real thing at all. */
+      var remain = budget - spent;
+      if(remain <= 0) break;
+      if(len * DECK_D > remain){
+        len = Math.max(20, remain / DECK_D);
+        if(len < 20) break;
+        cx = a0 + len/2;
+      }
+      spent += len * DECK_D;
 
       /* --- asphalt + striping under this run --------------------- */
       var pad = box(len, 0.14, DECK_D - 4, MAT.asphalt);
@@ -131831,6 +131892,7 @@ function buildCarport(it, arch){
     }
   }
 
+  it._builtSqft = spent;
   if(flip) g.rotation.y = Math.PI/2;
   return g;
 }
@@ -132775,6 +132837,15 @@ function paintSide(){
     if(it.dupeOf){
       h += '<div class="ov-im" style="margin-top:3px;color:#E0B45C">'
         +  'Hidden: overlaps \u201c' + esc(it.dupeOf) + '\u201d</div>';
+    }
+    /* Show what was actually built against what the kW calls for, so the
+       coverage can be checked at a glance instead of eyeballed. */
+    if(it.moduleBudgetSqft > 0 && it._builtSqft > 0){
+      var pctD = Math.round(it._builtSqft / it.moduleBudgetSqft * 100);
+      var pctL = Math.round(it._builtSqft / (it.wf*it.lf) * 100);
+      h += '<div class="ov-im" style="margin-top:3px">'
+        +  Math.round(it._builtSqft).toLocaleString() + ' sqft module \u00b7 '
+        +  pctD + '% of design \u00b7 covers ' + pctL + '% of the area</div>';
     }
     if(it.basis){
       h += '<div class="ov-im" style="margin-top:2px;color:#9FB8DE">'
