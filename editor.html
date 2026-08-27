@@ -132338,7 +132338,7 @@ var V = {
   site:null, raf:null, canvas:null,
   sun:null, hemi:null, sunInfo:null, onCamera:null,
   target:null, sph:{ r:400, theta:0.85, phi:0.95 },
-  layers:{}, opts:{ hour:13, day:172, shadows:true, sat:true, showAll:false, quality:'high' },
+  layers:{}, opts:{ hour:13, day:172, shadows:true, sat:true, showAll:false, quality:'high', buildings:false },
   needsRender:true, disposed:false
 };
 
@@ -133075,6 +133075,17 @@ function paintSide(){
     +  '<label for="ov-shadow">Cast shadows</label></div>'
     +  '<div class="ov-row"><input type="checkbox" id="ov-sat"' + (V.opts.sat?' checked':'') + '>'
     +  '<label for="ov-sat">Satellite ground</label></div>'
+    /* Surrounding buildings, pulled from OpenStreetMap footprints. Off by
+       default because it is a network call, and because on a rural parcel
+       there is nothing to fetch. */
+    +  '<div class="ov-row"><input type="checkbox" id="ov-bldg"' + (V.opts.buildings?' checked':'') + '>'
+    +  '<label for="ov-bldg">Surrounding buildings</label></div>'
+    +  '<div class="ov-im" id="ov-bldgv" style="margin:2px 0 6px;line-height:1.45">'
+    +    (window.OmegaContextBuildings
+          ? (V.opts.buildings ? esc(window.OmegaContextBuildings.summary())
+             : 'Extrudes neighbouring buildings from OpenStreetMap so they shade the array.')
+          : '')
+    +  '</div>'
     +  '<div class="ov-h">Quality</div>'
     +  '<div class="ov-vb">'
     +  ['low','medium','high'].map(function(q){
@@ -133317,6 +133328,28 @@ function wireSide(){
     var span = Math.max(60, Math.max(V.site.sizeFt.w, V.site.sizeFt.h));
     buildGround(V.site, span);
     V.needsRender = true;
+  };
+
+  var bl = el('ov-bldg');
+  if(bl) bl.onchange = function(){
+    V.opts.buildings = bl.checked;
+    var note = el('ov-bldgv');
+    var CB = window.OmegaContextBuildings;
+    if(!CB){
+      if(note) note.textContent = 'Building module not loaded.';
+      return;
+    }
+    if(!V.opts.buildings){
+      CB.clear(V);
+      if(note) note.textContent = 'Extrudes neighbouring buildings from OpenStreetMap so they shade the array.';
+      V.needsRender = true;
+      return;
+    }
+    if(note) note.textContent = 'Fetching building footprints\u2026';
+    CB.load(V, THREE, V.site, function(){
+      if(note) note.innerHTML = esc(CB.summary());
+      V.needsRender = true;
+    });
   };
 
   side.querySelectorAll('.ov-lyr').forEach(function(c){
@@ -138727,5 +138760,436 @@ root.OmegaGating = {
 
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
+<script id="omega-context-buildings-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  CONTEXT BUILDINGS  —  the neighbourhood, in 3D, in the existing scene
+ *
+ *  The visualizer renders the site beautifully and then stops at the
+ *  property line. Everything beyond it is a flat photograph, so the model
+ *  shows a solar field standing in an empty green plain when in reality it
+ *  is hemmed in by a warehouse to the south and a four-storey building to
+ *  the west.
+ *
+ *  ── WHY NOT MAPBOX ─────────────────────────────────────────────────
+ *
+ *  The obvious answer is "switch to Mapbox GL and turn on fill-extrusion",
+ *  and for a blank-page project it would be the right one. It is the wrong
+ *  answer here, for three reasons:
+ *
+ *   1. The visualizer is already Three.js, and everything valuable in it
+ *      lives in that scene — tilted tables, carport columns, BESS
+ *      containers, the sun model, the shadow pass, the presentation
+ *      export. Mapbox GL's fill-extrusion lives in Mapbox's own renderer.
+ *      Adopting it means either running two renderers over one viewport or
+ *      rewriting the site model as a Mapbox custom layer. Both are large,
+ *      and neither adds anything the site model does not already do.
+ *   2. It is a token and a bill. The app currently draws its ground from
+ *      imagery it already has. Mapbox building tiles need an access token,
+ *      and map loads are metered.
+ *   3. Mapbox's building layer is the same OpenStreetMap footprint data
+ *      this module reads, pre-baked into vector tiles. Going direct gets
+ *      the same geometry, plus the height tags, without the dependency.
+ *
+ *  So: fetch footprints from OSM, project them into the scene's own
+ *  coordinate frame, extrude, and hand them to the shadow pass that is
+ *  already running.
+ *
+ *  ── THE PART THAT IS NOT DECORATION ────────────────────────────────
+ *
+ *  In a solar visualizer a building is not scenery. It is a shading
+ *  object. A 40 ft warehouse south of an array takes real production out
+ *  of the winter morning, and the whole reason to look at the site in 3D
+ *  on Dec 21 at 9am is to see that happen.
+ *
+ *  Which means the HEIGHTS MATTER, and OSM height coverage is patchy.
+ *  Perhaps a fifth of buildings carry a real `height` tag; more carry
+ *  `building:levels`, which is a good proxy; the rest carry nothing at
+ *  all and have to be assumed from what kind of building they are.
+ *
+ *  A model that silently assumes a height and then casts a hard shadow
+ *  from it is stating something it does not know. So height provenance is
+ *  tracked per building, surfaced as a count in the panel, and buildings
+ *  on an assumed height are drawn in a visibly different, paler material —
+ *  you can see at a glance which shadows are evidence and which are
+ *  guesses, without having to click anything.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+var OVERPASS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter'
+];
+
+var M_PER_FT = 0.3048;
+var FT_PER_M = 1 / M_PER_FT;
+
+/* Default heights in METRES when OSM says nothing. Deliberately modest:
+   an over-tall guess casts a shadow that is not there, and on a solar
+   site a false shadow is a worse error than a missing one. */
+var DEFAULT_H = {
+  house: 6, detached: 6, residential: 7, apartments: 12, terrace: 7,
+  garage: 3, garages: 3, shed: 3, hut: 3, carport: 3, roof: 3,
+  industrial: 9, warehouse: 10, manufacture: 10, factory: 10,
+  commercial: 8, retail: 7, supermarket: 8, office: 14,
+  school: 8, university: 12, hospital: 16, hotel: 18,
+  church: 12, civic: 9, public: 9, government: 12,
+  farm: 6, barn: 8, greenhouse: 4, service: 3, parking: 9,
+  yes: 7
+};
+
+var state = {
+  enabled: false,
+  loading: false,
+  group: null,
+  stats: null,
+  lastKey: null,
+  cache: {},
+  error: null,
+  radiusFt: 1600
+};
+
+/* ── projection: lat/lon → the visualizer's world feet ────────────────
+   The scene works in FEET, x east and z south, with the origin at
+   site.originPx converted through site.ppf. Anything placed here must go
+   through the same ppf the satellite plane used, or the buildings will
+   sit next to the imagery of themselves rather than on it. */
+function projector(site){
+  var ms = null;
+  try { if (typeof _liveMapState === 'function') ms = _liveMapState(); } catch (e) {}
+  if (!ms) {
+    try {
+      if (root._savedMapState && root._savedMapState.lat != null) ms = root._savedMapState;
+    } catch (e) {}
+  }
+  var lat = (ms && ms.lat != null) ? +ms.lat : (site.lat != null ? +site.lat : null);
+  var lng = (ms && ms.lng != null) ? +ms.lng : (site.lng != null ? +site.lng : null);
+  if (lat == null || !isFinite(lat)) return null;
+
+  /* The map centre is the CANVAS centre, not the site origin. The site
+     origin is the bounding-box centre of what has been drawn, which is
+     somewhere else entirely. Conflating the two is a silent translation
+     error that puts every building a plot-width off. */
+  var rect = null;
+  try {
+    var sc = document.getElementById('sc');
+    if (sc) rect = sc.getBoundingClientRect();
+  } catch (e) {}
+  if (!rect || rect.width < 10) return null;
+
+  var canvasCx = rect.width / 2, canvasCy = rect.height / 2;
+  var ppf = site.ppf, ox = site.originPx.x, oy = site.originPx.y;
+  var cosLat = Math.cos(lat * Math.PI / 180);
+
+  return {
+    lat: lat, lng: lng, ppf: ppf,
+    /* Equirectangular about the site centre. Over a few thousand feet the
+       error against a proper projection is well under a foot. */
+    toWorld: function (plat, plng) {
+      var dEastFt  = (plng - lng) * 111320 * cosLat * FT_PER_M;
+      var dNorthFt = (plat - lat) * 110540 * FT_PER_M;
+      var px = canvasCx + dEastFt * ppf;
+      var py = canvasCy - dNorthFt * ppf;
+      return { x: (px - ox) / ppf, z: (py - oy) / ppf };
+    },
+    /* Half-extent to request, in degrees, from a radius in feet. */
+    bbox: function (radiusFt) {
+      var dLat = (radiusFt * M_PER_FT) / 110540;
+      var dLng = (radiusFt * M_PER_FT) / (111320 * Math.max(cosLat, 0.05));
+      return [lat - dLat, lng - dLng, lat + dLat, lng + dLng];
+    }
+  };
+}
+
+/* ── height, and where it came from ─────────────────────────────────── */
+function heightOf(tags){
+  var t = tags || {};
+
+  /* 1. An explicit height, in metres unless it says feet. */
+  if (t.height) {
+    var s = String(t.height).trim();
+    var ft = /'|ft|feet/i.test(s);
+    var v = parseFloat(s);
+    if (isFinite(v) && v > 0.5 && v < 700) {
+      return { m: ft ? v * M_PER_FT : v, basis: 'measured', why: 'OSM height tag' };
+    }
+  }
+  if (t['building:height']) {
+    var v2 = parseFloat(t['building:height']);
+    if (isFinite(v2) && v2 > 0.5) return { m: v2, basis: 'measured', why: 'OSM building:height' };
+  }
+
+  /* 2. Storey count. 3.2 m per level is the usual commercial figure; a
+        parapet or roof adds roughly a metre on top. */
+  var lv = parseFloat(t['building:levels'] || t.levels);
+  if (isFinite(lv) && lv >= 1 && lv < 180) {
+    return { m: lv * 3.2 + 1.0, basis: 'derived',
+             why: lv + (lv === 1 ? ' storey' : ' storeys') + ' at 3.2 m' };
+  }
+
+  /* 3. Nothing but a type. This is a guess and is labelled as one. */
+  var kind = String(t.building || 'yes').toLowerCase();
+  var d = DEFAULT_H[kind] || DEFAULT_H.yes;
+  return { m: d, basis: 'assumed', why: 'typical for building=' + kind };
+}
+
+/* ── Overpass ────────────────────────────────────────────────────────
+   `out geom` returns each way's node coordinates inline, so one request
+   gets footprints and tags together instead of a second lookup per way. */
+function fetchBuildings(bb, cb){
+  var q = '[out:json][timeout:25];('
+        + 'way["building"](' + bb.join(',') + ');'
+        + 'way["building:part"](' + bb.join(',') + ');'
+        + ');out geom tags;';
+  var idx = 0;
+  function attempt(){
+    if (idx >= OVERPASS.length) return cb(null, 'no Overpass mirror responded');
+    var url = OVERPASS[idx++];
+    var done = false;
+    var t = setTimeout(function(){ if (!done) { done = true; attempt(); } }, 20000);
+    try {
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: q
+      }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(function (j) {
+        if (done) return;
+        done = true; clearTimeout(t);
+        cb(j && j.elements ? j.elements : [], null);
+      }).catch(function (e) {
+        if (done) return;
+        done = true; clearTimeout(t);
+        if (idx < OVERPASS.length) attempt();
+        else cb(null, (e && e.message) || 'Overpass unreachable');
+      });
+    } catch (e) {
+      if (!done) { done = true; clearTimeout(t); attempt(); }
+    }
+  }
+  attempt();
+}
+
+/* ── geometry ────────────────────────────────────────────────────────── */
+function ringArea(pts){
+  var a = 0;
+  for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    a += (pts[j].x * pts[i].z) - (pts[i].x * pts[j].z);
+  }
+  return a / 2;
+}
+
+function buildMesh(THREE, ring, heightFt, mat){
+  var shape = new THREE.Shape();
+  shape.moveTo(ring[0].x, ring[0].z);
+  for (var i = 1; i < ring.length; i++) shape.lineTo(ring[i].x, ring[i].z);
+  shape.closePath();
+
+  var geo = new THREE.ExtrudeGeometry(shape, {
+    depth: heightFt, bevelEnabled: false, curveSegments: 1
+  });
+  /* ExtrudeGeometry builds in the XY plane and extrudes along +Z. The
+     scene is Y-up, so rotate the slab upright. -PI/2 about X sends +Z to
+     -Y; the mesh is then flipped so the extrusion goes up, not down. */
+  geo.rotateX(-Math.PI / 2);
+  geo.computeVertexNormals();
+
+  var m = new THREE.Mesh(geo, mat);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
+/* ── the scene work ──────────────────────────────────────────────────── */
+function clear(V){
+  if (!state.group) return;
+  try {
+    state.group.traverse(function (o) {
+      if (o.geometry) { try { o.geometry.dispose(); } catch (e) {} }
+    });
+    if (state.group.parent) state.group.parent.remove(state.group);
+  } catch (e) {}
+  state.group = null;
+}
+
+function render(V, THREE, site, elements, proj){
+  clear(V);
+  var grp = new THREE.Group();
+  grp.name = 'context-buildings';
+
+  /* Two materials, so the difference between a measured height and a
+     guessed one is visible in the render rather than buried in a tooltip.
+     Solid concrete for buildings whose height is known or derived from a
+     storey count; a paler, flatter surface for the ones we assumed. */
+  var matKnown = new THREE.MeshStandardMaterial({
+    color: 0xb9bcc0, roughness: 0.93, metalness: 0.0
+  });
+  var matGuess = new THREE.MeshStandardMaterial({
+    color: 0xd3d6da, roughness: 0.98, metalness: 0.0,
+    transparent: true, opacity: 0.82
+  });
+
+  /* Footprints the user has already drawn are modelled properly by the
+     visualizer. Rendering the OSM copy on top of them produces z-fighting
+     and a doubled roof, so any OSM footprint whose centroid lands inside a
+     drawn building is dropped in favour of the drawn one. */
+  var drawn = [];
+  try {
+    (site.items || []).forEach(function (it) {
+      if (it && it.arch === 'building' && it.box) drawn.push(it.box);
+    });
+  } catch (e) {}
+  function insideDrawn(cx, cz){
+    for (var i = 0; i < drawn.length; i++) {
+      var b = drawn[i];
+      if (cx >= b.x && cx <= b.x + b.w && cz >= b.z && cz <= b.z + b.h) return true;
+    }
+    return false;
+  }
+
+  var stats = { total: 0, measured: 0, derived: 0, assumed: 0, skipped: 0,
+                tallestFt: 0, tallestName: null };
+  var maxR = state.radiusFt;
+
+  for (var e = 0; e < elements.length; e++) {
+    var el = elements[e];
+    if (!el || el.type !== 'way' || !el.geometry || el.geometry.length < 4) continue;
+
+    var ring = [], ok = true, cx = 0, cz = 0, near = false;
+    for (var i = 0; i < el.geometry.length; i++) {
+      var g = el.geometry[i];
+      if (g.lat == null) { ok = false; break; }
+      var w = proj.toWorld(g.lat, g.lon);
+      if (!isFinite(w.x) || !isFinite(w.z)) { ok = false; break; }
+      ring.push(w); cx += w.x; cz += w.z;
+      if (Math.abs(w.x) < maxR && Math.abs(w.z) < maxR) near = true;
+    }
+    if (!ok || ring.length < 4 || !near) { if (ok) stats.skipped++; continue; }
+
+    /* Overpass repeats the first node last to close the way. */
+    var a = ring[0], b2 = ring[ring.length - 1];
+    if (Math.abs(a.x - b2.x) < 0.01 && Math.abs(a.z - b2.z) < 0.01) ring.pop();
+    if (ring.length < 3) continue;
+
+    cx /= el.geometry.length; cz /= el.geometry.length;
+    if (insideDrawn(cx, cz)) { stats.skipped++; continue; }
+
+    /* Reject slivers: a 30 sq ft "building" is a mapping artefact. */
+    var areaFt2 = Math.abs(ringArea(ring));
+    if (areaFt2 < 120) { stats.skipped++; continue; }
+
+    /* ExtrudeGeometry wants a consistent winding or the side walls face
+       inward and the building renders inside-out. */
+    if (ringArea(ring) < 0) ring.reverse();
+
+    var hh = heightOf(el.tags);
+    var hFt = Math.max(6, hh.m * FT_PER_M);
+
+    var mesh = buildMesh(THREE, ring, hFt, hh.basis === 'assumed' ? matGuess : matKnown);
+    mesh.userData = {
+      osmId: el.id,
+      name: (el.tags && (el.tags.name || el.tags['addr:housename'])) || null,
+      kind: (el.tags && el.tags.building) || 'yes',
+      heightFt: +hFt.toFixed(1), heightBasis: hh.basis, heightWhy: hh.why,
+      areaFt2: Math.round(areaFt2)
+    };
+    grp.add(mesh);
+
+    stats.total++;
+    stats[hh.basis]++;
+    if (hFt > stats.tallestFt) {
+      stats.tallestFt = hFt;
+      stats.tallestName = mesh.userData.name || mesh.userData.kind;
+    }
+  }
+
+  state.group = grp;
+  state.stats = stats;
+  try {
+    /* Into V.root so it moves with the site, not the ground plane. */
+    if (V && V.root) V.root.add(grp);
+    else if (V && V.scene) V.scene.add(grp);
+  } catch (e) {}
+  return stats;
+}
+
+/* ── public entry ────────────────────────────────────────────────────── */
+function load(V, THREE, site, cb){
+  cb = cb || function(){};
+  if (state.loading) return cb(null, 'already loading');
+  var proj = projector(site);
+  if (!proj) {
+    state.error = 'No map position for this site, so there is nothing to place buildings against. ' +
+                  'Set the address or map centre first.';
+    return cb(null, state.error);
+  }
+
+  var bb = proj.bbox(state.radiusFt);
+  var key = bb.map(function (v) { return v.toFixed(4); }).join(',');
+
+  if (state.cache[key]) {
+    var s = render(V, THREE, site, state.cache[key], proj);
+    state.error = null;
+    return cb(s, null);
+  }
+
+  state.loading = true;
+  state.error = null;
+  fetchBuildings(bb, function (els, err) {
+    state.loading = false;
+    if (err || !els) {
+      state.error = 'Could not reach OpenStreetMap for building footprints (' + (err || 'no data') + ').';
+      return cb(null, state.error);
+    }
+    if (!els.length) {
+      state.error = 'OpenStreetMap has no building footprints mapped around this site. ' +
+                    'That is common on greenfield and rural parcels \u2014 it means the data is absent, ' +
+                    'not that the site is empty.';
+      state.cache[key] = [];
+      return cb(null, state.error);
+    }
+    state.cache[key] = els;
+    var s2 = render(V, THREE, site, els, proj);
+    cb(s2, null);
+  });
+}
+
+root.OmegaContextBuildings = {
+  state: state,
+  load: load,
+  clear: clear,
+  render: render,
+  projector: projector,
+  heightOf: heightOf,
+  setRadiusFt: function (ft) { state.radiusFt = Math.max(300, Math.min(6000, +ft || 1600)); },
+  /* A one-line summary for the panel. Names what is known and what is not,
+     because the shadow picture is only as good as the heights behind it. */
+  summary: function(){
+    var s = state.stats;
+    if (state.loading) return 'Fetching building footprints\u2026';
+    if (state.error) return state.error;
+    if (!s || !s.total) return 'No buildings loaded.';
+    var known = s.measured + s.derived;
+    var out = s.total + (s.total === 1 ? ' building' : ' buildings') + ' \u00b7 ';
+    out += known + ' with a height from the data';
+    if (s.measured) out += ' (' + s.measured + ' measured)';
+    if (s.assumed) {
+      out += ', ' + s.assumed + ' assumed from building type \u2014 shown paler, ' +
+             'and their shadows are estimates';
+    }
+    out += '.';
+    if (s.tallestFt > 0) {
+      out += ' Tallest ' + Math.round(s.tallestFt) + ' ft' +
+             (s.tallestName ? ' (' + s.tallestName + ')' : '') + '.';
+    }
+    return out;
+  }
+};
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
 </body>
 </html>
