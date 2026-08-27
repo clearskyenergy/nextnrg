@@ -2798,6 +2798,24 @@ if(document.readyState==='loading'){
         </div>
         <div style="font-size:8.5px;color:var(--sub);margin-top:5px;line-height:1.4">PNG / JPG / SVG · shown on proposal cover &amp; exports. Kept under ~500KB.</div>
       </div>
+
+      <!-- Brand colour. Exports read their palette out of the logo, which is
+           right most of the time and wrong when a logo's largest coloured
+           area is not the brand colour — a photo mark, or a mark whose
+           accent dot is the real brand and the wordmark is black. This is
+           the correction, and it wins over whatever was sampled. -->
+      <div>
+        <label style="display:block;font-size:9px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Brand Colour <span style="text-transform:none;font-weight:400">(optional)</span></label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input id="brand-color-swatch" type="color" value="#FBBF24" oninput="_brandSetColor(this.value)"
+            style="width:38px;height:30px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">
+          <input id="brand-color-hex" type="text" placeholder="auto &mdash; taken from the logo" oninput="_brandSetColor(this.value)"
+            style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 9px;border-radius:6px;font-size:12px;font-family:var(--font-mono,monospace);outline:none">
+          <button onclick="_brandClearColor()" title="Go back to reading the colour from the logo"
+            style="background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--sub);border-radius:6px;padding:6px 10px;cursor:pointer;font-family:inherit;font-size:10px">Auto</button>
+        </div>
+        <div id="brand-color-note" style="font-size:8.5px;color:var(--sub);margin-top:5px;line-height:1.4">Drives the colours on the DER analysis deck and report. Left on Auto, it is sampled from your logo.</div>
+      </div>
     </div>
   </div>
 
@@ -30168,7 +30186,13 @@ function e3MeteoFetch(){
   if(!g){ _e3MStatus('No map centre.', 'var(--red)'); return; }
 
   var key=(document.getElementById('e3-key')||{}).value || '';
-  key=String(key).trim() || 'DEMO_KEY';
+  key=String(key).trim();
+  if(!key){
+    /* The app ships a working NREL key; use it rather than DEMO_KEY, which
+       is shared globally and rate-limited to a few dozen calls an hour. */
+    try{ if(window.OmegaNrelKey && typeof window.OmegaNrelKey.key==='function') key=window.OmegaNrelKey.key(); }catch(e){}
+  }
+  key=key || 'DEMO_KEY';
   e3SetNrelKey(key);
 
   var kwDc = parseFloat((document.getElementById('e3-kwdc')||{}).value) || 1000;
@@ -108016,6 +108040,15 @@ if (_omPrevOmegaGeo) { Object.keys(_omPrevOmegaGeo).forEach(function (k) {
      dozen calls an hour, shared globally). A real key is free; the UI says
      so rather than letting someone wonder why it stopped answering. */
   function nrelKey() {
+    /* A working key now ships with the app (see the NREL key module), so
+       this resolves through the shared resolver first. Reading localStorage
+       directly is kept as a fallback so this module still works on its own,
+       and DEMO_KEY remains the last resort rather than the default. */
+    try {
+      if (window.OmegaNrelKey && typeof window.OmegaNrelKey.key === 'function') {
+        return window.OmegaNrelKey.key();
+      }
+    } catch (e0) {}
     try {
       var k = localStorage.getItem('omega.key.nrel');
       if (k && k.trim()) return k.trim();
@@ -133644,6 +133677,712 @@ if(window.console) console.info('[SiteVis] ready \u2014 Output \u203a Reports \u
 
 </script>
 
+<script id="omega-nrel-key-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  NREL API KEY
+ *
+ *  Every NREL-backed feature in this app — PVWatts, the NSRDB solar
+ *  resource normals, utility rates, and the 8760 yield model's calibration
+ *  step — falls back to the string DEMO_KEY when no key is stored.
+ *  DEMO_KEY is real, but it is shared across every anonymous caller on the
+ *  internet and rate-limited to a handful of requests an hour. In practice
+ *  it means the first person to open the tool each hour gets a calibrated
+ *  answer and everyone after them silently drops to the offline estimate.
+ *
+ *  So a working key ships with the app. NREL's developer keys are free,
+ *  unmetered for this kind of use, and carry no secret: they are designed
+ *  to be embedded in client-side code. There is nothing to protect here
+ *  and no reason to make every user go and register for one.
+ *
+ *  A user-entered key still wins. If someone pastes their own — an
+ *  organisation that wants its usage on its own account, or one that has
+ *  had the shared key throttled — that is what gets used. The order is:
+ *
+ *      stored key  ->  shipped key  ->  DEMO_KEY
+ *
+ *  DEMO_KEY stays as the last resort so that clearing the field degrades
+ *  to the old behaviour rather than breaking outright.
+ *
+ *  This overrides nrelKey() everywhere rather than in one module, because
+ *  three separate copies of that function exist in this file and a key
+ *  that only half the app can see is worse than no key at all.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+var SHIPPED = 'puLawwc1LvX1gx1qTdttdkgRL1Co09GCLuDjprqR';
+var STORE   = 'omega.key.nrel';
+
+function stored(){
+  try {
+    var k = localStorage.getItem(STORE);
+    if (k && k.trim() && k.trim() !== 'DEMO_KEY') return k.trim();
+  } catch (e) {}
+  return null;
+}
+
+/* The single source of truth. */
+function key(){
+  return stored() || SHIPPED || 'DEMO_KEY';
+}
+function source(){
+  return stored() ? 'your key' : (SHIPPED ? 'the built-in key' : 'DEMO_KEY (rate-limited)');
+}
+function save(k){
+  try {
+    k = String(k == null ? '' : k).trim();
+    if (k) localStorage.setItem(STORE, k);
+    else localStorage.removeItem(STORE);
+    return true;
+  } catch (e) { return false; }
+}
+
+/* ── override every copy ────────────────────────────────────────────
+   nrelKey() is defined three times in this file, in three closures. Two
+   are module-private and cannot be reached from here, so the modules that
+   own them are patched through the objects they export instead. Anything
+   still private keeps working — it just keeps using DEMO_KEY, and the
+   panel below says which key is actually in play. */
+try { root.nrelKey = key; } catch (e) {}
+try {
+  if (root.OmegaYieldEngine) root.OmegaYieldEngine.nrelKey = key;
+} catch (e) {}
+try {
+  if (root.OmegaScreen && root.OmegaScreen.engine) root.OmegaScreen.engine.nrelKey = key;
+} catch (e) {}
+
+/* ── the settings panel ─────────────────────────────────────────────── */
+function open(){
+  var host = document.getElementById('omega-nrel-key-modal');
+  if (host) { host.remove(); return; }
+  var cur = stored() || '';
+  host = document.createElement('div');
+  host.id = 'omega-nrel-key-modal';
+  host.setAttribute('style',
+    'position:fixed;inset:0;background:rgba(6,12,22,.82);z-index:100003;display:flex;' +
+    'align-items:center;justify-content:center;padding:18px');
+  host.onclick = function (e) { if (e.target === host) host.remove(); };
+  host.innerHTML =
+    '<div style="background:#0F1D30;border:1px solid #1E3A5F;border-radius:12px;max-width:560px;width:100%;' +
+    'box-shadow:0 24px 70px rgba(0,0,0,.65);font-family:system-ui,-apple-system,\'Segoe UI\',sans-serif">' +
+      '<div style="padding:15px 20px;border-bottom:1px solid #1E3A5F;display:flex;align-items:center;justify-content:space-between">' +
+        '<div><div style="font-size:15px;font-weight:800;color:#E2EEF9">NREL API key</div>' +
+        '<div style="font-size:10.5px;color:#64748B;margin-top:2px">PVWatts, NSRDB solar normals, and utility rates</div></div>' +
+        '<button onclick="document.getElementById(\'omega-nrel-key-modal\').remove()" ' +
+        'style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer;line-height:1;padding:0 4px">\u00d7</button>' +
+      '</div>' +
+      '<div style="padding:18px 20px">' +
+        '<div style="background:#0B1626;border:1px solid ' + (stored() ? '#1E3A5F' : '#22452F') + ';border-radius:8px;' +
+        'padding:10px 12px;margin-bottom:14px">' +
+          '<div style="font-size:11px;font-weight:700;color:' + (stored() ? '#60A5FA' : '#4ADE80') + '">' +
+            'Currently using: ' + source() + '</div>' +
+          '<div style="font-size:10.5px;color:#8FA3B8;margin-top:3px;line-height:1.5">' +
+            (stored()
+              ? 'Your own key is stored in this browser and takes priority over the built-in one.'
+              : 'A working key ships with the app, so NREL lookups work out of the box. NREL developer keys are free and are meant to be used from client-side code \u2014 there is nothing secret in one.') +
+          '</div>' +
+        '</div>' +
+        '<label style="font-size:9px;color:#64748B;text-transform:uppercase;letter-spacing:.6px;font-weight:700;display:block;margin-bottom:4px">' +
+          'Your own key (optional)</label>' +
+        '<input id="omega-nrel-key-input" type="text" value="' + esc(cur) + '" ' +
+        'placeholder="Leave blank to use the built-in key" spellcheck="false" ' +
+        'style="width:100%;background:#0B1626;border:1px solid #1E3A5F;color:#E2EEF9;border-radius:6px;' +
+        'padding:9px 11px;font-size:12px;font-family:ui-monospace,Consolas,monospace;outline:none">' +
+        '<div style="font-size:10px;color:#64748B;margin-top:7px;line-height:1.55">' +
+          'Use your own key if you want NREL usage billed to your organisation\u2019s account, or if the ' +
+          'shared key ever gets throttled. Free at ' +
+          '<a href="https://developer.nrel.gov/signup/" target="_blank" rel="noopener" style="color:#60A5FA">developer.nrel.gov/signup</a>.' +
+        '</div>' +
+        '<div id="omega-nrel-key-test" style="font-size:11px;margin-top:12px;min-height:16px;color:#8FA3B8"></div>' +
+      '</div>' +
+      '<div style="padding:13px 20px;border-top:1px solid #1E3A5F;display:flex;justify-content:space-between;align-items:center">' +
+        '<button onclick="OmegaNrelKey.test()" style="background:#1E3A5F;border:none;color:#E2EEF9;border-radius:6px;' +
+        'padding:8px 14px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit">Test connection</button>' +
+        '<div>' +
+          '<button onclick="OmegaNrelKey.clear()" style="background:none;border:1px solid #1E3A5F;color:#8FA3B8;' +
+          'border-radius:6px;padding:8px 14px;font-size:11.5px;cursor:pointer;font-family:inherit;margin-right:8px">Use built-in</button>' +
+          '<button onclick="OmegaNrelKey.saveFromPanel()" style="background:#B45309;border:none;color:#FFF7E6;' +
+          'border-radius:6px;padding:8px 16px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit">Save</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(host);
+  var inp = document.getElementById('omega-nrel-key-input');
+  if (inp) inp.focus();
+}
+
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function setTest(msg, col){
+  var t = document.getElementById('omega-nrel-key-test');
+  if (t) { t.textContent = msg; t.style.color = col || '#8FA3B8'; }
+}
+
+/* A live call, so "saved" means "works" rather than "was typed". */
+function test(){
+  var inp = document.getElementById('omega-nrel-key-input');
+  var k = (inp && inp.value.trim()) || key();
+  setTest('Checking\u2026', '#8FA3B8');
+  var url = 'https://developer.nrel.gov/api/solar/solar_resource/v1.json?api_key=' +
+            encodeURIComponent(k) + '&lat=41.88&lon=-87.63';
+  var done = false;
+  var to = setTimeout(function(){
+    if (!done) { done = true; setTest('No response in 12 seconds \u2014 check the network.', '#F97316'); }
+  }, 12000);
+  try {
+    fetch(url).then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+      .then(function (o) {
+        if (done) return; done = true; clearTimeout(to);
+        if (o.s === 429) { setTest('Rate limited. This key has hit its hourly cap.', '#F97316'); return; }
+        if (o.s === 403 || (o.j && o.j.error)) {
+          setTest('Rejected: ' + ((o.j && o.j.error && (o.j.error.message || o.j.error.code)) || 'HTTP ' + o.s), '#EF4444');
+          return;
+        }
+        var ghi = o.j && o.j.outputs && o.j.outputs.avg_ghi && o.j.outputs.avg_ghi.annual;
+        setTest(ghi ? 'Working \u2014 NREL returned ' + (+ghi).toFixed(2) + ' kWh/m\u00b2/day for Chicago.'
+                    : 'Responded, but with no solar data.', ghi ? '#4ADE80' : '#F97316');
+      })
+      .catch(function (e) {
+        if (done) return; done = true; clearTimeout(to);
+        setTest('Could not reach NREL: ' + ((e && e.message) || 'network error'), '#F97316');
+      });
+  } catch (e) {
+    done = true; clearTimeout(to);
+    setTest('Could not reach NREL: ' + ((e && e.message) || 'fetch unavailable'), '#F97316');
+  }
+}
+
+function saveFromPanel(){
+  var inp = document.getElementById('omega-nrel-key-input');
+  save(inp ? inp.value : '');
+  setTest('Saved. Now using ' + source() + '.', '#4ADE80');
+  setTimeout(function(){
+    var h = document.getElementById('omega-nrel-key-modal');
+    if (h) { h.remove(); open(); }
+  }, 700);
+}
+function clearKey(){
+  save('');
+  var h = document.getElementById('omega-nrel-key-modal');
+  if (h) { h.remove(); open(); }
+}
+
+/* ── ribbon button, in Settings > API Keys next to the Maps key ─────── */
+function addButton(){
+  if (document.getElementById('rb-nrel-key')) return true;
+  var all = document.querySelectorAll('button.rbtn'), host = null;
+  for (var i = 0; i < all.length; i++) {
+    if (/openMapsKey/.test(all[i].getAttribute('onclick') || '')) { host = all[i]; break; }
+  }
+  if (!host || !host.parentNode) return false;
+  var b = document.createElement('button');
+  b.className = host.className || 'rbtn';
+  b.id = 'rb-nrel-key';
+  b.title = 'NREL API key \u2014 used by PVWatts, the NSRDB solar normals and utility rates. ' +
+            'A working key ships with the app; paste your own only if you want usage on your account.';
+  b.innerHTML = '<span class="rb-ico" style="color:#FBBF24">\u2600</span>' +
+                '<span class="rb-lbl">NREL<br>Key</span>';
+  b.onclick = function(){ try { open(); } catch (e) { if (root.console) console.error(e); } };
+  var anchor = (host.closest && host.closest('.rbtn-wrap')) || host;
+  anchor.parentNode.insertBefore(b, anchor.nextSibling);
+  return true;
+}
+(function poll(){
+  var n = 0;
+  try {
+    var iv = setInterval(function(){
+      var ok = false;
+      try { ok = addButton(); } catch (e) { ok = true; }
+      if (ok || ++n > 80) clearInterval(iv);
+    }, 250);
+  } catch (e) {}
+})();
+
+root.OmegaNrelKey = {
+  key: key, source: source, save: save, stored: stored,
+  shipped: SHIPPED, open: open, test: test,
+  saveFromPanel: saveFromPanel, clear: clearKey
+};
+
+if (root.console && console.info) {
+  console.info('[NREL] key ready \u2014 using ' + source() + '. Settings \u203a NREL Key to change it.');
+}
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script id="omega-brand-theme-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  BRAND THEME  —  derive a deck palette from the tenant's own logo
+ *
+ *  _BRAND already carries the tenant's name, logo, tagline and contact. It
+ *  carries no colours, so every export has been drawn in the same fixed
+ *  navy and amber regardless of whose logo sits at the top of it. A deck
+ *  that says "Acme Energy" in Acme's typeface and then uses somebody
+ *  else's colours reads as a template someone forgot to finish.
+ *
+ *  So the colours come out of the logo itself. The image is drawn to a
+ *  canvas, the pixels are bucketed by hue and saturation, and the most
+ *  frequent genuinely-coloured bucket becomes the brand primary. From
+ *  there a tint-and-shade ramp gives the backgrounds, panels, rules and
+ *  text.
+ *
+ *  ── THE PART THAT MATTERS: CONTRAST ─────────────────────────────────
+ *
+ *  Deriving a palette from a logo is easy and usually produces something
+ *  unreadable. A tenant whose brand is yellow gets yellow headings on a
+ *  pale background; a tenant whose brand is navy gets navy text on a navy
+ *  panel. The naive version of this feature looks fine on the three logos
+ *  you test it with and fails on the fourth.
+ *
+ *  So every colour that carries text is checked against WCAG relative
+ *  luminance and lightened or darkened until it clears the contrast floor
+ *  — 4.5:1 for body text, 3:1 for large text and chart strokes. The brand
+ *  hue is preserved through that adjustment; only lightness moves. If a
+ *  colour cannot be made to clear the floor at any lightness, it is not
+ *  used for text at all and falls back to the neutral ramp.
+ *
+ *  ── WHAT DOES NOT GET BRANDED ───────────────────────────────────────
+ *
+ *  The data series keep their own colours. If the tenant's brand is
+ *  orange, generation cannot be orange while "peak before shaving" is
+ *  also orange — the reader loses the ability to tell two lines apart,
+ *  and a chart that looks on-brand but cannot be read is worse than one
+ *  that clashes. Brand colour drives the chrome: title bands, rules,
+ *  headings, table headers, card accents. The series palette is checked
+ *  for collisions against the brand hue and rotated away from it where
+ *  they are too close to distinguish.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+/* ── colour maths ───────────────────────────────────────────────────── */
+function clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
+
+function hexToRgb(h){
+  h = String(h || '').replace('#', '').trim();
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  if (!/^[0-9a-f]{6}$/i.test(h)) return null;
+  return { r: parseInt(h.slice(0,2),16), g: parseInt(h.slice(2,4),16), b: parseInt(h.slice(4,6),16) };
+}
+function rgbToHex(r, g, b){
+  function p(x){ var s = Math.round(clamp(x,0,255)).toString(16); return s.length === 1 ? '0'+s : s; }
+  return (p(r)+p(g)+p(b)).toUpperCase();
+}
+function rgbToHsl(r, g, b){
+  r/=255; g/=255; b/=255;
+  var mx = Math.max(r,g,b), mn = Math.min(r,g,b), h, s, l = (mx+mn)/2;
+  if (mx === mn) { h = 0; s = 0; }
+  else {
+    var d = mx - mn;
+    s = l > 0.5 ? d/(2-mx-mn) : d/(mx+mn);
+    if (mx === r) h = ((g-b)/d + (g < b ? 6 : 0));
+    else if (mx === g) h = (b-r)/d + 2;
+    else h = (r-g)/d + 4;
+    h /= 6;
+  }
+  return { h: h*360, s: s, l: l };
+}
+function hslToRgb(h, s, l){
+  h = ((h % 360) + 360) % 360 / 360;
+  var r, g, b;
+  if (s === 0) { r = g = b = l; }
+  else {
+    function hue2(p, q, t){
+      if (t < 0) t += 1; if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q-p)*6*t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q-p)*(2/3-t)*6;
+      return p;
+    }
+    var q = l < 0.5 ? l*(1+s) : l+s-l*s, p = 2*l-q;
+    r = hue2(p,q,h+1/3); g = hue2(p,q,h); b = hue2(p,q,h-1/3);
+  }
+  return { r: r*255, g: g*255, b: b*255 };
+}
+function hslHex(h, s, l){
+  var c = hslToRgb(h, clamp(s,0,1), clamp(l,0,1));
+  return rgbToHex(c.r, c.g, c.b);
+}
+function toHsl(hex){ var c = hexToRgb(hex); return c ? rgbToHsl(c.r,c.g,c.b) : null; }
+
+/* WCAG relative luminance and contrast ratio. */
+function luminance(hex){
+  var c = hexToRgb(hex); if (!c) return 0;
+  function ch(v){ v /= 255; return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); }
+  return 0.2126*ch(c.r) + 0.7152*ch(c.g) + 0.0722*ch(c.b);
+}
+function contrast(a, b){
+  var la = luminance(a), lb = luminance(b);
+  return (Math.max(la,lb) + 0.05) / (Math.min(la,lb) + 0.05);
+}
+
+/* Move a colour's LIGHTNESS ONLY until it clears a contrast floor against
+   the background. Hue and saturation are held, so the result still reads
+   as the brand colour rather than as a generic tint. Tries both directions
+   and takes whichever gets there with the smaller shift; returns null if
+   neither can, so the caller can fall back rather than ship grey-on-grey. */
+function ensureContrast(hex, bg, ratio){
+  ratio = ratio || 4.5;
+  if (contrast(hex, bg) >= ratio) return hex;
+  var h = toHsl(hex); if (!h) return null;
+  var up = null, down = null, i, cand;
+  for (i = 1; i <= 100; i++) {
+    if (up === null) {
+      cand = hslHex(h.h, h.s, clamp(h.l + i/100, 0, 1));
+      if (contrast(cand, bg) >= ratio) up = { hex: cand, dist: i };
+    }
+    if (down === null) {
+      cand = hslHex(h.h, h.s, clamp(h.l - i/100, 0, 1));
+      if (contrast(cand, bg) >= ratio) down = { hex: cand, dist: i };
+    }
+    if (up && down) break;
+  }
+  if (up && down) return up.dist <= down.dist ? up.hex : down.hex;
+  return (up || down) ? (up || down).hex : null;
+}
+
+/* Smallest angular distance between two hues, 0..180. */
+function hueGap(a, b){
+  var d = Math.abs(((a - b) % 360 + 360) % 360);
+  return d > 180 ? 360 - d : d;
+}
+
+/* ── pull colours out of the logo ────────────────────────────────────
+   Bucketed by hue rather than exact value, because an anti-aliased logo
+   contains hundreds of near-identical shades and counting exact pixels
+   makes the edge colour win over the fill. */
+function paletteFromImage(img, cb){
+  try {
+    var N = 72;
+    var cv = document.createElement('canvas');
+    cv.width = N; cv.height = N;
+    var g = cv.getContext('2d', { willReadFrequently: true });
+    /* Some logos are white-on-transparent; a mid-grey mat keeps both
+       light and dark marks visible to the sampler. */
+    g.clearRect(0, 0, N, N);
+    var iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    if (!iw || !ih) return cb(null);
+    var sc = Math.min(N/iw, N/ih);
+    var dw = Math.max(1, iw*sc), dh = Math.max(1, ih*sc);
+    g.drawImage(img, (N-dw)/2, (N-dh)/2, dw, dh);
+    var data = g.getImageData(0, 0, N, N).data;
+
+    var buckets = {}, neutrals = 0, total = 0;
+    for (var i = 0; i < data.length; i += 4) {
+      var a = data[i+3];
+      if (a < 140) continue;                       /* transparent          */
+      var hsl = rgbToHsl(data[i], data[i+1], data[i+2]);
+      total++;
+      /* Ignore the paper and the ink: near-white and near-black carry no
+         brand hue, and every logo is full of both. */
+      if (hsl.l > 0.94 || hsl.l < 0.06) { neutrals++; continue; }
+      if (hsl.s < 0.18) { neutrals++; continue; }  /* grey                 */
+      var key = Math.round(hsl.h / 12) * 12;       /* 30 hue buckets       */
+      if (!buckets[key]) buckets[key] = { n: 0, h: 0, s: 0, l: 0 };
+      var b = buckets[key];
+      b.n++; b.h += hsl.h; b.s += hsl.s; b.l += hsl.l;
+    }
+
+    var list = [];
+    for (var k in buckets) {
+      if (!buckets.hasOwnProperty(k)) continue;
+      var q = buckets[k];
+      list.push({ h: q.h/q.n, s: q.s/q.n, l: q.l/q.n, n: q.n,
+                  hex: hslHex(q.h/q.n, q.s/q.n, q.l/q.n) });
+    }
+    /* Rank by pixel count weighted by saturation: a small vivid mark is
+       more likely to be the brand colour than a large muted wash. */
+    list.sort(function (x, y) { return (y.n * (0.4 + y.s)) - (x.n * (0.4 + x.s)); });
+    cb({ colors: list, coloredPx: total - neutrals, totalPx: total });
+  } catch (e) { cb(null); }
+}
+
+function loadLogo(src, cb){
+  if (!src) return cb(null);
+  try {
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    var done = false;
+    var t = setTimeout(function(){ if (!done) { done = true; cb(null); } }, 6000);
+    img.onload = function(){ if (!done) { done = true; clearTimeout(t); cb(img); } };
+    img.onerror = function(){ if (!done) { done = true; clearTimeout(t); cb(null); } };
+    img.src = src;
+  } catch (e) { cb(null); }
+}
+
+
+/* ── logo, normalised for embedding ──────────────────────────────────
+   PowerPoint will not take an SVG, and a tenant logo is as likely to be
+   SVG as PNG. Rasterise whatever we have onto a transparent canvas at a
+   size that still looks sharp on a projector, and hand back the aspect
+   ratio so the caller can size a box without distorting the mark.
+
+   Logos are also frequently white-on-transparent, which vanishes on a
+   light panel and is invisible on a white one. The deck is dark, so a
+   white mark is fine there; `isLight` tells the caller which it has so a
+   light surface can be given a plate behind it instead. */
+function logoForDeck(cb){
+  var src = logoSrc();
+  if (!src) return cb(null);
+  loadLogo(src, function (img) {
+    if (!img) return cb(null);
+    try {
+      var iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+      if (!iw || !ih) return cb(null);
+      var MAX = 900;
+      var sc = Math.min(MAX / iw, MAX / ih, 4);
+      var w = Math.max(1, Math.round(iw * sc)), h = Math.max(1, Math.round(ih * sc));
+      var cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      var g = cv.getContext('2d', { willReadFrequently: true });
+      g.clearRect(0, 0, w, h);
+      g.drawImage(img, 0, 0, w, h);
+
+      /* Mean lightness of the non-transparent pixels, so the caller knows
+         whether this mark needs a dark or a light surface behind it. */
+      var lightSum = 0, n = 0;
+      try {
+        var d = g.getImageData(0, 0, w, h).data;
+        for (var i = 0; i < d.length; i += 4) {
+          if (d[i+3] < 140) continue;
+          lightSum += (0.2126*d[i] + 0.7152*d[i+1] + 0.0722*d[i+2]) / 255;
+          n++;
+        }
+      } catch (e) {}
+      var meanL = n ? lightSum / n : 0.5;
+
+      cb({
+        dataUrl: cv.toDataURL('image/png'),
+        w: w, h: h, aspect: w / h,
+        isLight: meanL > 0.62,
+        meanLightness: +meanL.toFixed(3)
+      });
+    } catch (e) { cb(null); }
+  });
+}
+
+/* ── build the deck palette ──────────────────────────────────────────── */
+var FALLBACK = { primary: 'FBBF24', secondary: '60A5FA', source: 'default' };
+
+function buildTheme(primaryHex, secondaryHex, source){
+  var P = toHsl(primaryHex) || toHsl(FALLBACK.primary);
+  var hue = P.h, sat = P.s;
+
+  /* Backgrounds: a deep, mostly-desaturated shade of the brand hue. Kept
+     dark because that is what the app and the existing deck look like, and
+     because a light deck built from an arbitrary brand colour is far
+     harder to keep readable. */
+  var bg    = hslHex(hue, clamp(sat * 0.45, 0.10, 0.42), 0.085);
+  var panel = hslHex(hue, clamp(sat * 0.40, 0.09, 0.36), 0.145);
+  var rule  = hslHex(hue, clamp(sat * 0.36, 0.08, 0.32), 0.245);
+
+  /* Text: tinted toward the brand hue but nowhere near saturated, then
+     forced to clear 7:1 so it is comfortable at projector distance. */
+  var text = hslHex(hue, clamp(sat * 0.12, 0.02, 0.10), 0.94);
+  var sub  = hslHex(hue, clamp(sat * 0.14, 0.03, 0.14), 0.70);
+  var dim  = hslHex(hue, clamp(sat * 0.12, 0.02, 0.12), 0.52);
+  text = ensureContrast(text, bg, 7) || 'F2F6FA';
+  sub  = ensureContrast(sub,  bg, 4.5) || 'A8BACB';
+  dim  = ensureContrast(dim,  bg, 3) || '7C8FA3';
+
+  /* The accent is the brand colour itself, lifted only as far as it must
+     be to be legible on the background. */
+  var accent = ensureContrast(primaryHex, bg, 4.5) || 'FBBF24';
+  /* A lighter tint of the brand, for fills and secondary emphasis. */
+  var A = toHsl(accent);
+  var accentSoft = hslHex(A.h, clamp(A.s * 0.85, 0, 1), clamp(A.l + 0.16, 0, 0.88));
+  var accentDeep = hslHex(A.h, clamp(A.s, 0, 1), clamp(A.l - 0.22, 0.06, 1));
+
+  /* Text sitting ON the accent (badges, the title rule, table headers). */
+  var onAccent = contrast('111111', accent) >= contrast('FFFFFF', accent) ? '111111' : 'FFFFFF';
+
+  /* ── data series ──────────────────────────────────────────────────
+     Six functionally distinct colours. The brand accent takes slot one
+     when it is distinguishable; any stock colour sitting within 26 degrees
+     of the brand hue is nudged away so two lines on one chart never read
+     as the same colour. */
+  var STOCK = [
+    { role: 'gen',  hex: 'FBBF24' },
+    { role: 'load', hex: '60A5FA' },
+    { role: 'net',  hex: '38BDF8' },
+    { role: 'bess', hex: 'A78BFA' },
+    { role: 'good', hex: '4ADE80' },
+    { role: 'warn', hex: 'F97316' }
+  ];
+  /* The series hues are NOT rotated to fit the brand. An earlier version of
+     this did exactly that, and on a green brand it pushed "warn" from orange
+     round to lime and "good" from green to cyan. A warning that renders as
+     lime has lost the only thing a warning colour is for, and the reader has
+     no way to recover the meaning from a legend that says "before". Semantic
+     colour outranks brand harmony every time.
+
+     The collision this would have guarded against does not arise anyway: the
+     brand accent is chrome only — title bands, rules, headings, table
+     headers — and is never drawn as a chart series. So the brand colour and
+     a series colour never appear as two lines on one chart, which is the
+     only situation where sharing a hue actually costs the reader anything.
+
+     All that remains is contrast: each series colour is lifted or dropped in
+     lightness until it clears 3:1 against whatever background the brand
+     produced, which is the WCAG floor for a graphical object. */
+  var series = {};
+  STOCK.forEach(function (s) {
+    series[s.role] = ensureContrast(s.hex, bg, 3) || s.hex;
+  });
+
+  return {
+    source: source || 'default',
+    brandPrimary: primaryHex,
+    brandSecondary: secondaryHex || null,
+    bg: bg, panel: panel, rule: rule,
+    text: text, sub: sub, dim: dim,
+    accent: accent, accentSoft: accentSoft, accentDeep: accentDeep, onAccent: onAccent,
+    gen: series.gen, load: series.load, net: series.net,
+    bess: series.bess, good: series.good, warn: series.warn,
+    contrastReport: {
+      textOnBg:  +contrast(text, bg).toFixed(2),
+      subOnBg:   +contrast(sub, bg).toFixed(2),
+      accentOnBg:+contrast(accent, bg).toFixed(2),
+      onAccent:  +contrast(onAccent, accent).toFixed(2)
+    }
+  };
+}
+
+/* ── resolution ──────────────────────────────────────────────────────
+   Explicit override, then the logo, then the default. Cached on the logo
+   data so changing the logo rebuilds and nothing else does. */
+var CACHE = { key: null, theme: null };
+
+function overrideColor(){
+  try {
+    if (root._BRAND && root._BRAND.brandColor && hexToRgb(root._BRAND.brandColor)) {
+      return String(root._BRAND.brandColor).replace('#','').toUpperCase();
+    }
+    var s = localStorage.getItem('omega.brand.color');
+    if (s && hexToRgb(s)) return s.replace('#','').toUpperCase();
+  } catch (e) {}
+  return null;
+}
+
+function logoSrc(){
+  try { if (typeof brandLogo === 'function') return brandLogo() || ''; } catch (e) {}
+  try { return (root._BRAND && root._BRAND.logoDataUrl) || ''; } catch (e) {}
+  return '';
+}
+
+function resolve(cb){
+  var ov = overrideColor();
+  var src = logoSrc();
+  var key = (ov || '-') + '|' + (src ? src.length + ':' + src.slice(-40) : '-');
+  if (CACHE.theme && CACHE.key === key) return cb(CACHE.theme);
+
+  function finish(theme){
+    CACHE.key = key; CACHE.theme = theme;
+    cb(theme);
+  }
+
+  if (ov) {
+    return finish(buildTheme(ov, null, 'brand colour set by hand'));
+  }
+  if (!src) {
+    return finish(buildTheme(FALLBACK.primary, FALLBACK.secondary, 'default palette \u2014 no logo uploaded'));
+  }
+  loadLogo(src, function (img) {
+    if (!img) return finish(buildTheme(FALLBACK.primary, FALLBACK.secondary, 'default palette \u2014 logo could not be read'));
+    paletteFromImage(img, function (p) {
+      if (!p || !p.colors.length) {
+        return finish(buildTheme(FALLBACK.primary, FALLBACK.secondary,
+          'default palette \u2014 logo is greyscale, so it carries no brand hue'));
+      }
+      var primary = p.colors[0].hex;
+      /* A secondary only if it is a genuinely different hue. */
+      var secondary = null;
+      for (var i = 1; i < p.colors.length; i++) {
+        if (hueGap(p.colors[i].h, p.colors[0].h) > 40) { secondary = p.colors[i].hex; break; }
+      }
+      finish(buildTheme(primary, secondary,
+        'derived from the ' + (typeof brandName === 'function' ? brandName() : 'company') + ' logo'));
+    });
+  });
+}
+
+/* Synchronous access for callers that cannot wait; returns the cached
+   theme or the default. Anything drawing a deck should use resolve(). */
+function current(){
+  return CACHE.theme || buildTheme(FALLBACK.primary, FALLBACK.secondary, 'default palette');
+}
+
+/* Warm the cache early so the first export does not wait on the logo. */
+try { setTimeout(function(){ resolve(function(){}); }, 1500); } catch (e) {}
+
+/* ── the Controls-panel field ─────────────────────────────────────────
+   Writes through to the same override the theme resolver reads, and shows
+   what the deck will actually use — including when the sampled colour has
+   had to be lightened to stay legible, because a swatch that does not
+   match the slide is worse than no swatch. */
+root._brandSetColor = function (v) {
+  var hex = String(v || '').trim();
+  if (hex && hex[0] !== '#') hex = '#' + hex;
+  if (hexToRgb(hex)) {
+    root.OmegaBrandTheme.setColor(hex);
+    try { if (typeof _brandMarkDirty === 'function') _brandMarkDirty(); } catch (e) {}
+  } else if (!hex.replace('#','')) {
+    root.OmegaBrandTheme.clearColor();
+  }
+  paintBrandField();
+};
+root._brandClearColor = function () {
+  root.OmegaBrandTheme.clearColor();
+  var t = document.getElementById('brand-color-hex');
+  if (t) t.value = '';
+  paintBrandField();
+};
+
+function paintBrandField(){
+  resolve(function (theme) {
+    var sw = document.getElementById('brand-color-swatch');
+    var tx = document.getElementById('brand-color-hex');
+    var nt = document.getElementById('brand-color-note');
+    if (sw) sw.value = '#' + theme.brandPrimary;
+    if (tx && document.activeElement !== tx) {
+      tx.value = overrideColor() ? '#' + theme.brandPrimary : '';
+      tx.placeholder = overrideColor() ? '' : 'auto \u2014 ' + theme.source;
+    }
+    if (nt) {
+      var lifted = theme.accent !== theme.brandPrimary;
+      nt.innerHTML = 'Deck palette: ' + theme.source + '.' +
+        (lifted ? ' Slides use <b style="color:#' + theme.accent + '">#' + theme.accent +
+                  '</b> \u2014 the brand colour lightened to stay readable on a dark slide.'
+                : ' Slides use this colour directly.');
+    }
+  });
+}
+root.OmegaBrandRepaintField = paintBrandField;
+try { setTimeout(paintBrandField, 2200); } catch (e) {}
+
+root.OmegaBrandTheme = {
+  resolve: resolve, current: current, build: buildTheme,
+  setColor: function (hex) {
+    try {
+      if (hex && hexToRgb(hex)) { localStorage.setItem('omega.brand.color', String(hex).replace('#','').toUpperCase()); }
+      else localStorage.removeItem('omega.brand.color');
+      CACHE.key = null; CACHE.theme = null;
+    } catch (e) {}
+  },
+  clearColor: function(){ try { localStorage.removeItem('omega.brand.color'); } catch (e) {} CACHE.key = null; CACHE.theme = null; },
+  logoSrc: logoSrc, logoForDeck: logoForDeck,
+  /* exposed for testing and for anything else that needs the maths */
+  contrast: contrast, ensureContrast: ensureContrast, luminance: luminance,
+  toHsl: toHsl, hslHex: hslHex, hexToRgb: hexToRgb, rgbToHex: rgbToHex,
+  paletteFromImage: paletteFromImage, hueGap: hueGap
+};
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
 <script id="omega-der-yield-js">
 /* ══════════════════════════════════════════════════════════════════════════
  *  OMEGA DER YIELD  —  hour-by-hour generation, peak shaving, and the deck
@@ -134453,8 +135192,14 @@ function ktClimatology(latDeg){
 }
 
 /* ── NREL fetches ───────────────────────────────────────────────────── */
+/* One resolver for the whole app, defined by the NREL key module. Falling
+   back to reading localStorage directly keeps this working if that module
+   is ever removed, and DEMO_KEY remains the last resort. */
 function nrelKey(){
-  try { var k = localStorage.getItem('omega.key.nrel'); if (k && k.trim()) return k.trim(); } catch (e) {}
+  try {
+    if (root.OmegaNrelKey && typeof root.OmegaNrelKey.key === 'function') return root.OmegaNrelKey.key();
+  } catch (e) {}
+  try { var k = localStorage.getItem('omega.key.nrel'); if (k && k.trim()) return k.trim(); } catch (e2) {}
   return 'DEMO_KEY';
 }
 
@@ -135612,7 +136357,10 @@ var P    = root.OmegaYieldPhysics;
 var Run  = root.OmegaYieldRun;
 var num  = P.num, MON = P.MON;
 
-/* Deck palette — the app's own, so a slide and the screen agree. */
+/* Deck palette. These are the defaults; applyTheme() overwrites them from
+   the tenant's own brand before a deck is built, so a slide carries the
+   customer's colours rather than ours. The object is mutated in place
+   because every draw call below closes over it. */
 var C = {
   bg:      '0F1D30',
   panel:   '132844',
@@ -135620,13 +136368,34 @@ var C = {
   text:    'E2EEF9',
   sub:     '8FA3B8',
   dim:     '64748B',
+  accent:     'FBBF24',   /* brand colour: bands, rules, headings  */
+  accentSoft: 'FCD34D',   /* lighter tint: fills, secondary marks  */
+  accentDeep: 'B45309',   /* darker: buttons, deep fills           */
+  onAccent:   '111111',   /* text that sits ON the accent          */
   gen:     'FBBF24',   /* generation — sun                 */
   load:    '60A5FA',   /* load — cool                      */
   bess:    'A78BFA',   /* storage                          */
   good:    '4ADE80',   /* savings, after                   */
   warn:    'F97316',   /* before, or the thing to fix      */
-  net:     '38BDF8'
+  net:     '38BDF8',
+  themeSource: 'default palette'
 };
+
+/* Copy a resolved brand theme into the live palette. Series colours come
+   across too, because the theme has already checked them for hue
+   collisions against the brand colour — two lines on one chart that read
+   as the same colour is a worse outcome than a chart that clashes. */
+function applyTheme(t){
+  if (!t) return;
+  ['bg','panel','rule','text','sub','dim','accent','accentSoft','accentDeep',
+   'onAccent','gen','load','net','bess','good','warn'].forEach(function (k) {
+    if (t[k]) C[k] = String(t[k]).replace('#','').toUpperCase();
+  });
+  C.themeSource = t.source || 'brand theme';
+}
+
+/* The tenant's logo, rasterised, or null. Set by exportPPTX before build. */
+var LOGO = null;
 
 function money(v){
   var n = Math.round(num(v, 0));
@@ -135650,13 +136419,28 @@ function HOURS(){ var a = []; for (var i = 0; i < 24; i++) a.push(String(i).padS
 function chrome(pptx, slide, title, kicker){
   slide.background = { color: C.bg };
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.92, fill: { color: C.panel }, line: { color: C.panel } });
-  slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0.92, w: 13.333, h: 0.028, fill: { color: C.gen }, line: { color: C.gen } });
+  slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0.92, w: 13.333, h: 0.028, fill: { color: C.accent }, line: { color: C.accent } });
   if (kicker) {
     slide.addText(kicker.toUpperCase(), { x: 0.5, y: 0.10, w: 12.4, h: 0.26,
-      fontSize: 10, color: C.gen, bold: true, charSpacing: 1.6, fontFace: 'Consolas' });
+      fontSize: 10, color: C.accent, bold: true, charSpacing: 1.6, fontFace: 'Consolas' });
   }
-  slide.addText(title, { x: 0.5, y: kicker ? 0.34 : 0.22, w: 12.4, h: 0.5,
+  /* Title width leaves room for the logo in the top-right of the band. */
+  slide.addText(title, { x: 0.5, y: kicker ? 0.34 : 0.22, w: LOGO ? 10.9 : 12.4, h: 0.5,
     fontSize: 23, color: C.text, bold: true, fontFace: 'Segoe UI' });
+  if (LOGO) placeLogo(slide, 11.55, 0.17, 1.28, 0.58);
+}
+
+/* Drop the logo into a box, preserving its aspect ratio and pinning it to
+   the right edge of that box. Sizing to the box without respecting aspect
+   is how a client's mark ends up stretched on their own proposal. */
+function placeLogo(slide, x, y, boxW, boxH){
+  if (!LOGO || !LOGO.dataUrl) return;
+  var a = LOGO.aspect || 1;
+  var w = boxW, hgt = boxW / a;
+  if (hgt > boxH) { hgt = boxH; w = boxH * a; }
+  try {
+    slide.addImage({ data: LOGO.dataUrl, x: x + (boxW - w), y: y + (boxH - hgt) / 2, w: w, h: hgt });
+  } catch (e) {}
 }
 function footer(pptx, slide, res, n){
   var brand = 'ClearSky OMEGA';
@@ -135725,10 +136509,12 @@ function buildDeck(res, opts){
   (function(){
     var s = pptx.addSlide();
     s.background = { color: C.bg };
+    /* The tenant's mark, top-left, at the size a cover would give it. */
+    if (LOGO) placeLogo(s, 0.9, 0.75, 3.1, 1.15);
     s.addShape(pptx.ShapeType.rect, { x: 0, y: 3.34, w: 13.333, h: 0.045,
-      fill: { color: C.gen }, line: { color: C.gen } });
+      fill: { color: C.accent }, line: { color: C.accent } });
     s.addText('DISTRIBUTED ENERGY RESOURCE \u00b7 GENERATION AND STORAGE ANALYSIS',
-      { x: 0.9, y: 2.25, w: 11.5, h: 0.34, fontSize: 11.5, color: C.gen, bold: true,
+      { x: 0.9, y: 2.25, w: 11.5, h: 0.34, fontSize: 11.5, color: C.accent, bold: true,
         charSpacing: 2.2, fontFace: 'Consolas' });
     s.addText(res.address || 'Site analysis',
       { x: 0.9, y: 2.6, w: 11.5, h: 0.72, fontSize: 38, color: C.text, bold: true, fontFace: 'Segoe UI' });
@@ -136079,6 +136865,27 @@ function buildDeck(res, opts){
   return pptx;
 }
 
+/* Resolve the tenant's theme and logo, then build. Both are async: the
+   logo has to be decoded before its colours can be sampled or before it
+   can be rasterised for embedding. Everything is optional — a failure at
+   any step falls back to the default palette and a deck with no logo,
+   rather than blocking the export. */
+function withBrand(cb){
+  var T = root.OmegaBrandTheme;
+  if (!T) { LOGO = null; return cb(); }
+  var done = false, pending = 2;
+  function step(){ if (--pending <= 0 && !done) { done = true; cb(); } }
+  var guard = setTimeout(function(){ if (!done) { done = true; cb(); } }, 7000);
+  try {
+    T.resolve(function (theme) { applyTheme(theme); step(); });
+  } catch (e) { step(); }
+  try {
+    T.logoForDeck(function (l) { LOGO = l; step(); });
+  } catch (e) { LOGO = null; step(); }
+  var origCb = cb;
+  cb = function(){ clearTimeout(guard); origCb(); };
+}
+
 function exportPPTX(res, opts){
   var pptx = buildDeck(res, opts);
   var base = (res.address || 'DER-Analysis').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 48);
@@ -136087,7 +136894,22 @@ function exportPPTX(res, opts){
   return pptx.writeFile({ fileName: base + '-' + slug + '-DER-Generation.pptx' });
 }
 
-root.OmegaYieldDeck = { build: buildDeck, exportPPTX: exportPPTX, palette: C,
+/* The entry point the UI calls. Resolves branding, then exports. */
+function exportPPTXBranded(res, opts){
+  return new Promise(function (resolve, reject) {
+    withBrand(function () {
+      try {
+        var r = exportPPTX(res, opts);
+        if (r && r.then) r.then(resolve).catch(reject); else resolve(r);
+      } catch (e) { reject(e); }
+    });
+  });
+}
+
+root.OmegaYieldDeck = { build: buildDeck, exportPPTX: exportPPTXBranded,
+                        exportPPTXRaw: exportPPTX, withBrand: withBrand,
+                        applyTheme: applyTheme, palette: C,
+                        logo: function(){ return LOGO; },
                         money: money, kwh: kwh, kw: kw, pct: pct, HOURS: HOURS };
 
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -136509,6 +137331,14 @@ function setOffline(v){ OV.offline = !!v; }
    HTML REPORT — the offline path, and the one that prints.
    ──────────────────────────────────────────────────────────────────── */
 function reportHTML(res){
+  /* Same palette the deck uses, so the offline report and the presentation
+     are not two different-looking documents about one site. C is already
+     populated by withBrand() when a deck was exported; if the report is the
+     first thing run, fall back to whatever the theme has cached. */
+  try {
+    var _t = root.OmegaBrandTheme && root.OmegaBrandTheme.current();
+    if (_t && typeof Deck.applyTheme === 'function') Deck.applyTheme(_t);
+  } catch (e) {}
   var rep = Run.representativeDays(res, res.load);
   var sh = res.shave || {};
   var brand = 'ClearSky OMEGA';
@@ -136525,30 +137355,35 @@ function reportHTML(res){
   var h = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>DER generation and storage \u2014 ' + esc(where) + '</title><style>' +
-    '*{box-sizing:border-box}body{margin:0;background:#0F1D30;color:#E2EEF9;' +
+    '*{box-sizing:border-box}body{margin:0;background:'+C.bg+';color:'+C.text+';' +
     'font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:14px;line-height:1.6}' +
     '.wrap{max-width:980px;margin:0 auto;padding:34px 24px 70px}' +
-    'h1{font-size:27px;margin:0 0 4px}h2{font-size:15px;color:#FBBF24;text-transform:uppercase;' +
+    'h1{font-size:27px;margin:0 0 4px}h2{font-size:15px;color:'+C.accent+';text-transform:uppercase;' +
     'letter-spacing:1.1px;margin:34px 0 4px;font-weight:700}' +
-    '.lede{color:#8FA3B8;font-size:13px;margin:0 0 6px}' +
+    '.lede{color:'+C.sub+';font-size:13px;margin:0 0 6px}' +
     '.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin:14px 0}' +
-    '.card{background:#0B1626;border:1px solid #1E3A5F;border-radius:9px;padding:12px 13px}' +
-    '.lbl{font-size:8.5px;color:#64748B;text-transform:uppercase;letter-spacing:.8px;font-weight:700}' +
+    '.card{background:'+C.panel+';border:1px solid '+C.rule+';border-radius:9px;padding:12px 13px}' +
+    '.lbl{font-size:8.5px;color:'+C.dim+';text-transform:uppercase;letter-spacing:.8px;font-weight:700}' +
     '.val{font-size:21px;font-weight:800;margin-top:3px}' +
-    '.sub{font-size:9.5px;color:#64748B;margin-top:3px;line-height:1.45}' +
-    '.panel{background:#0B1626;border:1px solid #1E3A5F;border-radius:9px;padding:14px;margin:12px 0}' +
+    '.sub{font-size:9.5px;color:'+C.dim+';margin-top:3px;line-height:1.45}' +
+    '.panel{background:'+C.panel+';border:1px solid '+C.rule+';border-radius:9px;padding:14px;margin:12px 0}' +
     'table{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}' +
-    'th{text-align:left;color:#64748B;font-size:9px;text-transform:uppercase;letter-spacing:.6px;padding:6px 8px}' +
-    'td{padding:7px 8px;border-top:1px solid #1E3A5F;color:#CBD5E1}' +
-    '.r{text-align:right}.g{color:#4ADE80}.y{color:#FBBF24}.o{color:#F97316}.v{color:#A78BFA}.b{color:#60A5FA}' +
-    '.foot{margin-top:44px;padding-top:16px;border-top:1px solid #1E3A5F;font-size:10.5px;color:#64748B}' +
+    'th{text-align:left;color:'+C.dim+';font-size:9px;text-transform:uppercase;letter-spacing:.6px;padding:6px 8px}' +
+    'td{padding:7px 8px;border-top:1px solid '+C.rule+';color:'+C.text+'}' +
+    '.r{text-align:right}.g{color:'+C.good+'}.y{color:'+C.accent+'}.o{color:'+C.warn+'}.v{color:'+C.bess+'}.b{color:'+C.load+'}' +
+    '.foot{margin-top:44px;padding-top:16px;border-top:1px solid '+C.rule+';font-size:10.5px;color:'+C.dim+'}' +
     '.tag{display:inline-block;font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px}' +
     '@media print{body{background:#fff;color:#111}.card,.panel{background:#fff;border-color:#ccc}' +
-    'h2{color:#92400E}td{color:#333;border-color:#ddd}.wrap{padding:0}}' +
+    'h2{color:'+C.accentDeep+'}td{color:#333;border-color:#ddd}.wrap{padding:0}}' +
     '@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}}' +
     '</style></head><body><div class="wrap">';
 
-  h += '<div style="font-size:10px;color:#FBBF24;font-weight:700;letter-spacing:2px;margin-bottom:8px">' +
+  /* The tenant's mark, same as the deck cover. */
+  var _logo = '';
+  try { var _L = Deck.logo && Deck.logo(); if (_L && _L.dataUrl) _logo = _L.dataUrl; } catch (e) {}
+  if (!_logo) { try { _logo = root.OmegaBrandTheme ? root.OmegaBrandTheme.logoSrc() : ''; } catch (e) {} }
+  if (_logo) h += '<img src="' + _logo + '" alt="" style="max-height:52px;max-width:240px;margin-bottom:14px;display:block">';
+  h += '<div style="font-size:10px;color:' + C.accent + ';font-weight:700;letter-spacing:2px;margin-bottom:8px">' +
        'DISTRIBUTED ENERGY RESOURCE \u00b7 GENERATION AND STORAGE ANALYSIS</div>';
   h += '<h1>' + esc(where) + '</h1>';
   h += '<p class="lede">' + res.location.lat.toFixed(5) + '\u00b0, ' + res.location.lon.toFixed(5) + '\u00b0 \u00b7 ' +
@@ -137631,6 +138466,264 @@ try {
 
 root.OmegaPQScreen = { screen: screen, STORAGE_INCENTIVE: STORAGE_INCENTIVE,
                        filingPath: filingPath, filingFee: filingFee, solarEnergy: solarEnergy };
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script id="omega-ribbon-gating-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  RIBBON GATING  —  hide, mark "coming soon", and re-badge
+ *
+ *  Three states, and the difference between them is a promise to the user:
+ *
+ *    hidden        the tool is not ready to be seen. No button, no tooltip,
+ *                  no dead end. Nothing is deleted — the markup stays and
+ *                  one line here brings it back.
+ *    coming soon   the tool is real and is being built. The button stays
+ *                  visible so people know it is on the way, but it cannot
+ *                  be opened, because a half-built tool that opens is worse
+ *                  than one that does not.
+ *    beta          the tool works and the OUTPUT may not be right yet.
+ *
+ *  This extends the app's existing OmegaTags system rather than starting a
+ *  parallel one. The SOON badge reuses the same absolute-corner anchor as
+ *  BETA and NEW, so all three sit in the same place on a button and the
+ *  ribbon's overflow rules already account for them.
+ *
+ *  WHY NOT JUST DELETE THE BUTTONS
+ *
+ *  Because "hide it for now" and "remove the feature" are different asks,
+ *  and the markup for these tools is threaded through tooltips, hamburger
+ *  menus and keyboard handlers. Hiding at the display layer is reversible
+ *  in one edit; cutting the markup is not.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+var TAG = '[RibbonGating]';
+
+/* ── what is gated, and why ──────────────────────────────────────────
+   Matched against a button's onclick attribute, or its id. Each entry
+   carries the reason so this list stays readable a year from now. */
+
+var HIDE = [
+  { match: /openViabilityWorkflow/, what: 'Viability Workflow', why: 'hidden at request' },
+  { match: /omegaPermitBeta|sendToPermitCreator/, what: 'Permit Creator', why: 'hidden at request' }
+];
+
+var SOON = [
+  { match: /openPriceDecks/,  what: 'Price Decks',
+    note: 'Nodal price-deck import is being finished. Until then, the Value Stack panel carries the revenue assumptions.' },
+  { match: /openSitePreQual/, what: 'Site Pre-Qualification',
+    note: 'The Phase 0 property viability score is being rebuilt on national data. Grid Pre-Qualify covers interconnection screening in the meantime.' },
+  { id: 'rb-screen',          what: 'Site Pre-Screen',
+    note: 'The ZIP-level utility and rate screen is being finished. Grid Pre-Qualify covers interconnection screening in the meantime.' }
+];
+
+/* Bill Analysis is currently badged NEW. It is an analysis whose numbers
+   feed a proposal, so BETA is the accurate label: the tool runs, the
+   output is what needs a second look. */
+var REBADGE = [
+  { id: 'omega-btn-bill-analysis', label: 'BETA' }
+];
+
+/* ── styles: one badge colour that is neither a warning nor a signpost ── */
+function injectCss(){
+  if (document.getElementById('omega-gating-css')) return;
+  var s = document.createElement('style');
+  s.id = 'omega-gating-css';
+  s.textContent = [
+    /* SOON sits in the same corner as BETA and NEW and inherits their
+       geometry, so a gated button is laid out identically to a tagged one. */
+    '.omega-soon-tag{',
+    '  position:absolute; top:1px; right:1px; z-index:2;',
+    '  font:700 6.5px/1 var(--font-mono,monospace); letter-spacing:.08em;',
+    '  border-radius:2px; padding:2px 3px; pointer-events:none;',
+    '  color:#E2EEF9; background:#3B5470;',
+    '}',
+    '.rbtn.omega-soon{ padding-right:6px }',
+    /* Dimmed, but still legible: the point is that people can see the tool
+       is coming, not that it disappears in all but name. */
+    '.omega-soon{ position:relative; opacity:.48; cursor:not-allowed !important }',
+    '.omega-soon:hover{ opacity:.62; background:transparent !important }',
+    '.omega-soon .rb-ico, .omega-soon .rb-lbl{ pointer-events:none }',
+    '.omega-gated-hidden{ display:none !important }',
+    /* The toast a gated button raises. */
+    '#omega-soon-toast{',
+    '  position:fixed; left:50%; bottom:34px; transform:translateX(-50%);',
+    '  background:#132844; border:1px solid #1E3A5F; border-radius:9px;',
+    '  padding:11px 16px; z-index:100050; max-width:min(460px,92vw);',
+    '  box-shadow:0 14px 40px rgba(0,0,0,.55);',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  opacity:0; transition:opacity .16s ease;',
+    '}',
+    '#omega-soon-toast.on{ opacity:1 }',
+    '#omega-soon-toast .t{ font-size:12px; font-weight:800; color:#E2EEF9; margin-bottom:3px }',
+    '#omega-soon-toast .n{ font-size:11px; color:#8FA3B8; line-height:1.5 }'
+  ].join('\n');
+  document.head.appendChild(s);
+}
+
+var toastTimer = null;
+function toast(title, note){
+  injectCss();
+  var t = document.getElementById('omega-soon-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'omega-soon-toast';
+    document.body.appendChild(t);
+  }
+  t.innerHTML = '<div class="t">' + esc(title) + ' \u2014 coming soon</div>' +
+                (note ? '<div class="n">' + esc(note) + '</div>' : '');
+  requestAnimationFrame(function(){ t.classList.add('on'); });
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){
+    t.classList.remove('on');
+    setTimeout(function(){ if (t && t.parentNode) t.parentNode.removeChild(t); }, 220);
+  }, 4200);
+}
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+
+/* ── applying it ─────────────────────────────────────────────────────
+   The original onclick is stashed rather than destroyed, so restoring a
+   tool is a one-liner from the console and not an edit to this file. */
+function gate(btn, entry){
+  if (!btn || btn.__omegaSoon) return false;
+  btn.__omegaSoon = true;
+  /* A button may carry its handler as an attribute (markup) or as a
+     property (buttons built by a later module). Stash whichever it has, so
+     restore() can put either kind back. */
+  btn.__omegaSoonOnclick = btn.getAttribute('onclick');
+  btn.__omegaSoonFn = (typeof btn.onclick === 'function') ? btn.onclick : null;
+  btn.removeAttribute('onclick');
+  btn.onclick = function (e) {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    toast(entry.what, entry.note);
+    return false;
+  };
+  btn.classList.add('omega-soon');
+  if (!btn.style.position) btn.style.position = 'relative';
+  btn.setAttribute('title', entry.what + ' \u2014 coming soon. ' + (entry.note || ''));
+  btn.setAttribute('aria-disabled', 'true');
+  if (!btn.querySelector('.omega-soon-tag')) {
+    var s = document.createElement('span');
+    s.className = 'omega-soon-tag';
+    s.textContent = 'SOON';
+    btn.appendChild(s);
+  }
+  /* Any badge the tag system already put here is now misleading. */
+  var stale = btn.querySelectorAll('.omega-beta-tag, .omega-new-tag');
+  for (var i = 0; i < stale.length; i++) stale[i].remove();
+  return true;
+}
+
+function hide(btn){
+  if (!btn || btn.classList.contains('omega-gated-hidden')) return false;
+  btn.classList.add('omega-gated-hidden');
+  return true;
+}
+
+function rebadge(btn, label){
+  if (!btn) return false;
+  var have = btn.querySelector('.omega-beta-tag, .omega-new-tag');
+  var wantClass = label === 'NEW' ? 'omega-new-tag' : 'omega-beta-tag';
+  if (have && have.className === wantClass && have.textContent === label) return false;
+  if (have) have.remove();
+  btn.classList.add('omega-beta');
+  if (!btn.style.position) btn.style.position = 'relative';
+  var s = document.createElement('span');
+  s.className = wantClass;
+  s.textContent = label;
+  btn.appendChild(s);
+  return true;
+}
+
+function matches(btn, entry){
+  if (entry.id) return btn.id === entry.id;
+  var oc = btn.getAttribute('onclick') || btn.__omegaSoonOnclick || '';
+  return entry.match.test(oc);
+}
+
+function apply(){
+  var n = 0, i, j;
+  try {
+    injectCss();
+    var all = document.querySelectorAll('#ribbon .rbtn, #ribbon .rsbtn, .rtm-item');
+    for (i = 0; i < all.length; i++) {
+      var b = all[i], done = false;
+      for (j = 0; j < HIDE.length && !done; j++) {
+        if (matches(b, HIDE[j])) { if (hide(b)) n++; done = true; }
+      }
+      for (j = 0; j < SOON.length && !done; j++) {
+        if (matches(b, SOON[j])) { if (gate(b, SOON[j])) n++; done = true; }
+      }
+    }
+    /* id-addressed entries, including buttons injected after load. */
+    for (j = 0; j < SOON.length; j++) {
+      if (!SOON[j].id) continue;
+      var el = document.getElementById(SOON[j].id);
+      if (el && gate(el, SOON[j])) n++;
+    }
+    for (j = 0; j < HIDE.length; j++) {
+      if (!HIDE[j].id) continue;
+      var eh = document.getElementById(HIDE[j].id);
+      if (eh && hide(eh)) n++;
+    }
+    for (j = 0; j < REBADGE.length; j++) {
+      var rb = document.getElementById(REBADGE[j].id);
+      if (rb && rebadge(rb, REBADGE[j].label)) n++;
+    }
+  } catch (e) { if (root.console) console.warn(TAG, e && e.message); }
+  return n;
+}
+
+/* Several of these buttons are injected by later modules, and the tag
+   system re-runs on its own schedule, so this has to keep watch rather
+   than fire once. MutationObserver is guarded: a missing global here must
+   not take the ribbon down. */
+function start(){
+  apply();
+  var attached = false;
+  try {
+    if (typeof root.MutationObserver === 'function') {
+      new root.MutationObserver(function(){ apply(); })
+        .observe(document.body, { childList: true, subtree: true });
+      attached = true;
+    }
+  } catch (e) {}
+  if (!attached) setInterval(apply, 1200);
+  /* A few late passes regardless: the observer can fire before a module
+     finishes wiring its own onclick. */
+  [400, 1200, 2500, 5000].forEach(function (ms) { setTimeout(apply, ms); });
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+else start();
+
+root.OmegaGating = {
+  apply: apply,
+  /* Put a tool back: OmegaGating.restore(/openPriceDecks/) */
+  restore: function (re) {
+    var all = document.querySelectorAll('.omega-soon, .omega-gated-hidden'), n = 0;
+    for (var i = 0; i < all.length; i++) {
+      var b = all[i];
+      var oc = b.getAttribute('onclick') || b.__omegaSoonOnclick || '';
+      if (re && !re.test(oc) && !(b.id && re.test(b.id))) continue;
+      b.classList.remove('omega-soon', 'omega-gated-hidden');
+      if (b.__omegaSoonOnclick) { b.setAttribute('onclick', b.__omegaSoonOnclick); b.onclick = null; }
+      else if (b.__omegaSoonFn) { b.onclick = b.__omegaSoonFn; }
+      b.__omegaSoon = false;
+      b.removeAttribute('aria-disabled');
+      var t = b.querySelector('.omega-soon-tag'); if (t) t.remove();
+      n++;
+    }
+    return n;
+  },
+  hidden: HIDE, soon: SOON
+};
 
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
