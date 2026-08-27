@@ -131793,7 +131793,70 @@ function buildCarport(it, arch){
   var poly = it.poly;
   var w = it.wf, d = it.lf;
 
-  /* Runs follow the LONG axis, which is how a lot is striped. Build with
+  /* Per-array geometry when Array Geometry set it; a canopy needs real
+     drive-under clearance, so the floor is 10 ft whatever it says. */
+  var CLEAR = Math.max(10, (it.clearFt != null) ? it.clearFt : 14);
+  var TILT  = ((it.tiltDeg != null) ? Math.min(12, it.tiltDeg) : 7) * Math.PI/180;
+
+  /* ═══ THE DRAWN LAYOUT WINS ═══════════════════════════════════════
+     If the auto-layout produced tables, those rectangles ARE the design:
+     the site map draws them, the kW is computed from them, and the table
+     count in the panel is theirs. This builder used to ignore them
+     entirely and improvise its own runs from the bounding box, so an
+     array with 285 real tables rendered as four invented strips in the
+     wrong place. Nothing else here can be as accurate as simply building
+     what the layout laid out. */
+  if(it.tables && it.tables.length){
+    var stride = it.tables.length > 1200 ? Math.ceil(it.tables.length/1200) : 1;
+    var used = 0, tot = 0;
+
+    /* asphalt over the traced outline, so the canopy stands on a lot */
+    if(poly){
+      var lot0 = polySlab(poly, it.x, it.z, 0.14, MAT.asphalt);
+      lot0.castShadow = false; lot0.receiveShadow = true;
+      g.add(lot0);
+    }
+
+    for(var k=0;k<it.tables.length;k++){
+      if(k % stride) continue;
+      var t = it.tables[k];
+      var tw = Math.max(2, t.wf), tl = Math.max(2, t.lf);
+      var riseT = Math.tan(TILT) * tl;
+
+      /* One bay per table. A wrapper carries the table's own azimuth so
+         the tilt stays about the table's cross-axis, not the world's. */
+      var bay = new THREE.Group();
+      bay.position.set(t.x - it.x, 0, t.z - it.z);
+      bay.rotation.y = -(t.a || 0);
+
+      var deck = new THREE.Mesh(
+        new THREE.BoxGeometry(tw, 0.34, tl/Math.cos(TILT)), panelMat(tw, tl));
+      deck.rotation.x = -TILT;
+      deck.position.y = CLEAR + riseT/2;
+      deck.castShadow = true; deck.receiveShadow = true;
+      bay.add(deck);
+
+      /* corrugated substrate just proud of the modules */
+      var sub0 = box(tw + 0.9, 0.24, tl/Math.cos(TILT) + 1.0, MAT.galv);
+      sub0.rotation.x = -TILT;
+      sub0.position.y = CLEAR + riseT/2 - 0.28;
+      bay.add(sub0);
+
+      /* Supports on a structural interval, not under every table — a
+         post per table would be a forest and is not how these are built. */
+      if((used % 3) === 0){
+        var fr = canopyFrame(tl, CLEAR, TILT);
+        bay.add(fr);
+      }
+      g.add(bay);
+      used++; tot += tw * tl * stride;
+    }
+    it._builtSqft = tot;
+    return g;
+  }
+
+  /* ═══ no table layout: generate runs over the outline ═══════════════
+     Runs follow the LONG axis, which is how a lot is striped. Build with
      runs along local X, then spin the finished group if the region is
      deeper than it is wide. */
   var flip = (d > w);
@@ -131806,12 +131869,6 @@ function buildCarport(it, arch){
      region when the region is the smaller of the two. */
   var DECK_D  = Math.min(40, Math.max(18, A));
   var ROW     = Math.min(18, DECK_D/2 - 1);       /* one parking row  */
-  /* Per-array geometry when Array Geometry set it; a canopy needs real
-     drive-under clearance, so the floor is 10 ft whatever it says. */
-  /* 14 ft clear is the commercial norm (the reference decks sit at
-     5.5 m); 12 ft read as low and made the deck look undersized. */
-  var CLEAR   = Math.max(10, (it.clearFt != null) ? it.clearFt : 14);
-  var TILT    = ((it.tiltDeg != null) ? Math.min(12, it.tiltDeg) : 7) * Math.PI/180;
   var rise    = Math.tan(TILT) * DECK_D;
   var deckMid = CLEAR + rise/2;
 
