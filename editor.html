@@ -133350,8 +133350,17 @@ function wireSide(){
       V.needsRender = true;
       return;
     }
-    if(note) note.textContent = 'Fetching building footprints\u2026';
+    /* Tick the note while the fetch runs. Overpass is community-run and can
+       take twenty seconds on a dense block; a line that never changes reads
+       as a hang, and the user gives up on a feature that was about to
+       work. A counter costs nothing and buys the wait. */
+    if(note) note.textContent = 'Contacting OpenStreetMap\u2026';
+    var tick = setInterval(function(){
+      if(!CB.state.loading){ clearInterval(tick); return; }
+      if(note) note.textContent = CB.summary();
+    }, 500);
     CB.load(V, THREE, V.site, function(){
+      clearInterval(tick);
       if(note) note.innerHTML = esc(CB.summary());
       V.needsRender = true;
     });
@@ -139217,10 +139226,16 @@ root.OmegaGating = {
 (function (root) {
 'use strict';
 
+/* Three mirrors. Overpass is free, community-run and frequently busy;
+   the main instance in particular will accept a connection and then sit
+   on it under load, which is a different failure from refusing one and
+   has to be handled on a timer rather than an error. */
 var OVERPASS = [
+  'https://overpass.kumi.systems/api/interpreter',   /* usually the fastest */
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter'
+  'https://overpass.osm.ch/api/interpreter'
 ];
+var MIRROR_MS = 9000;      /* per mirror. 3 x 9s = 27s worst case, not 40. */
 
 var M_PER_FT = 0.3048;
 var FT_PER_M = 1 / M_PER_FT;
@@ -139247,7 +139262,10 @@ var state = {
   lastKey: null,
   cache: {},
   error: null,
-  radiusFt: 1600
+  radiusFt: 1600,
+  progress: null,
+  startedAt: null,
+  abort: null
 };
 
 /* ── projection: lat/lon → the visualizer's world feet ────────────────
@@ -139373,21 +139391,46 @@ function heightOf(tags){
    `out geom` returns each way's node coordinates inline, so one request
    gets footprints and tags together instead of a second lookup per way. */
 function fetchBuildings(bb, cb){
-  var q = '[out:json][timeout:25];('
+  /* building:part was dropped. Those are facade sub-volumes of buildings
+     the query already returns, so they doubled the work and the payload
+     to add geometry that sits inside a mass we are drawing anyway. On a
+     dense block that alone was most of the wait. */
+  var q = '[out:json][timeout:15];'
         + 'way["building"](' + bb.join(',') + ');'
-        + 'way["building:part"](' + bb.join(',') + ');'
-        + ');out geom tags;';
-  var idx = 0;
+        + 'out geom tags;';
+  var idx = 0, lastErr = null;
+
   function attempt(){
-    if (idx >= OVERPASS.length) return cb(null, 'no Overpass mirror responded');
+    if (idx >= OVERPASS.length) {
+      return cb(null, 'no mirror answered in time' + (lastErr ? ' (' + lastErr + ')' : ''));
+    }
     var url = OVERPASS[idx++];
+    var host = url.replace(/^https:\/\//, '').split('/')[0];
     var done = false;
-    var t = setTimeout(function(){ if (!done) { done = true; attempt(); } }, 20000);
+    state.progress = 'Asking ' + host + ' (' + idx + ' of ' + OVERPASS.length + ')\u2026';
+    state.startedAt = state.startedAt || Date.now();
+
+    /* Abort rather than abandon: a request left running still costs the
+       mirror, and its late reply could land after the user has toggled
+       the layer off. */
+    var ctl = null;
+    try { if (typeof AbortController === 'function') ctl = new AbortController(); } catch (e) {}
+    state.abort = ctl;
+
+    var t = setTimeout(function(){
+      if (done) return;
+      done = true;
+      lastErr = host + ' did not respond';
+      try { if (ctl) ctl.abort(); } catch (e) {}
+      attempt();
+    }, MIRROR_MS);
+
     try {
       fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: q
+        body: q,
+        signal: ctl ? ctl.signal : undefined
       }).then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -139398,11 +139441,11 @@ function fetchBuildings(bb, cb){
       }).catch(function (e) {
         if (done) return;
         done = true; clearTimeout(t);
-        if (idx < OVERPASS.length) attempt();
-        else cb(null, (e && e.message) || 'Overpass unreachable');
+        lastErr = (e && e.message) || 'unreachable';
+        attempt();
       });
     } catch (e) {
-      if (!done) { done = true; clearTimeout(t); attempt(); }
+      if (!done) { done = true; clearTimeout(t); lastErr = (e && e.message) || 'fetch failed'; attempt(); }
     }
   }
   attempt();
@@ -139472,6 +139515,10 @@ function buildMesh(THREE, ring, heightFt, mat){
 
 /* ── the scene work ──────────────────────────────────────────────────── */
 function clear(V){
+  /* Toggling off mid-fetch should stop the fetch, not leave it to land on
+     a layer nobody is looking at any more. */
+  try { if (state.abort) state.abort.abort(); } catch (e) {}
+  state.abort = null; state.loading = false; state.progress = null; state.startedAt = null;
   if (!state.group) return;
   try {
     state.group.traverse(function (o) {
@@ -139610,8 +139657,13 @@ function load(V, THREE, site, cb){
 
   state.loading = true;
   state.error = null;
+  state.startedAt = Date.now();
+  state.progress = 'Contacting OpenStreetMap\u2026';
   fetchBuildings(bb, function (els, err) {
     state.loading = false;
+    state.progress = null;
+    state.abort = null;
+    state.startedAt = null;
     if (err || !els) {
       state.error = 'Could not reach OpenStreetMap for building footprints (' + (err || 'no data') + ').';
       return cb(null, state.error);
@@ -139641,7 +139693,10 @@ root.OmegaContextBuildings = {
      because the shadow picture is only as good as the heights behind it. */
   summary: function(){
     var s = state.stats;
-    if (state.loading) return 'Fetching building footprints\u2026';
+    if (state.loading) {
+      var secs = state.startedAt ? Math.round((Date.now() - state.startedAt) / 1000) : 0;
+      return (state.progress || 'Fetching building footprints\u2026') + ' ' + secs + 's';
+    }
     if (state.error) return state.error;
     if (!s || !s.total) return 'No buildings loaded.';
     var known = s.measured + s.derived;
