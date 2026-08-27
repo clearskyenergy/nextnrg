@@ -139306,8 +139306,19 @@ function projector(site){
     }
   }
 
+  /* Where the map centre lands in the scene's own feet. Buildings are
+     placed against this point, and so is the satellite backdrop — the two
+     use identical arithmetic, so they cannot disagree with each other.
+     Reporting it turns "the buildings look wrong" into a number. */
+  var anchor = {
+    source: ms ? (ms === root._savedMapState ? 'saved map state' : 'live map') : 'project record',
+    lat: lat, lng: lng, ppf: ppf,
+    mapCentreEastFt:  (canvasCx - ox) / ppf,
+    mapCentreSouthFt: (canvasCy - oy) / ppf
+  };
+
   return {
-    lat: lat, lng: lng, ppf: ppf, scaleWarn: scaleWarn,
+    lat: lat, lng: lng, ppf: ppf, scaleWarn: scaleWarn, anchor: anchor,
     /* Equirectangular about the site centre. Over a few thousand feet the
        error against a proper projection is well under a foot. */
     toWorld: function (plat, plng) {
@@ -139492,22 +139503,29 @@ function render(V, THREE, site, elements, proj){
      visualizer. Rendering the OSM copy on top of them produces z-fighting
      and a doubled roof, so any OSM footprint whose centroid lands inside a
      drawn building is dropped in favour of the drawn one. */
+  /* readSite's items carry x/z centre and wf/lf extents in FEET — there is
+     no .box on them. The first version read it.box, so `drawn` was always
+     empty and the dedupe silently never ran. A drawn building therefore
+     got its OSM twin rendered straight through it. */
   var drawn = [];
   try {
     (site.items || []).forEach(function (it) {
-      if (it && it.arch === 'building' && it.box) drawn.push(it.box);
+      if (!it || it.arch !== 'building' || it.hidden) return;
+      if (!isFinite(it.x) || !isFinite(it.z)) return;
+      drawn.push({ x: it.x, z: it.z, hw: Math.max(2, (it.wf || 0) / 2), hl: Math.max(2, (it.lf || 0) / 2) });
     });
   } catch (e) {}
   function insideDrawn(cx, cz){
     for (var i = 0; i < drawn.length; i++) {
       var b = drawn[i];
-      if (cx >= b.x && cx <= b.x + b.w && cz >= b.z && cz <= b.z + b.h) return true;
+      if (Math.abs(cx - b.x) <= b.hw && Math.abs(cz - b.z) <= b.hl) return true;
     }
     return false;
   }
 
   var stats = { total: 0, measured: 0, derived: 0, assumed: 0, skipped: 0,
-                tallestFt: 0, tallestName: null, scaleWarn: proj.scaleWarn || null };
+                tallestFt: 0, tallestName: null, scaleWarn: proj.scaleWarn || null,
+                anchor: proj.anchor || null, nearestFt: null };
   var maxR = state.radiusFt;
 
   for (var e = 0; e < elements.length; e++) {
@@ -139552,6 +139570,8 @@ function render(V, THREE, site, elements, proj){
 
     stats.total++;
     stats[hh.basis]++;
+    var dist = Math.sqrt(cx * cx + cz * cz);
+    if (stats.nearestFt === null || dist < stats.nearestFt) stats.nearestFt = dist;
     if (hFt > stats.tallestFt) {
       stats.tallestFt = hFt;
       stats.tallestName = mesh.userData.name || mesh.userData.kind;
@@ -139636,6 +139656,19 @@ root.OmegaContextBuildings = {
     if (s.tallestFt > 0) {
       out += ' Tallest ' + Math.round(s.tallestFt) + ' ft' +
              (s.tallestName ? ' (' + s.tallestName + ')' : '') + '.';
+    }
+    if (s.nearestFt != null) {
+      out += ' Nearest is ' + Math.round(s.nearestFt) + ' ft from the site centre.';
+    }
+    if (s.anchor) {
+      var a = s.anchor;
+      out += '  Placed against the ' + a.source + ' at ' + a.lat.toFixed(5) + ', ' +
+             a.lng.toFixed(5) + ' and ' + a.ppf.toFixed(3) + ' px/ft; that point sits ' +
+             Math.round(Math.abs(a.mapCentreEastFt)) + ' ft ' + (a.mapCentreEastFt >= 0 ? 'east' : 'west') +
+             ' and ' + Math.round(Math.abs(a.mapCentreSouthFt)) + ' ft ' +
+             (a.mapCentreSouthFt >= 0 ? 'south' : 'north') + ' of the site centre. ' +
+             'The satellite backdrop is placed by the same arithmetic \u2014 if the imagery lines up ' +
+             'and the buildings do not, that is a bug here; if neither lines up, it is the drawing scale.';
     }
     if (s.scaleWarn) out += '  \u26a0 ' + s.scaleWarn;
     return out;
