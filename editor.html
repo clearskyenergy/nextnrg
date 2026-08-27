@@ -130954,15 +130954,25 @@ function readSite(){
                  wf:(t.w||0)/p, lf:(t.h||0)/p, a:t.a||0 };
       });
     }
-    /* THE OUTLINE, NOT ITS BOUNDING BOX.
-       Half the arrays on a real site are angled roof planes or clipped
-       parcels. Rendering those as their bounding rectangle spills the deck
-       over roof edges and setbacks it was drawn to respect. An auto-layout
-       array keeps its outline in `boundary`; a hand-drawn polygon keeps it
-       in `pts`. Either way the outline is what gets extruded. */
+    /* THE OUTLINE, AND IT MUST COME FROM THE SAME SOURCE AS THE SIZE.
+
+       shapeBox measures from _ftBoundary (feet, always current). Reading
+       the outline from sh.boundary instead — the PIXEL cache, which goes
+       stale the moment the drawing scale changes — meant the polygon used
+       for clipping and the box used for centring described different
+       geometry. Panels were then clipped against an outline sitting
+       somewhere other than where the array was drawn.
+
+       Feet first here too, exactly as shapeBox does it. */
     var ring = null;
-    if(sh.boundary && sh.boundary.length > 2) ring = sh.boundary;
-    else if(sh.pts && sh.pts.length > 2)      ring = sh.pts;
+    if(sh._ftBoundary && sh._ftBoundary.length > 2 && sh.pts && sh.pts[0]){
+      var ob = sh.pts[0];
+      ring = sh._ftBoundary.map(function(q){
+        return { x: ob.x + q.x*p, y: ob.y + q.y*p };
+      });
+    }
+    else if(sh.boundary && sh.boundary.length > 2) ring = sh.boundary;
+    else if(sh.pts && sh.pts.length > 2)           ring = sh.pts;
     if(ring){
       it.poly = ring.map(function(q){ return { x:fx(q.x), z:fz(q.y) }; });
     }
@@ -131357,6 +131367,39 @@ function inPoly(x, z, pts){
   return inside;
 }
 
+/* THE EDITOR'S OWN MODULE GRID.
+
+   _pvDrawModules is what draws the panels you see on the site map, and
+   this reproduces its arithmetic exactly so the 3D lays modules on the
+   same grid the 2D does — same module, same pitch, same orientation
+   choice. Anything else and the two views disagree about a design they
+   are both supposed to be showing.
+
+     module      3.6 x 7.2 ft with a 0.08 ft gap
+     ground      pitch = module length / GCR, so rows do not shade
+     roof        pitch = module length + gap, laid nearly edge to edge
+     orientation portrait and landscape are both tried and whichever fits
+                 more modules wins, ties to portrait
+
+   Returns feet. */
+var PV_MOD = { wFt:3.6, hFt:7.2, gapFt:0.08 };
+
+function moduleGrid(availW, availH, gcr, isRoof){
+  var gap = PV_MOD.gapFt;
+  var g2 = (gcr > 0 && gcr <= 1) ? gcr : 0.40;
+  function fit(mw, mh){
+    var pitch = isRoof ? (mh + gap) : (mh / Math.max(0.15, g2));
+    var cols  = Math.floor((availW + gap) / (mw + gap));
+    var rows  = (availH < mh) ? 0 : Math.floor((availH - mh) / pitch) + 1;
+    if(cols < 0) cols = 0;
+    return { mw:mw, mh:mh, pitch:pitch, cols:cols, rows:rows,
+             n:Math.max(0, cols*rows) };
+  }
+  var portrait  = fit(PV_MOD.wFt, PV_MOD.hFt);
+  var landscape = fit(PV_MOD.hFt, PV_MOD.wFt);
+  return (landscape.n > portrait.n) ? landscape : portrait;
+}
+
 function box(w,h,d,mat){ var m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
   m.castShadow=true; m.receiveShadow=true; return m; }
 function cyl(rt,rb,h,mat,seg){ var m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg||12), mat);
@@ -131444,39 +131487,56 @@ function buildSolarGround(it, arch){
     return g;
   }
 
-  /* --- generate rows, clipped to the outline ------------------------ */
+  /* --- generate rows on the editor's grid, clipped to the outline ----
+     Row pitch, module size and orientation all come from moduleGrid, so
+     the rows sit where the site map draws them rather than on a pitch
+     invented here. Row azimuth follows the array's own angleDeg. */
   var poly = it.poly;
   var sb = it.setbackFt || 0;
   var gcr = it.gcr > 0 ? it.gcr : 0.40;
-  var pitch = it.pitchFt || Math.max(tD*1.05, tD/gcr);
+  var availW = Math.max(4, it.wf - sb*2), availH = Math.max(4, it.lf - sb*2);
+  var grid = moduleGrid(availW, availH, gcr, false);
+  var pitch = it.pitchFt || grid.pitch;
+
+  /* One mesh per module is far too many for a site of any size, so a
+     contiguous run of modules along a row is drawn as one strip. The
+     panel texture repeats at true module scale over it, so the modules
+     are still individually visible. */
+  /* Strip length is a trade: long strips are cheap to draw but follow an
+     angled outline coarsely, since a strip is kept or dropped whole. Six
+     modules (~22 ft) tracks a boundary closely without flooding the scene
+     with meshes. */
+  var runW = Math.max(grid.mw, Math.min(availW, grid.mw * 6 + PV_MOD.gapFt * 5));
   var ang = (it.angleDeg || 0) * Math.PI/180;
   var ca = Math.cos(ang), sa = Math.sin(ang);
-
-  /* Work in the row frame, then map back to site coords to test the
-     outline, so rows follow the array's azimuth rather than the screen. */
   var reach = Math.sqrt(it.wf*it.wf + it.lf*it.lf)/2 + pitch;
-  var cols = Math.max(1, Math.ceil(reach*2 / tW));
-  var rows = Math.max(1, Math.ceil(reach*2 / pitch));
-  var made = 0, CAP = 900;
+  var nRow = Math.max(1, Math.ceil(reach*2 / pitch));
+  var nCol = Math.max(1, Math.ceil(reach*2 / (runW + PV_MOD.gapFt)));
+  var made = 0, CAP = 1400;
 
-  for(var r=0; r<rows && made<CAP; r++){
+  for(var r=0; r<nRow && made<CAP; r++){
     var lz = -reach + pitch*(r + 0.5);
-    for(var c=0; c<cols && made<CAP; c++){
-      var lx = -reach + tW*(c + 0.5);
-      /* row frame -> local site frame */
+    for(var c=0; c<nCol && made<CAP; c++){
+      if(spent >= budget) break;
+      var lx = -reach + (runW + PV_MOD.gapFt)*(c + 0.5);
       var wx = lx*ca - lz*sa, wz = lx*sa + lz*ca;
-      /* inside the drawn area? outline if we have one, else the setback box */
+      /* Clip on the strip's real EXTENT, not its centre point. Testing the
+         centre alone let half a strip hang past the boundary — a 200 ft
+         array rendering 262 ft wide. */
+      var ex = (runW/2)*ca, ez = (runW/2)*sa;
       if(poly){
         if(!inPoly(wx + it.x, wz + it.z, poly)) continue;
+        if(!inPoly(wx - ex + it.x, wz - ez + it.z, poly)) continue;
+        if(!inPoly(wx + ex + it.x, wz + ez + it.z, poly)) continue;
       } else {
-        if(Math.abs(wx) > (it.wf/2 - sb) || Math.abs(wz) > (it.lf/2 - sb)) continue;
+        if(Math.abs(wx) + Math.abs(ex) > availW/2) continue;
+        if(Math.abs(wz) + Math.abs(ez) > availH/2) continue;
       }
-      if(spent >= budget) break;
-      var tbl = pvTable(tW*0.94, tD, tilt, clear);
+      var tbl = pvTable(runW, grid.mh, tilt, clear);
       tbl.position.set(wx, 0, wz);
       tbl.rotation.y = -ang;
       g.add(tbl); made++;
-      spent += tW*0.94 * tD;
+      spent += runW * grid.mh;
     }
     if(spent >= budget) break;
   }
@@ -131561,10 +131621,14 @@ function buildSolarRoof(it, arch, roofY, implied){
   /* Real per-array geometry where the drawing states it. */
   var tiltR = ((it.tiltDeg != null) ? it.tiltDeg : arch.tilt) * Math.PI/180;
   var stand = (it.clearFt != null) ? it.clearFt : arch.clear;
-  var rowD  = it.tableHft || 6.6;
-  var tW    = it.tableWft || Math.min(bw, 40);
+  /* Roof arrays are laid nearly edge to edge, not on a shading pitch —
+     the same distinction the editor's renderer makes. */
+  var rgrid = moduleGrid(bw, bl, (it.gcr>0 ? it.gcr : 0.70), true);
+  var rowD  = it.tableHft || rgrid.mh;
+  var tW    = it.tableWft ||
+              Math.max(rgrid.mw, Math.min(bw, rgrid.mw*12 + PV_MOD.gapFt*11));
   var gcr   = it.gcr>0 ? it.gcr : 0.70;
-  var pitch = it.pitchFt || Math.max(rowD*1.02, rowD/gcr);
+  var pitch = it.pitchFt || rgrid.pitch;
   var ang   = (it.angleDeg || 0) * Math.PI/180;
   var ca = Math.cos(ang), sa = Math.sin(ang);
 
@@ -132496,11 +132560,25 @@ function populate(site){
       default: return;
     }
     if(!g) return;
-    g.position.x += it.x; g.position.z += it.z;
-    g.rotation.y = -(it.rot||0) * Math.PI/180;   /* screen-clockwise -> -Y */
-    g.userData.itemId = it.id;
+
+    /* PLACE VIA A WRAPPER, never by writing g's own transform.
+
+       buildCarport sets g.rotation.y = 90deg when the region is deeper
+       than it is wide, because it lays runs along local X and then spins
+       the finished group. Assigning g.rotation.y here WIPED that out, so
+       the runs were clipped to the polygon in one orientation and drawn
+       in another — panels ending up across the lot from where they were
+       computed. That is the "it does whatever it wants" behaviour.
+
+       A wrapper carries position and the item's own rotation, and the
+       builder keeps whatever internal transform it needs. */
+    var wrap = new THREE.Group();
+    wrap.position.set(it.x, 0, it.z);
+    wrap.rotation.y = -(it.rot||0) * Math.PI/180;   /* screen-clockwise -> -Y */
+    wrap.add(g);
+    wrap.userData.itemId = it.id;
     var lg = V.layers[arch.group] || V.root;
-    lg.add(g);
+    lg.add(wrap);
   });
 
   buildConduits(site);
