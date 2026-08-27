@@ -46129,7 +46129,7 @@ function _renderPreQualResults(r, totalKW, totalKWh, el, isHeuristic) {
         ? `<div style="font-size:13px;font-weight:700;color:#FBBF24">${Math.round(r.solarEnergy.annualKwh/1000).toLocaleString()} MWh/yr</div>
            <div style="font-size:10px;color:var(--sub);margin-top:2px">${Math.round(r.solarKwDc).toLocaleString()} kW-DC at ${Math.round(r.solarEnergy.specificYield).toLocaleString()} kWh/kW-yr &middot; ${r.solarEnergy.basis}</div>`
         : `<div style="font-size:12px;font-weight:700;color:var(--sub)">${Math.round(r.solarKwDc).toLocaleString()} kW-DC placed &mdash; generation not modelled</div>
-           <div style="font-size:10px;color:var(--sub);margin-top:2px">Run Generation &rsaquo; 8760 Yield to model output hour by hour from this site&rsquo;s latitude and each array&rsquo;s tilt.</div>`}
+           <div style="font-size:10px;color:var(--sub);margin-top:2px">Run Analyze &rsaquo; Generation Analysis to model output hour by hour from this site&rsquo;s latitude and each array&rsquo;s tilt.</div>`}
     </div>` : ''}
 
     <!-- Data sources (transparency) -->
@@ -108035,6 +108035,11 @@ if (_omPrevOmegaGeo) { Object.keys(_omPrevOmegaGeo).forEach(function (k) {
   if (window.OmegaScreenEngine) return;
 
   var NREL = 'https://developer.nrel.gov/api';
+  /* Same-origin proxy, when the browser will not talk to NREL directly. */
+  function _nrelUrl(u){
+    try { if (window.OmegaNrelKey && window.OmegaNrelKey.wrap) return window.OmegaNrelKey.wrap(u); } catch (e) {}
+    return u;
+  }
 
   /* NREL's DEMO_KEY works without signup but is rate-limited hard (a few
      dozen calls an hour, shared globally). A real key is free; the UI says
@@ -108093,8 +108098,8 @@ if (_omPrevOmegaGeo) { Object.keys(_omPrevOmegaGeo).forEach(function (k) {
       source: 'NREL Utility Rates v3 (from EIA-861)',
       key: 'nrel',
       url: function (ctx) {
-        return NREL + '/utility_rates/v3.json?api_key=' + encodeURIComponent(nrelKey()) +
-               '&lat=' + ctx.lat + '&lon=' + ctx.lng;
+        return _nrelUrl(NREL + '/utility_rates/v3.json?api_key=' + encodeURIComponent(nrelKey()) +
+               '&lat=' + ctx.lat + '&lon=' + ctx.lng);
       },
       parse: function (j) {
         var o = j && j.outputs;
@@ -108121,8 +108126,8 @@ if (_omPrevOmegaGeo) { Object.keys(_omPrevOmegaGeo).forEach(function (k) {
       source: 'NREL Solar Resource Data (NSRDB)',
       key: 'nrel',
       url: function (ctx) {
-        return NREL + '/solar/solar_resource/v1.json?api_key=' + encodeURIComponent(nrelKey()) +
-               '&lat=' + ctx.lat + '&lon=' + ctx.lng;
+        return _nrelUrl(NREL + '/solar/solar_resource/v1.json?api_key=' + encodeURIComponent(nrelKey()) +
+               '&lat=' + ctx.lat + '&lon=' + ctx.lng);
       },
       parse: function (j) {
         var o = j && j.outputs;
@@ -108142,9 +108147,9 @@ if (_omPrevOmegaGeo) { Object.keys(_omPrevOmegaGeo).forEach(function (k) {
       source: 'NREL PVWatts v8',
       key: 'nrel',
       url: function (ctx) {
-        return NREL + '/pvwatts/v8.json?api_key=' + encodeURIComponent(nrelKey()) +
+        return _nrelUrl(NREL + '/pvwatts/v8.json?api_key=' + encodeURIComponent(nrelKey()) +
                '&lat=' + ctx.lat + '&lon=' + ctx.lng +
-               '&system_capacity=1&azimuth=180&tilt=20&array_type=1&module_type=0&losses=14';
+               '&system_capacity=1&azimuth=180&tilt=20&array_type=1&module_type=0&losses=14');
       },
       parse: function (j) {
         var o = j && j.outputs;
@@ -133855,12 +133860,71 @@ function setTest(msg, col){
 }
 
 /* A live call, so "saved" means "works" rather than "was typed". */
+/* ── OPTIONAL SAME-ORIGIN PROXY ──────────────────────────────────────
+   If the browser refuses to talk to developer.nrel.gov directly, no
+   amount of key-fiddling helps: the request is being stopped before NREL
+   ever sees it. The only fix that works from a static single-file app is
+   to route the call through the origin the page was served from.
+
+   Set one with:  OmegaNrelKey.setProxy('https://nextnrg.csebuilders.com/nrel')
+   and every NREL call becomes  <proxy>/<path>?<query>  instead. Anything
+   that forwards the path and query to developer.nrel.gov and returns the
+   body will do — a dozen lines of Cloudflare Worker, an nginx
+   proxy_pass, or a Vercel rewrite.
+
+   Nothing is proxied by default, because a proxy that silently appears in
+   the request path is a thing nobody can debug. */
+var PROXY_STORE = 'omega.nrel.proxy';
+function proxyBase(){
+  try {
+    var v = localStorage.getItem(PROXY_STORE);
+    return (v && v.trim()) ? v.trim().replace(/\/+$/, '') : '';
+  } catch (e) { return ''; }
+}
+function setProxy(u){
+  try {
+    if (u && String(u).trim()) localStorage.setItem(PROXY_STORE, String(u).trim());
+    else localStorage.removeItem(PROXY_STORE);
+  } catch (e) {}
+}
+/* Rewrite an absolute NREL URL onto the proxy, if one is set. */
+function wrap(url){
+  var b = proxyBase();
+  if (!b) return url;
+  return String(url).replace(/^https:\/\/developer\.nrel\.gov\/api/, b);
+}
+
+/* ── DIAGNOSIS ───────────────────────────────────────────────────────
+   "Failed to fetch" is what the browser says for every network-layer
+   refusal, and it covers at least four different problems with four
+   different fixes. Guessing between them wastes an afternoon, so this
+   probes rather than guesses.
+
+   The discriminator is a no-cors request. In that mode the browser sends
+   the request and hands back an opaque response without reading it, so it
+   succeeds whenever the server was actually REACHED — even if the server
+   sent no CORS headers at all. Therefore:
+
+     normal fails, no-cors succeeds  -> NREL was reached and answered; the
+                                        browser discarded the answer for
+                                        want of an Access-Control-Allow-
+                                        Origin header. A proxy fixes it.
+     both fail                       -> the request never left, or never
+                                        arrived: offline, DNS, corporate
+                                        firewall, or a blocking extension.
+                                        A proxy will not help. */
+function diagnose(url, cb){
+  fetch(url, { mode: 'no-cors', cache: 'no-store' })
+    .then(function(){ cb('cors'); })
+    .catch(function(){ cb('unreachable'); });
+}
+
 function test(){
   var inp = document.getElementById('omega-nrel-key-input');
   var k = (inp && inp.value.trim()) || key();
   setTest('Checking\u2026', '#8FA3B8');
-  var url = 'https://developer.nrel.gov/api/solar/solar_resource/v1.json?api_key=' +
-            encodeURIComponent(k) + '&lat=41.88&lon=-87.63';
+  var url = wrap('https://developer.nrel.gov/api/solar/solar_resource/v1.json?api_key=' +
+            encodeURIComponent(k) + '&lat=41.88&lon=-87.63');
   var done = false;
   var to = setTimeout(function(){
     if (!done) { done = true; setTest('No response in 12 seconds \u2014 check the network.', '#F97316'); }
@@ -133880,7 +133944,20 @@ function test(){
       })
       .catch(function (e) {
         if (done) return; done = true; clearTimeout(to);
-        setTest('Could not reach NREL: ' + ((e && e.message) || 'network error'), '#F97316');
+        setTest('No answer \u2014 working out why\u2026', '#8FA3B8');
+        diagnose(url, function (verdict) {
+          if (verdict === 'cors') {
+            setTest('NREL answered, but this browser threw the answer away: the response carried no ' +
+                    'Access-Control-Allow-Origin header for ' + location.origin + '. The key is fine and the ' +
+                    'network is fine \u2014 the call has to go through your own domain. Set a proxy with ' +
+                    'OmegaNrelKey.setProxy(\'https://your-domain/nrel\') pointing at anything that forwards ' +
+                    'to developer.nrel.gov/api.', '#F97316');
+          } else {
+            setTest('The request never reached NREL at all \u2014 not a CORS problem and not the key. ' +
+                    'Most often an ad-blocker or privacy extension, a corporate firewall, or DNS. ' +
+                    'Try a private window with extensions off.', '#F97316');
+          }
+        });
       });
   } catch (e) {
     done = true; clearTimeout(to);
@@ -133936,6 +134013,7 @@ function addButton(){
 
 root.OmegaNrelKey = {
   key: key, source: source, save: save, stored: stored,
+  wrap: wrap, setProxy: setProxy, proxyBase: proxyBase, diagnose: diagnose,
   shipped: SHIPPED, open: open, test: test,
   saveFromPanel: saveFromPanel, clear: clearKey
 };
@@ -134200,74 +134278,96 @@ function logoForDeck(cb){
 /* ── build the deck palette ──────────────────────────────────────────── */
 var FALLBACK = { primary: 'FBBF24', secondary: '60A5FA', source: 'default' };
 
-function buildTheme(primaryHex, secondaryHex, source){
+/* The six data-series colours. Fixed, and deliberately not derived from
+   the brand: see the note in buildTheme. */
+var STOCK = [
+  { role: 'gen',  hex: 'FBBF24' },
+  { role: 'load', hex: '60A5FA' },
+  { role: 'net',  hex: '38BDF8' },
+  { role: 'bess', hex: 'A78BFA' },
+  { role: 'good', hex: '4ADE80' },
+  { role: 'warn', hex: 'F97316' }
+];
+
+function buildTheme(primaryHex, secondaryHex, source, mode){
   var P = toHsl(primaryHex) || toHsl(FALLBACK.primary);
   var hue = P.h, sat = P.s;
+  var light = (mode !== 'dark');          /* light is the default now */
 
-  /* Backgrounds: a deep, mostly-desaturated shade of the brand hue. Kept
-     dark because that is what the app and the existing deck look like, and
-     because a light deck built from an arbitrary brand colour is far
-     harder to keep readable. */
-  var bg    = hslHex(hue, clamp(sat * 0.45, 0.10, 0.42), 0.085);
-  var panel = hslHex(hue, clamp(sat * 0.40, 0.09, 0.36), 0.145);
-  var rule  = hslHex(hue, clamp(sat * 0.36, 0.08, 0.32), 0.245);
+  var bg, panel, rule, text, sub, dim;
 
-  /* Text: tinted toward the brand hue but nowhere near saturated, then
-     forced to clear 7:1 so it is comfortable at projector distance. */
-  var text = hslHex(hue, clamp(sat * 0.12, 0.02, 0.10), 0.94);
-  var sub  = hslHex(hue, clamp(sat * 0.14, 0.03, 0.14), 0.70);
-  var dim  = hslHex(hue, clamp(sat * 0.12, 0.02, 0.12), 0.52);
-  text = ensureContrast(text, bg, 7) || 'F2F6FA';
-  sub  = ensureContrast(sub,  bg, 4.5) || 'A8BACB';
-  dim  = ensureContrast(dim,  bg, 3) || '7C8FA3';
+  if (light) {
+    /* ── LIGHT ───────────────────────────────────
+       White page, brand colour as accent only. This is the default
+       because these documents get read on a phone in daylight, printed,
+       and pasted into a customer's own deck — all three of which a dark
+       slide handles badly. A full-bleed dark background is also a page a
+       client cannot practically print.
 
-  /* The accent is the brand colour itself, lifted only as far as it must
-     be to be legible on the background. */
-  var accent = ensureContrast(primaryHex, bg, 4.5) || 'FBBF24';
-  /* A lighter tint of the brand, for fills and secondary emphasis. */
+       The surfaces carry a whisper of the brand hue rather than being
+       neutral grey, which is enough to make the document feel of a piece
+       with the logo without tinting the paper. */
+    bg    = 'FFFFFF';
+    panel = hslHex(hue, clamp(sat * 0.16, 0.02, 0.14), 0.972);
+    rule  = hslHex(hue, clamp(sat * 0.18, 0.02, 0.16), 0.892);
+    text  = hslHex(hue, clamp(sat * 0.10, 0.01, 0.08), 0.115);
+    sub   = hslHex(hue, clamp(sat * 0.14, 0.02, 0.12), 0.400);
+    dim   = hslHex(hue, clamp(sat * 0.12, 0.02, 0.10), 0.560);
+  } else {
+    bg    = hslHex(hue, clamp(sat * 0.45, 0.10, 0.42), 0.085);
+    panel = hslHex(hue, clamp(sat * 0.40, 0.09, 0.36), 0.145);
+    rule  = hslHex(hue, clamp(sat * 0.36, 0.08, 0.32), 0.245);
+    text  = hslHex(hue, clamp(sat * 0.12, 0.02, 0.10), 0.94);
+    sub   = hslHex(hue, clamp(sat * 0.14, 0.03, 0.14), 0.70);
+    dim   = hslHex(hue, clamp(sat * 0.12, 0.02, 0.12), 0.52);
+  }
+
+  /* The contrast floors are the same either way. ensureContrast moves
+     lightness toward whichever direction clears the ratio, so on a white
+     page it DARKENS and on a dark one it lightens \u2014 one call does both,
+     which is why light mode needed no second implementation. */
+  text = ensureContrast(text, bg, 10) || (light ? '111418' : 'F2F6FA');
+  sub  = ensureContrast(sub,  bg, 4.5) || (light ? '4A5561' : 'A8BACB');
+  dim  = ensureContrast(dim,  bg, 3)   || (light ? '6E7A87' : '7C8FA3');
+
+  /* The accent is the brand colour, moved only as far as legibility
+     demands. On white this bites hard: a bright yellow logo cannot be read
+     at 4.5:1 until it is close to bronze. That is the correct outcome \u2014
+     the alternative is a heading nobody can read. The logo itself is
+     untouched, so the real brand colour is still on the page. */
+  var accent = ensureContrast(primaryHex, bg, 4.5) || (light ? 'B45309' : 'FBBF24');
   var A = toHsl(accent);
-  var accentSoft = hslHex(A.h, clamp(A.s * 0.85, 0, 1), clamp(A.l + 0.16, 0, 0.88));
-  var accentDeep = hslHex(A.h, clamp(A.s, 0, 1), clamp(A.l - 0.22, 0.06, 1));
+  var accentSoft = light
+    ? hslHex(A.h, clamp(A.s * 0.55, 0, 1), clamp(A.l + 0.42, 0, 0.955))
+    : hslHex(A.h, clamp(A.s * 0.85, 0, 1), clamp(A.l + 0.16, 0, 0.88));
+  var accentDeep = hslHex(A.h, clamp(A.s, 0, 1), clamp(A.l - 0.18, 0.06, 1));
 
-  /* Text sitting ON the accent (badges, the title rule, table headers). */
   var onAccent = contrast('111111', accent) >= contrast('FFFFFF', accent) ? '111111' : 'FFFFFF';
 
-  /* ── data series ──────────────────────────────────────────────────
-     Six functionally distinct colours. The brand accent takes slot one
-     when it is distinguishable; any stock colour sitting within 26 degrees
-     of the brand hue is nudged away so two lines on one chart never read
-     as the same colour. */
-  var STOCK = [
-    { role: 'gen',  hex: 'FBBF24' },
-    { role: 'load', hex: '60A5FA' },
-    { role: 'net',  hex: '38BDF8' },
-    { role: 'bess', hex: 'A78BFA' },
-    { role: 'good', hex: '4ADE80' },
-    { role: 'warn', hex: 'F97316' }
-  ];
-  /* The series hues are NOT rotated to fit the brand. An earlier version of
-     this did exactly that, and on a green brand it pushed "warn" from orange
-     round to lime and "good" from green to cyan. A warning that renders as
-     lime has lost the only thing a warning colour is for, and the reader has
-     no way to recover the meaning from a legend that says "before". Semantic
-     colour outranks brand harmony every time.
+  /* \u2500\u2500 data series \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+     Hues are never rotated to fit the brand. An earlier version did, and on
+     a green brand it pushed "warn" from orange round to lime and "good"
+     from green to cyan. A warning that renders as lime has lost the only
+     thing a warning colour is for. Semantic colour outranks brand harmony.
 
-     The collision this would have guarded against does not arise anyway: the
-     brand accent is chrome only — title bands, rules, headings, table
-     headers — and is never drawn as a chart series. So the brand colour and
-     a series colour never appear as two lines on one chart, which is the
-     only situation where sharing a hue actually costs the reader anything.
+     The collision that would have guarded against does not arise: the brand
+     accent is chrome only \u2014 bands, rules, headings, table headers \u2014 and is
+     never drawn as a chart series, so the two never appear as competing
+     lines on one chart.
 
-     All that remains is contrast: each series colour is lifted or dropped in
-     lightness until it clears 3:1 against whatever background the brand
-     produced, which is the WCAG floor for a graphical object. */
+     What DOES change on a white page is that the stock colours stop
+     working. Amber on white is about 1.6:1 \u2014 a reader sees a pale smear
+     where a bar should be, which is exactly what the first light render
+     looked like. Each is darkened until it clears the WCAG floor for a
+     graphical object. */
   var series = {};
   STOCK.forEach(function (s) {
-    series[s.role] = ensureContrast(s.hex, bg, 3) || s.hex;
+    series[s.role] = ensureContrast(s.hex, bg, light ? 3.2 : 3) || s.hex;
   });
 
   return {
     source: source || 'default',
+    mode: light ? 'light' : 'dark',
     brandPrimary: primaryHex,
     brandSecondary: secondaryHex || null,
     bg: bg, panel: panel, rule: rule,
@@ -134279,7 +134379,9 @@ function buildTheme(primaryHex, secondaryHex, source){
       textOnBg:  +contrast(text, bg).toFixed(2),
       subOnBg:   +contrast(sub, bg).toFixed(2),
       accentOnBg:+contrast(accent, bg).toFixed(2),
-      onAccent:  +contrast(onAccent, accent).toFixed(2)
+      onAccent:  +contrast(onAccent, accent).toFixed(2),
+      genOnBg:   +contrast(series.gen, bg).toFixed(2),
+      warnOnBg:  +contrast(series.warn, bg).toFixed(2)
     }
   };
 }
@@ -134375,6 +134477,7 @@ root._brandClearColor = function () {
 };
 
 function paintBrandField(){
+  if (typeof document === 'undefined') return;
   resolve(function (theme) {
     var sw = document.getElementById('brand-color-swatch');
     var tx = document.getElementById('brand-color-hex');
@@ -134388,7 +134491,8 @@ function paintBrandField(){
       var lifted = theme.accent !== theme.brandPrimary;
       nt.innerHTML = 'Deck palette: ' + theme.source + '.' +
         (lifted ? ' Slides use <b style="color:#' + theme.accent + '">#' + theme.accent +
-                  '</b> \u2014 the brand colour lightened to stay readable on a dark slide.'
+                  '</b> \u2014 the brand colour darkened enough to stay readable on a white page. ' +
+                  'Your logo keeps its real colour.'
                 : ' Slides use this colour directly.');
     }
   });
@@ -135228,6 +135332,15 @@ function ktClimatology(latDeg){
 /* One resolver for the whole app, defined by the NREL key module. Falling
    back to reading localStorage directly keeps this working if that module
    is ever removed, and DEMO_KEY remains the last resort. */
+/* Route through the same-origin proxy when one is configured. Without
+   this, setting a proxy would fix the Test button and nothing else — the
+   test would go green while every real lookup kept failing, which is a
+   worse state to be in than no proxy at all. */
+function nrelUrl(u){
+  try { if (root.OmegaNrelKey && root.OmegaNrelKey.wrap) return root.OmegaNrelKey.wrap(u); } catch (e) {}
+  return u;
+}
+
 function nrelKey(){
   try {
     if (root.OmegaNrelKey && typeof root.OmegaNrelKey.key === 'function') return root.OmegaNrelKey.key();
@@ -135252,7 +135365,7 @@ function jsonGet(url, timeoutMs, cb){
    what the hourly model gets calibrated against. */
 function fetchPVWatts(loc, arr, lossPct, cb){
   var arrayType = arr.tracker ? 2 : (arr.mount === 'roof' ? 1 : 0);
-  var url = 'https://developer.nrel.gov/api/pvwatts/v8.json'
+  var url = nrelUrl('https://developer.nrel.gov/api/pvwatts/v8.json'
           + '?api_key='         + encodeURIComponent(nrelKey())
           + '&lat='             + loc.lat.toFixed(5)
           + '&lon='             + loc.lon.toFixed(5)
@@ -135264,7 +135377,7 @@ function fetchPVWatts(loc, arr, lossPct, cb){
           + '&gcr='             + clamp(num(arr.gcr, 0.4), 0.01, 0.99).toFixed(3)
           + '&dc_ac_ratio='     + num(arr.dcAcRatio, 1.25).toFixed(2)
           + '&losses='          + clamp(num(lossPct, 14), -5, 99).toFixed(2)
-          + '&timeframe=monthly';
+          + '&timeframe=monthly');
   jsonGet(url, 14000, function(j, err){
     if (err) return cb(null, err);
     if (!j || !j.outputs || !(num(j.outputs.ac_annual, 0) > 0)) {
@@ -135288,9 +135401,9 @@ function fetchPVWatts(loc, arr, lossPct, cb){
 /* Solar Resource: monthly GHI normals. Cheaper and more robust than
    PVWatts, and enough to drive the physics on its own. */
 function fetchGHI(loc, cb){
-  var url = 'https://developer.nrel.gov/api/solar/solar_resource/v1.json'
+  var url = nrelUrl('https://developer.nrel.gov/api/solar/solar_resource/v1.json'
           + '?api_key=' + encodeURIComponent(nrelKey())
-          + '&lat=' + loc.lat.toFixed(5) + '&lon=' + loc.lon.toFixed(5);
+          + '&lat=' + loc.lat.toFixed(5) + '&lon=' + loc.lon.toFixed(5));
   jsonGet(url, 12000, function(j, err){
     if (err) return cb(null, err);
     var o = j && j.outputs && j.outputs.avg_ghi;
@@ -136498,25 +136611,281 @@ function note(slide, text, y){
   slide.addText(text, { x: 0.5, y: y == null ? 6.62 : y, w: 12.4, h: 0.42,
     fontSize: 9.5, color: C.sub, italic: true, fontFace: 'Segoe UI' });
 }
-var CHART_BASE = {
-  showLegend: true, legendPos: 'b', legendColor: C.sub, legendFontSize: 10,
-  catAxisLabelColor: C.sub, valAxisLabelColor: C.sub,
-  catAxisLabelFontSize: 9, valAxisLabelFontSize: 9,
-  catAxisLineColor: C.rule, valAxisLineColor: C.rule,
-  valGridLine: { color: C.rule, style: 'solid', size: 1 },
-  catGridLine: { style: 'none' },
-  chartArea: { fill: { color: C.bg } }, plotArea: { fill: { color: C.bg } },
-  border: { pt: 0, color: C.bg },
-  showValAxisTitle: true, valAxisTitleColor: C.sub, valAxisTitleFontSize: 10,
-  dataLabelColor: C.text
-};
+/* Built PER CALL, not once at module load. The previous version was an
+   object literal evaluated when the file parsed, so it captured the
+   DEFAULT palette and never saw applyTheme() — every chart kept the old
+   dark background and slate gridlines no matter what the brand theme
+   resolved to. On a white slide that is a dark rectangle where a chart
+   should be, which is half of why the charts looked wrong. */
+function chartBase(){
+  return {
+    showLegend: true, legendPos: 'b', legendColor: C.sub, legendFontSize: 10,
+    catAxisLabelColor: C.sub, valAxisLabelColor: C.sub,
+    catAxisLabelFontSize: 9, valAxisLabelFontSize: 9,
+    catAxisLineColor: C.rule, valAxisLineColor: C.rule,
+    valGridLine: { color: C.rule, style: 'solid', size: 1 },
+    catGridLine: { style: 'none' },
+    chartArea: { fill: { color: C.bg } }, plotArea: { fill: { color: C.bg } },
+    border: { pt: 0, color: C.bg },
+    showValAxisTitle: true, valAxisTitleColor: C.sub, valAxisTitleFontSize: 10,
+    dataLabelColor: C.text
+  };
+}
 function chartOpts(extra){
-  var o = {}; for (var k in CHART_BASE) o[k] = CHART_BASE[k];
+  var o = chartBase(), k;
   for (k in (extra || {})) o[k] = extra[k];
   return o;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════
+ *  CHARTS AS PICTURES
+ *
+ *  The deck used native PowerPoint chart objects, which are editable and
+ *  carry their data with them. That is the right choice on paper and the
+ *  wrong one here: Keynote's importer draws them inconsistently, and the
+ *  charts came through as empty rectangles. Google Slides and LibreOffice
+ *  have their own gaps. An editable chart nobody can see is worth less
+ *  than a picture of a chart everybody can.
+ *
+ *  So the charts are drawn here, to a canvas, and embedded as PNGs at
+ *  160 DPI. That renders identically in PowerPoint, Keynote, Slides,
+ *  LibreOffice, Preview thumbnails and on a phone.
+ *
+ *  The trade is real and worth naming: the reader can no longer click a
+ *  series and retype a number. Set OmegaYieldDeck.nativeCharts = true to
+ *  go back to native chart objects if the deck is only ever opened in
+ *  PowerPoint.
+ *
+ *  Everything is drawn from the same data the native charts received, so
+ *  there is one source of numbers and no way for the picture to drift
+ *  from the model.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+var DPI = 160;                    /* render scale; 160 is sharp on a 4K projector */
+var PT = DPI / 72;                /* points -> pixels, so pt font sizes stay true */
+
+function niceStep(range, target){
+  if (!(range > 0)) return 1;
+  var raw = range / Math.max(1, target);
+  var mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+  var n = raw / mag;
+  var step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10;
+  return step * mag;
+}
+function axisFmt(v, step){
+  var a = Math.abs(v);
+  if (a >= 1e6) return (v / 1e6).toFixed(a >= 1e7 ? 0 : 1) + 'M';
+  if (a >= 1e3) return (v / 1e3).toFixed(a >= 1e4 ? 0 : 1) + 'k';
+  if (step >= 1) return String(Math.round(v));
+  return String(+v.toFixed(2));
+}
+
+/* Draw one chart and hand back a PNG data URL, or null if the canvas is
+   unavailable so the caller can fall back to a native chart. */
+function chartImage(kind, data, o){
+  o = o || {};
+  var inW = o.w || 9, inH = o.h || 4;
+  var W = Math.round(inW * DPI), H = Math.round(inH * DPI);
+  var cv, g;
+  try {
+    cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    g = cv.getContext('2d');
+    if (!g) return null;
+  } catch (e) { return null; }
+
+  var bg = '#' + C.bg, sub = '#' + C.sub, rule = '#' + C.rule, text = '#' + C.text;
+  var colors = (o.chartColors || [C.gen, C.load, C.net, C.bess, C.good, C.warn])
+                 .map(function (c) { return '#' + String(c).replace('#',''); });
+  var font = 'system-ui, -apple-system, "Segoe UI", Arial, sans-serif';
+
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+
+  var labels = (data[0] && data[0].labels) || [];
+  var isBar  = (kind === 'bar');
+  var nSer   = data.length;
+
+  /* ── extents. Bars are read against zero; a bar chart with a floating
+        baseline overstates every difference on it. ── */
+  var mn = isBar ? 0 : Infinity, mx = -Infinity, i, j, v;
+  for (i = 0; i < nSer; i++) {
+    for (j = 0; j < data[i].values.length; j++) {
+      v = data[i].values[j];
+      if (v == null || !isFinite(v)) continue;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+  }
+  if (!isFinite(mn)) mn = 0;
+  if (!isFinite(mx)) mx = 1;
+  if (mx === mn) mx = mn + 1;
+  if (!isBar && mn > 0) mn = 0;
+  var step = niceStep(mx - mn, 5);
+  var lo = Math.floor(mn / step) * step;
+  var hi = Math.ceil(mx / step) * step;
+  if (hi === lo) hi = lo + step;
+
+  /* ── margins, measured rather than guessed ── */
+  var fLab = 9 * PT, fTitle = 10 * PT, fLeg = 10 * PT;
+  g.font = fLab + 'px ' + font;
+  var widest = 0;
+  for (v = lo; v <= hi + 1e-9; v += step) {
+    widest = Math.max(widest, g.measureText(axisFmt(v, step)).width);
+  }
+  var showLegend = (o.showLegend !== false) && nSer > 1 ||
+                   ((o.showLegend !== false) && nSer === 1 && data[0].name && o.forceLegend);
+  var padL = widest + 14 * PT + (o.valAxisTitle ? fTitle + 8 * PT : 0);
+  var padR = 10 * PT;
+  var padT = 10 * PT;
+  var padB = fLab + 12 * PT
+           + (o.catAxisTitle ? fTitle + 6 * PT : 0)
+           + (showLegend ? fLeg + 14 * PT : 0);
+  var pw = W - padL - padR, ph = H - padT - padB;
+  if (pw < 40 || ph < 40) return null;
+
+  function Y(val){ return padT + ph - ((val - lo) / (hi - lo)) * ph; }
+
+  /* ── gridlines and value labels ── */
+  g.lineWidth = Math.max(1, PT * 0.75);
+  g.strokeStyle = rule;
+  g.fillStyle = sub;
+  g.font = fLab + 'px ' + font;
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (v = lo; v <= hi + 1e-9; v += step) {
+    var y = Y(v);
+    g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke();
+    g.fillText(axisFmt(v, step), padL - 7 * PT, y);
+  }
+  /* Zero line, when the data crosses it, drawn heavier: on a net-load
+     chart the difference between importing and exporting is the whole
+     point and must not read as just another gridline. */
+  if (lo < 0 && hi > 0) {
+    g.strokeStyle = sub; g.lineWidth = Math.max(1, PT);
+    g.beginPath(); g.moveTo(padL, Y(0)); g.lineTo(padL + pw, Y(0)); g.stroke();
+  }
+
+  /* ── category labels, thinned until they fit ── */
+  var n = labels.length || (data[0] ? data[0].values.length : 0);
+  var slot = pw / Math.max(n, 1);
+  g.fillStyle = sub; g.textAlign = 'center'; g.textBaseline = 'top';
+  var need = 0;
+  for (i = 0; i < n; i++) need = Math.max(need, g.measureText(String(labels[i] || '')).width);
+  var every = Math.max(1, Math.ceil((need + 8 * PT) / Math.max(slot, 1)));
+  for (i = 0; i < n; i += every) {
+    var cx = isBar ? padL + slot * (i + 0.5)
+                   : padL + (n > 1 ? (i / (n - 1)) * pw : pw / 2);
+    g.fillText(String(labels[i] || ''), cx, padT + ph + 6 * PT);
+  }
+
+  /* ── the data ── */
+  if (isBar) {
+    var groupW = slot * 0.76, barW = groupW / nSer;
+    for (i = 0; i < n; i++) {
+      for (j = 0; j < nSer; j++) {
+        v = data[j].values[i];
+        if (v == null || !isFinite(v)) continue;
+        var x = padL + slot * i + (slot - groupW) / 2 + j * barW;
+        var y0 = Y(Math.max(0, lo)), y1 = Y(v);
+        g.fillStyle = colors[j % colors.length];
+        g.fillRect(x, Math.min(y0, y1), Math.max(1, barW * 0.88), Math.abs(y1 - y0));
+      }
+    }
+    if (o.showValue && nSer === 1) {
+      g.fillStyle = sub; g.font = (9 * PT) + 'px ' + font;
+      g.textAlign = 'center'; g.textBaseline = 'bottom';
+      for (i = 0; i < n; i += every) {
+        v = data[0].values[i];
+        if (v == null) continue;
+        g.fillText(axisFmt(v, step), padL + slot * (i + 0.5), Y(v) - 3 * PT);
+      }
+    }
+  } else {
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    for (j = 0; j < nSer; j++) {
+      g.strokeStyle = colors[j % colors.length];
+      g.lineWidth = Math.max(1.5, (o.lineSize || 2.4) * PT * 0.55);
+      /* A reference line (a held threshold, a limit) is context, not a
+         result. Dashing it keeps it readable where a result line lands on
+         exactly the same value — which on the shaving chart it does for
+         sixteen hours a day, by construction. */
+      try { g.setLineDash(data[j].dash ? [7 * PT, 5 * PT] : []); } catch (e) {}
+      g.beginPath();
+      var started = false;
+      for (i = 0; i < data[j].values.length; i++) {
+        v = data[j].values[i];
+        if (v == null || !isFinite(v)) { started = false; continue; }
+        var px2 = padL + (n > 1 ? (i / (n - 1)) * pw : pw / 2);
+        if (started) g.lineTo(px2, Y(v)); else g.moveTo(px2, Y(v));
+        started = true;
+      }
+      g.stroke();
+    }
+    try { g.setLineDash([]); } catch (e) {}
+  }
+
+  /* ── axis titles ── */
+  g.fillStyle = sub; g.font = fTitle + 'px ' + font;
+  if (o.catAxisTitle) {
+    g.textAlign = 'center'; g.textBaseline = 'top';
+    g.fillText(o.catAxisTitle, padL + pw / 2,
+               padT + ph + fLab + 12 * PT);
+  }
+  if (o.valAxisTitle) {
+    g.save();
+    g.translate(fTitle + 2 * PT, padT + ph / 2);
+    g.rotate(-Math.PI / 2);
+    g.textAlign = 'center'; g.textBaseline = 'top';
+    g.fillText(o.valAxisTitle, 0, 0);
+    g.restore();
+  }
+
+  /* ── legend ── */
+  if (showLegend) {
+    g.font = fLeg + 'px ' + font;
+    var items = [], tot = 0, gap = 20 * PT, sw = 16 * PT;
+    for (j = 0; j < nSer; j++) {
+      var nm = data[j].name || ('Series ' + (j + 1));
+      var wd = sw + 6 * PT + g.measureText(nm).width;
+      items.push({ nm: nm, w: wd, c: colors[j % colors.length], dash: !!data[j].dash });
+      tot += wd + (j ? gap : 0);
+    }
+    var lx = Math.max(padL, (W - tot) / 2), ly = H - fLeg - 6 * PT;
+    g.textAlign = 'left'; g.textBaseline = 'middle';
+    for (j = 0; j < items.length; j++) {
+      g.fillStyle = items[j].c;
+      if (items[j].dash) {
+        g.fillRect(lx, ly + fLeg * 0.5 - 1.6 * PT, sw * 0.42, 3.2 * PT);
+        g.fillRect(lx + sw * 0.58, ly + fLeg * 0.5 - 1.6 * PT, sw * 0.42, 3.2 * PT);
+      } else {
+        g.fillRect(lx, ly + fLeg * 0.5 - 1.6 * PT, sw, 3.2 * PT);
+      }
+      g.fillStyle = sub;
+      g.fillText(items[j].nm, lx + sw + 6 * PT, ly + fLeg * 0.5);
+      lx += items[j].w + gap;
+    }
+  }
+
+  try { return cv.toDataURL('image/png'); } catch (e) { return null; }
+}
+
+/* Put a chart on a slide. Rasterised by default; falls back to a native
+   chart object if the canvas is unavailable, so a deck is never produced
+   with a hole where a chart should be. */
+function putChart(pptx, slide, kind, data, o){
+  if (!root.OmegaYieldDeck || !root.OmegaYieldDeck.nativeCharts) {
+    var img = null;
+    try { img = chartImage(kind, data, o); } catch (e) { img = null; }
+    if (img) {
+      try {
+        slide.addImage({ data: img, x: o.x, y: o.y, w: o.w, h: o.h });
+        return;
+      } catch (e) {}
+    }
+  }
+  slide.addChart(kind === 'bar' ? pptx.ChartType.bar : pptx.ChartType.line, data, o);
+}
+
 function buildDeck(res, opts){
   opts = opts || {};
   var PptxGenJS = root.PptxGenJS;
@@ -136586,7 +136955,7 @@ function buildDeck(res, opts){
     statCard(pptx, s, 10.16, 1.25, 2.68, 'Peak output', kw(res.peakOutputKw),
       'highest modelled hour', C.text);
 
-    s.addChart(pptx.ChartType.bar,
+    putChart(pptx, s, 'bar',
       [{ name: 'Monthly generation (MWh)', labels: MON.slice(),
          values: res.monthAc.map(function (v) { return +(v / 1000).toFixed(1); }) }],
       chartOpts({ x: 0.5, y: 2.78, w: 12.33, h: 3.7,
@@ -136658,7 +137027,7 @@ function buildDeck(res, opts){
       .map(function (d) {
         return { name: d.label + ' (' + d.date + ') \u2014 ' + kwh(d.kwh), labels: HOURS(), values: d.gen };
       });
-    s.addChart(pptx.ChartType.line, series,
+    putChart(pptx, s, 'line', series,
       chartOpts({ x: 0.5, y: 1.25, w: 12.33, h: 4.9,
         chartColors: [C.gen, C.net, C.bess],
         lineSize: 2.6, lineSmooth: true, showMarker: false,
@@ -136682,7 +137051,7 @@ function buildDeck(res, opts){
       var d = rep.monthlyAverageDay[m];
       return { name: d.label, labels: HOURS(), values: d.profile };
     });
-    s.addChart(pptx.ChartType.line, series,
+    putChart(pptx, s, 'line', series,
       chartOpts({ x: 0.5, y: 1.25, w: 12.33, h: 4.9,
         chartColors: ['3B82F6', '38BDF8', '4ADE80', 'FBBF24', 'F97316', 'A78BFA'],
         lineSize: 2.2, lineSmooth: true, showMarker: false,
@@ -136747,7 +137116,7 @@ function buildDeck(res, opts){
   if (shave.ok && shave.worstDay) {
     var s7 = newSlide('Load against generation on the worst day', 'Coincidence');
     var d = shave.worstDay;
-    s7.addChart(pptx.ChartType.line,
+    putChart(pptx, s7, 'line',
       [{ name: 'Site load', labels: HOURS(), values: d.load },
        { name: 'Solar generation', labels: HOURS(), values: d.gen },
        { name: 'Net load after solar', labels: HOURS(), values: d.net }],
@@ -136774,12 +137143,17 @@ function buildDeck(res, opts){
     var s8 = newSlide('What the battery takes off the peak', 'Demand shaving');
     var d8 = shave.worstDay;
     var thr = new Array(24); for (var q = 0; q < 24; q++) thr[q] = d8.thresholdKw;
-    s8.addChart(pptx.ChartType.line,
-      [{ name: 'Net load after solar', labels: HOURS(), values: d8.net },
-       { name: 'After solar and battery', labels: HOURS(), values: d8.afterBess },
-       { name: 'Billing threshold held', labels: HOURS(), values: thr }],
+    /* Threshold first so it is painted UNDERNEATH, and dashed. For most of
+       the day the battery holds the meter at exactly the threshold, so the
+       two lines coincide; drawn last and solid, the threshold covered the
+       result and the chart read as though the battery stopped working at
+       breakfast. */
+    putChart(pptx, s8, 'line',
+      [{ name: 'Billing threshold held', labels: HOURS(), values: thr, dash: true },
+       { name: 'Net load after solar', labels: HOURS(), values: d8.net },
+       { name: 'After solar and battery', labels: HOURS(), values: d8.afterBess }],
       chartOpts({ x: 0.5, y: 1.25, w: 12.33, h: 4.3,
-        chartColors: [C.warn, C.good, C.bess], lineSize: 2.8, lineSmooth: false, showMarker: false,
+        chartColors: [C.bess, C.warn, C.good], lineSize: 2.8, lineSmooth: false, showMarker: false,
         valAxisTitle: 'kW at the meter', catAxisTitle: 'Hour of ' + d8.date,
         showCatAxisTitle: true, catAxisTitleColor: C.sub, catAxisTitleFontSize: 10,
         catAxisLabelFontSize: 8 }));
@@ -136799,7 +137173,7 @@ function buildDeck(res, opts){
   if (shave.ok) {
     var s9 = newSlide('Billing demand, month by month', 'Twelve billing periods');
     var mo = shave.months;
-    s9.addChart(pptx.ChartType.bar,
+    putChart(pptx, s9, 'bar',
       [{ name: 'Load alone', labels: MON.slice(), values: mo.map(function (m) { return +m.peakLoadKw.toFixed(0); }) },
        { name: 'After solar', labels: MON.slice(), values: mo.map(function (m) { return +m.peakAfterSolarKw.toFixed(0); }) },
        { name: 'After solar and battery', labels: MON.slice(), values: mo.map(function (m) { return +m.peakAfterBessKw.toFixed(0); }) }],
@@ -136832,7 +137206,7 @@ function buildDeck(res, opts){
     statCard(pptx, s10, 10.16, 1.25, 2.68, 'Total annual saving', money(a.totalSaving),
       'demand plus avoided energy', C.good);
 
-    s10.addChart(pptx.ChartType.bar,
+    putChart(pptx, s10, 'bar',
       [{ name: 'Annual value ($)', labels: ['Demand \u2014 solar', 'Demand \u2014 storage', 'Energy avoided'],
          values: [a.demandSavingSolar, a.demandSavingBess, a.energySaving] }],
       chartOpts({ x: 0.5, y: 2.82, w: 6.0, h: 3.4, barDir: 'col', showLegend: false,
@@ -136939,7 +137313,8 @@ function exportPPTXBranded(res, opts){
   });
 }
 
-root.OmegaYieldDeck = { build: buildDeck, exportPPTX: exportPPTXBranded,
+root.OmegaYieldDeck = { nativeCharts: false, chartImage: chartImage,
+                        build: buildDeck, exportPPTX: exportPPTXBranded,
                         exportPPTXRaw: exportPPTX, withBrand: withBrand,
                         applyTheme: applyTheme, palette: C,
                         logo: function(){ return LOGO; },
@@ -136981,8 +137356,21 @@ function esc(s){
 /* ────────────────────────────────────────────────────────────────────────
    SVG charts. Small, dependency-free, and the same data the deck gets.
    ──────────────────────────────────────────────────────────────────── */
+/* Chart chrome. The panel is a dark surface and the report is a white
+   page, and the same two helpers draw both — so the gridline, axis-label
+   and legend colours are inputs, not constants. Defaults are the panel's
+   dark set; reportHTML passes the resolved light theme. */
+function chartChrome(opts){
+  return {
+    grid:   (opts && opts.grid)   || '#1E3A5F',
+    label:  (opts && opts.label)  || '#64748B',
+    legend: (opts && opts.legend) || '#8FA3B8'
+  };
+}
+
 function svgLine(series, opts){
   opts = opts || {};
+  var CH = chartChrome(opts);
   var W = num(opts.w, 620), H = num(opts.h, 240);
   var pad = { l: 52, r: 12, t: 12, b: 30 };
   var n = series[0] ? series[0].values.length : 0;
@@ -137002,14 +137390,14 @@ function svgLine(series, opts){
   for (var k = 0; k <= 4; k++) {
     var yv = min + (max - min) * k / 4, y = Y(yv);
     g += '<line x1="' + pad.l + '" y1="' + y.toFixed(1) + '" x2="' + (W - pad.r) + '" y2="' + y.toFixed(1) +
-         '" stroke="#1E3A5F" stroke-width="1"/>';
-    g += '<text x="' + (pad.l - 6) + '" y="' + (y + 3.5).toFixed(1) + '" fill="#64748B" font-size="9" ' +
+         '" stroke="'+CH.grid+'" stroke-width="1"/>';
+    g += '<text x="' + (pad.l - 6) + '" y="' + (y + 3.5).toFixed(1) + '" fill="'+CH.label+'" font-size="9" ' +
          'text-anchor="end" font-family="system-ui">' + fmtAxis(yv) + '</text>';
   }
   /* x labels */
   var step = Math.max(1, Math.round(n / (opts.xTicks || 8)));
   for (var i = 0; i < n; i += step) {
-    g += '<text x="' + X(i).toFixed(1) + '" y="' + (H - 10) + '" fill="#64748B" font-size="9" ' +
+    g += '<text x="' + X(i).toFixed(1) + '" y="' + (H - 10) + '" fill="'+CH.label+'" font-size="9" ' +
          'text-anchor="middle" font-family="system-ui">' + esc(opts.labels ? opts.labels[i] : i) + '</text>';
   }
   series.forEach(function (s) {
@@ -137029,7 +137417,7 @@ function svgLine(series, opts){
   });
   g += '</svg>';
 
-  var legend = '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;font-size:10px;color:#8FA3B8">' +
+  var legend = '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;font-size:10px;color:'+CH.legend+'">' +
     series.map(function (s) {
       return '<span style="display:inline-flex;align-items:center;gap:5px">' +
         '<span style="width:14px;height:3px;border-radius:2px;background:' + s.color + '"></span>' + esc(s.name) + '</span>';
@@ -137039,6 +137427,7 @@ function svgLine(series, opts){
 
 function svgBars(groups, labels, opts){
   opts = opts || {};
+  var CH = chartChrome(opts);
   var W = num(opts.w, 620), H = num(opts.h, 230);
   var pad = { l: 52, r: 12, t: 12, b: 30 };
   var n = labels.length, m = groups.length;
@@ -137052,8 +137441,8 @@ function svgBars(groups, labels, opts){
   for (var k = 0; k <= 4; k++) {
     var yv = max * k / 4, y = pad.t + ph - (yv / max) * ph;
     s += '<line x1="' + pad.l + '" y1="' + y.toFixed(1) + '" x2="' + (W - pad.r) + '" y2="' + y.toFixed(1) +
-         '" stroke="#1E3A5F" stroke-width="1"/>' +
-         '<text x="' + (pad.l - 6) + '" y="' + (y + 3.5).toFixed(1) + '" fill="#64748B" font-size="9" ' +
+         '" stroke="'+CH.grid+'" stroke-width="1"/>' +
+         '<text x="' + (pad.l - 6) + '" y="' + (y + 3.5).toFixed(1) + '" fill="'+CH.label+'" font-size="9" ' +
          'text-anchor="end" font-family="system-ui">' + fmtAxis(yv) + '</text>';
   }
   for (var i = 0; i < n; i++) {
@@ -137065,10 +137454,10 @@ function svgBars(groups, labels, opts){
            '" height="' + Math.max(0, h).toFixed(1) + '" fill="' + groups[j].color + '" rx="1.5"/>';
     }
     s += '<text x="' + (pad.l + i * slot + slot / 2).toFixed(1) + '" y="' + (H - 10) +
-         '" fill="#64748B" font-size="9" text-anchor="middle" font-family="system-ui">' + esc(labels[i]) + '</text>';
+         '" fill="'+CH.label+'" font-size="9" text-anchor="middle" font-family="system-ui">' + esc(labels[i]) + '</text>';
   }
   s += '</svg>';
-  var legend = m > 1 ? '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;font-size:10px;color:#8FA3B8">' +
+  var legend = m > 1 ? '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;font-size:10px;color:'+CH.legend+'">' +
     groups.map(function (g) {
       return '<span style="display:inline-flex;align-items:center;gap:5px">' +
         '<span style="width:10px;height:10px;border-radius:2px;background:' + g.color + '"></span>' + esc(g.name) + '</span>';
@@ -137113,7 +137502,8 @@ function shell(inner){
     'box-shadow:0 24px 70px rgba(0,0,0,.65);font-family:system-ui,-apple-system,Segoe UI,sans-serif">' +
     '<div style="padding:15px 20px;border-bottom:1px solid #1E3A5F;display:flex;align-items:center;' +
     'justify-content:space-between;flex:0 0 auto">' +
-      '<div><div style="font-size:16px;font-weight:800;color:#E2EEF9">\u2600 DER Generation \u2014 8760 model</div>' +
+      '<div><div style="font-size:9px;font-weight:700;letter-spacing:1.6px;color:#FBBF24;text-transform:uppercase;margin-bottom:2px">Distributed Energy Resource</div>' +
+      '<div style="font-size:16px;font-weight:800;color:#E2EEF9">Generation and Storage Analysis</div>' +
       '<div style="font-size:10.5px;color:#64748B;margin-top:2px">Hour by hour from this site\u2019s latitude, ' +
       'longitude and each array\u2019s own tilt and azimuth</div></div>' +
       '<button onclick="document.getElementById(\'omega-yield-panel\').remove()" ' +
@@ -137379,8 +137769,11 @@ function reportHTML(res){
   var where = res.address || (res.location.lat.toFixed(5) + ', ' + res.location.lon.toFixed(5));
 
   function card(label, value, sub, col){
+    /* The default was #E2EEF9 — a near-white meant for a dark slide, which
+       on a white page rendered Specific Yield, Capacity Factor and Peak
+       Output as pale ghosts. Falls back to the theme's body colour now. */
     return '<div class="card"><div class="lbl">' + esc(label) + '</div>' +
-      '<div class="val" style="color:' + (col || '#E2EEF9') + '">' + value + '</div>' +
+      '<div class="val" style="color:#' + (col ? String(col).replace('#','') : C.text) + '">' + value + '</div>' +
       (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
   }
 
@@ -137388,26 +137781,26 @@ function reportHTML(res){
   var h = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>DER generation and storage \u2014 ' + esc(where) + '</title><style>' +
-    '*{box-sizing:border-box}body{margin:0;background:'+C.bg+';color:'+C.text+';' +
+    '*{box-sizing:border-box}body{margin:0;background:#'+C.bg+';color:#'+C.text+';' +
     'font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:14px;line-height:1.6}' +
     '.wrap{max-width:980px;margin:0 auto;padding:34px 24px 70px}' +
-    'h1{font-size:27px;margin:0 0 4px}h2{font-size:15px;color:'+C.accent+';text-transform:uppercase;' +
+    'h1{font-size:27px;margin:0 0 4px}h2{font-size:15px;color:#'+C.accent+';text-transform:uppercase;' +
     'letter-spacing:1.1px;margin:34px 0 4px;font-weight:700}' +
-    '.lede{color:'+C.sub+';font-size:13px;margin:0 0 6px}' +
+    '.lede{color:#'+C.sub+';font-size:13px;margin:0 0 6px}' +
     '.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin:14px 0}' +
-    '.card{background:'+C.panel+';border:1px solid '+C.rule+';border-radius:9px;padding:12px 13px}' +
-    '.lbl{font-size:8.5px;color:'+C.dim+';text-transform:uppercase;letter-spacing:.8px;font-weight:700}' +
+    '.card{background:#'+C.panel+';border:1px solid #'+C.rule+';border-radius:9px;padding:12px 13px}' +
+    '.lbl{font-size:8.5px;color:#'+C.dim+';text-transform:uppercase;letter-spacing:.8px;font-weight:700}' +
     '.val{font-size:21px;font-weight:800;margin-top:3px}' +
-    '.sub{font-size:9.5px;color:'+C.dim+';margin-top:3px;line-height:1.45}' +
-    '.panel{background:'+C.panel+';border:1px solid '+C.rule+';border-radius:9px;padding:14px;margin:12px 0}' +
+    '.sub{font-size:9.5px;color:#'+C.dim+';margin-top:3px;line-height:1.45}' +
+    '.panel{background:#'+C.panel+';border:1px solid #'+C.rule+';border-radius:9px;padding:14px;margin:12px 0}' +
     'table{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}' +
-    'th{text-align:left;color:'+C.dim+';font-size:9px;text-transform:uppercase;letter-spacing:.6px;padding:6px 8px}' +
-    'td{padding:7px 8px;border-top:1px solid '+C.rule+';color:'+C.text+'}' +
-    '.r{text-align:right}.g{color:'+C.good+'}.y{color:'+C.accent+'}.o{color:'+C.warn+'}.v{color:'+C.bess+'}.b{color:'+C.load+'}' +
-    '.foot{margin-top:44px;padding-top:16px;border-top:1px solid '+C.rule+';font-size:10.5px;color:'+C.dim+'}' +
+    'th{text-align:left;color:#'+C.dim+';font-size:9px;text-transform:uppercase;letter-spacing:.6px;padding:6px 8px}' +
+    'td{padding:7px 8px;border-top:1px solid #'+C.rule+';color:#'+C.text+'}' +
+    '.r{text-align:right}.g{color:#'+C.good+'}.y{color:#'+C.accent+'}.o{color:#'+C.warn+'}.v{color:#'+C.bess+'}.b{color:#'+C.load+'}' +
+    '.foot{margin-top:44px;padding-top:16px;border-top:1px solid #'+C.rule+';font-size:10.5px;color:#'+C.dim+'}' +
     '.tag{display:inline-block;font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px}' +
     '@media print{body{background:#fff;color:#111}.card,.panel{background:#fff;border-color:#ccc}' +
-    'h2{color:'+C.accentDeep+'}td{color:#333;border-color:#ddd}.wrap{padding:0}}' +
+    'h2{color:#'+C.accentDeep+'}td{color:#333;border-color:#ddd}.wrap{padding:0}}' +
     '@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}}' +
     '</style></head><body><div class="wrap">';
 
@@ -137416,7 +137809,7 @@ function reportHTML(res){
   try { var _L = Deck.logo && Deck.logo(); if (_L && _L.dataUrl) _logo = _L.dataUrl; } catch (e) {}
   if (!_logo) { try { _logo = root.OmegaBrandTheme ? root.OmegaBrandTheme.logoSrc() : ''; } catch (e) {} }
   if (_logo) h += '<img src="' + _logo + '" alt="" style="max-height:52px;max-width:240px;margin-bottom:14px;display:block">';
-  h += '<div style="font-size:10px;color:' + C.accent + ';font-weight:700;letter-spacing:2px;margin-bottom:8px">' +
+  h += '<div style="font-size:10px;color:#' + C.accent + ';font-weight:700;letter-spacing:2px;margin-bottom:8px">' +
        'DISTRIBUTED ENERGY RESOURCE \u00b7 GENERATION AND STORAGE ANALYSIS</div>';
   h += '<h1>' + esc(where) + '</h1>';
   h += '<p class="lede">' + res.location.lat.toFixed(5) + '\u00b0, ' + res.location.lon.toFixed(5) + '\u00b0 \u00b7 ' +
@@ -137424,37 +137817,37 @@ function reportHTML(res){
        (sh.hasBess ? ' \u00b7 ' + kwF(sh.bessKw) + ' / ' + kwh(sh.bessKwh) + ' storage' : '') + '</p>';
 
   var rung = res.irradiance.rung;
-  var rc = rung === 'pvwatts' ? '#4ADE80' : rung === 'nsrdb' ? '#38BDF8' : '#F97316';
+  var rc = '#' + (rung === 'pvwatts' ? C.good : rung === 'nsrdb' ? C.net : C.warn);
   h += '<div class="panel" style="border-color:' + rc + '"><div style="color:' + rc +
        ';font-weight:700;font-size:12px">' +
        (rung === 'pvwatts' ? 'Calibrated to NREL PVWatts v8'
         : rung === 'nsrdb' ? 'Driven by NREL NSRDB monthly normals'
         : 'Offline estimate \u2014 no site weather data was reached') + '</div>' +
-       '<div style="font-size:11px;color:#8FA3B8;margin-top:4px">' + esc(res.irradiance.note || '') + '</div></div>';
+       '<div style="font-size:11px;color:#' + C.sub + ';margin-top:4px">' + esc(res.irradiance.note || '') + '</div></div>';
 
   h += '<h2>Annual generation</h2>';
   h += '<div class="grid">' +
-    card('Annual output', kwh(res.acAnnualKwh), kwF(res.kwDc) + '-DC \u00b7 ' + kwF(res.kwAc) + '-AC', '#FBBF24') +
+    card('Annual output', kwh(res.acAnnualKwh), kwF(res.kwDc) + '-DC \u00b7 ' + kwF(res.kwAc) + '-AC', C.accent) +
     card('Specific yield', Math.round(res.specificYield).toLocaleString() + ' kWh/kW', 'per kW-DC per year') +
     card('Capacity factor', pct(res.capacityFactorAcPct), 'on AC \u00b7 ' + pct(res.capacityFactorDcPct) + ' on DC') +
     card('Peak output', kwF(res.peakOutputKw), 'highest modelled hour') + '</div>';
-  h += '<div class="panel">' + svgBars([{ name: 'MWh', color: '#FBBF24',
-        values: res.monthAc.map(function (v) { return v / 1000; }) }], MON.slice(), { h: 200, w: 900 }) +
+  h += '<div class="panel">' + svgBars([{ name: 'MWh', color: '#' + C.gen,
+        values: res.monthAc.map(function (v) { return v / 1000; }) }], MON.slice(), { grid: '#' + C.rule, label: '#' + C.dim, legend: '#' + C.sub, h: 200, w: 900 }) +
        '<div class="sub" style="margin-top:8px">Monthly energy, MWh.</div></div>';
 
   h += '<h2>One day, hour by hour</h2>';
   h += '<p class="lede">Solar noon is set by longitude and the equation of time, not by the clock.</p>';
   h += '<div class="panel">' + svgLine(days.map(function (d, i) {
         return { name: d.label + ' (' + d.date + ') \u2014 ' + kwh(d.kwh), values: d.gen,
-                 color: ['#FBBF24', '#38BDF8', '#A78BFA'][i], fill: i === 0 };
-      }), { labels: Deck.HOURS(), h: 230, w: 900, xTicks: 12 }) + '</div>';
+                 color: '#' + [C.gen, C.net, C.bess][i], fill: i === 0 };
+      }), { grid: '#' + C.rule, label: '#' + C.dim, legend: '#' + C.sub, labels: Deck.HOURS(), h: 230, w: 900, xTicks: 12 }) + '</div>';
 
   h += '<h2>The same day, month by month</h2>';
   h += '<div class="panel">' + svgLine([0, 2, 4, 6, 8, 10].map(function (m, i) {
         var d = rep.monthlyAverageDay[m];
         return { name: d.label, values: d.profile,
-                 color: ['#3B82F6', '#38BDF8', '#4ADE80', '#FBBF24', '#F97316', '#A78BFA'][i] };
-      }), { labels: Deck.HOURS(), h: 230, w: 900, xTicks: 12 }) + '</div>';
+                 color: '#' + [C.load, C.net, C.good, C.gen, C.warn, C.bess][i] };
+      }), { grid: '#' + C.rule, label: '#' + C.dim, legend: '#' + C.sub, labels: Deck.HOURS(), h: 230, w: 900, xTicks: 12 }) + '</div>';
 
   h += '<h2>What is on the ground</h2><table><thead><tr><th>Array</th><th class="r">kW-DC</th>' +
        '<th>Racking</th><th class="r">Tilt</th><th class="r">Azimuth</th><th class="r">GCR</th>' +
@@ -137462,7 +137855,7 @@ function reportHTML(res){
   res.arrays.forEach(function (p) {
     var A = p.array;
     h += '<tr><td>' + esc(A.name) + '</td><td class="r">' + Math.round(A.kwDc).toLocaleString() + '</td>' +
-      '<td style="color:#8FA3B8">' + esc(A.racking) + '</td>' +
+      '<td style="color:#' + C.sub + '">' + esc(A.racking) + '</td>' +
       '<td class="r" title="' + esc(A.tiltSource) + '">' + (A.tracker ? 'tracked' : A.tiltDeg.toFixed(0) + '\u00b0') + '</td>' +
       '<td class="r" title="' + esc(A.azimuthSource) + '">' + (A.tracker ? 'tracked' : A.azimuthDeg.toFixed(0) + '\u00b0') + '</td>' +
       '<td class="r">' + num(A.gcr, 0).toFixed(2) + '</td>' +
@@ -137474,28 +137867,28 @@ function reportHTML(res){
     var wm = sh.worstMonth;
     h += '<h2>Peak demand shaving</h2>';
     h += '<div class="grid">' +
-      card('Peak before', kwF(wm.peakLoadKw), wm.label + ' billing demand', '#F97316') +
-      card('After solar', kwF(wm.peakAfterSolarKw), '\u2212' + kwF(wm.solarReductionKw), '#FBBF24') +
-      card('After battery', kwF(wm.peakAfterBessKw), '\u2212' + kwF(wm.bessReductionKw) + ' more', '#4ADE80') +
-      card('Annual saving', money(sh.annual.demandSavingTotal), '$' + sh.tariff.demandPerKwMonth.toFixed(2) + '/kW-mo', '#4ADE80') +
+      card('Peak before', kwF(wm.peakLoadKw), wm.label + ' billing demand', C.warn) +
+      card('After solar', kwF(wm.peakAfterSolarKw), '\u2212' + kwF(wm.solarReductionKw), C.gen) +
+      card('After battery', kwF(wm.peakAfterBessKw), '\u2212' + kwF(wm.bessReductionKw) + ' more', C.good) +
+      card('Annual saving', money(sh.annual.demandSavingTotal), '$' + sh.tariff.demandPerKwMonth.toFixed(2) + '/kW-mo', C.good) +
       '</div>';
     if (sh.worstDay) {
       var d8 = sh.worstDay, thr = [];
       for (var q = 0; q < 24; q++) thr.push(d8.thresholdKw);
       h += '<div class="panel"><div class="sub">' + esc(d8.date) + ' \u2014 the day that set the ' +
         esc(d8.month) + ' billing peak</div>' + svgLine([
-          { name: 'Site load', values: d8.load, color: '#60A5FA' },
-          { name: 'Solar', values: d8.gen, color: '#FBBF24' },
-          { name: 'Net after solar', values: d8.net, color: '#F97316' },
-          { name: 'After solar and battery', values: d8.afterBess, color: '#4ADE80', width: 2.6 },
-          { name: 'Threshold held', values: thr, color: '#A78BFA', dash: '5 4', width: 1.5 }
-        ], { labels: Deck.HOURS(), h: 235, w: 900, xTicks: 12 }) + '</div>';
+          { name: 'Site load', values: d8.load, color: '#' + C.load },
+          { name: 'Solar', values: d8.gen, color: '#' + C.gen },
+          { name: 'Net after solar', values: d8.net, color: '#' + C.warn },
+          { name: 'After solar and battery', values: d8.afterBess, color: '#' + C.good, width: 2.6 },
+          { name: 'Threshold held', values: thr, color: '#' + C.bess, dash: '5 4', width: 1.5 }
+        ], { grid: '#' + C.rule, label: '#' + C.dim, legend: '#' + C.sub, labels: Deck.HOURS(), h: 235, w: 900, xTicks: 12 }) + '</div>';
     }
     h += '<div class="panel">' + svgBars([
-        { name: 'Load alone', color: '#F97316', values: sh.months.map(function (m) { return m.peakLoadKw; }) },
-        { name: 'After solar', color: '#FBBF24', values: sh.months.map(function (m) { return m.peakAfterSolarKw; }) },
-        { name: 'After solar and battery', color: '#4ADE80', values: sh.months.map(function (m) { return m.peakAfterBessKw; }) }
-      ], MON.slice(), { h: 205, w: 900 }) + '</div>';
+        { name: 'Load alone', color: '#' + C.warn, values: sh.months.map(function (m) { return m.peakLoadKw; }) },
+        { name: 'After solar', color: '#' + C.gen, values: sh.months.map(function (m) { return m.peakAfterSolarKw; }) },
+        { name: 'After solar and battery', color: '#' + C.good, values: sh.months.map(function (m) { return m.peakAfterBessKw; }) }
+      ], MON.slice(), { grid: '#' + C.rule, label: '#' + C.dim, legend: '#' + C.sub, h: 205, w: 900 }) + '</div>';
 
     h += '<table><thead><tr><th>Month</th><th class="r">Load peak</th><th class="r">After solar</th>' +
       '<th class="r">After battery</th><th class="r">Threshold</th><th class="r">Discharge</th>' +
@@ -137509,7 +137902,7 @@ function reportHTML(res){
         '<td class="r g"><b>' + money(m.saving) + '</b></td></tr>';
     });
     var a = sh.annual;
-    h += '<tr style="border-top:2px solid #1E3A5F"><td><b>Year</b></td>' +
+    h += '<tr style="border-top:2px solid #' + C.rule + '"><td><b>Year</b></td>' +
       '<td class="r"></td><td class="r"></td><td class="r"></td><td class="r"></td>' +
       '<td class="r">' + Math.round(a.dischargeKwh).toLocaleString() + ' kWh</td>' +
       '<td class="r g"><b>' + money(a.demandSavingTotal) + '</b></td></tr>';
@@ -137519,11 +137912,11 @@ function reportHTML(res){
   h += '<h2>How this number was arrived at</h2><table><thead><tr><th>Input</th><th>Basis</th>' +
        '<th>Detail</th></tr></thead><tbody>';
   Run.assumptions(res).forEach(function (it) {
-    var col = it.basis === 'measured' ? '#4ADE80' : it.basis === 'modelled' ? '#38BDF8'
-            : it.basis === 'assumed' ? '#F97316' : '#64748B';
+    var col = '#' + (it.basis === 'measured' ? C.good : it.basis === 'modelled' ? C.net
+            : it.basis === 'assumed' ? C.warn : C.dim);
     h += '<tr><td>' + esc(it.item) + '</td>' +
       '<td><span class="tag" style="color:' + col + ';border:1px solid ' + col + '">' + esc(it.basis) + '</span></td>' +
-      '<td style="color:#8FA3B8;font-size:11px">' + esc(it.text) + '</td></tr>';
+      '<td style="color:#' + C.sub + ';font-size:11px">' + esc(it.text) + '</td></tr>';
   });
   h += '</tbody></table>';
 
@@ -137610,7 +138003,7 @@ function addModalButton(){
   b.setAttribute('data-oy-btn', '1');
   b.style.cssText = 'background:rgba(251,191,36,.14);border:1px solid rgba(251,191,36,.4);color:#FBBF24;' +
     'border-radius:6px;padding:5px 11px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit';
-  b.textContent = '\u2600 8760 model + deck';
+  b.textContent = '\u2600 Generation \u0026 storage analysis';
   b.title = 'Model generation hour by hour from this site\u2019s latitude and each array\u2019s tilt, ' +
             'then export a presentation with the daily and annual charts.';
   b.onclick = function(){ root.OmegaYield.open(); };
@@ -137661,7 +138054,7 @@ function addRibbonButton(){
   b.setAttribute('onclick', 'OmegaYield.open()');
   b.title = 'Model generation hour by hour from latitude, tilt and azimuth \u2014 24-hour profile, ' +
             'annual energy, and what a battery takes off the peak. Exports a presentation.';
-  b.innerHTML = '<span class="rb-ico">\u2600</span><span class="rb-lbl">8760<br>Yield</span>';
+  b.innerHTML = '<span class="rb-ico">\u2600</span><span class="rb-lbl">Generation<br>Analysis</span>';
   host.parentNode.insertBefore(b, host.nextSibling);
   return true;
 }
@@ -137758,9 +138151,9 @@ function provenance(){
   return {
     modelled: true,
     rung: rung,
-    label: rung === 'pvwatts' ? '8760 model calibrated to PVWatts v8'
-         : rung === 'nsrdb'   ? '8760 model on NSRDB monthly normals'
-         : '8760 model, offline irradiance estimate',
+    label: rung === 'pvwatts' ? 'hourly model calibrated to PVWatts v8'
+         : rung === 'nsrdb'   ? 'hourly model on NSRDB monthly normals'
+         : 'hourly model, offline irradiance estimate',
     annualKwh: r.acAnnualKwh,
     specificYield: r.specificYield,
     at: r.at
@@ -137774,7 +138167,7 @@ root.OmegaYield.capacityFactor = modelledCapacityFactor;
 root.OmegaYield.provenance = provenance;
 
 if (root.console && console.info) {
-  console.info('[Yield] ready \u2014 ribbon \u203a 8760 Yield, or OmegaYield.open()');
+  console.info('[DER Analysis] ready \u2014 ribbon \u203a Generation Analysis, or OmegaYield.open()');
 }
 
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -138187,16 +138580,16 @@ function solarEnergy(solarKwDc){
           modelled: true,
           annualKwh: r.acAnnualKwh * scale,
           specificYield: r.specificYield,
-          basis: r.irradiance.rung === 'pvwatts' ? '8760 model calibrated to NREL PVWatts v8'
-               : r.irradiance.rung === 'nsrdb'   ? '8760 model on NREL NSRDB monthly normals'
-               : '8760 model, offline irradiance estimate',
+          basis: r.irradiance.rung === 'pvwatts' ? 'hourly model calibrated to NREL PVWatts v8'
+               : r.irradiance.rung === 'nsrdb'   ? 'hourly model on NREL NSRDB monthly normals'
+               : 'hourly model, offline irradiance estimate',
           scaled: Math.abs(scale - 1) > 0.02
         };
       }
     }
   } catch (e) {}
   return { modelled: false,
-           basis: 'not modelled \u2014 run Generation \u203a 8760 Yield for a site-specific figure' };
+           basis: 'not modelled \u2014 run Analyze \u203a Generation Analysis for a site-specific figure' };
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -138384,7 +138777,7 @@ function screen(addr, geo, totalKW, totalKWh, solarKwDc){
   }
   if (solarKwDc > 0 && solarE && !solarE.modelled) {
     risks.push(Math.round(solarKwDc).toLocaleString() + ' kW-DC of solar is on the map but its generation has not been modelled. ' +
-               'Run Generation \u203a 8760 Yield so the interconnection review sees real energy rather than a nameplate.');
+               'Run Analyze \u203a Generation Analysis so the interconnection review sees real energy rather than a nameplate.');
   }
 
   /* ── recommendations ── */
