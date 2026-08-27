@@ -130988,6 +130988,40 @@ function readSite(){
     });
   }
 
+/* --- kW vs AREA SANITY CHECK -------------------------------------
+   A 7,506 kW array cannot occupy 2x2 ft. Whenever the shape's geometry
+   is unusable, whatever the reason, the kW figure is still sound — it
+   came from the layout engine — so it can be inverted to recover a
+   believable footprint.
+
+   The app rates modules at 20 W per sqft of MODULE area, and GCR is the
+   module-to-ground ratio, so gross area = kW*1000 / 20 / gcr. If what
+   was measured is less than a third of that, the measurement is wrong
+   rather than the design, and a square of the right area beats a speck
+   that renders as a stick. This is a backstop for every geometry path at
+   once instead of one more special case. */
+  var WPSF = 20;
+  out.items.forEach(function(i2){
+    if(!i2.kw || i2.kw <= 0) return;
+    if(!ARCH[i2.arch] || ARCH[i2.arch].group !== 'solar') return;
+    var g2 = (i2.gcr > 0) ? i2.gcr : 0.5;
+    var wantSqft = (i2.kw * 1000 / WPSF) / g2;
+    var gotSqft  = i2.wf * i2.lf;
+    if(gotSqft >= wantSqft * 0.33) return;      /* plausible enough */
+    var side = Math.sqrt(wantSqft);
+    i2.wf = side; i2.lf = side;
+    i2.approx = true;
+    i2.poly = null;                              /* outline was the bad data */
+    i2.tables = null;
+    i2.sizedFromKw = true;
+    i2.boxSrc = 'kW\u00f7area';
+    out.warnings.push('"' + (i2.label || i2.kind) + '" is drawn at '
+      + Math.round(gotSqft).toLocaleString() + ' sqft but its '
+      + Math.round(i2.kw).toLocaleString() + ' kW needs about '
+      + Math.round(wantSqft).toLocaleString() + ' sqft. The drawn geometry '
+      + 'could not be read, so it is shown at the size the kW implies.');
+  });
+
   /* --- duplicate detection ------------------------------------------
      A BESS can exist on this canvas as a shape (kind 'assembly' or
      'bespad') AND as an element, and some flows synthesise one from the
@@ -131074,9 +131108,16 @@ function mkItem(ref, src, c, geo){
 /* Write an override back onto the drawing object. */
 function setArch(item, arch){
   if(!ARCH[arch]) return;
+  /* An unlabelled item shows its archetype's name as its title. If that
+     title is not refreshed here it keeps the OLD archetype's name while
+     the dropdown shows the new one — the row then contradicts itself,
+     which is exactly what it looked like on screen. Only auto-generated
+     titles are touched; a name the user typed is theirs. */
+  var wasAuto = !item.ref.label && !item.ref.text;
   item.arch = arch;
   item.why  = 'explicit';
   item.hidden = (arch==='ignore');
+  if(wasAuto) item.label = ARCH[arch].label;
   try{ item.ref._visArch = arch; }catch(e){}
 }
 /* ═══════════════════════════════════════════════════════════════════════
@@ -131554,25 +131595,51 @@ function buildCar(seed){
    cantilevered out both sides, so the bays stay clear to drive and park
    in. A four-post grid under every bay would be structurally silly and
    visually wrong. */
-function tColumn(hCol, armLen){
+/* SINGLE-POST CANTILEVER CANOPY FRAME.
+
+   The previous support was a plain post with two flat arms, which at any
+   distance read as a stick in a field. A real commercial canopy is a
+   single spine column carrying a Y-shaped bracket: two angled struts
+   spreading up and out to catch the deck near its edges, tied by a short
+   cross brace, all sitting on a long concrete footing. That silhouette is
+   what makes the structure legible as a carport rather than a table on
+   legs.
+
+   Built in the run's local frame: X along the run, Z across it — the
+   direction the deck cantilevers and slopes. */
+function canopyFrame(deckD, clearFt, tiltR){
   var g = new THREE.Group();
-  var post = cyl(0.55, 0.85, hCol, MAT.steel, 10);
-  post.position.y = hCol/2; g.add(post);
-  var base = box(2.6, 0.5, 2.6, MAT.concrete);
-  base.position.y = 0.25; g.add(base);
-  /* Arms reach ACROSS the run (local Z), which is the direction the deck
-     needs cantilevering in. Pointing them along the run supports nothing,
-     and pushes the structure out past the end of the canopy. */
+  var rise = Math.tan(tiltR) * deckD;
+  var hubY = clearFt + rise*0.35;              /* where the Y splits */
+  var reach = deckD * 0.40;                    /* how far the struts spread */
+
+  /* footing: a long pad across the bay, like a real canopy base */
+  var foot = box(3.0, 0.85, 7.0, MAT.darkSteel);
+  foot.position.y = 0.42; g.add(foot);
+
+  /* spine */
+  var col = box(1.5, hubY, 1.5, MAT.steel);
+  col.position.y = hubY/2; g.add(col);
+
+  /* Y struts: from the hub up and out to the underside of the deck */
   [-1, 1].forEach(function(s){
-    var arm = box(0.9, 0.5, armLen, MAT.darkSteel);
-    arm.position.set(0, hCol - 0.4, s*armLen/2);
-    arm.rotation.x = -s * 0.05;
-    g.add(arm);
-    var brace = box(0.5, 0.28, armLen*0.55, MAT.darkSteel);
-    brace.position.set(0, hCol - 1.5, s*armLen*0.34);
-    brace.rotation.x = -s * 0.42;
-    g.add(brace);
+    var tipY = clearFt + rise*(0.5 + s*0.42);
+    var dz = s*reach, dy = tipY - hubY;
+    var len = Math.sqrt(dz*dz + dy*dy);
+    var strut = box(1.1, len, 0.85, MAT.steel);
+    strut.position.set(0, hubY + dy/2, dz/2);
+    strut.rotation.x = -Math.atan2(dz, dy);
+    g.add(strut);
   });
+
+  /* cross brace between the struts — the detail that reads as structure */
+  var braceY = hubY + (clearFt + rise*0.5 - hubY)*0.45;
+  var brace = box(0.75, 0.5, reach*0.85, MAT.steel);
+  brace.position.set(0, braceY, 0); g.add(brace);
+
+  /* short knee below the hub so the spine is not a bare stick */
+  var knee = box(1.1, 0.5, 2.4, MAT.steel);
+  knee.position.set(0, hubY*0.55, 0); g.add(knee);
   return g;
 }
 
@@ -131656,6 +131723,11 @@ function buildCarport(it, arch){
     }
     if(cur) spans.push(cur);
 
+    /* A region shorter than one bay used to `continue` past every span
+       and leave the group EMPTY — a canopy that silently rendered as
+       nothing at all. Anything with real area gets at least one bay. */
+    if(!spans.length && L > 4) spans.push({ a:-L/2, b:L/2 - SEG });
+
     for(var si=0; si<spans.length; si++){
       var sp = spans[si];
       /* The walk steps in SEG increments, so a span's last sample can sit
@@ -131666,7 +131738,10 @@ function buildCarport(it, arch){
       var a0 = Math.max(sp.a, -L/2);
       var b0 = Math.min(sp.b + SEG, L/2);
       var len = b0 - a0;
-      if(len < 18) continue;                     /* too short to build */
+      /* Below a single bay there is nothing to build, but a short run is
+         still a real canopy — clamp rather than drop it. */
+      if(len < 6) continue;
+      if(len < 20) len = Math.min(20, Math.max(L, 12));
       var cx = (a0 + b0) / 2;
 
       /* --- asphalt + striping under this run --------------------- */
@@ -131689,9 +131764,19 @@ function buildCarport(it, arch){
         sinst.count = sk; sinst.receiveShadow = true; g.add(sinst);
       }
 
-      /* --- the deck: one plane, sloping across the run ------------ */
+      /* --- the deck ------------------------------------------------
+         Two layers, as built: a corrugated metal substrate that sheds
+         water and overhangs slightly, with the module field laid on top.
+         A single blue slab reads as a painted board; the pale lip of
+         substrate showing past the panels is what says "roof". */
+      var slope = DECK_D/Math.cos(TILT);
+      var sub = box(len + 1.6, 0.35, slope + 1.8, MAT.galv);
+      sub.rotation.x = -TILT;
+      sub.position.set(cx, deckMid - 0.32, zc);
+      g.add(sub);
+
       var deck = new THREE.Mesh(
-        new THREE.BoxGeometry(len, 0.55, DECK_D/Math.cos(TILT)),
+        new THREE.BoxGeometry(len, 0.32, slope),
         panelMat(len, DECK_D));
       deck.rotation.x = -TILT;
       deck.position.set(cx, deckMid, zc);
@@ -131714,13 +131799,16 @@ function buildCarport(it, arch){
         g.add(eb);
       });
 
-      /* --- T-columns down the centre line ------------------------ */
-      var bay = 30, nb = Math.max(1, Math.round(len/bay));
+      /* --- cantilever frames down the centre line ----------------
+         Bays are inset from the deck ends so the deck visibly
+         cantilevers past the end frame, which is how these are built. */
+      var bay = 26, nb = Math.max(1, Math.round(len/bay));
+      var inset = Math.min(len*0.18, bay*0.5);
       for(var b2=0; b2<=nb && cols<COL_CAP; b2++){
-        var bx = cx - len/2 + (len/nb)*b2;
-        if(b2===0) bx += 1.5; if(b2===nb) bx -= 1.5;
+        var bx = (nb === 0) ? cx
+               : (cx - len/2 + inset) + ((len - inset*2)/Math.max(1,nb))*b2;
         if(poly && !inside(bx, zc)) continue;
-        var t = tColumn(deckMid - 0.9, DECK_D*0.42);
+        var t = canopyFrame(DECK_D, CLEAR, TILT);
         t.position.set(bx, 0, zc);
         g.add(t); cols++;
       }
