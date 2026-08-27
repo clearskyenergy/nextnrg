@@ -139237,6 +139237,97 @@ var OVERPASS = [
 ];
 var MIRROR_MS = 9000;      /* per mirror. 3 x 9s = 27s worst case, not 40. */
 
+/* ── WHY THIS IS CACHED TO DISK ──────────────────────────────────────
+   Overpass is free and community-run. It rate-limits per IP, and a site
+   that fetched fine an hour ago will refuse or hang later the same
+   morning — which is exactly what happened here: the layer worked, then
+   stopped, with nothing changed but the clock.
+
+   Building footprints are close to static. There is no reason to ask the
+   internet for the same block twice. Once a site's buildings have been
+   fetched they are kept in localStorage and the layer comes back
+   instantly, offline, and independently of whatever Overpass is doing
+   that afternoon.
+
+   Only the fields the model reads are stored, and coordinates are cut to
+   six decimals (about 4 inches), which takes the payload to roughly a
+   fifth of the raw response. */
+var STORE_PREFIX = 'omega.bldg.';
+var STORE_TTL_MS = 60 * 24 * 3600 * 1000;      /* two months */
+var STORE_MAX_CH = 1800000;                    /* stay well inside the quota */
+var MIRROR_PREF  = 'omega.bldg.mirror';
+
+function storeKey(bb){
+  return STORE_PREFIX + bb.map(function (v) { return v.toFixed(3); }).join('_');
+}
+function compact(els){
+  var out = [], i, j;
+  for (i = 0; i < els.length; i++) {
+    var e = els[i];
+    if (!e || e.type !== 'way' || !e.geometry || e.geometry.length < 4) continue;
+    var g = [];
+    for (j = 0; j < e.geometry.length; j++) {
+      var p = e.geometry[j];
+      if (p.lat == null) continue;
+      g.push(+p.lat.toFixed(6), +p.lon.toFixed(6));
+    }
+    if (g.length < 8) continue;
+    var t = e.tags || {}, keep = {};
+    ['building', 'height', 'building:height', 'building:levels', 'levels', 'name', 'addr:housename']
+      .forEach(function (k) { if (t[k] != null) keep[k] = t[k]; });
+    out.push({ i: e.id, t: keep, g: g });
+  }
+  return out;
+}
+function expand(rows){
+  var out = [], i, j;
+  for (i = 0; i < rows.length; i++) {
+    var r = rows[i], geom = [];
+    for (j = 0; j < r.g.length; j += 2) geom.push({ lat: r.g[j], lon: r.g[j + 1] });
+    out.push({ type: 'way', id: r.i, tags: r.t, geometry: geom });
+  }
+  return out;
+}
+function cacheRead(bb){
+  try {
+    var raw = localStorage.getItem(storeKey(bb));
+    if (!raw) return null;
+    var o = JSON.parse(raw);
+    if (!o || !o.rows || !o.at) return null;
+    if (Date.now() - o.at > STORE_TTL_MS) { localStorage.removeItem(storeKey(bb)); return null; }
+    return expand(o.rows);
+  } catch (e) { return null; }
+}
+function cacheWrite(bb, els){
+  try {
+    var payload = JSON.stringify({ at: Date.now(), rows: compact(els) });
+    if (payload.length > STORE_MAX_CH) return false;
+    localStorage.setItem(storeKey(bb), payload);
+    return true;
+  } catch (e) {
+    /* Quota full: drop the oldest building entries and try once more. */
+    try {
+      var keys = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(STORE_PREFIX) === 0) keys.push(k);
+      }
+      keys.slice(0, Math.ceil(keys.length / 2)).forEach(function (k) { localStorage.removeItem(k); });
+      localStorage.setItem(storeKey(bb), JSON.stringify({ at: Date.now(), rows: compact(els) }));
+      return true;
+    } catch (e2) { return false; }
+  }
+}
+/* The mirror that answered last time goes first next time. */
+function mirrorOrder(){
+  var pref = null;
+  try { pref = localStorage.getItem(MIRROR_PREF); } catch (e) {}
+  if (!pref) return OVERPASS.slice();
+  var rest = OVERPASS.filter(function (u) { return u !== pref; });
+  return OVERPASS.indexOf(pref) >= 0 ? [pref].concat(rest) : OVERPASS.slice();
+}
+function rememberMirror(u){ try { localStorage.setItem(MIRROR_PREF, u); } catch (e) {} }
+
 var M_PER_FT = 0.3048;
 var FT_PER_M = 1 / M_PER_FT;
 
@@ -139265,7 +139356,8 @@ var state = {
   radiusFt: 1600,
   progress: null,
   startedAt: null,
-  abort: null
+  abort: null,
+  lastProj: null
 };
 
 /* ── projection: lat/lon → the visualizer's world feet ────────────────
@@ -139398,16 +139490,17 @@ function fetchBuildings(bb, cb){
   var q = '[out:json][timeout:15];'
         + 'way["building"](' + bb.join(',') + ');'
         + 'out geom tags;';
+  var order = mirrorOrder();
   var idx = 0, lastErr = null;
 
   function attempt(){
-    if (idx >= OVERPASS.length) {
+    if (idx >= order.length) {
       return cb(null, 'no mirror answered in time' + (lastErr ? ' (' + lastErr + ')' : ''));
     }
-    var url = OVERPASS[idx++];
+    var url = order[idx++];
     var host = url.replace(/^https:\/\//, '').split('/')[0];
     var done = false;
-    state.progress = 'Asking ' + host + ' (' + idx + ' of ' + OVERPASS.length + ')\u2026';
+    state.progress = 'Asking ' + host + ' (' + idx + ' of ' + order.length + ')\u2026';
     state.startedAt = state.startedAt || Date.now();
 
     /* Abort rather than abandon: a request left running still costs the
@@ -139437,6 +139530,7 @@ function fetchBuildings(bb, cb){
       }).then(function (j) {
         if (done) return;
         done = true; clearTimeout(t);
+        rememberMirror(url);
         cb(j && j.elements ? j.elements : [], null);
       }).catch(function (e) {
         if (done) return;
@@ -139646,13 +139740,25 @@ function load(V, THREE, site, cb){
     return cb(null, state.error);
   }
 
+  state.lastProj = proj;
   var bb = proj.bbox(state.radiusFt);
   var key = bb.map(function (v) { return v.toFixed(4); }).join(',');
 
+  /* In-memory first (this session), then disk (any previous session).
+     Only if both miss does the network get involved. */
   if (state.cache[key]) {
     var s = render(V, THREE, site, state.cache[key], proj);
     state.error = null;
+    if (s) s.source = 'session cache';
     return cb(s, null);
+  }
+  var onDisk = cacheRead(bb);
+  if (onDisk && onDisk.length) {
+    state.cache[key] = onDisk;
+    var sd = render(V, THREE, site, onDisk, proj);
+    state.error = null;
+    if (sd) sd.source = 'saved earlier';
+    return cb(sd, null);
   }
 
   state.loading = true;
@@ -139665,7 +139771,10 @@ function load(V, THREE, site, cb){
     state.abort = null;
     state.startedAt = null;
     if (err || !els) {
-      state.error = 'Could not reach OpenStreetMap for building footprints (' + (err || 'no data') + ').';
+      state.error = 'Could not reach OpenStreetMap for building footprints (' + (err || 'no data') + '). ' +
+                    'Overpass is free and community-run, and rate-limits by IP \u2014 a site that loaded an hour ' +
+                    'ago can be refused later the same day. Try again shortly; once a site loads once it is ' +
+                    'saved and will not need the network again.';
       return cb(null, state.error);
     }
     if (!els.length) {
@@ -139676,12 +139785,90 @@ function load(V, THREE, site, cb){
       return cb(null, state.error);
     }
     state.cache[key] = els;
+    var saved = cacheWrite(bb, els);
     var s2 = render(V, THREE, site, els, proj);
+    if (s2) s2.source = saved ? 'fetched and saved' : 'fetched (too large to save)';
     cb(s2, null);
   });
 }
 
+/* ── SELF-TEST ────────────────────────────────────────────────────────
+   Run OmegaContextBuildings.selfTest() in the console.
+
+   Three screenshots in, the layer has failed for three different reasons
+   and every diagnosis has come from reading a picture of a panel. This
+   pings each mirror in turn with a deliberately tiny query and prints
+   what actually happened, so the next answer is a fact rather than an
+   inference. It also dumps the placement inputs, because a mirror that
+   answers and a building that lands in the right place are separate
+   questions and confusing them has cost time already. */
+function selfTest(){
+  var log = (root.console && console.log) ? console.log.bind(console) : function(){};
+  log('%c[Buildings] self-test', 'font-weight:700');
+
+  log('  module loaded    : yes');
+  log('  AbortController  : ' + (typeof root.AbortController === 'function' ? 'yes' : 'no (timeouts still work)'));
+  log('  layer state      : ' + (state.group ? state.group.children.length + ' meshes in scene' : 'nothing rendered')
+      + (state.loading ? ' | FETCH IN PROGRESS: ' + state.progress : ''));
+  if (state.error) log('  last error       : ' + state.error);
+  if (state.stats) log('  last stats       : ' + JSON.stringify(state.stats));
+
+  /* Placement inputs. */
+  var ms = null;
+  try { ms = (typeof _liveMapState === 'function') ? _liveMapState() : null; } catch (e) {}
+  log('  live map state   : ' + (ms ? ms.lat.toFixed(5) + ', ' + ms.lng.toFixed(5) + ' @ zoom ' + ms.zoom
+                                    : 'null (map frozen, or not ready) \u2014 falling back to saved/project coords'));
+  try {
+    var sc = document.getElementById('sc');
+    var r = sc && sc.getBoundingClientRect();
+    log('  canvas #sc       : ' + (r ? Math.round(r.width) + ' x ' + Math.round(r.height) + ' css px' : 'NOT FOUND \u2014 placement cannot run'));
+  } catch (e) {}
+  if (state.lastProj) {
+    var a = state.lastProj.anchor;
+    log('  last anchor      : ' + a.lat.toFixed(5) + ', ' + a.lng.toFixed(5) + ' @ ' + a.ppf.toFixed(3) + ' px/ft'
+        + ' | map centre is ' + Math.round(a.mapCentreEastFt) + ' ft east, ' + Math.round(a.mapCentreSouthFt) + ' ft south of site centre');
+    if (state.lastProj.scaleWarn) log('  %c  scale warning  : ' + state.lastProj.scaleWarn, 'color:#F97316');
+  }
+
+  /* Connectivity, one mirror at a time, smallest useful query. */
+  var bb = [51.4990, -0.1250, 51.5010, -0.1230];   /* one block of Westminster */
+  var q = '[out:json][timeout:10];way["building"](' + bb.join(',') + ');out geom tags;';
+  log('  \u2014 pinging ' + OVERPASS.length + ' mirrors \u2014');
+
+  var i = 0;
+  (function ping(){
+    if (i >= OVERPASS.length) {
+      log('%c[Buildings] every mirror failed. That points at something local \u2014 an extension, a firewall, '
+        + 'or DNS \u2014 rather than at Overpass, since these are three independent hosts.', 'color:#F97316');
+      return;
+    }
+    var url = OVERPASS[i++];
+    var host = url.replace(/^https:\/\//, '').split('/')[0];
+    var t0 = Date.now(), settled = false;
+    var to = setTimeout(function(){
+      if (settled) return; settled = true;
+      log('    ' + host + ' \u2014 no response in 10s');
+      ping();
+    }, 10000);
+    fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: q })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) {
+        if (settled) return; settled = true; clearTimeout(to);
+        var n = (j && j.elements) ? j.elements.length : 0;
+        log('%c    ' + host + ' \u2014 OK in ' + ((Date.now() - t0) / 1000).toFixed(1) + 's, ' + n + ' buildings', 'color:#4ADE80');
+        log('%c[Buildings] Overpass is reachable. If the layer still shows nothing, the problem is '
+          + 'placement or the site coordinates, not the network.', 'color:#4ADE80');
+      })
+      .catch(function (e) {
+        if (settled) return; settled = true; clearTimeout(to);
+        log('    ' + host + ' \u2014 failed: ' + ((e && e.message) || 'unknown'));
+        ping();
+      });
+  })();
+}
+
 root.OmegaContextBuildings = {
+  selfTest: selfTest,
   state: state,
   load: load,
   clear: clear,
@@ -139700,7 +139887,9 @@ root.OmegaContextBuildings = {
     if (state.error) return state.error;
     if (!s || !s.total) return 'No buildings loaded.';
     var known = s.measured + s.derived;
-    var out = s.total + (s.total === 1 ? ' building' : ' buildings') + ' \u00b7 ';
+    var out = s.total + (s.total === 1 ? ' building' : ' buildings');
+    if (s.source) out += ' (' + s.source + ')';
+    out += ' \u00b7 ';
     out += known + ' with a height from the data';
     if (s.measured) out += ' (' + s.measured + ' measured)';
     if (s.assumed) {
