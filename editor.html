@@ -2832,6 +2832,7 @@ if(document.readyState==='loading'){
       <button id="btn-hidemap" onclick="toggleMapHidden()" title="Hide the map and work on a plain grid" style="flex:0 0 auto;padding:4px 8px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--sub);cursor:pointer;font-size:10px">◫ Hide</button>
     </div>
     <div style="margin-top:5px">
+      <button id="btn-hideevselbl" onclick="toggleEvsePads()" title="Hide the orange hatched protection island drawn under each charger. Labels, bollards and the cost sheet are unaffected." style="width:100%;padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--sub);cursor:pointer;font-size:10px;margin-bottom:4px">Hide charger pads</button>
       <button id="btn-hidebollards" onclick="toggleBollards()" title="Bollards can read as noise when zoomed out. Hide them on the map view -- they still print in permit exports." style="width:100%;padding:4px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--sub);cursor:pointer;font-size:10px">Hide bollards</button>
     </div>
     <!-- Google Maps mode controls -->
@@ -6873,13 +6874,29 @@ function renderCtypes(){
     + '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--sub);margin-bottom:5px">Routing / Trenching</div>'
     + '<select id="cond-route-mode" onchange="S.condRoute=this.value" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:5px 8px;font-size:10px;font-family:inherit;margin-bottom:6px">'
     +   '<option value="surface"'+((S.condRoute||'surface')==='surface'?' selected':'')+'>Surface mount (above grade)</option>'
-    +   '<option value="trench-ground"'+(S.condRoute==='trench-ground'?' selected':'')+'>Trench -- in-ground</option>'
+    +   '<option value="trench-ground"'+(S.condRoute==='trench-ground'?' selected':'')+'>Trench -- in-ground (turf, ground cover)</option>'
+    /* Sawcut asphalt was missing from both selectors even though the model,
+       the drawing tag and the BOM all support it. With no way to pick it,
+       every run stayed in-ground and the utility sheet reported turf
+       excavation at $10/$60 per foot on jobs that are actually cut through
+       pavement at $15/$80 — a real difference on the submitted matrix. */
+    +   '<option value="trench-asphalt"'+(S.condRoute==='trench-asphalt'?' selected':'')+'>Trench -- sawcut asphalt</option>'
     +   '<option value="trench-concrete"'+(S.condRoute==='trench-concrete'?' selected':'')+'>Trench -- sawcut concrete</option>'
     + '</select>'
     + '<div style="font-size:8.5px;color:var(--sub);line-height:1.5;margin-bottom:6px">Applies to conduits you draw or auto-wire next. Click any conduit\u2019s label to cycle its routing.</div>'
     + '<button onclick="applyRouteToAll(\'power\')" style="width:100%;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--amber);border-radius:4px;padding:5px;font-size:9.5px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:4px">Apply to all AC/DC power runs</button>'
     + '<button onclick="applyRouteToAll(\'all\')" style="width:100%;background:rgba(124,58,237,.1);border:1px solid rgba(124,58,237,.3);color:#A78BFA;border-radius:4px;padding:5px;font-size:9.5px;font-weight:700;cursor:pointer;font-family:inherit">Apply to all conduit runs</button>'
     + '</div>';
+}
+
+/* Both confirmation banners omitted asphalt and fell through to "in-ground
+   trench", so a run set to sawcut-asphalt reported itself as in-ground and
+   looked like the change had not taken. */
+function _routeWord(mode){
+  return mode==='surface'         ? 'surface mount'
+       : mode==='trench-concrete' ? 'sawcut-concrete trench'
+       : mode==='trench-asphalt'  ? 'sawcut-asphalt trench'
+       :                            'in-ground trench';
 }
 
 // Set S.condRoute -> route + trenchIn fields on a conduit object.
@@ -6903,7 +6920,7 @@ function applyRouteToAll(scope){
   });
   if(typeof _updateConduitSchedule==='function') _updateConduitSchedule();
   if(typeof updCondStat==='function') updCondStat();
-  if(typeof showBanner==='function') showBanner('cond','OK Routing applied to '+n+' run'+(n===1?'':'s')+' -- '+(mode==='surface'?'surface mount':mode==='trench-concrete'?'sawcut-concrete trench':'in-ground trench'));
+  if(typeof showBanner==='function') showBanner('cond','OK Routing applied to '+n+' run'+(n===1?'':'s')+' -- '+_routeWord(mode));
 }
 
 // Cycle a single conduit's routing method (surface -> ground -> concrete).
@@ -6922,7 +6939,7 @@ function cycleConduitRoute(id){
   var g=document.querySelector('[data-cid="'+c.id+'"]'); if(g&&g.parentNode) g.parentNode.removeChild(g);
   renderConduit(c);
   if(typeof _updateConduitSchedule==='function') _updateConduitSchedule();
-  if(typeof showBanner==='function') showBanner('cond','Conduit routing: '+(next==='surface'?'surface mount':next==='trench-concrete'?'sawcut-concrete trench':'in-ground trench'));
+  if(typeof showBanner==='function') showBanner('cond','Conduit routing: '+_routeWord(next));
 }
 
 // == WIZARD ==================================================
@@ -8112,8 +8129,41 @@ function addEl(opts){
   _warnIfMapUnlocked();
   const el={id:uid(),...opts};S.elements.push(el);
   try{ if(typeof _geoStampElement==='function') _geoStampElement(el); }catch(e){}
-  renderEl(el);updCount();renderLegend();pushHist();return el;
+  renderEl(el);
+  try{ _autoBollardsFor(el); }catch(e){}
+  updCount();renderLegend();pushHist();return el;
 }
+
+/* Every Level 2 port gets a bollard, so placing a charger places its
+   protection with it rather than leaving it to be remembered later. The
+   cost sheet counts bollards as real elements, so a port drawn without one
+   was a port priced without one.
+
+   Placed just off the unit and marked _autoFor, so removing the charger can
+   take them with it and a hand-placed bollard is never touched. */
+function _autoBollardsFor(el){
+  if(!el || String(el.eqId||'')!=='charger') return 0;
+  if(window.OMEGA_AUTO_BOLLARDS === false) return 0;
+  if(el._bollardsDone) return 0;
+  if(el.futureProof) return 0;      /* no port yet, so nothing to protect */
+  var ports = +(el.ports||el.portCount||1) || 1;
+  var sz = +(el.w||60), gap = Math.round(sz*0.55), i, made=0;
+  for(i=0;i<ports;i++){
+    /* fan them along the face of the unit */
+    var offset = (i - (ports-1)/2) * Math.round(sz*0.8);
+    var b={ id:uid(), type:el.type, eqId:'bollard', label:'Bollard',
+            x:(+el.x||0)+offset, y:(+el.y||0)+gap,
+            w:Math.round(sz*0.35), rot:el.rot||0,
+            _autoFor:el.id };
+    S.elements.push(b);
+    try{ if(typeof _geoStampElement==='function') _geoStampElement(b); }catch(e){}
+    try{ renderEl(b); }catch(e){}
+    made++;
+  }
+  el._bollardsDone = true;
+  return made;
+}
+window._autoBollardsFor=_autoBollardsFor;
 
 // == EXPORT FOR CAD TOOL (Enlarged Plot Plan generator) =====
 // Converts S.elements (placed equipment) into the JSON shape expected
@@ -8637,6 +8687,14 @@ function renderEl(el){
 
 function removeEl(id){
   document.querySelector(`[data-elid="${id}"]`)?.remove();
+  /* Bollards placed automatically with a charger belong to it. Deleting the
+     charger without them left orphans standing in an empty stall — and the
+     cost sheet counts bollards, so the job kept paying for them. Only the
+     auto-placed ones go; anything hand-placed stays. */
+  (S.elements||[]).filter(e=>e && e._autoFor===id).forEach(function(b){
+    document.querySelector(`[data-elid="${b.id}"]`)?.remove();
+    S.elements=S.elements.filter(e=>e.id!==b.id);
+  });
   S.elements=S.elements.filter(e=>e.id!==id);
   if(S.sel===id){S.sel=null;showProps(null);}
   S.conduits.filter(c=>c.fromId===id||c.toId===id).forEach(c=>removeConduit(c.id));
@@ -16901,6 +16959,33 @@ function renderLegend(){
     h+='<div style="font-size:8px;font-weight:800;letter-spacing:.8px;opacity:.6;margin:2px 0 4px">EQUIPMENT</div>'+eqRows;
   }
 
+  /* ---- FUTURE PROOFING -------------------------------------------
+     Positions built out but not energised. They are drawn like chargers
+     and would otherwise read as live ports on the legend, which is
+     exactly the confusion a reviewer must not have: the utilities pay
+     make-ready on a live port and book future proofing as ineligible.
+     Given its own block so the sheet says which is which. */
+  try{
+    var _fp=(S.elements||[]).filter(function(e){ return e && e.futureProof; });
+    if(_fp.length){
+      var _fpRows='';
+      var _byLbl={};
+      _fp.forEach(function(e){
+        var k=String(e.label||'FP Position');
+        _byLbl[k]=(_byLbl[k]||0)+1;
+      });
+      Object.keys(_byLbl).forEach(function(k){
+        _fpRows+='<div style="display:flex;align-items:center;gap:6px;margin:2px 0">'
+          +'<span style="width:10px;height:10px;border:1.5px dashed #d9a441;border-radius:2px;'
+          +'display:inline-block;flex:0 0 auto"></span>'
+          +'<span style="font-size:9px"><b>'+k+' \u00d7'+_byLbl[k]+'</b>'
+          +'<span style="opacity:.7"> \u2014 conduit + panel position, no EVSE</span></span></div>';
+      });
+      h+='<div style="font-size:8px;font-weight:800;letter-spacing:.8px;opacity:.6;'
+        +'margin:8px 0 4px;color:#d9a441">FUTURE PROOFING (INELIGIBLE)</div>'+_fpRows;
+    }
+  }catch(e){}
+
   /* ---- UTILITY / BOP ---------------------------------------------
      Drawn utility components (kind:'utility') were rendered on the plan
      but never counted anywhere: the shape loop above returns early for
@@ -21458,6 +21543,21 @@ const WIZ_STEPS_L2 = [
     optional: true,
   },
   {
+    id:'l2_evse_fp', icon:'\u26A1',
+    title:'Place Future-Proofing Position (optional)',
+    desc:'A stall built out now but not energised: conduit, trench and a panel position carried '
+        +'to the pad, with no charger and no port. Utilities book this as INELIGIBLE future '
+        +'proofing, never as make-ready, so it is drawn separately from a live port and priced '
+        +'separately. Adding capacity while the trench is open costs a fraction of returning to it.',
+    action:'click-place',
+    eqId:'charger', label:'FP Position', spec:'Future proofing \u2014 conduit + panel position, no EVSE',
+    futureProof:true,
+    btnLabel:'  Click to Place Future-Proofing Position',
+    wireFrom:'l2_panel', wireType:'L2-TRENCH', wireLabel:'Spare branch, panel\u2192FP position (2" PVC trench)',
+    editableSpec: true,
+    optional: true,
+  },
+  {
     id:'l2_bollard', icon:'\u25A0',
     title:'Place Bollards (optional)',
     desc:'Impact protection at the stall. Often required by the property owner or the AHJ where a charger faces oncoming traffic, and it is cheap to include now and expensive to add after the pour.',
@@ -22653,7 +22753,12 @@ function _wizPlaceAt(p){
   // Place the element centered on the click point.
   var newEl = addEl({
     type:'eq', eqId:step.eqId, label:step.label||step.eqId, spec:stepSpec,
-    x:Math.round(p.x - iconSz/2), y:Math.round(p.y - iconSz/2), w:iconSz, rot:0
+    x:Math.round(p.x - iconSz/2), y:Math.round(p.y - iconSz/2), w:iconSz, rot:0,
+    /* A future-proofing position is drawn like a charger but is NOT one: no
+       port, no EVSE, and the utilities book it as ineligible future proofing
+       rather than make-ready. The flag rides on the element so the legend,
+       the port count and the cost sheet all treat it the same way. */
+    futureProof: !!step.futureProof
   });
 
   // Route conduit INTO THE TRENCH from the source device to this one.
@@ -33055,6 +33160,46 @@ function ctxToggleLabel() {
   toggleElLabel(_ctxElId);
   closeCtxMenu();
 }
+
+/* == HIDE THE CHARGER PROTECTION PADS =========================
+   Each charger draws a bollard-protection island under it: an orange
+   bordered box with diagonal hatching. On a ten-unit run those islands
+   overlap the stalls and each other until the drawing is unreadable,
+   and they are purely presentational — the bollards themselves are real
+   elements (eqId 'bollard') and are what the estimate counts, so hiding
+   the islands changes nothing on the cost sheet.
+
+   The labels stay. renderEl already honours window.OMEGA_EV_PAD, so this
+   just flips it and re-renders the chargers. */
+function toggleEvsePads(){
+  window.OMEGA_EV_PAD = (window.OMEGA_EV_PAD === false);
+  var hidden = (window.OMEGA_EV_PAD === false);
+  /* Hide with a stylesheet rule rather than re-rendering each charger.
+     Re-rendering only worked for elements the loop could find and
+     re-draw — anything drawn through a cluster or array path kept its
+     island, which is why the toggle worked "not every time". A rule on
+     .ev-bollard-pad catches every one, including pads drawn later. */
+  var st=document.getElementById('omega-evpad-style');
+  if(!st){
+    st=document.createElement('style');
+    st.id='omega-evpad-style';
+    document.head.appendChild(st);
+  }
+  st.textContent = hidden ? '.ev-bollard-pad{display:none !important}' : '';
+  var btn=document.getElementById('btn-hideevselbl');
+  if(btn){
+    btn.style.background=hidden?'rgba(0,212,255,.2)':'var(--surface)';
+    btn.style.color=hidden?'var(--accent)':'var(--sub)';
+    btn.style.borderColor=hidden?'var(--accent)':'var(--border)';
+    btn.textContent=hidden?'Show charger pads':'Hide charger pads';
+  }
+  if(typeof showBanner==='function')
+    showBanner('wiz', hidden
+      ? 'Charger protection pads hidden. Labels and bollard counts are unchanged.'
+      : 'Charger protection pads shown.');
+  return touched.length;
+}
+window.toggleEvsePads=toggleEvsePads;
 
 function toggleElLabel(elId) {
   const el = S.elements.find(x=>x.id===elId);
@@ -62789,7 +62934,8 @@ function openConduitMenu(){
       +'<label style="'+lbl+'">Trenching method</label>'
       +'<select id="cd-route" style="'+sel+'">'
         +'<option value="surface"'+(routeMode==='surface'?' selected':'')+'>Surface mount (above grade)</option>'
-        +'<option value="trench-ground"'+(routeMode==='trench-ground'?' selected':'')+'>Trench \u2014 in-ground</option>'
+        +'<option value="trench-ground"'+(routeMode==='trench-ground'?' selected':'')+'>Trench \u2014 in-ground (turf, ground cover)</option>'
+        +'<option value="trench-asphalt"'+(routeMode==='trench-asphalt'?' selected':'')+'>Trench \u2014 sawcut asphalt</option>'
         +'<option value="trench-concrete"'+(routeMode==='trench-concrete'?' selected':'')+'>Trench \u2014 sawcut concrete</option>'
       +'</select>'
       +'<div style="display:flex;gap:10px">'
@@ -65151,31 +65297,101 @@ window._elecWorkbookHost = function(){
    by route, because they price at different rates. */
 function _evFeetFromCanvas(){
   var list=[]; try{ list=(typeof S!=='undefined' && S.conduits)?S.conduits:[]; }catch(e){}
-  var ug=0, ag=0, cable=0, pavedRuns=0, i, c, lf;
+  var ug=0, ag=0, cable=0, pavedRuns=0, turfRuns=0, i, c, lf;
   for(i=0;i<list.length;i++){
     c=list[i];
     /* stamp first: _cdEstLf reads the riser allowance it sets */
     try{ if(typeof _cdStamp==='function') _cdStamp(c); }catch(e){}
     lf = (typeof _cdEstLf==='function') ? _cdEstLf(c) : (+c.ftLen||0);
-    if(c.route==='trench') ug+=lf; else ag+=lf;
+    /* Underground vs above-ground/indoor is about where the conduit RUNS,
+       not which tool drew it. The interior service->panel feed is tagged
+       L2-INT and is EMT, which is not rated for direct burial — but it is
+       drawn on a trench route, so it was being counted as underground and
+       priced at the buried rate. It belongs on Conduit & Cable - Above
+       Ground/Indoor with the rest of the interior work. */
+    var _cType=String(c.condType||'').toUpperCase();
+    var _cLbl =String(c.label||'').toLowerCase();
+    var _indoor = _cType.indexOf('INT')>=0 || _cType.indexOf('EMT')>=0
+               || _cLbl.indexOf('interior')>=0 || _cLbl.indexOf('indoor')>=0;
+    if(c.route==='trench' && !_indoor) ug+=lf; else ag+=lf;
     cable += (typeof _cdCableLf==='function') ? _cdCableLf(c) : 0;
-    if(c.route==='trench' && (c.trenchIn==='concrete'||c.trenchIn==='asphalt'))
-      pavedRuns += (+c.ftLen||0);
+    /* Surface type from the TRENCHED runs only, counting both kinds. Turf
+       taken as "corridor total minus paved" invented 7 ft of excavation on a
+       job whose only non-paved footage was a 7.2 ft INTERIOR run — the
+       corridor total counts that run, and an interior conduit is not a
+       trench. */
+    /* an interior run is not excavation, so it does not vote on the surface */
+    if(c.route==='trench' && !_indoor){
+      if(c.trenchIn==='concrete'||c.trenchIn==='asphalt') pavedRuns += (+c.ftLen||0);
+      else turfRuns += (+c.ftLen||0);
+    }
   }
   /* Trench counts each shared corridor once — never the sum of the conduit
      lengths in it. trenchTotals() is the same function the schedule uses. */
   var tt=(typeof trenchTotals==='function')?trenchTotals():{ft:0,corridors:0};
-  var paved=Math.min(pavedRuns, tt.ft);   /* runs share corridors; cap it */
+
+  /* How much trench there actually is. trenchTotals() measures the CORRIDOR,
+     which counts every run laid in it — including the interior feed, which
+     is not dug. On 112 Willow that reported 156 ft against 141.9 ft of
+     branch actually trenched, so the sheet billed 14 ft of excavation that
+     nobody digs.
+
+     min() is what makes both cases right: when runs share a corridor the
+     sum exceeds the corridor and the corridor wins (no double-count); when
+     the corridor carries a run that is not excavation, the trenched footage
+     is smaller and it wins. */
+  var dug = pavedRuns + turfRuns;
+  var trenchFt = dug>0 ? Math.min(tt.ft, dug) : 0;
+
+  var kind=dug, paved, turf;
+  if(kind>0){ paved=trenchFt*(pavedRuns/kind); turf=trenchFt*(turfRuns/kind); }
+  else { paved=0; turf=0; }
   return {
-    trench:      Math.round(tt.ft),
+    trench:      Math.round(trenchFt),
     trenchPaved: Math.round(paved),
-    trenchTurf:  Math.round(Math.max(0, tt.ft-paved)),
+    trenchTurf:  Math.round(turf),
     conduitUG:   Math.round(ug),
     conduitAG:   Math.round(ag),
     conduit:     Math.round(ug+ag),
     cable:       Math.round(cable),
-    trenchDrawn: tt.ft>0
+    trenchDrawn: trenchFt>0
   };
+}
+
+/* What is actually PLACED on the drawing. The takeoff sent footage and
+   chargers but never the equipment, so bollards, concrete pads, transformer
+   pads, handholes and the meter had to be typed into the cost sheet by hand
+   on every job — the drawing knew all of it. Counting them here closes the
+   last gap between the map and the matrix. */
+function _evCountsFromCanvas(){
+  var els=[]; try{ els=(typeof S!=='undefined' && S.elements)?S.elements:[]; }catch(e){}
+  var c={ bollard:0, pad:0, xfmrpad:0, handhole:0, meter:0, panel:0, disco:0,
+          charger:0, fpPositions:0 };
+  var i, t;
+  for(i=0;i<els.length;i++){
+    t=String((els[i]&&(els[i].type||els[i].eqId))||'').toLowerCase();
+    if(!t) continue;
+    if(t.indexOf('bollard')>=0)                       c.bollard++;
+    else if(t.indexOf('jbox')>=0||t.indexOf('handhole')>=0||t.indexOf('pull')>=0) c.handhole++;
+    /* a pad under a transformer is the utility's pad, not an EVSE base */
+    else if(t.indexOf('xfmr')>=0||t.indexOf('transformer')>=0) c.xfmrpad++;
+    else if(t.indexOf('pad')>=0)                      c.pad++;
+    else if(t.indexOf('meter')>=0)                    c.meter++;
+    else if(t.indexOf('panel')>=0||t.indexOf('mdp')>=0||t.indexOf('switchgear')>=0) c.panel++;
+    else if(t.indexOf('disco')>=0)                    c.disco++;
+    else if(t.indexOf('charger')>=0||t.indexOf('evse')>=0){
+      if(els[i].futureProof) c.fpPositions++; else c.charger++;
+    }
+  }
+  /* Whether the service is new is a drawing fact too: an existing meter bank
+     on the map means the service is there already. */
+  var existing=false;
+  for(i=0;i<els.length;i++){
+    var lbl=String((els[i]&&(els[i].label||els[i].name))||'').toLowerCase();
+    if(lbl.indexOf('existing')>=0 && (lbl.indexOf('meter')>=0||lbl.indexOf('service')>=0)) existing=true;
+  }
+  c.existingService = existing;
+  return c;
 }
 
 /* Pack whatever is on the canvas right now into one workbook payload. */
@@ -65219,6 +65435,8 @@ function _evPackSite(name){
     /* measured geometry — without this the workbook derives conduit from
        the trench and labels it DERIVED on the utility sheet */
     feet: _evFeetFromCanvas(),
+    /* placed equipment, so the sheet does not have to be told twice */
+    counts: _evCountsFromCanvas(),
     chargers: chargers,
     priceBasis: (typeof OMEGA_PRICE_BASIS!=='undefined') ? OMEGA_PRICE_BASIS : 'cost',
     evTotals: evT ? { ports:evT.ports, l2Units:evT.l2Units, dcfcUnits:evT.dcfcUnits,
@@ -82455,17 +82673,37 @@ if (_omPrevOmegaTrench) { Object.keys(_omPrevOmegaTrench).forEach(function (k) {
   }
 
   function addButton() {
-    if (document.getElementById('rb-labels')) return true;
     var host = document.getElementById('rb-crosshair');
     host = host && host.parentNode;
     if (!host) return false;
-    var b = document.createElement('button');
-    b.className = 'rbtn';
-    b.id = 'rb-labels';
-    b.title = 'Hide the text on the drawing. The legend, schedule and takeoff are unaffected.';
-    b.innerHTML = '<span class="rb-ico">\u1d40</span><span class="rb-lbl">Labels</span>';
-    b.onclick = function () { set(mode === 'on' ? 'off' : 'on'); };
-    host.appendChild(b);
+    if (!document.getElementById('rb-labels')) {
+      var b = document.createElement('button');
+      b.className = 'rbtn';
+      b.id = 'rb-labels';
+      b.title = 'Hide the text on the drawing. The legend, schedule and takeoff are unaffected.';
+      b.innerHTML = '<span class="rb-ico">\u1d40</span><span class="rb-lbl">Labels</span>';
+      b.onclick = function () { set(mode === 'on' ? 'off' : 'on'); };
+      host.appendChild(b);
+    }
+    /* Collapsing the EVSE plates is a VIEW decision, so it belongs on the
+       View ribbon next to Labels — not buried in the Satellite Photo panel,
+       where it was invisible on the tab people actually use for this. */
+    if (!document.getElementById('rb-evselbl') && typeof toggleEvsePads === 'function') {
+      var e = document.createElement('button');
+      e.className = 'rbtn';
+      e.id = 'rb-evselbl';
+      e.title = 'The orange hatched island under each charger is presentational. '
+              + 'Hide it when a long run of stalls gets unreadable \u2014 labels, bollards and '
+              + 'the cost sheet are unaffected.';
+      e.innerHTML = '<span class="rb-ico">\u25a7</span><span class="rb-lbl">Charger<br>pads</span>';
+      e.onclick = function () {
+        toggleEvsePads();
+        var off = (window.OMEGA_EV_PAD === false);
+        e.style.background = off ? 'rgba(0,212,255,.18)' : '';
+        e.style.borderColor = off ? 'var(--accent)' : '';
+      };
+      host.appendChild(e);
+    }
     return true;
   }
 
@@ -130159,6 +130397,1849 @@ challengeRow(s) +
     var rb = document.getElementById('ribbon');
     if (rb) mo.observe(rb, { childList: true, subtree: true });
   } catch (e) {}
+})();
+
+</script>
+
+
+<!-- ═══ 3D SITE VISUALIZER ═══════════════════════════════════════════
+     Renders the drawn site map as a lit 3D model. Adds a button to
+     Output › Reports. Self-contained; three.js is lazy-loaded only
+     when the view is actually opened.                              -->
+<script>
+(function(){
+'use strict';
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  OMEGA SITE VISUALIZER  —  3D / photoreal site rendering
+ *  ---------------------------------------------------------------------
+ *  Turns the 2D site map (S.elements + S.shapes + S.conduits) into a real
+ *  3D model: tilted PV tables, carport canopies on columns, rooftop arrays
+ *  sitting on the building, BESS containers on their pads, transformers,
+ *  switchgear, fence, bollards, parking and trees — lit by a positionable
+ *  sun and standing on the site's own satellite imagery.
+ *
+ *  WHY THIS EXISTS
+ *  A plan view answers "does it fit". It does not answer "what will this
+ *  look like when it is built", which is the question a landowner, a city
+ *  council or a customer actually asks. This renders the same model the
+ *  estimate and the permit set are drawn from, so the picture cannot drift
+ *  from the numbers.
+ *
+ *  THE HARD PART IS NOT THE 3D — IT IS KNOWING WHAT EACH THING IS.
+ *  A rectangle on a site map is not self-describing. A solar array drawn
+ *  over parking is a carport; the same rectangle on a roof is a flush
+ *  array; on dirt it is a tilted ground mount. The three look completely
+ *  different in 3D and are priced completely differently.
+ *
+ *  So classification runs in three passes, most-trusted first:
+ *    1. EXPLICIT   — the user set it by hand (rides on the object as
+ *                    _visArch, so it survives save/reload/tab switch).
+ *    2. AUTHORED   — the drawing already says so. sh.mount==='roof' came
+ *                    from the Rooftop draw tool; gcr 0.85 came from the
+ *                    Carport preset. This is design intent, not a guess.
+ *    3. INFERRED   — geometry. An array whose footprint sits on a parking
+ *                    field is a carport; one on a building is rooftop.
+ *
+ *  Every item reports which pass decided it, and the panel lets any of it
+ *  be overridden, because a guess presented as fact is worse than no guess.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ---- ARCHETYPES ------------------------------------------------------
+   The 3D vocabulary. `group` drives the layer toggles; `h` is a default
+   height in feet used when the source object carries none. */
+var ARCH = {
+  'solar-ground':  { label:'Solar — ground mount',   group:'solar', tilt:25, clear:3   },
+  'solar-tracker': { label:'Solar — single-axis tracker', group:'solar', tilt:0, clear:6 },
+  'solar-roof':    { label:'Solar — rooftop',        group:'solar', tilt:7,  clear:0.7 },
+  'solar-carport': { label:'Solar — carport canopy', group:'solar', tilt:7,  clear:14  },
+
+  'bess-container':{ label:'BESS — container',       group:'storage', h:9.5  },
+  'bess-cabinet':  { label:'BESS — cabinet',         group:'storage', h:7.2  },
+  'pcs':           { label:'PCS / inverter skid',    group:'storage', h:7.5  },
+  'ems':           { label:'EMS / controls cabinet', group:'storage', h:5.0  },
+
+  'xfmr':          { label:'Pad-mount transformer',  group:'elec', h:6.0 },
+  'switchgear':    { label:'Switchgear lineup',      group:'elec', h:7.5 },
+  'meter':         { label:'Utility meter',          group:'elec', h:4.0 },
+  'panel':         { label:'Panelboard',             group:'elec', h:5.0 },
+  'disco':         { label:'AC disconnect',          group:'elec', h:3.0 },
+  'jbox':          { label:'Junction box',           group:'elec', h:1.6 },
+  'genset':        { label:'Generator',              group:'elec', h:9.0 },
+  'ups':           { label:'UPS cabinet',            group:'elec', h:6.5 },
+  'pole':          { label:'Utility pole',           group:'elec', h:35  },
+
+  'building':      { label:'Building',               group:'civil', h:22  },
+  'pad':           { label:'Concrete pad',           group:'civil', h:0.7 },
+  'fence':         { label:'Fence',                  group:'civil', h:8   },
+  'bollard':       { label:'Bollard',                group:'civil', h:3.5 },
+  'parking':       { label:'Parking',                group:'civil', h:0   },
+  'tree':          { label:'Tree',                   group:'civil', h:24  },
+  'hydrant':       { label:'Fire hydrant',           group:'civil', h:2.8 },
+  'camera':        { label:'Camera',                 group:'civil', h:12  },
+  'charger':       { label:'EV charger',             group:'ev', h:5.2 },
+  'ignore':        { label:'— not shown —',          group:'none' }
+};
+
+var ARCH_GROUPS = [
+  { id:'solar',   label:'Solar' },
+  { id:'storage', label:'Storage' },
+  { id:'elec',    label:'Electrical' },
+  { id:'civil',   label:'Civil / site' },
+  { id:'ev',      label:'EV' }
+];
+
+/* Selectable archetypes, in menu order. */
+var ARCH_ORDER = ['solar-ground','solar-tracker','solar-roof','solar-carport',
+  'bess-container','bess-cabinet','pcs','ems',
+  'xfmr','switchgear','meter','panel','disco','jbox','genset','ups','pole',
+  'building','pad','fence','bollard','parking','tree','hydrant','camera',
+  'charger','ignore'];
+
+/* ---- SCALE ----------------------------------------------------------
+   Everything downstream is in FEET. px/ft is the one conversion, and a
+   site that was never calibrated gets a clearly-labelled assumed scale
+   rather than a silently wrong model. */
+function ppf(){
+  try{
+    if(typeof S!=='undefined' && S.pxPerFt > 0) return S.pxPerFt;
+  }catch(e){}
+  return 6;
+}
+function isCalibrated(){
+  try{ return !!(typeof S!=='undefined' && S.pxPerFt > 0); }catch(e){ return false; }
+}
+
+/* ---- GEOMETRY HELPERS ---------------------------------------------- */
+function bboxOfPts(pts){
+  var minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity,i;
+  for(i=0;i<pts.length;i++){
+    if(pts[i].x<minx)minx=pts[i].x; if(pts[i].x>maxx)maxx=pts[i].x;
+    if(pts[i].y<miny)miny=pts[i].y; if(pts[i].y>maxy)maxy=pts[i].y;
+  }
+  return { x:minx, y:miny, w:Math.max(1,maxx-minx), h:Math.max(1,maxy-miny) };
+}
+/* Axis-aligned overlap ratio of A relative to A's own area (0..1). Used to
+   decide "is this array sitting on that building / that parking field". */
+function overlapFrac(a, b){
+  var ix = Math.max(0, Math.min(a.x+a.w, b.x+b.w) - Math.max(a.x, b.x));
+  var iy = Math.max(0, Math.min(a.y+a.h, b.y+b.h) - Math.max(a.y, b.y));
+  var ia = ix*iy, aa = a.w*a.h;
+  return aa>0 ? ia/aa : 0;
+}
+
+/* Pixel bbox for a shape, defensively — _shapeBBox is the app's own and is
+   authoritative, but it throws on half-built shapes, so fall back to the
+   point list rather than dropping the object out of the render. */
+function shapeBox(sh){
+  try{
+    if(typeof _shapeBBox==='function'){
+      var b=_shapeBBox(sh);
+      if(b && isFinite(b.x) && isFinite(b.y) && b.w>0 && b.h>0) return b;
+    }
+  }catch(e){}
+  if(sh.wPx>0 && sh.hPx>0 && sh.pts && sh.pts[0])
+    return { x:sh.pts[0].x, y:sh.pts[0].y, w:sh.wPx, h:sh.hPx };
+  if(sh.pts && sh.pts.length) return bboxOfPts(sh.pts);
+  if(sh.cx!=null) return { x:sh.cx-10, y:sh.cy-10, w:20, h:20 };
+  return null;
+}
+
+/* ---- CLASSIFICATION -------------------------------------------------
+   Returns {arch, why} where `why` is 'explicit' | 'authored' | 'inferred'. */
+
+/* Equipment ids map straight onto archetypes — this is authored data: the
+   user picked "Transformer" off the Insert tab, so it is a transformer. */
+var EQ_ARCH = {
+  bess:'bess-cabinet', pcs:'pcs', xfmr:'xfmr', disco:'disco', panel:'panel',
+  meter:'meter', building:'building', hydrant:'hydrant', genset:'genset',
+  solar:'solar-ground', pad:'pad', bollard:'bollard', fence:'fence',
+  jbox:'jbox', charger:'charger', camera:'camera', ups:'ups', pole:'pole',
+  ems:'ems',
+  /* Armada modular data-center units read as containers */
+  dc_cruiser:'bess-container', dc_triton:'bess-container',
+  dc_leviathan:'bess-container'
+};
+
+function classifyElement(el){
+  if(el._visArch && ARCH[el._visArch]) return { arch:el._visArch, why:'explicit' };
+  var id = String(el.eqId||'');
+  if(EQ_ARCH[id]) return { arch:EQ_ARCH[id], why:'authored' };
+  if(el.type==='logo') return { arch:'ignore', why:'authored' };
+  return { arch:'jbox', why:'inferred' };
+}
+
+/* Solar arrays: the one classification that genuinely has to be worked out.
+   `ctx` carries the other shapes so geometry can be consulted. */
+function classifySolar(sh, ctx){
+  if(sh._visArch && ARCH[sh._visArch]) return { arch:sh._visArch, why:'explicit' };
+
+  var mount = String(sh.mount||'ground');
+  var gcr   = +sh.gcr || 0;
+  var label = String(sh.label||'').toLowerCase();
+
+  /* --- pass 2: authored ------------------------------------------------
+     The draw tool and the racking preset already recorded the intent. A
+     rooftop array was drawn with the Rooftop tool (mount 'roof'); the
+     Carport preset is the only one that ships gcr 0.85, and 'adjacent' is
+     the mount the canopy tool sets. Trust all of that over geometry. */
+  if(label.indexOf('carport')>=0 || label.indexOf('canopy')>=0)
+    return { arch:'solar-carport', why:'authored' };
+  if(mount==='adjacent') return { arch:'solar-carport', why:'authored' };
+  if(gcr >= 0.80)        return { arch:'solar-carport', why:'authored' };
+  if(mount==='roof')     return { arch:'solar-roof',    why:'authored' };
+  /* Tracker preset is the only ground option that drops to ~0.33 GCR. */
+  if(gcr > 0 && gcr <= 0.35) return { arch:'solar-tracker', why:'authored' };
+
+  /* --- pass 3: inferred -------------------------------------------------
+     Nothing in the drawing said. Ask where the footprint physically is:
+     mostly over parking -> carport; mostly over a building -> rooftop. */
+  var box = shapeBox(sh);
+  if(box && ctx){
+    var i, best=0, bestKind=null;
+    for(i=0;i<ctx.length;i++){
+      var o = ctx[i]; if(!o.box || o.sh===sh) continue;
+      if(o.kind!=='parking' && o.kind!=='building') continue;
+      var f = overlapFrac(box, o.box);
+      if(f > best){ best = f; bestKind = o.kind; }
+    }
+    if(best >= 0.45 && bestKind==='parking')  return { arch:'solar-carport', why:'inferred' };
+    if(best >= 0.45 && bestKind==='building') return { arch:'solar-roof',    why:'inferred' };
+  }
+  return { arch:'solar-ground', why:'authored' };
+}
+
+/* Non-solar shapes. */
+var SHAPE_ARCH = {
+  parking:'parking', adaaisle:'parking', evstencil:'parking', adastencil:'parking',
+  bespad:'bess-container', assembly:'bess-container', energy:'bess-container',
+  substation:'switchgear', utility:'xfmr',
+  evl2:'charger', evcab:'charger', evpost:'charger', evunit:'charger',
+  derwind:'ignore', deralt:'genset', derdc:'bess-container',
+  callout:'ignore', line:'ignore', polyline:'ignore', zonebox:'ignore'
+};
+
+function classifyShape(sh, ctx){
+  if(sh._visArch && ARCH[sh._visArch]) return { arch:sh._visArch, why:'explicit' };
+  var k = String(sh.kind||'');
+  if(k==='dersolar' || k==='solar') return classifySolar(sh, ctx);
+  if(SHAPE_ARCH[k]) return { arch:SHAPE_ARCH[k], why:'authored' };
+
+  /* rect / circle / polygon are generic. A labelled one usually says what
+     it is; an unlabelled one is a building only if it is big enough to be
+     one, otherwise it is a pad. */
+  var label = String(sh.label||sh.text||'').toLowerCase();
+  if(/build|warehouse|office|store|plant|facility|hangar/.test(label))
+    return { arch:'building', why:'authored' };
+  if(/pad|slab|concrete/.test(label)) return { arch:'pad', why:'authored' };
+  if(/fence|perimeter/.test(label))   return { arch:'fence', why:'authored' };
+  if(/tree|landscap/.test(label))     return { arch:'tree', why:'authored' };
+  if(/park|stall|lot/.test(label))    return { arch:'parking', why:'authored' };
+
+  if(k==='rect'||k==='polygon'||k==='poly'||k==='boundary'||k==='area'){
+    var b = shapeBox(sh), p = ppf();
+    if(b){
+      var sqft = (b.w/p)*(b.h/p);
+      if(sqft > 1200) return { arch:'building', why:'inferred' };
+      return { arch:'pad', why:'inferred' };
+    }
+  }
+  if(k==='circle') return { arch:'tree', why:'inferred' };
+  return { arch:'ignore', why:'inferred' };
+}
+/* ═══════════════════════════════════════════════════════════════════════
+ *  SITE READER
+ *  Walks the live drawing and produces a normalised model in FEET with the
+ *  origin at the centre of everything drawn, which is where the camera
+ *  wants to orbit and where a shadow camera wants to be centred.
+ *
+ *  AXES. Canvas x runs east, canvas y runs SOUTH. Three.js is Y-up, so the
+ *  ground plane is XZ: world X = east, world Z = south, world Y = up.
+ *  A screen rotation of +θ (clockwise) is therefore a rotation about +Y of
+ *  −θ; getting that sign wrong mirrors every rotated table on the site.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function readSite(){
+  var p = ppf();
+  var out = { items:[], calibrated:isCalibrated(), ppf:p,
+              warnings:[], counts:{}, kw:0, kwh:0 };
+  var S_ = (typeof S!=='undefined') ? S : null;
+  if(!S_) return out;
+
+  var shapes = S_.shapes || [], elements = S_.elements || [];
+
+  /* --- context pass -------------------------------------------------
+     Solar classification needs to know where the parking and the
+     buildings are before it can decide what any array is sitting on, so
+     the cheap kinds get boxed first. */
+  var ctx = [], i, sh, b;
+  for(i=0;i<shapes.length;i++){
+    sh = shapes[i]; if(!sh) continue;
+    var k = String(sh.kind||'');
+    var kind = (k==='parking') ? 'parking'
+             : (k==='rect'||k==='polygon'||k==='poly'||k==='boundary') ? 'building'
+             : null;
+    if(!kind) continue;
+    /* An explicit override re-labels the context too, so overriding a
+       rectangle to "Parking" immediately makes arrays on it read as
+       carports without a second pass by the user. */
+    if(sh._visArch==='parking') kind='parking';
+    else if(sh._visArch==='building') kind='building';
+    else if(sh._visArch) continue;
+    b = shapeBox(sh); if(!b) continue;
+    ctx.push({ sh:sh, box:b, kind:kind });
+  }
+
+  /* --- bounds -------------------------------------------------------- */
+  var minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  function grow(x,y,w,h){
+    if(!isFinite(x)||!isFinite(y)) return;
+    if(x<minx)minx=x; if(y<miny)miny=y;
+    if(x+w>maxx)maxx=x+w; if(y+h>maxy)maxy=y+h;
+  }
+  for(i=0;i<shapes.length;i++){ b=shapeBox(shapes[i]); if(b) grow(b.x,b.y,b.w,b.h); }
+  for(i=0;i<elements.length;i++){
+    var e=elements[i]; if(!e) continue;
+    var ew=+e.w||40; grow(+e.x||0, +e.y||0, ew, ew);
+  }
+  if(!isFinite(minx)){ minx=0;miny=0;maxx=600;maxy=400; }
+  var cx=(minx+maxx)/2, cy=(miny+maxy)/2;
+  out.originPx = { x:cx, y:cy };
+  out.sizeFt   = { w:(maxx-minx)/p, h:(maxy-miny)/p };
+  out.bboxPx   = { x:minx, y:miny, w:maxx-minx, h:maxy-miny };
+
+  /* px -> ft, relative to site centre */
+  function fx(px){ return (px - cx)/p; }
+  function fz(py){ return (py - cy)/p; }
+
+  /* --- shapes -------------------------------------------------------- */
+  for(i=0;i<shapes.length;i++){
+    sh = shapes[i]; if(!sh) continue;
+    var c = classifyShape(sh, ctx);
+    if(c.arch==='ignore' && !sh._visArch) {
+      /* still record it so the user can turn it back on by hand */
+      out.items.push(mkItem(sh, 'shape', c, null));
+      continue;
+    }
+    b = shapeBox(sh); if(!b) continue;
+    var it = mkItem(sh, 'shape', c, {
+      x: fx(b.x + b.w/2), z: fz(b.y + b.h/2),
+      wf: b.w/p, lf: b.h/p,
+      rot: +sh.rot||0
+    });
+    /* carry the design data the 3D builders need */
+    it.kw       = +sh.kw || 0;
+    it.gcr      = +sh.gcr || 0;
+    it.setbackFt= +sh.setbackFt || 0;
+    it.mount    = sh.mount || null;
+    it.stallRows= +sh.rows || 0;
+    it.stallCols= +sh.cols || 0;
+    it.catalogKey = sh.catalogKey || null;
+    /* An auto-laid-out array already knows where each table goes; use the
+       real table rects rather than re-deriving rows from GCR, so the 3D
+       matches the drawing table-for-table. */
+    if(sh.autoLayout && sh.tables && sh.tables.length){
+      it.tables = sh.tables.map(function(t){
+        return { x:fx(t.x + (t.w||0)/2), z:fz(t.y + (t.h||0)/2),
+                 wf:(t.w||0)/p, lf:(t.h||0)/p };
+      });
+    }
+    if(sh.pts && sh.pts.length>2){
+      it.poly = sh.pts.map(function(q){ return { x:fx(q.x), z:fz(q.y) }; });
+    }
+    if(sh.kind==='bespad' || sh.kind==='assembly'){
+      it.wf = (+sh.lf||20); it.lf = (+sh.wf||8);
+      if(sh.cx!=null){ it.x = fx(sh.cx); it.z = fz(sh.cy); }
+    }
+    out.items.push(it);
+    out.kw += it.kw;
+  }
+
+  /* --- elements ------------------------------------------------------ */
+  for(i=0;i<elements.length;i++){
+    var ele = elements[i]; if(!ele) continue;
+    var ce = classifyElement(ele);
+    var wpx = +ele.w || 40;
+    /* Real footprints where the app knows them, so a transformer is 6x5 ft
+       and not a 60 px square that happens to be whatever the drop size was. */
+    var fw = wpx/p, fl = wpx/p;
+    try{
+      var gf = (typeof EQ_FOOTPRINT_FT!=='undefined') ? EQ_FOOTPRINT_FT[ele.eqId] : null;
+      var dc = (typeof DC_CATALOG!=='undefined') ? DC_CATALOG[ele.eqId] : null;
+      if(dc){ fw = dc.lf; fl = dc.wf; }
+      else if(gf){ fw = gf.lf; fl = gf.wf; }
+    }catch(e2){}
+    out.items.push(mkItem(ele, 'element', ce, {
+      x: fx((+ele.x||0) + wpx/2), z: fz((+ele.y||0) + wpx/2),
+      wf: fw, lf: fl, rot: +ele.rot||0
+    }));
+  }
+
+  /* --- conduits ------------------------------------------------------ */
+  out.conduits = [];
+  var cds = S_.conduits || [];
+  for(i=0;i<cds.length;i++){
+    var cd = cds[i]; if(!cd || !cd.pts || cd.pts.length<2) continue;
+    out.conduits.push({
+      id: cd.id, type: cd.condType||'',
+      pts: cd.pts.map(function(q){ return { x:fx(q.x), z:fz(q.y) }; })
+    });
+  }
+
+  /* --- tallies ------------------------------------------------------- */
+  for(i=0;i<out.items.length;i++){
+    var a = out.items[i].arch;
+    out.counts[a] = (out.counts[a]||0) + 1;
+  }
+  try{
+    (S_.bessList||[]).forEach(function(bb){ out.kwh += +(bb.kwh||0); });
+  }catch(e3){}
+
+  if(!out.calibrated) out.warnings.push(
+    'Site scale is not calibrated — heights and spacing use an assumed '
+    + p + ' px/ft. Set the scale on the site map for a true-to-size model.');
+  if(!out.items.length) out.warnings.push('Nothing is drawn on the site map yet.');
+
+  return out;
+}
+
+/* Normalised item. `ref` is the live object so an override written here
+   lands on the drawing itself and is saved with the project. */
+function mkItem(ref, src, c, geo){
+  var it = {
+    id:  ref.id || ('x'+Math.random().toString(36).slice(2,8)),
+    ref: ref, src: src,
+    arch: c.arch, why: c.why,
+    label: ref.label || ref.text || '',
+    x:0, z:0, wf:4, lf:4, rot:0, hidden:(c.arch==='ignore')
+  };
+  if(geo){ it.x=geo.x; it.z=geo.z; it.wf=Math.max(0.4,geo.wf); it.lf=Math.max(0.4,geo.lf); it.rot=geo.rot; }
+  if(!it.label) it.label = ARCH[it.arch] ? ARCH[it.arch].label : it.arch;
+  return it;
+}
+
+/* Write an override back onto the drawing object. */
+function setArch(item, arch){
+  if(!ARCH[arch]) return;
+  item.arch = arch;
+  item.why  = 'explicit';
+  item.hidden = (arch==='ignore');
+  try{ item.ref._visArch = arch; }catch(e){}
+}
+/* ═══════════════════════════════════════════════════════════════════════
+ *  MATERIALS + PROCEDURAL TEXTURES
+ *  No texture files ship with this app, so every map is drawn into a
+ *  canvas at load. That keeps the tool a single self-contained file and
+ *  means the render works with no network, which matters because half of
+ *  these sites get presented from a truck.
+ * ═══════════════════════════════════════════════════════════════════════ */
+var MAT = null, TEX = {};
+
+function canvasTex(w, h, draw, repX, repY){
+  var c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  var t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  if(repX||repY) t.repeat.set(repX||1, repY||1);
+  t.anisotropy = 8;
+  /* These are colour maps, so they have to be tagged sRGB or the tone
+     mapper double-applies gamma and everything renders washed out. */
+  try{ if(THREE.sRGBEncoding !== undefined) t.encoding = THREE.sRGBEncoding; }catch(e){}
+  return t;
+}
+
+function buildTextures(){
+  /* PV module: cell grid + busbars. This one texture is what makes an
+     array read as solar rather than as blue boxes. */
+  TEX.panel = canvasTex(256, 512, function(g,w,h){
+    g.fillStyle = '#0f1d3d'; g.fillRect(0,0,w,h);
+    var cols=6, rows=12, m=6;
+    var cw=(w-m*2)/cols, ch=(h-m*2)/rows;
+    for(var r=0;r<rows;r++) for(var c2=0;c2<cols;c2++){
+      var x=m+c2*cw, y=m+r*ch;
+      var grd=g.createLinearGradient(x,y,x+cw,y+ch);
+      grd.addColorStop(0,'#1b3568'); grd.addColorStop(.5,'#15294f'); grd.addColorStop(1,'#1e3c74');
+      g.fillStyle=grd; g.fillRect(x+1,y+1,cw-2,ch-2);
+      g.strokeStyle='rgba(140,170,220,.25)'; g.lineWidth=1;
+      g.strokeRect(x+1.5,y+1.5,cw-3,ch-3);
+      /* busbars */
+      g.fillStyle='rgba(190,205,230,.45)';
+      g.fillRect(x+cw*0.32, y+2, 1.6, ch-4);
+      g.fillRect(x+cw*0.66, y+2, 1.6, ch-4);
+    }
+    /* frame */
+    g.strokeStyle='#c8ced6'; g.lineWidth=m*1.6; g.strokeRect(0,0,w,h);
+  });
+
+  /* Asphalt with a little grain so a parking field is not a flat swatch. */
+  TEX.asphalt = canvasTex(256, 256, function(g,w,h){
+    g.fillStyle='#3c3c40'; g.fillRect(0,0,w,h);
+    for(var i=0;i<5200;i++){
+      var v = 30 + Math.random()*40;
+      g.fillStyle='rgba('+v+','+v+','+(v+3)+',.5)';
+      g.fillRect(Math.random()*w, Math.random()*h, 1.4, 1.4);
+    }
+  }, 8, 8);
+
+  /* Concrete for pads. */
+  TEX.concrete = canvasTex(256, 256, function(g,w,h){
+    g.fillStyle='#b6b2a8'; g.fillRect(0,0,w,h);
+    for(var i=0;i<3000;i++){
+      var v = 150 + Math.random()*55;
+      g.fillStyle='rgba('+v+','+(v-3)+','+(v-12)+',.45)';
+      g.fillRect(Math.random()*w, Math.random()*h, 2, 2);
+    }
+    g.strokeStyle='rgba(120,118,110,.5)'; g.lineWidth=2;
+    g.beginPath(); g.moveTo(0,h/2); g.lineTo(w,h/2);
+    g.moveTo(w/2,0); g.lineTo(w/2,h); g.stroke();
+  }, 3, 3);
+
+  /* Grass / dirt, used when there is no satellite image to stand on. */
+  TEX.ground = canvasTex(256, 256, function(g,w,h){
+    g.fillStyle='#5e6b45'; g.fillRect(0,0,w,h);
+    for(var i=0;i<7000;i++){
+      var v = Math.random();
+      g.fillStyle = v>.5 ? 'rgba(108,124,78,.55)' : 'rgba(78,90,58,.55)';
+      g.fillRect(Math.random()*w, Math.random()*h, 2.2, 2.2);
+    }
+  }, 40, 40);
+
+  /* Corrugated container flank. */
+  TEX.corrugate = canvasTex(128, 128, function(g,w,h){
+    g.fillStyle='#dfe3e6'; g.fillRect(0,0,w,h);
+    for(var x=0;x<w;x+=10){
+      var grd=g.createLinearGradient(x,0,x+10,0);
+      grd.addColorStop(0,'rgba(0,0,0,.16)');
+      grd.addColorStop(.5,'rgba(255,255,255,.20)');
+      grd.addColorStop(1,'rgba(0,0,0,.16)');
+      g.fillStyle=grd; g.fillRect(x,0,10,h);
+    }
+  }, 6, 1);
+}
+
+function buildMaterials(){
+  function std(o){ return new THREE.MeshStandardMaterial(o); }
+  MAT = {
+    panel:      std({ map:TEX.panel, color:0xffffff, metalness:0.32, roughness:0.26 }),
+    panelBack:  std({ color:0x6f7681, metalness:0.25, roughness:0.72 }),
+    steel:      std({ color:0x8d949c, metalness:0.72, roughness:0.42 }),
+    galv:       std({ color:0xa9b0b7, metalness:0.66, roughness:0.38 }),
+    darkSteel:  std({ color:0x54595f, metalness:0.62, roughness:0.5  }),
+    concrete:   std({ map:TEX.concrete, color:0xffffff, roughness:0.94, metalness:0.02 }),
+    asphalt:    std({ map:TEX.asphalt, color:0xffffff, roughness:0.96, metalness:0.0 }),
+    ground:     std({ map:TEX.ground, color:0xffffff, roughness:1.0, metalness:0.0 }),
+    container:  std({ map:TEX.corrugate, color:0xe8ecef, roughness:0.62, metalness:0.22 }),
+    containerTop:std({ color:0xd2d7db, roughness:0.7, metalness:0.2 }),
+    cabinet:    std({ color:0x9aa1a8, roughness:0.5, metalness:0.42 }),
+    xfmr:       std({ color:0x35624a, roughness:0.55, metalness:0.28 }),
+    gear:       std({ color:0xb9bfc5, roughness:0.45, metalness:0.5 }),
+    yellow:     std({ color:0xf0b323, roughness:0.6, metalness:0.1 }),
+    red:        std({ color:0xb03030, roughness:0.6, metalness:0.1 }),
+    stripe:     std({ color:0xeceae4, roughness:0.85, metalness:0.0 }),
+    wall:       std({ color:0xa9a49a, roughness:0.86, metalness:0.02 }),
+    roofDeck:   std({ color:0x6d6f70, roughness:0.9,  metalness:0.04 }),
+    glass:      std({ color:0x2c4f6b, roughness:0.12, metalness:0.85 }),
+    trunk:      std({ color:0x5b4735, roughness:0.95, metalness:0.0 }),
+    leaves:     std({ color:0x44703a, roughness:0.92, metalness:0.0, flatShading:true }),
+    mesh:       new THREE.MeshStandardMaterial({ color:0x9aa2a8, roughness:.6,
+                  metalness:.5, transparent:true, opacity:0.30, side:THREE.DoubleSide }),
+    conduit:    std({ color:0xd08a2a, roughness:0.7, metalness:0.1 })
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  BUILDERS
+ *  Each returns a THREE.Group positioned at the origin; the caller places
+ *  and rotates it. Feet are the unit throughout.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function box(w,h,d,mat){ var m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+  m.castShadow=true; m.receiveShadow=true; return m; }
+function cyl(rt,rb,h,mat,seg){ var m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg||12), mat);
+  m.castShadow=true; m.receiveShadow=true; return m; }
+
+/* ---- SOLAR ----------------------------------------------------------
+   One table = a tilted module plane on posts. Everything else about a PV
+   array is how many of these there are and how far apart, which is the
+   ground-cover ratio the estimate already used. Building the array from
+   the SAME gcr means the picture cannot show a density the kW number did
+   not come from. */
+function pvTable(wf, df, tiltDeg, clearFt){
+  var g = new THREE.Group();
+  var tilt = (tiltDeg||0) * Math.PI/180;
+  var planeD = df / Math.cos(tilt);          /* slope length of the table */
+
+  var pv = new THREE.Mesh(new THREE.BoxGeometry(wf, 0.22, planeD), MAT.panel);
+  pv.castShadow = true; pv.receiveShadow = true;
+  /* rotate about X so the table leans back along +Z (north-facing rows
+     run east-west, which is how a fixed-tilt row is built) */
+  pv.rotation.x = -tilt;
+  pv.position.y = clearFt + Math.sin(tilt)*planeD/2;
+  g.add(pv);
+
+  /* posts: front pair low, back pair at the raised edge */
+  var rise = Math.sin(tilt) * planeD;
+  var zf = -Math.cos(tilt)*planeD/2, zb = Math.cos(tilt)*planeD/2;
+  var px = wf/2 - 0.6;
+  [[-px,zf,clearFt],[px,zf,clearFt],[-px,zb,clearFt+rise],[px,zb,clearFt+rise]]
+    .forEach(function(p){
+      var h = Math.max(0.4, p[2]);
+      var post = cyl(0.16,0.16,h,MAT.galv,8);
+      post.position.set(p[0], h/2, p[1]);
+      g.add(post);
+    });
+  /* torque tube / purlin along the row */
+  var tube = cyl(0.14,0.14,wf,MAT.darkSteel,8);
+  tube.rotation.z = Math.PI/2;
+  tube.position.y = clearFt + rise/2;
+  g.add(tube);
+  return g;
+}
+
+/* A whole ground-mount field: rows at the pitch implied by GCR. */
+function buildSolarGround(it, arch){
+  var g = new THREE.Group();
+  var tilt = arch.tilt, clear = arch.clear;
+  var sb = it.setbackFt || 0;
+  var bw = Math.max(2, it.wf - sb*2), bl = Math.max(2, it.lf - sb*2);
+
+  /* If the app already laid out real tables, use them verbatim. */
+  if(it.tables && it.tables.length){
+    it.tables.forEach(function(t){
+      var tb = pvTable(Math.max(1,t.wf), Math.max(1,t.lf), tilt, clear);
+      tb.position.set(t.x - it.x, 0, t.z - it.z);
+      g.add(tb);
+    });
+    return g;
+  }
+
+  var tableD = 12;                                  /* 2-up landscape table depth */
+  var gcr = it.gcr > 0 ? it.gcr : 0.40;
+  var pitch = Math.max(tableD*1.05, tableD/gcr);    /* row-to-row, from GCR */
+  var rows = Math.max(1, Math.floor(bl / pitch));
+  var tableW = Math.min(bw, 40);
+  var cols = Math.max(1, Math.round(bw / tableW));
+  var colW = bw / cols;
+
+  /* Beyond a few hundred tables the browser stops coping and the detail is
+     sub-pixel anyway, so thin the field and keep the footprint honest. */
+  var total = rows*cols, stride = 1;
+  if(total > 420){ stride = Math.ceil(total/420); }
+
+  var n=0;
+  for(var r=0;r<rows;r++){
+    for(var c=0;c<cols;c++){
+      if((n++ % stride) !== 0) continue;
+      var t = pvTable(colW*0.94, tableD, tilt, clear);
+      t.position.set(-bw/2 + colW*(c+0.5), 0, -bl/2 + pitch*(r+0.5));
+      g.add(t);
+    }
+  }
+  return g;
+}
+
+/* Tracker rows: table flat at torque-tube height on a line of piles. */
+function buildSolarTracker(it){
+  var g = new THREE.Group();
+  var axis = 6, tableD = 13;
+  var gcr = it.gcr>0 ? it.gcr : 0.33;
+  var pitch = Math.max(tableD*1.1, tableD/gcr);
+  var rows = Math.max(1, Math.floor(it.lf / pitch));
+  var len = Math.max(6, it.wf*0.96);
+  for(var r=0;r<rows;r++){
+    var z = -it.lf/2 + pitch*(r+0.5);
+    var pv = new THREE.Mesh(new THREE.BoxGeometry(len, 0.22, tableD), MAT.panel);
+    pv.rotation.z = 0.16;                    /* a few degrees off flat reads better */
+    pv.position.set(0, axis, z);
+    pv.castShadow = pv.receiveShadow = true;
+    g.add(pv);
+    var tube = cyl(0.2,0.2,len,MAT.darkSteel,8);
+    tube.rotation.z = Math.PI/2; tube.position.set(0, axis, z); g.add(tube);
+    var piles = Math.max(2, Math.round(len/22));
+    for(var i=0;i<=piles;i++){
+      var p = cyl(0.18,0.18,axis,MAT.galv,8);
+      p.position.set(-len/2 + len*(i/piles), axis/2, z); g.add(p);
+    }
+  }
+  return g;
+}
+
+/* Rooftop: a low-slope array standing off the deck, on the building it was
+   drawn over. The building is drawn by its own item; this only adds the
+   array, lifted to roof height. */
+function buildSolarRoof(it, arch, roofY){
+  var g = new THREE.Group();
+  var sb = it.setbackFt || 3;
+  var bw = Math.max(2, it.wf - sb*2), bl = Math.max(2, it.lf - sb*2);
+  var tilt = arch.tilt, tiltR = tilt*Math.PI/180;
+  var rowD = 6.6;
+  var gcr = it.gcr>0 ? it.gcr : 0.70;
+  var pitch = Math.max(rowD*1.02, rowD/gcr);
+  var rows = Math.max(1, Math.floor(bl/pitch));
+  var stride = rows>140 ? Math.ceil(rows/140) : 1;
+
+  for(var r=0;r<rows;r++){
+    if(r % stride) continue;
+    var z = -bl/2 + pitch*(r+0.5);
+    var pv = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.18, rowD/Math.cos(tiltR)), MAT.panel);
+    pv.rotation.x = -tiltR;
+    pv.position.set(0, arch.clear + Math.sin(tiltR)*rowD/2, z);
+    pv.castShadow = pv.receiveShadow = true;
+    g.add(pv);
+    /* ballast trays — what actually holds a flat-roof array down */
+    var bal = box(bw, 0.3, 0.8, MAT.concrete);
+    bal.position.set(0, 0.15, z - rowD/2);
+    g.add(bal);
+  }
+  g.position.y = roofY || 0;
+  return g;
+}
+
+/* Carport canopy: a continuous deck on columns, high enough to drive under.
+   The columns are the whole visual signature of a carport, so they are
+   placed on a real structural grid rather than at the corners. */
+function buildCarport(it, arch){
+  var g = new THREE.Group();
+  var front = arch.clear, tiltR = arch.tilt*Math.PI/180;
+  var w = it.wf, d = it.lf;
+  var rise = Math.tan(tiltR) * d;
+
+  /* deck */
+  var deck = new THREE.Mesh(new THREE.BoxGeometry(w, 0.5, d/Math.cos(tiltR)), MAT.panel);
+  deck.rotation.x = -tiltR;
+  deck.position.y = front + rise/2;
+  deck.castShadow = deck.receiveShadow = true;
+  g.add(deck);
+
+  /* underside beams so it does not read as a floating slab */
+  var beams = Math.max(2, Math.round(w/20));
+  for(var i=0;i<=beams;i++){
+    var bx = -w/2 + w*(i/beams);
+    var bm = box(0.55, 0.55, d, MAT.darkSteel);
+    bm.rotation.x = -tiltR;
+    bm.position.set(bx, front + rise/2 - 0.45, 0);
+    g.add(bm);
+  }
+
+  /* columns on a bay grid, set in from the edge like a real canopy */
+  var bays = Math.max(1, Math.round(w/22));
+  var inset = d*0.22;
+  for(var c=0;c<=bays;c++){
+    var x = -w/2 + w*(c/bays);
+    if(c===0) x += 1.2; if(c===bays) x -= 1.2;
+    [-1,1].forEach(function(sgn){
+      var z = sgn*(d/2 - inset);
+      var hCol = front + (rise/2) + (-sgn)*(rise/2)*0.6;
+      hCol = Math.max(6, hCol);
+      var col = box(0.9, hCol, 0.9, MAT.steel);
+      col.position.set(x, hCol/2, z);
+      g.add(col);
+      var ftg = box(2.2, 0.4, 2.2, MAT.concrete);
+      ftg.position.set(x, 0.2, z);
+      g.add(ftg);
+    });
+  }
+  return g;
+}
+
+/* ---- STORAGE -------------------------------------------------------- */
+function buildContainer(it, arch){
+  var g = new THREE.Group();
+  var w = Math.max(8, it.wf), d = Math.max(6, it.lf), h = arch.h;
+
+  var pad = box(w+3, 0.6, d+3, MAT.concrete);
+  pad.position.y = 0.3; g.add(pad);
+
+  var body = box(w, h, d, MAT.container);
+  body.position.y = 0.6 + h/2; g.add(body);
+
+  var top = box(w+0.15, 0.25, d+0.15, MAT.containerTop);
+  top.position.y = 0.6 + h; g.add(top);
+
+  /* door end + corner castings, the details that say "ISO container" */
+  var doors = box(0.2, h*0.8, d*0.86, MAT.cabinet);
+  doors.position.set(w/2+0.06, 0.6+h/2, 0); g.add(doors);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(function(s){
+    [0.6+0.35, 0.6+h-0.35].forEach(function(y){
+      var cc = box(0.7,0.7,0.7, MAT.darkSteel);
+      cc.position.set(s[0]*(w/2-0.3), y, s[1]*(d/2-0.3)); g.add(cc);
+    });
+  });
+  /* HVAC units on the flank — every battery container has them */
+  var n = Math.max(2, Math.round(w/9));
+  for(var i=0;i<n;i++){
+    var hv = box(w/n*0.55, 1.5, 0.8, MAT.cabinet);
+    hv.position.set(-w/2 + w*((i+0.5)/n), 0.6+h*0.62, -d/2-0.4);
+    g.add(hv);
+  }
+  return g;
+}
+
+function buildCabinet(it, arch, mat){
+  var g = new THREE.Group();
+  var w = Math.max(2, it.wf), d = Math.max(1.5, it.lf), h = arch.h;
+  var pad = box(w+1.6, 0.45, d+1.6, MAT.concrete); pad.position.y=0.22; g.add(pad);
+  var b = box(w, h, d, mat || MAT.cabinet); b.position.y = 0.45+h/2; g.add(b);
+  /* a lid lip + door seam so it is not a bare cube */
+  var lid = box(w+0.25, 0.18, d+0.25, MAT.darkSteel); lid.position.y = 0.45+h+0.04; g.add(lid);
+  var seam = box(0.06, h*0.78, d*0.7, MAT.darkSteel); seam.position.set(w/2+0.02, 0.45+h/2, 0); g.add(seam);
+  return g;
+}
+
+function buildXfmr(it, arch){
+  var g = buildCabinet(it, arch, MAT.xfmr);
+  /* HV/LV bushing hump on top — the pad-mount tell */
+  var w = Math.max(2, it.wf), h = arch.h;
+  var hump = box(w*0.5, 0.8, Math.max(1.2, it.lf*0.5), MAT.xfmr);
+  hump.position.y = 0.45 + h + 0.4; g.add(hump);
+  for(var i=0;i<3;i++){
+    var b = cyl(0.16,0.2,0.7,MAT.cabinet,8);
+    b.position.set(-w*0.18 + i*w*0.18, 0.45+h+1.05, 0); g.add(b);
+  }
+  return g;
+}
+
+function buildSwitchgear(it, arch){
+  var g = new THREE.Group();
+  var w = Math.max(6, it.wf), d = Math.max(3, it.lf), h = arch.h;
+  var pad = box(w+2.5, 0.55, d+2.5, MAT.concrete); pad.position.y=0.27; g.add(pad);
+  var secs = Math.max(2, Math.round(w/6));
+  for(var i=0;i<secs;i++){
+    var sw = w/secs;
+    var s = box(sw*0.96, h, d, MAT.gear);
+    s.position.set(-w/2 + sw*(i+0.5), 0.55+h/2, 0); g.add(s);
+    var v = box(sw*0.5, 0.5, 0.08, MAT.darkSteel);
+    v.position.set(-w/2 + sw*(i+0.5), 0.55+h*0.72, d/2+0.05); g.add(v);
+  }
+  return g;
+}
+
+/* ---- CIVIL ---------------------------------------------------------- */
+function buildBuilding(it, arch){
+  var g = new THREE.Group();
+  var w = Math.max(6, it.wf), d = Math.max(6, it.lf);
+  var h = it.heightFt || arch.h;
+  var b = box(w, h, d, MAT.wall); b.position.y = h/2; g.add(b);
+  var parapet = box(w+0.4, 0.9, d+0.4, MAT.roofDeck); parapet.position.y = h+0.3; g.add(parapet);
+  var deck = box(w-0.6, 0.2, d-0.6, MAT.roofDeck); deck.position.y = h+0.1; g.add(deck);
+  /* a band of glazing so scale reads */
+  if(h > 12){
+    var band = box(w+0.08, Math.min(4, h*0.22), d+0.08, MAT.glass);
+    band.position.y = h*0.62; g.add(band);
+  }
+  it._roofY = h;
+  return g;
+}
+
+function buildPad(it){
+  var g = new THREE.Group();
+  var s = box(Math.max(1,it.wf), 0.65, Math.max(1,it.lf), MAT.concrete);
+  s.position.y = 0.32; g.add(s);
+  return g;
+}
+
+function buildParking(it){
+  var g = new THREE.Group();
+  var w = Math.max(4, it.wf), d = Math.max(4, it.lf);
+  var deck = new THREE.Mesh(new THREE.BoxGeometry(w, 0.16, d), MAT.asphalt);
+  deck.position.y = 0.08; deck.receiveShadow = true; g.add(deck);
+  /* stall striping, instanced — a lot draws a lot of stripes */
+  var cols = it.stallCols > 0 ? it.stallCols : Math.max(1, Math.round(w/9));
+  var rows = it.stallRows > 0 ? it.stallRows : Math.max(1, Math.round(d/18));
+  var n = (cols+1) * rows;
+  if(n > 0 && n < 1200){
+    var geo = new THREE.BoxGeometry(0.34, 0.03, d/rows*0.92);
+    var inst = new THREE.InstancedMesh(geo, MAT.stripe, n);
+    var m = new THREE.Matrix4(), k = 0;
+    for(var r=0;r<rows;r++) for(var c=0;c<=cols;c++){
+      m.makeTranslation(-w/2 + (w/cols)*c, 0.17, -d/2 + (d/rows)*(r+0.5));
+      inst.setMatrixAt(k++, m);
+    }
+    inst.count = k; inst.receiveShadow = true; g.add(inst);
+  }
+  return g;
+}
+
+function buildFence(it, arch){
+  var g = new THREE.Group();
+  var w = Math.max(2, it.wf), d = Math.max(0.2, it.lf), h = arch.h;
+  /* A fence drawn as a long thin rect runs along its long side. */
+  var len = Math.max(w, d), along = (w >= d);
+  var mesh = new THREE.Mesh(new THREE.PlaneGeometry(len, h), MAT.mesh);
+  mesh.position.y = h/2;
+  if(!along) mesh.rotation.y = Math.PI/2;
+  g.add(mesh);
+  var posts = Math.max(2, Math.round(len/10));
+  for(var i=0;i<=posts;i++){
+    var p = cyl(0.13,0.13,h,MAT.galv,8);
+    var t = -len/2 + len*(i/posts);
+    p.position.set(along?t:0, h/2, along?0:t);
+    g.add(p);
+  }
+  var rail = cyl(0.09,0.09,len,MAT.galv,8);
+  rail.rotation.z = Math.PI/2; if(!along) rail.rotation.y = Math.PI/2;
+  rail.position.y = h; g.add(rail);
+  return g;
+}
+
+function buildBollard(it, arch){
+  var g = new THREE.Group();
+  var h = arch.h;
+  var p = cyl(0.35,0.35,h,MAT.yellow,12); p.position.y = h/2; g.add(p);
+  var cap = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 8), MAT.yellow);
+  cap.position.y = h; cap.castShadow = true; g.add(cap);
+  var band = cyl(0.37,0.37,0.35,MAT.stripe,12); band.position.y = h*0.78; g.add(band);
+  return g;
+}
+
+function buildTree(it, arch){
+  var g = new THREE.Group();
+  var h = arch.h, r = Math.max(3, Math.min(it.wf, it.lf)/2 || 6);
+  var tr = cyl(0.5,0.75,h*0.42,MAT.trunk,8); tr.position.y = h*0.21; g.add(tr);
+  /* three offset spheres read as a canopy far better than one */
+  [[0,h*0.62,0,r],[r*0.42,h*0.52,r*0.2,r*0.72],[-r*0.38,h*0.55,-r*0.28,r*0.66]]
+    .forEach(function(s){
+      var c = new THREE.Mesh(new THREE.SphereGeometry(s[3], 9, 7), MAT.leaves);
+      c.position.set(s[0], s[1], s[2]); c.castShadow = true; g.add(c);
+    });
+  return g;
+}
+
+function buildCharger(it, arch){
+  var g = new THREE.Group();
+  var h = arch.h;
+  var pad = box(3.2,0.35,2.6,MAT.concrete); pad.position.y=0.17; g.add(pad);
+  var b = box(1.5, h, 1.1, MAT.cabinet); b.position.y = 0.35+h/2; g.add(b);
+  var scr = box(1.1, 1.3, 0.09, MAT.glass); scr.position.set(0, 0.35+h*0.72, 0.58); g.add(scr);
+  var cap = box(1.65, 0.2, 1.25, MAT.red); cap.position.y = 0.35+h+0.08; g.add(cap);
+  return g;
+}
+
+function buildPole(it, arch){
+  var g = new THREE.Group();
+  var h = arch.h;
+  var p = cyl(0.5,0.85,h,MAT.trunk,10); p.position.y = h/2; g.add(p);
+  var arm = box(9, 0.35, 0.35, MAT.trunk); arm.position.y = h*0.9; g.add(arm);
+  [-3.4,0,3.4].forEach(function(x){
+    var ins = cyl(0.22,0.22,0.55,MAT.cabinet,8);
+    ins.position.set(x, h*0.9+0.45, 0); g.add(ins);
+  });
+  return g;
+}
+
+function buildGenset(it, arch){
+  var g = new THREE.Group();
+  var w = Math.max(6, it.wf), d = Math.max(3, it.lf), h = arch.h;
+  var pad = box(w+2.5,0.55,d+2.5,MAT.concrete); pad.position.y=0.27; g.add(pad);
+  var b = box(w, h, d, MAT.cabinet); b.position.y = 0.55+h/2; g.add(b);
+  /* louvres + exhaust stack */
+  for(var i=0;i<4;i++){
+    var l = box(w*0.16, h*0.5, 0.08, MAT.darkSteel);
+    l.position.set(-w*0.3 + i*w*0.2, 0.55+h*0.55, d/2+0.05); g.add(l);
+  }
+  var st = cyl(0.5,0.5,4,MAT.darkSteel,10); st.position.set(w/2-1.2, 0.55+h+2, 0); g.add(st);
+  return g;
+}
+
+function buildHydrant(it, arch){
+  var g = new THREE.Group();
+  var h = arch.h;
+  var b = cyl(0.45,0.55,h,MAT.red,10); b.position.y=h/2; g.add(b);
+  var cap = new THREE.Mesh(new THREE.SphereGeometry(0.45,10,8), MAT.red);
+  cap.position.y=h; cap.castShadow=true; g.add(cap);
+  [-1,1].forEach(function(s){
+    var n = cyl(0.2,0.2,0.5,MAT.red,8); n.rotation.z=Math.PI/2;
+    n.position.set(s*0.55, h*0.62, 0); g.add(n);
+  });
+  return g;
+}
+
+function buildCamera(it, arch){
+  var g = new THREE.Group();
+  var h = arch.h;
+  var p = cyl(0.2,0.24,h,MAT.galv,8); p.position.y=h/2; g.add(p);
+  var arm = box(1.6,0.16,0.16,MAT.galv); arm.position.set(0.8,h,0); g.add(arm);
+  var cam = box(0.8,0.5,0.5,MAT.darkSteel); cam.position.set(1.6,h-0.2,0); g.add(cam);
+  return g;
+}
+/* ═══════════════════════════════════════════════════════════════════════
+ *  SCENE
+ * ═══════════════════════════════════════════════════════════════════════ */
+/* NOTHING AT MODULE SCOPE MAY TOUCH `THREE`.
+   three.js is lazy-loaded — it is not present when this file is parsed. A
+   single `new THREE.Vector3()` in this initialiser throws at page load,
+   which kills the whole IIFE and takes the ribbon button with it, so the
+   feature would be invisible with only a console error to show for it.
+   `target` is therefore created in open(), once the library is up. */
+var V = {
+  scene:null, camera:null, renderer:null, root:null, groundGrp:null,
+  site:null, raf:null, canvas:null,
+  sun:null, hemi:null,
+  target:null, sph:{ r:400, theta:0.85, phi:0.95 },
+  layers:{}, opts:{ hour:15, shadows:true, sat:true, showAll:false },
+  needsRender:true, disposed:false
+};
+
+function skyTexture(hour){
+  /* Warmer and lower-contrast at the ends of the day. A flat blue at 7am
+     and 7pm is the giveaway that a render is fake. */
+  var t = Math.abs(hour-13)/7;                 /* 0 midday .. 1 at the ends */
+  t = Math.max(0, Math.min(1, t));
+  var c = document.createElement('canvas'); c.width=8; c.height=256;
+  var g = c.getContext('2d');
+  var grd = g.createLinearGradient(0,0,0,256);
+  function mix(a,b,f){ return [Math.round(a[0]+(b[0]-a[0])*f),
+    Math.round(a[1]+(b[1]-a[1])*f), Math.round(a[2]+(b[2]-a[2])*f)]; }
+  function rgb(a){ return 'rgb('+a[0]+','+a[1]+','+a[2]+')'; }
+  var top = mix([64,128,206],[36,58,104], t);
+  var mid = mix([150,193,235],[196,150,126], t);
+  var bot = mix([214,229,242],[236,190,150], t);
+  grd.addColorStop(0, rgb(top));
+  grd.addColorStop(0.62, rgb(mid));
+  grd.addColorStop(1, rgb(bot));
+  g.fillStyle = grd; g.fillRect(0,0,8,256);
+  var tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  return tex;
+}
+
+/* Sun position from an hour of the day. Not an ephemeris — a plausible arc
+   that lets someone drag through the day and see how the carports shade
+   the lot, which is the question this control exists to answer. */
+function sunFor(hour, radius){
+  var f = (hour - 6) / 12;                       /* 0 at 6am .. 1 at 6pm */
+  f = Math.max(-0.15, Math.min(1.15, f));
+  var az = Math.PI * f;                          /* east -> west */
+  /* named `elev`, not `el`: `el` is the DOM helper at module scope and
+     shadowing it here is one edit away from a very confusing bug */
+  var elev = Math.sin(Math.PI * Math.max(0.04, Math.min(0.96, f))) * 1.05;
+  var r = radius || 500;
+  return {
+    x: -Math.cos(az) * r * 0.85,
+    y: Math.max(30, Math.sin(elev) * r * 0.9),
+    z: -Math.cos(elev) * r * 0.35 - r*0.25,
+    warm: 1 - Math.sin(Math.PI*Math.max(0,Math.min(1,f)))
+  };
+}
+
+function initRenderer(canvas){
+  var r = new THREE.WebGLRenderer({ canvas:canvas, antialias:true, alpha:false,
+                                    preserveDrawingBuffer:true });
+  r.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+  r.shadowMap.enabled = true;
+  r.shadowMap.type = THREE.PCFSoftShadowMap;
+  /* r128 names. Guarded because these move between revisions and a hard
+     reference would break the whole tool on an upgrade. */
+  try{ if(THREE.sRGBEncoding !== undefined) r.outputEncoding = THREE.sRGBEncoding; }catch(e){}
+  try{ if(THREE.ACESFilmicToneMapping !== undefined){
+        r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05; } }catch(e){}
+  return r;
+}
+
+function buildScene(site){
+  var sc = new THREE.Scene();
+  V.site = site;
+
+  var span = Math.max(60, Math.max(site.sizeFt.w, site.sizeFt.h));
+  var far  = Math.max(4000, span*8);
+
+  sc.background = skyTexture(V.opts.hour);
+  sc.fog = new THREE.Fog(0xbcd0e0, span*2.2, far*0.9);
+
+  V.hemi = new THREE.HemisphereLight(0xbcd8f5, 0x5d5a4a, 0.62);
+  sc.add(V.hemi);
+  sc.add(new THREE.AmbientLight(0xffffff, 0.16));
+
+  var sun = new THREE.DirectionalLight(0xffffff, 1.5);
+  sun.castShadow = true;
+  var sExtent = span * 0.78;
+  sun.shadow.mapSize.width = 2048; sun.shadow.mapSize.height = 2048;
+  sun.shadow.camera.left = -sExtent; sun.shadow.camera.right = sExtent;
+  sun.shadow.camera.top  =  sExtent; sun.shadow.camera.bottom= -sExtent;
+  sun.shadow.camera.near = 1; sun.shadow.camera.far = span*6;
+  sun.shadow.bias = -0.0006;
+  sun.shadow.normalBias = 0.6;
+  sc.add(sun); sc.add(sun.target);
+  V.sun = sun;
+  applySun(span);
+
+  V.root = new THREE.Group(); sc.add(V.root);
+  V.groundGrp = new THREE.Group(); sc.add(V.groundGrp);
+
+  buildGround(site, span);
+  populate(site);
+
+  V.scene = sc;
+  return sc;
+}
+
+function applySun(span){
+  if(!V.sun) return;
+  var s = sunFor(V.opts.hour, Math.max(400, (span|| Math.max(60,
+      Math.max(V.site.sizeFt.w, V.site.sizeFt.h)))*2.2));
+  V.sun.position.set(s.x, s.y, s.z);
+  V.sun.target.position.set(0,0,0);
+  V.sun.target.updateMatrixWorld();
+  /* warm and dim the sun toward the ends of the day */
+  var warm = s.warm;
+  V.sun.intensity = 1.55 - warm*0.55;
+  V.sun.color.setRGB(1, 1 - warm*0.16, 1 - warm*0.34);
+  if(V.hemi) V.hemi.intensity = 0.62 - warm*0.16;
+  if(V.scene) V.scene.background = skyTexture(V.opts.hour);
+  V.sun.castShadow = !!V.opts.shadows;
+  V.needsRender = true;
+}
+
+/* GROUND
+   The site's own satellite image, when there is one, dropped onto the XZ
+   plane at exactly the scale and offset the drawing used. That is the
+   single biggest thing separating "a 3D diagram" from "a picture of the
+   site", so it is worth the alignment arithmetic. */
+function buildGround(site, span){
+  while(V.groundGrp.children.length){
+    var g0 = V.groundGrp.children[0];
+    /* The satellite plane owns its own texture and material (unlike the
+       MAT.* shared set), so those are ours to free here. */
+    if(g0.material && g0.material !== MAT.ground){
+      try{ if(g0.material.map) g0.material.map.dispose(); }catch(e){}
+      try{ g0.material.dispose(); }catch(e){}
+    }
+    try{ if(g0.geometry) g0.geometry.dispose(); }catch(e){}
+    V.groundGrp.remove(g0);
+  }
+
+  var base = new THREE.Mesh(
+    new THREE.PlaneGeometry(span*14, span*14),
+    MAT.ground);
+  base.rotation.x = -Math.PI/2;
+  base.position.y = -0.06;
+  base.receiveShadow = true;
+  V.groundGrp.add(base);
+
+  if(!V.opts.sat) return;
+
+  var src = null, scEl = null;
+  try{
+    scEl = document.getElementById('sc');
+    var fz = document.getElementById('frozen-map-img');
+    var bd = document.getElementById('backdrop');
+    if(fz && fz.src && fz.style.display!=='none') src = fz.src;
+    else if(bd && bd.src) src = bd.src;
+    if(!src && window._frozenMapImg) src = window._frozenMapImg;
+  }catch(e){}
+  if(!src || !scEl) return;
+
+  var rect;
+  try{ rect = scEl.getBoundingClientRect(); }catch(e){ return; }
+  if(!rect || rect.width<10) return;
+
+  /* The backdrop is stretched to fill #sc, so it spans canvas px
+     (0,0)-(scW,scH). Convert those two corners into site feet. */
+  var p = site.ppf, o = site.originPx;
+  var x0 = (0 - o.x)/p, x1 = (rect.width  - o.x)/p;
+  var z0 = (0 - o.y)/p, z1 = (rect.height - o.y)/p;
+  var w = x1-x0, h = z1-z0;
+
+  var loader = new THREE.TextureLoader();
+  loader.load(src, function(tex){
+    if(V.disposed) return;
+    try{ if(THREE.sRGBEncoding !== undefined) tex.encoding = THREE.sRGBEncoding; }catch(e){}
+    tex.anisotropy = 8;
+    var m = new THREE.MeshStandardMaterial({ map:tex, roughness:0.97, metalness:0.0 });
+    var g = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m);
+    g.rotation.x = -Math.PI/2;
+    g.position.set(x0 + w/2, 0.02, z0 + h/2);
+    g.receiveShadow = true;
+    V.groundGrp.add(g);
+    V.needsRender = true;
+  }, undefined, function(){ /* image unavailable — the base plane stands in */ });
+}
+
+/* Release the GPU side of a discarded subtree.
+   Materials are shared out of MAT and must NOT be disposed — only the
+   per-object geometry is ours to free. This matters more than it looks:
+   changing one dropdown rebuilds the entire site, so a user working
+   through a classification list rebuilds it dozens of times in a minute.
+   Without this the buffers pile up until the context is lost. */
+function disposeTree(obj){
+  obj.traverse(function(o){
+    if(o.geometry && o.geometry.dispose){
+      try{ o.geometry.dispose(); }catch(e){}
+    }
+  });
+}
+
+/* Place every classified item. */
+function populate(site){
+  while(V.root.children.length){
+    var c0 = V.root.children[0];
+    disposeTree(c0);
+    V.root.remove(c0);
+  }
+  V.layers = {};
+  ARCH_GROUPS.forEach(function(g){
+    var grp = new THREE.Group(); grp.name = g.id;
+    V.layers[g.id] = grp; V.root.add(grp);
+  });
+
+  /* Buildings first: a rooftop array needs to know how high its roof is. */
+  var items = site.items.slice().sort(function(a,b){
+    var ra = a.arch==='building' ? 0 : 1, rb = b.arch==='building' ? 0 : 1;
+    return ra-rb;
+  });
+
+  var buildings = [];
+  items.forEach(function(it){
+    if(it.hidden || it.arch==='ignore') return;
+    var arch = ARCH[it.arch]; if(!arch) return;
+    var g = null, roofY = 0;
+
+    switch(it.arch){
+      case 'solar-ground':  g = buildSolarGround(it, arch); break;
+      case 'solar-tracker': g = buildSolarTracker(it); break;
+      case 'solar-carport': g = buildCarport(it, arch); break;
+      case 'solar-roof':
+        roofY = roofUnder(it, buildings);
+        g = buildSolarRoof(it, arch, roofY); break;
+      case 'bess-container': g = buildContainer(it, arch); break;
+      case 'bess-cabinet':   g = buildCabinet(it, arch); break;
+      case 'pcs':            g = buildCabinet(it, arch); break;
+      case 'ems':            g = buildCabinet(it, arch); break;
+      case 'ups':            g = buildCabinet(it, arch); break;
+      case 'panel':          g = buildCabinet(it, arch); break;
+      case 'disco':          g = buildCabinet(it, arch); break;
+      case 'meter':          g = buildCabinet(it, arch); break;
+      case 'jbox':           g = buildCabinet(it, arch); break;
+      case 'xfmr':           g = buildXfmr(it, arch); break;
+      case 'switchgear':     g = buildSwitchgear(it, arch); break;
+      case 'genset':         g = buildGenset(it, arch); break;
+      case 'pole':           g = buildPole(it, arch); break;
+      case 'building':       g = buildBuilding(it, arch); buildings.push(it); break;
+      case 'pad':            g = buildPad(it); break;
+      case 'parking':        g = buildParking(it); break;
+      case 'fence':          g = buildFence(it, arch); break;
+      case 'bollard':        g = buildBollard(it, arch); break;
+      case 'tree':           g = buildTree(it, arch); break;
+      case 'hydrant':        g = buildHydrant(it, arch); break;
+      case 'camera':         g = buildCamera(it, arch); break;
+      case 'charger':        g = buildCharger(it, arch); break;
+      default: return;
+    }
+    if(!g) return;
+    g.position.x += it.x; g.position.z += it.z;
+    g.rotation.y = -(it.rot||0) * Math.PI/180;   /* screen-clockwise -> -Y */
+    g.userData.itemId = it.id;
+    var lg = V.layers[arch.group] || V.root;
+    lg.add(g);
+  });
+
+  buildConduits(site);
+}
+
+/* Which building is this rooftop array on? The one it overlaps most. */
+function roofUnder(it, buildings){
+  var best = 0, y = 0;
+  var a = { x:it.x-it.wf/2, y:it.z-it.lf/2, w:it.wf, h:it.lf };
+  buildings.forEach(function(b){
+    var bb = { x:b.x-b.wf/2, y:b.z-b.lf/2, w:b.wf, h:b.lf };
+    var f = overlapFrac(a, bb);
+    if(f > best){ best = f; y = b._roofY || ARCH.building.h; }
+  });
+  /* Drawn on a roof that was never drawn: stand it on a nominal parapet so
+     it is not floating on the dirt pretending to be a ground mount. */
+  return best > 0.15 ? y : ARCH.building.h;
+}
+
+function buildConduits(site){
+  if(!site.conduits || !site.conduits.length) return;
+  var grp = new THREE.Group();
+  site.conduits.forEach(function(c){
+    for(var i=1;i<c.pts.length;i++){
+      var a=c.pts[i-1], b=c.pts[i];
+      var dx=b.x-a.x, dz=b.z-a.z, len=Math.sqrt(dx*dx+dz*dz);
+      if(len < 0.4) continue;
+      var m = cyl(0.28,0.28,len,MAT.conduit,8);
+      m.rotation.z = Math.PI/2;
+      m.rotation.y = -Math.atan2(dz,dx);
+      m.position.set((a.x+b.x)/2, 0.3, (a.z+b.z)/2);
+      m.castShadow = false;
+      grp.add(m);
+    }
+  });
+  grp.name = 'conduit';
+  V.layers.conduit = grp;
+  V.root.add(grp);
+}
+
+/* ---- CAMERA + CONTROLS ---------------------------------------------
+   OrbitControls lives in three's examples bundle, which is not loaded
+   here, so this is a small hand-rolled equivalent: spherical orbit, pan
+   on the ground plane, dolly on wheel/pinch. Roughly 60 lines against a
+   second network dependency that may not resolve on a job site. */
+function updateCamera(){
+  var s = V.sph;
+  s.phi   = Math.max(0.06, Math.min(Math.PI/2 - 0.02, s.phi));
+  s.r     = Math.max(12, Math.min(40000, s.r));
+  var sp = Math.sin(s.phi), cp = Math.cos(s.phi);
+  V.camera.position.set(
+    V.target.x + s.r * sp * Math.sin(s.theta),
+    V.target.y + s.r * cp,
+    V.target.z + s.r * sp * Math.cos(s.theta));
+  V.camera.lookAt(V.target);
+  V.needsRender = true;
+}
+
+function attachControls(dom){
+  var mode = null, lx = 0, ly = 0, pinch = 0;
+
+  function down(e){
+    var t = e.touches;
+    if(t && t.length === 2){
+      pinch = Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
+      mode = 'pinch'; return;
+    }
+    var p = t ? t[0] : e;
+    lx = p.clientX; ly = p.clientY;
+    mode = (e.button === 2 || e.shiftKey || (t && t.length === 3)) ? 'pan' : 'orbit';
+    if(!t && dom.setPointerCapture && e.pointerId != null){
+      try{ dom.setPointerCapture(e.pointerId); }catch(err){}
+    }
+  }
+  function move(e){
+    if(!mode) return;
+    var t = e.touches;
+    if(mode === 'pinch' && t && t.length === 2){
+      var d = Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
+      if(pinch) V.sph.r *= pinch/d;
+      pinch = d; updateCamera(); e.preventDefault(); return;
+    }
+    var p = t ? t[0] : e;
+    var dx = p.clientX - lx, dy = p.clientY - ly;
+    lx = p.clientX; ly = p.clientY;
+    if(mode === 'orbit'){
+      V.sph.theta -= dx * 0.006;
+      V.sph.phi   -= dy * 0.006;
+    } else {
+      /* pan across the ground, scaled so a drag moves the same amount of
+         site regardless of how far out the camera is */
+      var k = V.sph.r * 0.0016;
+      var st = Math.sin(V.sph.theta), ct = Math.cos(V.sph.theta);
+      V.target.x -= ( dx*ct - dy*st) * k;
+      V.target.z -= ( dx*-st - dy*ct) * k;
+    }
+    updateCamera();
+    if(e.preventDefault) e.preventDefault();
+  }
+  function up(){ mode = null; pinch = 0; }
+
+  dom.addEventListener('pointerdown', down);
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  dom.addEventListener('touchstart', down, { passive:false });
+  dom.addEventListener('touchmove', move, { passive:false });
+  dom.addEventListener('touchend', up);
+  dom.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  dom.addEventListener('wheel', function(e){
+    V.sph.r *= (1 + Math.sign(e.deltaY) * 0.11);
+    updateCamera(); e.preventDefault();
+  }, { passive:false });
+}
+
+/* View presets. Each frames the whole site rather than using a fixed
+   distance, so they work on a 40 ft pad and on a 200 acre field. */
+function setView(kind){
+  var s = V.site; if(!s) return;
+  var span = Math.max(40, Math.max(s.sizeFt.w, s.sizeFt.h));
+  V.target.set(0, 0, 0);
+  if(kind === 'aerial'){      V.sph.theta = 0.0;  V.sph.phi = 0.10; V.sph.r = span*1.35; }
+  else if(kind === 'iso'){    V.sph.theta = 0.78; V.sph.phi = 0.72; V.sph.r = span*1.45; }
+  else if(kind === 'eye'){    V.sph.theta = 0.55; V.sph.phi = 1.50; V.sph.r = span*0.92;
+                              V.target.set(0, 6, 0); }
+  else if(kind === 'corner'){ V.sph.theta = 2.30; V.sph.phi = 1.12; V.sph.r = span*1.30; }
+  else {                      V.sph.theta = 0.78; V.sph.phi = 0.72; V.sph.r = span*1.45; }
+  updateCamera();
+}
+
+function renderLoop(){
+  if(V.disposed) return;
+  V.raf = requestAnimationFrame(renderLoop);
+  if(!V.needsRender) return;
+  V.needsRender = false;
+  try{ V.renderer.render(V.scene, V.camera); }catch(e){}
+}
+
+function resize(){
+  if(!V.renderer || !V.canvas) return;
+  var w = V.canvas.clientWidth || 800, h = V.canvas.clientHeight || 600;
+  V.renderer.setSize(w, h, false);
+  V.camera.aspect = w/h;
+  V.camera.updateProjectionMatrix();
+  V.needsRender = true;
+}
+/* ═══════════════════════════════════════════════════════════════════════
+ *  UI
+ *  A full-screen overlay with its own scoped styles. Scoped because this
+ *  file already carries several thousand lines of CSS and a generic
+ *  class name here would land on something else.
+ * ═══════════════════════════════════════════════════════════════════════ */
+var CSS_ID = 'omega-vis-css';
+var CSS = ''
++ '#ovis{position:fixed;inset:0;z-index:9000;background:#141416;display:none;'
++   'flex-direction:column;font-family:"IBM Plex Sans",sans-serif;color:#E0E0E0}'
++ '#ovis.on{display:flex}'
++ '#ovis .ov-bar{height:44px;flex-shrink:0;background:#1E1E1E;border-bottom:1px solid #3A3A3A;'
++   'display:flex;align-items:center;gap:10px;padding:0 12px}'
++ '#ovis .ov-ttl{font-size:13px;font-weight:700;letter-spacing:.3px}'
++ '#ovis .ov-ttl span{color:#2FB54A}'
++ '#ovis .ov-sub{font-size:10.5px;color:#9A9A9A;font-family:"IBM Plex Mono",monospace}'
++ '#ovis .ov-sp{flex:1}'
++ '#ovis .ov-b{background:#2D2D2D;border:1px solid #3A3A3A;color:#E0E0E0;border-radius:3px;'
++   'padding:5px 11px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap}'
++ '#ovis .ov-b:hover{background:#3C3C3C;border-color:#4d4d4d}'
++ '#ovis .ov-b.on{background:#2FB54A;border-color:#2FB54A;color:#0d0d0d;font-weight:600}'
++ '#ovis .ov-b.pri{background:#2FB54A;border-color:#2FB54A;color:#0d0d0d;font-weight:600}'
++ '#ovis .ov-x{font-size:17px;line-height:1;padding:4px 11px}'
++ '#ovis .ov-body{flex:1;display:flex;min-height:0}'
++ '#ovis .ov-stage{flex:1;position:relative;min-width:0;background:#0f1013}'
++ '#ovis canvas{width:100%;height:100%;display:block;outline:none;touch-action:none}'
++ '#ovis .ov-side{width:322px;flex-shrink:0;background:#1B1B1D;border-left:1px solid #3A3A3A;'
++   'overflow-y:auto;padding:12px}'
++ '#ovis .ov-h{font-size:9.5px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;'
++   'color:#2FB54A;margin:15px 0 7px;padding-bottom:4px;border-bottom:1px solid #303030}'
++ '#ovis .ov-h:first-child{margin-top:0}'
++ '#ovis .ov-row{display:flex;align-items:center;gap:7px;padding:4px 0;font-size:11.5px}'
++ '#ovis .ov-row label{flex:1;cursor:pointer;color:#CFCFCF}'
++ '#ovis .ov-chip{display:inline-block;font-size:9px;font-weight:700;padding:1px 5px;'
++   'border-radius:2px;letter-spacing:.4px;font-family:"IBM Plex Mono",monospace}'
++ '#ovis .c-explicit{background:rgba(47,181,74,.18);color:#7FDE9A}'
++ '#ovis .c-authored{background:rgba(120,150,200,.16);color:#9FB8DE}'
++ '#ovis .c-inferred{background:rgba(224,168,60,.16);color:#E0B45C}'
++ '#ovis .ov-item{border:1px solid #2C2C2E;border-radius:4px;padding:7px 8px;margin-bottom:6px;'
++   'background:#212123}'
++ '#ovis .ov-item.q{border-color:#5a4a20}'
++ '#ovis .ov-il{display:flex;align-items:center;gap:6px;margin-bottom:5px}'
++ '#ovis .ov-in{flex:1;font-size:11px;font-weight:600;color:#E4E4E4;overflow:hidden;'
++   'text-overflow:ellipsis;white-space:nowrap}'
++ '#ovis .ov-im{font-size:9.5px;color:#8A8A8A;font-family:"IBM Plex Mono",monospace}'
++ '#ovis select{width:100%;background:#2A2A2C;border:1px solid #3A3A3A;color:#E0E0E0;'
++   'border-radius:3px;padding:4px 6px;font-size:10.5px;font-family:inherit;cursor:pointer}'
++ '#ovis input[type=range]{width:100%;accent-color:#2FB54A;cursor:pointer}'
++ '#ovis .ov-warn{background:rgba(224,168,60,.10);border:1px solid rgba(224,168,60,.34);'
++   'border-radius:4px;padding:8px 9px;font-size:10.5px;color:#E0B45C;margin-bottom:10px;line-height:1.5}'
++ '#ovis .ov-kpi{display:flex;gap:6px;margin-bottom:9px}'
++ '#ovis .ov-k{flex:1;background:#212123;border:1px solid #2C2C2E;border-radius:4px;padding:6px 7px}'
++ '#ovis .ov-kv{font-size:14px;font-weight:700;font-family:"IBM Plex Mono",monospace;color:#E4E4E4}'
++ '#ovis .ov-kl{font-size:8.5px;color:#8A8A8A;text-transform:uppercase;letter-spacing:.5px;margin-top:1px}'
++ '#ovis .ov-vb{display:flex;gap:4px;flex-wrap:wrap}'
++ '#ovis .ov-vb .ov-b{flex:1;text-align:center;padding:5px 4px;font-size:10px}'
++ '#ovis .ov-load{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;'
++   'flex-direction:column;gap:9px;background:#0f1013;color:#9A9A9A;font-size:12px}'
++ '#ovis .ov-spin{width:26px;height:26px;border:2.5px solid #2C2C2E;border-top-color:#2FB54A;'
++   'border-radius:50%;animation:ovspin .8s linear infinite}'
++ '@keyframes ovspin{to{transform:rotate(360deg)}}'
++ '#ovis .ov-hint{font-size:9.5px;color:#7A7A7A;line-height:1.55;margin-top:6px}'
++ '@media(max-width:900px){#ovis .ov-body{flex-direction:column}'
++   '#ovis .ov-side{width:auto;max-height:44%;border-left:none;border-top:1px solid #3A3A3A}}';
+
+function ensureCSS(){
+  if(document.getElementById(CSS_ID)) return;
+  var s = document.createElement('style');
+  s.id = CSS_ID; s.textContent = CSS;
+  document.head.appendChild(s);
+}
+
+function el(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+function shell(){
+  if(el('ovis')) return el('ovis');
+  ensureCSS();
+  var d = document.createElement('div');
+  d.id = 'ovis';
+  d.innerHTML = ''
+  + '<div class="ov-bar">'
+  +   '<div class="ov-ttl">Site <span>Visualizer</span></div>'
+  +   '<div class="ov-sub" id="ov-scale"></div>'
+  +   '<div class="ov-sp"></div>'
+  +   '<button class="ov-b" id="ov-refresh" title="Re-read the site map">&#8635; Refresh</button>'
+  +   '<button class="ov-b" id="ov-snap" title="Save this view as a PNG">&#9112; Snapshot</button>'
+  +   '<button class="ov-b ov-x" id="ov-close" title="Close">&times;</button>'
+  + '</div>'
+  + '<div class="ov-body">'
+  +   '<div class="ov-stage" id="ov-stage">'
+  +     '<canvas id="ov-canvas"></canvas>'
+  +     '<div class="ov-load" id="ov-load"><div class="ov-spin"></div><div id="ov-loadmsg">Loading 3D engine\u2026</div></div>'
+  +   '</div>'
+  +   '<div class="ov-side" id="ov-side"></div>'
+  + '</div>';
+  document.body.appendChild(d);
+
+  el('ov-close').onclick   = close;
+  el('ov-refresh').onclick = function(){ reload(); };
+  el('ov-snap').onclick    = snapshot;
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && d.classList.contains('on')) close();
+  });
+  return d;
+}
+
+/* ---- side panel ----------------------------------------------------- */
+function paintSide(){
+  var side = el('ov-side'); if(!side || !V.site) return;
+  var s = V.site, h = '';
+
+  if(s.warnings.length){
+    h += '<div class="ov-warn">' + s.warnings.map(esc).join('<br>') + '</div>';
+  }
+
+  var nSolar = 0, nStore = 0;
+  s.items.forEach(function(it){
+    if(it.hidden) return;
+    var g = ARCH[it.arch] && ARCH[it.arch].group;
+    if(g === 'solar') nSolar++;
+    if(g === 'storage') nStore++;
+  });
+  h += '<div class="ov-kpi">'
+    +  '<div class="ov-k"><div class="ov-kv">' + (s.kw ? Math.round(s.kw).toLocaleString() : '\u2014')
+    +  '</div><div class="ov-kl">kW-DC drawn</div></div>'
+    +  '<div class="ov-k"><div class="ov-kv">' + nSolar + '</div><div class="ov-kl">PV arrays</div></div>'
+    +  '<div class="ov-k"><div class="ov-kv">' + nStore + '</div><div class="ov-kl">Storage</div></div>'
+    +  '</div>';
+
+  h += '<div class="ov-h">View</div><div class="ov-vb">'
+    +  '<button class="ov-b" data-view="iso">Isometric</button>'
+    +  '<button class="ov-b" data-view="aerial">Aerial</button>'
+    +  '<button class="ov-b" data-view="eye">Eye level</button>'
+    +  '<button class="ov-b" data-view="corner">Reverse</button>'
+    +  '</div>'
+    +  '<div class="ov-hint">Drag to orbit \u00b7 shift-drag or right-drag to pan \u00b7 scroll to zoom</div>';
+
+  h += '<div class="ov-h">Sun &amp; ground</div>'
+    +  '<div class="ov-row"><label for="ov-hour">Time of day</label>'
+    +  '<span class="ov-im" id="ov-hourv">' + fmtHour(V.opts.hour) + '</span></div>'
+    +  '<input type="range" id="ov-hour" min="6" max="20" step="0.25" value="' + V.opts.hour + '">'
+    +  '<div class="ov-row"><input type="checkbox" id="ov-shadow"' + (V.opts.shadows?' checked':'') + '>'
+    +  '<label for="ov-shadow">Cast shadows</label></div>'
+    +  '<div class="ov-row"><input type="checkbox" id="ov-sat"' + (V.opts.sat?' checked':'') + '>'
+    +  '<label for="ov-sat">Satellite ground</label></div>';
+
+  h += '<div class="ov-h">Layers</div>';
+  ARCH_GROUPS.forEach(function(g){
+    var n = 0;
+    s.items.forEach(function(it){
+      if(!it.hidden && ARCH[it.arch] && ARCH[it.arch].group === g.id) n++;
+    });
+    if(!n) return;
+    var on = V.layers[g.id] ? V.layers[g.id].visible !== false : true;
+    h += '<div class="ov-row"><input type="checkbox" class="ov-lyr" data-g="' + g.id + '"'
+      +  (on?' checked':'') + ' id="ovl-' + g.id + '">'
+      +  '<label for="ovl-' + g.id + '">' + esc(g.label) + '</label>'
+      +  '<span class="ov-im">' + n + '</span></div>';
+  });
+  if(V.layers.conduit){
+    h += '<div class="ov-row"><input type="checkbox" class="ov-lyr" data-g="conduit" checked id="ovl-conduit">'
+      +  '<label for="ovl-conduit">Conduit runs</label></div>';
+  }
+
+  /* --- what the model thinks each thing is ---------------------------
+     Ordered so the guesses float to the top: an inferred carport is the
+     one line in here somebody actually needs to check. */
+  var skipped = s.items.filter(function(it){
+    return it.arch === 'ignore' && !it.ref._visArch;
+  }).length;
+  var vis = s.items.filter(function(it){
+    if(V.opts.showAll) return true;
+    return it.arch !== 'ignore' || it.ref._visArch;
+  });
+  var rank = { inferred:0, authored:1, explicit:2 };
+  vis.sort(function(a,b){
+    var d = rank[a.why] - rank[b.why];
+    if(d) return d;
+    return (ARCH[a.arch]?ARCH[a.arch].label:'').localeCompare(ARCH[b.arch]?ARCH[b.arch].label:'');
+  });
+
+  var nGuess = vis.filter(function(it){ return it.why === 'inferred'; }).length;
+  h += '<div class="ov-h">What\u2019s on the site (' + vis.length + ')</div>';
+  if(nGuess){
+    h += '<div class="ov-hint" style="margin-bottom:8px">' + nGuess
+      +  ' item' + (nGuess>1?'s were':' was') + ' worked out from geometry rather than '
+      +  'set in the drawing. Check those first \u2014 change any dropdown and the '
+      +  'model rebuilds, and the choice is saved with the project.</div>';
+  }
+  /* Lines, callouts and annotation are deliberately not rendered, but a
+     rectangle that should have been a building is hiding in the same pile,
+     so the pile has to be reachable. */
+  if(skipped){
+    h += '<div class="ov-row"><input type="checkbox" id="ov-showall"'
+      +  (V.opts.showAll?' checked':'') + '>'
+      +  '<label for="ov-showall">Show ' + skipped + ' unrendered drawing object'
+      +  (skipped>1?'s':'') + '</label></div>';
+  }
+  vis.forEach(function(it){
+    var q = (it.why === 'inferred');
+    h += '<div class="ov-item' + (q?' q':'') + '">'
+      +  '<div class="ov-il"><div class="ov-in">' + esc(it.label || '(unlabelled)') + '</div>'
+      +  '<span class="ov-chip c-' + it.why + '">' + it.why.toUpperCase() + '</span></div>'
+      +  '<select data-item="' + esc(it.id) + '">';
+    ARCH_ORDER.forEach(function(a){
+      h += '<option value="' + a + '"' + (a === it.arch ? ' selected' : '') + '>'
+        +  esc(ARCH[a].label) + '</option>';
+    });
+    h += '</select>'
+      +  '<div class="ov-im" style="margin-top:4px">' + Math.round(it.wf) + '\u00d7'
+      +  Math.round(it.lf) + ' ft' + (it.kw ? ' \u00b7 ' + Math.round(it.kw) + ' kW' : '') + '</div>'
+      +  '</div>';
+  });
+
+  side.innerHTML = h;
+  wireSide();
+}
+
+function fmtHour(v){
+  var hh = Math.floor(v), mm = Math.round((v - hh) * 60);
+  var ap = hh >= 12 ? 'PM' : 'AM';
+  var h12 = hh % 12; if(!h12) h12 = 12;
+  return h12 + ':' + (mm < 10 ? '0' : '') + mm + ' ' + ap;
+}
+
+function wireSide(){
+  var side = el('ov-side'); if(!side) return;
+
+  side.querySelectorAll('[data-view]').forEach(function(b){
+    b.onclick = function(){ setView(b.getAttribute('data-view')); };
+  });
+
+  var hr = el('ov-hour');
+  if(hr) hr.oninput = function(){
+    V.opts.hour = +hr.value;
+    var lbl = el('ov-hourv'); if(lbl) lbl.textContent = fmtHour(V.opts.hour);
+    applySun();
+  };
+
+  var sh = el('ov-shadow');
+  if(sh) sh.onchange = function(){ V.opts.shadows = sh.checked; applySun(); };
+
+  var sa = el('ov-showall');
+  if(sa) sa.onchange = function(){ V.opts.showAll = sa.checked; paintSide(); };
+
+  var st = el('ov-sat');
+  if(st) st.onchange = function(){
+    V.opts.sat = st.checked;
+    var span = Math.max(60, Math.max(V.site.sizeFt.w, V.site.sizeFt.h));
+    buildGround(V.site, span);
+    V.needsRender = true;
+  };
+
+  side.querySelectorAll('.ov-lyr').forEach(function(c){
+    c.onchange = function(){
+      var g = V.layers[c.getAttribute('data-g')];
+      if(g){ g.visible = c.checked; V.needsRender = true; }
+    };
+  });
+
+  /* Reclassifying rebuilds the model. It is fast enough to do on change
+     rather than behind an Apply button, and an Apply button on a
+     classification list is where mistakes hide. */
+  side.querySelectorAll('select[data-item]').forEach(function(sel){
+    sel.onchange = function(){
+      var id = sel.getAttribute('data-item');
+      var it = null;
+      for(var i=0;i<V.site.items.length;i++){
+        if(V.site.items[i].id === id){ it = V.site.items[i]; break; }
+      }
+      if(!it) return;
+      setArch(it, sel.value);
+      populate(V.site);
+      paintSide();
+      V.needsRender = true;
+      try{ if(typeof pushHist === 'function') pushHist(); }catch(e){}
+    };
+  });
+}
+
+/* ---- snapshot ------------------------------------------------------- */
+function snapshot(){
+  if(!V.renderer) return;
+  try{
+    V.renderer.render(V.scene, V.camera);      /* guarantee a fresh buffer */
+    var url = V.renderer.domElement.toDataURL('image/png');
+    var name = 'site-render';
+    try{
+      var pn = document.getElementById('pname');
+      if(pn && pn.value) name = pn.value.replace(/[^\w\-]+/g,'-').toLowerCase();
+    }catch(e){}
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = name + '-3d.png';
+    document.body.appendChild(a); a.click(); a.remove();
+  }catch(e){
+    alert('Snapshot failed: ' + (e && e.message ? e.message : e));
+  }
+}
+
+/* ---- lifecycle ------------------------------------------------------ */
+function loadThree(){
+  return new Promise(function(res, rej){
+    if(typeof THREE !== 'undefined'){ res(); return; }
+    /* The app already lazy-loads r128 for the Maps overlay; reuse that
+       loader when it is present so there is one place the version lives. */
+    if(typeof _gpsEnsureThree === 'function'){ _gpsEnsureThree().then(res, rej); return; }
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+    s.onload  = function(){ res(); };
+    s.onerror = function(){ rej(new Error('three-load-failed')); };
+    document.head.appendChild(s);
+  });
+}
+
+function reload(){
+  if(!V.scene) return;
+  var site = readSite();
+  V.site = site;
+  var span = Math.max(60, Math.max(site.sizeFt.w, site.sizeFt.h));
+  buildGround(site, span);
+  populate(site);
+  applySun(span);
+  paintSide();
+  updScaleLine();
+  V.needsRender = true;
+}
+
+function updScaleLine(){
+  var n = el('ov-scale'); if(!n || !V.site) return;
+  var s = V.site;
+  n.textContent = Math.round(s.sizeFt.w) + ' \u00d7 ' + Math.round(s.sizeFt.h) + ' ft'
+    + '  \u00b7  ' + (s.calibrated ? (Math.round(s.ppf*100)/100 + ' px/ft')
+                                   : 'UNCALIBRATED (assumed ' + s.ppf + ' px/ft)');
+}
+
+function open(){
+  var d = shell();
+  d.classList.add('on');
+  var load = el('ov-load');
+  if(load) load.style.display = 'flex';
+
+  loadThree().then(function(){
+    /* THREE exists from here down, and not one line before it. */
+    if(!V.target) V.target = new THREE.Vector3(0,0,0);
+    if(!MAT){ buildTextures(); buildMaterials(); }
+    var canvas = el('ov-canvas');
+    V.canvas = canvas;
+    V.disposed = false;
+
+    if(!V.renderer){
+      V.renderer = initRenderer(canvas);
+      V.camera = new THREE.PerspectiveCamera(48, 1, 0.5, 60000);
+      attachControls(canvas);
+      window.addEventListener('resize', resize);
+    }
+
+    var site = readSite();
+    buildScene(site);
+    resize();
+    setView('iso');
+    paintSide();
+    updScaleLine();
+
+    if(load) load.style.display = 'none';
+    if(!V.raf) renderLoop();
+    V.needsRender = true;
+    /* One more resize after layout settles — the canvas is 0-height on the
+       first frame in a flex column and the camera bakes a bad aspect. */
+    setTimeout(resize, 60);
+  }).catch(function(err){
+    var msg = el('ov-loadmsg');
+    if(msg) msg.innerHTML = '3D engine could not load.<br>'
+      + '<span style="font-size:10.5px;color:#8A8A8A">'
+      + 'This view needs three.js from the network. Check the connection and try again.</span>';
+    if(window.console) console.warn('[SiteVis]', err);
+  });
+}
+
+function close(){
+  var d = el('ovis'); if(d) d.classList.remove('on');
+  if(V.raf){ cancelAnimationFrame(V.raf); V.raf = null; }
+  V.disposed = true;
+}
+
+/* ---- ribbon button --------------------------------------------------
+   Injected rather than hard-coded into the markup so the Output page keeps
+   working if this block is ever removed, and so it lands next to the other
+   visual outputs rather than in a panel of its own. */
+function injectButton(){
+  try{
+    var page = document.querySelector('.ribbon-page[data-page="output"]');
+    if(!page || page.querySelector('#ov-ribbon-btn')) return true;
+    var panels = page.querySelectorAll('.rpanel');
+    var host = null, i;
+    for(i=0;i<panels.length;i++){
+      var cap = panels[i].querySelector('.rpanel-cap');
+      if(cap && /report/i.test(cap.textContent||'')){ host = panels[i]; break; }
+    }
+    if(!host) host = panels[0];
+    if(!host) return false;
+    var body = host.querySelector('.rpanel-body'); if(!body) return false;
+    var b = document.createElement('button');
+    b.className = 'rbtn';
+    b.id = 'ov-ribbon-btn';
+    b.title = '3D Site Visualizer \u2014 render the drawn site map as a lit 3D model: '
+            + 'carports, rooftop and ground arrays, BESS, transformers and parking';
+    b.innerHTML = '<span class="rb-ico" style="color:#2FB54A">\u25E9</span>'
+                + '<span class="rb-lbl">3D Site<br>Visualizer</span>';
+    b.onclick = function(){
+      if(typeof rbRun === 'function') rbRun(open); else open();
+    };
+    body.appendChild(b);
+    return true;
+  }catch(e){ return false; }
+}
+
+/* The ribbon is rebuilt when Designer mode toggles, so keep re-asserting
+   the button for a while rather than assuming one insertion sticks. */
+function watchRibbon(){
+  injectButton();
+  var n = 0;
+  var iv = setInterval(function(){
+    injectButton();
+    if(++n > 20) clearInterval(iv);
+  }, 700);
+  try{
+    var rb = document.getElementById('ribbon');
+    if(rb && window.MutationObserver){
+      new MutationObserver(function(){ injectButton(); })
+        .observe(rb, { childList:true, subtree:true });
+    }
+  }catch(e){}
+}
+
+if(document.readyState === 'loading')
+  document.addEventListener('DOMContentLoaded', watchRibbon);
+else watchRibbon();
+
+/* Public surface. */
+window.OmegaSiteVis = {
+  open: open,
+  close: close,
+  refresh: reload,
+  snapshot: snapshot,
+  read: readSite,
+  /* Inspect what the classifier decided and why, without opening the view. */
+  audit: function(){
+    var s = readSite(), rows = [];
+    s.items.forEach(function(it){
+      rows.push({ label:it.label, arch:it.arch, why:it.why,
+                  ft:Math.round(it.wf)+'x'+Math.round(it.lf), kw:it.kw||0 });
+    });
+    if(window.console && console.table) console.table(rows);
+    return rows;
+  },
+  ARCH: ARCH
+};
+
+if(window.console) console.info('[SiteVis] ready \u2014 Output \u203a Reports \u203a 3D Site '
+  + 'Visualizer, or OmegaSiteVis.open()');
+
 })();
 
 </script>
