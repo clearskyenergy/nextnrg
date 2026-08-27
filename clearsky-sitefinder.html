@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<!--
+  ClearSky-OMEGA · Site Finder  (listings v1)
+  ---------------------------------------------------------------------------
+  A Zillow-shaped browser over C&I property, where the headline number is not
+  a price but DELIVERABLE kW — and where selling a circuit removes it from
+  everyone else's inventory.
+
+  Three files, by design:
+    omega-capacity-ledger.js   circuit allocation math + shared claims
+    omega-listings-source.js   swappable property providers
+    this page                  the sales surface
+
+  ES5 only. Single page. No build step. Matches the ComEd Capacity Finder's
+  tokens so the two read as one product.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Site Finder · ClearSky-OMEGA</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<style>
+  :root{
+    --bg:#f5f6f8;--panel:#fff;--panel2:#f0f2f5;--line:#dfe3e8;
+    --ink:#1a2733;--muted:#5b6b7b;--dim:#9aa7b4;--accent:#0a6ed1;
+    --purple:#8a5cd1;--green:#2ea043;--amber:#c98a2b;--gray:#9aa7b4;--red:#e0533d;
+    --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --topH:56px; --filtH:52px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:var(--sans);overflow:hidden;font-size:14px}
+  button{font-family:inherit}
+  a{color:var(--accent)}
+
+  /* ------------------------------------------------------------ top bar */
+  #top{position:absolute;top:0;left:0;right:0;height:var(--topH);z-index:1300;display:flex;
+    align-items:center;gap:14px;padding:0 16px;background:#fff;border-bottom:1px solid var(--line)}
+  .logo{display:flex;align-items:center;gap:9px;text-decoration:none;flex:none}
+  .logo img{height:26px;border-radius:6px}
+  .logo .t{font-weight:700;font-size:14px;color:var(--ink);white-space:nowrap}
+  .logo .t span{color:var(--accent)}
+  .seprt{width:1px;height:22px;background:var(--line);flex:none}
+  #search{position:relative;flex:1;max-width:460px}
+  #search input{width:100%;height:34px;border:1px solid var(--line);background:var(--panel2);
+    color:var(--ink);border-radius:8px;padding:0 66px 0 34px;font-size:13px;outline:none}
+  #search input:focus{border-color:var(--accent);background:#fff}
+  #search .mag{position:absolute;left:11px;top:9px;color:var(--dim);font-size:14px}
+  #search .go{position:absolute;right:5px;top:5px;height:24px;border:0;background:var(--accent);
+    color:#fff;border-radius:6px;padding:0 11px;font-size:12px;font-weight:600;cursor:pointer}
+
+  .views{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    padding:2px;gap:2px;flex:none}
+  .views button{border:0;background:transparent;color:var(--muted);font-size:12px;font-weight:600;
+    padding:6px 13px;border-radius:6px;cursor:pointer;white-space:nowrap}
+  .views button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(26,39,51,.12)}
+  .views button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+  .spacer{flex:1}
+  .chip{display:flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:999px;padding:4px 11px 4px 4px;font-size:12px;font-weight:600;color:var(--muted);
+    cursor:pointer;flex:none}
+  .chip .av{width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+  .srcTag{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--amber);background:#fdf6e8;border:1px solid #f0dcb4;border-radius:5px;padding:3px 7px;flex:none}
+
+  /* ---------------------------------------------------------- filter bar */
+  #filters{position:absolute;top:var(--topH);left:0;right:0;height:var(--filtH);z-index:1250;
+    display:flex;align-items:center;gap:8px;padding:0 16px;background:#fff;
+    border-bottom:1px solid var(--line);overflow-x:auto;overflow-y:hidden;white-space:nowrap;
+    box-shadow:0 1px 3px rgba(26,39,51,.05)}
+  #filters::-webkit-scrollbar{height:0}
+  .f{display:flex;align-items:center;gap:6px;flex:none}
+  .f label{font-size:11px;color:var(--muted);font-weight:600}
+  .f select,.f input{height:30px;border:1px solid var(--line);background:#fff;border-radius:7px;
+    padding:0 8px;font-size:12px;color:var(--ink);outline:none;font-family:inherit}
+  .f select:focus,.f input:focus{border-color:var(--accent)}
+  .f input[type=number]{width:82px}
+  .btn{height:30px;border:1px solid var(--line);background:#fff;border-radius:7px;padding:0 12px;
+    font-size:12px;font-weight:600;color:var(--ink);cursor:pointer;flex:none}
+  .btn:hover{border-color:var(--dim)}
+  .btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.pri:hover{background:#0961b8}
+  .btn.warn{background:var(--red);border-color:var(--red);color:#fff}
+  .btn.ghost{background:transparent}
+  .btn:disabled{opacity:.5;cursor:default}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);
+    font-weight:600;cursor:pointer;flex:none}
+  .toggle input{accent-color:var(--accent);margin:0}
+
+  /* ------------------------------------------------------------- layout */
+  /* The map is the BACKGROUND, not a panel. It runs the full width beneath
+     everything, and the results rail floats over it — so the hosting-capacity
+     shading is always visible behind the cards instead of being squeezed into
+     whatever is left of the viewport. */
+  #stage{position:absolute;top:calc(var(--topH) + var(--filtH));left:0;right:0;bottom:0}
+  #mapPane{position:absolute;inset:0}
+  #map{position:absolute;inset:0;background:#e8ebef}
+  #listPane{position:absolute;left:0;top:0;bottom:0;width:436px;z-index:900;
+    background:rgba(245,246,248,.97);overflow-y:auto;border-right:1px solid var(--line);
+    scroll-behavior:smooth;box-shadow:6px 0 26px rgba(26,39,51,.12)}
+  body.v-map #listPane{display:none}
+  body.v-list #mapPane{display:none}
+  body.v-list #listPane{position:static;width:100%;border-right:0;box-shadow:none;
+    background:var(--bg);height:100%}
+  body.v-list #cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));
+    gap:12px;padding:14px 16px}
+  body.v-ledger #stage{display:none}
+  #ledgerPane{position:absolute;top:calc(var(--topH) + var(--filtH));left:0;right:0;bottom:0;
+    display:none;overflow-y:auto;background:var(--bg);padding:18px}
+  body.v-ledger #ledgerPane{display:block}
+  body.v-ledger #filters .mapOnly{display:none}
+
+  /* ------------------------------------------------------------ results */
+  .resHead{position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 16px 8px;
+    border-bottom:1px solid var(--line)}
+  .resHead .n{font-size:15px;font-weight:700}
+  .resHead .s{font-size:12px;color:var(--muted);margin-top:2px;white-space:normal}
+  #cards{padding:12px 12px 40px}
+
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    margin-bottom:12px;cursor:pointer;transition:box-shadow .14s,border-color .14s;
+    display:flex;flex-direction:column}
+  body.v-list .card{margin-bottom:0}
+  .card:hover,.card.hot{box-shadow:0 6px 20px rgba(26,39,51,.13);border-color:#c3cdd7}
+  .card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .card.blocked{background:#fffaf9}
+  .card .ph{height:132px;position:relative;background:var(--panel2);flex:none;overflow:hidden}
+  .card .ph img,.card .ph svg{width:100%;height:100%;object-fit:cover;display:block}
+  .card .ph .badge{position:absolute;left:9px;top:9px;background:rgba(255,255,255,.94);
+    border-radius:6px;padding:3px 8px;font-size:10px;font-weight:700;color:var(--ink);
+    letter-spacing:.04em;text-transform:uppercase}
+  .card .ph .cst{position:absolute;right:9px;top:9px;border-radius:6px;padding:3px 8px;
+    font-size:10px;font-weight:700;color:#fff;letter-spacing:.03em}
+  .card .bd{padding:11px 13px 13px}
+  .card .kw{font-size:21px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+  .card .kw small{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:0}
+  .card .kwsub{font-size:11px;color:var(--muted);margin-top:2px}
+  .card .ad{font-size:14px;font-weight:600;margin-top:7px;line-height:1.25}
+  .card .mt{font-size:12px;color:var(--muted);margin-top:3px}
+  .card .own{font-size:11px;color:var(--dim);margin-top:4px;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .card .warn{margin-top:9px;background:#fdf1ef;border:1px solid #f3d3cc;border-radius:8px;
+    padding:7px 9px;font-size:11px;color:#a3372a;line-height:1.35}
+  .card .warn b{color:#8c2d21}
+  .card .hold{background:#fdf6e8;border-color:#f0dcb4;color:#8a5f16}
+  .card .hold b{color:#6f4b10}
+
+  /* ------------------------------- SIGNATURE: circuit allocation meter
+     Capacity is a shared, finite resource. This bar is the one element
+     repeated on every surface so a rep learns to read it in a day:
+     purple = other developers' queue, blue = our filed projects,
+     amber = our live holds, green = what is actually still for sale. */
+  .meter{margin-top:10px}
+  .meter .track{height:7px;border-radius:4px;background:var(--green);overflow:hidden;display:flex}
+  .meter .seg{height:100%}
+  .meter .seg.q{background:repeating-linear-gradient(-45deg,#8a5cd1,#8a5cd1 3px,#a37fdd 3px,#a37fdd 6px)}
+  .meter .seg.f{background:var(--accent)}
+  .meter .seg.s{background:repeating-linear-gradient(-45deg,#c98a2b,#c98a2b 3px,#e0ab5c 3px,#e0ab5c 6px)}
+  .meter .seg.o{background:var(--red)}
+  .meter .lg{display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:5px;
+    font-family:var(--mono);letter-spacing:.02em}
+  .meter.tall .track{height:26px;border-radius:7px}
+  .meter.tall .lg{font-size:11px;margin-top:8px}
+
+  .keys{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px}
+  .keys .k{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+  .keys .sw{width:11px;height:11px;border-radius:3px;flex:none}
+
+  .empty{padding:44px 26px;text-align:center;color:var(--muted);grid-column:1/-1}
+  .empty p{max-width:440px;margin-left:auto;margin-right:auto}
+  .empty h3{margin:0 0 8px;font-size:15px;color:var(--ink)}
+  .empty p{margin:0 0 16px;font-size:13px;line-height:1.5}
+
+  /* ------------------------------------------------------------- drawer */
+  #drawer{position:absolute;top:calc(var(--topH) + var(--filtH));right:0;bottom:0;
+    width:min(520px,92vw);background:#fff;
+    border-left:1px solid var(--line);box-shadow:-14px 0 40px rgba(26,39,51,.16);z-index:1200;
+    transform:translateX(102%);transition:transform .26s cubic-bezier(.2,.8,.2,1);
+    display:flex;flex-direction:column}
+  #drawer.open{transform:none}
+  .d-h{padding:13px 16px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:10px;flex:none}
+  .d-h .ti{flex:1;min-width:0}
+  .d-h .ti b{display:block;font-size:15px;line-height:1.3}
+  .d-h .ti span{font-size:12px;color:var(--muted)}
+  .d-x{border:0;background:var(--panel2);color:var(--muted);width:28px;height:28px;border-radius:7px;
+    font-size:16px;cursor:pointer;flex:none;line-height:1}
+  .d-x:hover{color:var(--ink)}
+  .d-b{flex:1;overflow-y:auto;padding:0 16px 26px}
+  .sec{padding:15px 0;border-bottom:1px solid var(--line)}
+  .sec:last-child{border-bottom:0}
+  .sec h4{margin:0 0 11px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);font-family:var(--mono)}
+  .grid2{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px;align-items:baseline}
+  .grid2 .lab{color:var(--muted);font-size:12px}
+  .grid2 .val{text-align:right;font-weight:600}
+  .grid2 .val small{font-weight:400;color:var(--muted);font-size:11px}
+  .hero{background:var(--panel2);border-radius:11px;padding:14px;margin-bottom:4px}
+  .hero .big{font-size:29px;font-weight:700;letter-spacing:-.02em;line-height:1}
+  .hero .big small{font-size:14px;color:var(--muted);font-weight:600}
+  .hero .cap{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.45}
+  .note{font-size:12px;line-height:1.5;color:var(--muted);background:var(--panel2);
+    border-radius:9px;padding:10px 12px;margin-top:10px}
+  .note.bad{background:#fdf1ef;color:#a3372a}
+  .note.warnb{background:#fdf6e8;color:#8a5f16}
+  .note b{color:inherit}
+
+  table.t{width:100%;border-collapse:collapse;font-size:12px}
+  table.t th{text-align:left;font-weight:600;color:var(--muted);font-size:10.5px;
+    text-transform:uppercase;letter-spacing:.07em;padding:0 8px 7px 0;border-bottom:1px solid var(--line);
+    font-family:var(--mono);white-space:nowrap}
+  table.t td{padding:8px 8px 8px 0;border-bottom:1px solid var(--panel2);vertical-align:top}
+  table.t tr:last-child td{border-bottom:0}
+  table.t td.r,table.t th.r{text-align:right}
+  .pill{display:inline-block;border-radius:5px;padding:2px 7px;font-size:10px;font-weight:700;
+    color:#fff;white-space:nowrap}
+  .pill.o{background:transparent;border:1px solid currentColor}
+  .mono{font-family:var(--mono);font-size:12px}
+
+  .form{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .form .full{grid-column:1/-1}
+  .form label{display:block;font-size:11px;color:var(--muted);font-weight:600;margin-bottom:4px}
+  .form input,.form select,.form textarea{width:100%;height:32px;border:1px solid var(--line);
+    background:#fff;border-radius:7px;padding:0 9px;font-size:13px;color:var(--ink);outline:none;
+    font-family:inherit}
+  .form textarea{height:60px;padding:7px 9px;resize:vertical}
+  .form input:focus,.form select:focus,.form textarea:focus{border-color:var(--accent)}
+  .msg{font-size:12px;margin-top:9px;line-height:1.45}
+  .msg.err{color:var(--red)}
+  .msg.ok{color:var(--green)}
+
+  /* ------------------------------------------------------------- ledger */
+  .lgHead{display:flex;align-items:flex-end;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+  .lgHead h2{margin:0;font-size:19px;letter-spacing:-.01em}
+  .lgHead p{margin:3px 0 0;font-size:13px;color:var(--muted);max-width:640px;line-height:1.5}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px;margin-bottom:18px}
+  .kpi{background:#fff;border:1px solid var(--line);border-radius:11px;padding:13px 15px}
+  .kpi .n{font-size:23px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+  .kpi .l{font-size:11px;color:var(--muted);margin-top:3px;font-weight:600}
+  .kpi.alert{border-color:#f3d3cc;background:#fffaf9}
+  .kpi.alert .n{color:var(--red)}
+  .lgCard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 17px;margin-bottom:11px}
+  .lgCard.over{border-color:#f3d3cc;background:#fffaf9}
+  .lgTop{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin-bottom:11px}
+  .lgTop .fid{font-family:var(--mono);font-size:14px;font-weight:700}
+  .lgTop .sb{font-size:12px;color:var(--muted)}
+  .lgTop .sp{flex:1}
+
+  @media (max-width:900px){
+    #listPane{width:100%;border-right:0}
+    body.v-split #mapPane{display:none}
+    .logo .t{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important;animation:none!important}
+    #listPane{scroll-behavior:auto}
+  }
+
+  .leaflet-container{background:#e8ebef;font-family:var(--sans)}
+  .mk{border-radius:7px;border:2px solid #fff;box-shadow:0 2px 6px rgba(26,39,51,.3);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;
+    font-weight:700;font-family:var(--mono);cursor:pointer}
+  .mk.sel{outline:3px solid var(--accent);outline-offset:2px}
+  #mapNote{position:absolute;left:50%;transform:translateX(-50%);top:12px;z-index:900;
+    background:#fff;border:1px solid var(--line);border-radius:999px;padding:7px 15px;
+    font-size:12px;font-weight:600;box-shadow:0 3px 12px rgba(26,39,51,.14);cursor:pointer}
+  #mapNote[hidden]{display:none}
+
+  /* ── layer legend ─────────────────────────────────────────────────── */
+  #legend{position:absolute;right:14px;bottom:16px;z-index:950;background:#fff;
+    border:1px solid var(--line);border-radius:11px;padding:11px 13px;width:232px;
+    box-shadow:0 6px 22px rgba(26,39,51,.15);font-size:12px}
+  body.v-list #legend,body.v-ledger #legend{display:none}
+  #legend .lgH{font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin-bottom:8px}
+  #legend label{display:flex;align-items:center;gap:7px;padding:3px 0;cursor:pointer;font-size:12px}
+  #legend label input{accent-color:var(--accent);margin:0;flex:none}
+  #legend label b{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--dim);font-weight:600}
+  #legend .lgKey{display:flex;flex-wrap:wrap;gap:4px 10px;padding:2px 0 6px 22px}
+  #legend .lgKey[hidden]{display:none}   /* [hidden] loses to display:flex */
+  #legend .lgKey span{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+  #legend .lgKey i{width:9px;height:9px;border-radius:2px;flex:none}
+  #legend .lgNote{font-size:10px;color:var(--dim);line-height:1.4;margin-top:5px;
+    border-top:1px solid var(--line);padding-top:6px}
+  #legend .lgNote:empty{display:none;border:0;padding:0}
+
+  /* ── settings ─────────────────────────────────────────────────────── */
+  #settings{position:absolute;top:calc(var(--topH) + var(--filtH));right:0;bottom:0;
+    width:min(420px,94vw);background:#fff;border-left:1px solid var(--line);z-index:1210;
+    box-shadow:-14px 0 40px rgba(26,39,51,.16);transform:translateX(102%);
+    transition:transform .26s cubic-bezier(.2,.8,.2,1);display:flex;flex-direction:column}
+  #settings.open{transform:none}
+  .setH{display:flex;align-items:center;padding:13px 16px;border-bottom:1px solid var(--line);flex:none}
+  .setH b{flex:1;font-size:15px}
+  .setH button{border:0;background:var(--panel2);color:var(--muted);width:28px;height:28px;
+    border-radius:7px;font-size:16px;line-height:1;cursor:pointer}
+  .setB{flex:1;overflow-y:auto;padding:0 16px 30px}
+  .setB section{padding:15px 0;border-bottom:1px solid var(--line)}
+  .setB section:last-child{border-bottom:0}
+  .setB h5{margin:0 0 6px;font:700 11px var(--mono);letter-spacing:.09em;
+    text-transform:uppercase;color:var(--muted)}
+  .setB p{margin:0 0 10px;font-size:11.5px;color:var(--muted);line-height:1.5}
+  .setSeg{display:flex;background:var(--panel2);border-radius:8px;padding:2px;gap:2px}
+  .setSeg button{flex:1;border:0;background:transparent;color:var(--muted);
+    font:600 12px var(--sans);padding:7px 4px;border-radius:6px;cursor:pointer}
+  .setSeg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(26,39,51,.12)}
+  .setRow{display:flex;gap:9px;align-items:flex-start;padding:7px 0;cursor:pointer}
+  .setRow input{accent-color:var(--accent);margin:2px 0 0;flex:none}
+  .setRow span{font-size:12.5px;font-weight:600;line-height:1.35}
+  .setRow em{display:block;font-size:11px;font-weight:400;font-style:normal;
+    color:var(--muted);line-height:1.45;margin-top:2px}
+  .setGrid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}
+  .setGrid label{display:flex;gap:7px;align-items:center;font-size:12px;cursor:pointer}
+  .setGrid input{accent-color:var(--accent);margin:0}
+  #setSrc{width:100%;height:32px;border:1px solid var(--line);border-radius:7px;
+    background:#fff;padding:0 9px;font:400 13px var(--sans);outline:none}
+  #setSrcNote{margin-top:9px}
+</style>
+</head>
+<body class="v-split">
+
+<div id="top">
+  <a href="/" class="logo"><img src="/omega-logo.png" alt="" onerror="this.style.display='none'">
+    <span class="t">ClearSky<span>-OMEGA</span></span></a>
+  <div class="seprt"></div>
+  <div id="search">
+    <span class="mag">&#9906;</span>
+    <input id="q" type="search" placeholder="Address, neighbourhood, ZIP or circuit id" autocomplete="off">
+    <button class="go" id="qGo" type="button">Search</button>
+  </div>
+  <div class="views" role="tablist" aria-label="View">
+    <button type="button" data-view="split" class="on">Split</button>
+    <button type="button" data-view="map">Map</button>
+    <button type="button" data-view="list">List</button>
+    <button type="button" data-view="ledger">Circuit ledger</button>
+  </div>
+  <div class="spacer"></div>
+  <span class="srcTag" id="srcTag">Sample data</span>
+  <div class="chip" id="repChip"><span class="av" id="repAv">—</span><span id="repName">Set your name</span></div>
+</div>
+
+<div id="filters">
+  <div class="f">
+    <label for="fKw">Min kW available</label>
+    <input id="fKw" type="number" min="0" step="50" value="250">
+  </div>
+  <div class="f">
+    <label for="fType">Use</label>
+    <select id="fType">
+      <option value="">Any</option>
+      <option value="__ci">Industrial &amp; warehouse</option>
+    </select>
+  </div>
+  <div class="f">
+    <label for="fSqft">Min SF</label>
+    <input id="fSqft" type="number" min="0" step="5000" value="20000">
+  </div>
+  <div class="f">
+    <label for="fCirc">Circuit</label>
+    <select id="fCirc">
+      <option value="">Any status</option>
+      <option value="sellable">Has capacity left</option>
+      <option value="open">Untouched only</option>
+      <option value="partial">Partly claimed</option>
+      <option value="closed">Taken or oversubscribed</option>
+      <option value="mine">Where I hold capacity</option>
+    </select>
+  </div>
+  <div class="f">
+    <label for="fSort">Sort</label>
+    <select id="fSort">
+      <option value="kw">Deliverable kW</option>
+      <option value="score">Deal score</option>
+      <option value="head">Circuit headroom</option>
+      <option value="sqft">Building size</option>
+      <option value="load">Peak load</option>
+    </select>
+  </div>
+  <label class="toggle mapOnly"><input type="checkbox" id="fFollow" checked> Search as I move</label>
+  <button class="btn pri mapOnly" id="run" type="button">Search this area</button>
+  <div class="spacer"></div>
+  <button class="btn ghost" id="setOpen" type="button">Settings</button>
+  <button class="btn ghost" id="expCsv" type="button">Export</button>
+</div>
+
+<div id="stage">
+  <div id="listPane">
+    <div class="resHead">
+      <div class="n" id="resN">Pan the map, then search</div>
+      <div class="s" id="resS">Every result is scored on what the circuit will still accept, not on what the building could theoretically host.</div>
+    </div>
+    <div id="cards"></div>
+  </div>
+  <div id="mapPane">
+    <div id="map"></div>
+    <button id="mapNote" type="button" hidden>Search this area</button>
+  </div>
+</div>
+
+<div id="ledgerPane"></div>
+
+<div id="legend">
+  <div class="lgH">On the map</div>
+  <label><input type="checkbox" id="lyHost" checked><span>Hosting capacity <b id="cHost">–</b></span></label>
+  <div class="lgKey" id="hostKey">
+    <span><i style="background:#E8590C"></i>1001 kW +</span>
+    <span><i style="background:#F2B705"></i>501–1000 kW</span>
+    <span><i style="background:#C9CDD2"></i>0–500 kW</span>
+  </div>
+  <label><input type="checkbox" id="lyCI"><span>C&amp;I / industrial parcels <b id="cCI">–</b></span></label>
+  <label><input type="checkbox" id="lyILS"><span>Illinois Shines solar <b id="cILS">–</b></span></label>
+  <div class="lgKey" id="ilsKey" hidden>
+    <span><i style="background:#F59E0B"></i>energised</span>
+    <span><i style="background:#94A3B8"></i>in development</span>
+  </div>
+  <div class="lgNote" id="lgNote"></div>
+</div>
+
+<div id="settings" role="dialog" aria-label="Settings">
+  <div class="setH"><b>Settings</b><button id="setX" aria-label="Close">&#215;</button></div>
+  <div class="setB">
+
+    <section>
+      <h5>Circuit product</h5>
+      <p>Which hosting-capacity column the map shades and the ledger meters.
+         A battery needs both directions; a data centre only draws; solar only
+         exports. Shading the wrong one paints a circuit green that cannot
+         take the thing being sold.</p>
+      <div class="setSeg" id="setUse">
+        <button data-use="bess" class="on">Battery</button>
+        <button data-use="ev">Large load</button>
+        <button data-use="pv">Solar</button>
+      </div>
+    </section>
+
+    <section>
+      <h5>Map colours</h5>
+      <label class="setRow"><input type="checkbox" id="setProspect" checked>
+        <span>Prospecting palette<em>Ranks by what is worth a call. Off = ComEd's own three bands.</em></span></label>
+      <label class="setRow"><input type="checkbox" id="setNetQueue" checked>
+        <span>Shade net of queued DER<em>ComEd never nets Feeder_Q out of its own published figure. Off shows the headline, which oversells.</em></span></label>
+    </section>
+
+    <section>
+      <h5>Card detail</h5>
+      <p>What appears on every result card. Turning things off does not stop
+         them loading — the drawer always shows everything.</p>
+      <div class="setGrid" id="setFields"></div>
+    </section>
+
+    <section>
+      <h5>Property source</h5>
+      <select id="setSrc"></select>
+      <p id="setSrcNote"></p>
+      <label class="setRow"><input type="checkbox" id="setEnrich">
+        <span>Enrich open sites with Crexi<em>One billed lookup per site opened, cached for the session. Never in bulk over a whole sweep.</em></span></label>
+    </section>
+
+  </div>
+</div>
+
+<div id="drawer" role="dialog" aria-label="Property detail">
+  <div class="d-h">
+    <div class="ti"><b id="dAddr">—</b><span id="dSub">—</span></div>
+    <button class="d-x" id="dClose" type="button" aria-label="Close">&#215;</button>
+  </div>
+  <div class="d-b" id="dBody"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="omega-capacity-ledger.js"></script>
+<script src="omega-comed-layers.js"></script>
+<script src="omega-listings-source.js"></script>
+<script src="omega-comed-listings.js"></script>
+<script>
+/* ==========================================================================
+   Site Finder — application layer
+   ========================================================================== */
+(function () {
+  "use strict";
+
+  var L = window.OmegaLedger, SRC = window.OmegaListings;
+  var ORG = (location.search.match(/[?&]org=([^&]+)/) || [])[1] || "demo";
+  try { ORG = decodeURIComponent(ORG); } catch (e) {}
+
+  var ST = {
+    rows: [],          /* normalized properties, enriched */
+    byId: {},
+    view: "split",
+    sel: null,
+    busy: false,
+    lastKey: "",
+    rep: ""
+  };
+
+  /* ------------------------------------------------------------------ map */
+  var map = L2().setView([41.8500, -87.7100], 14);
+  /* Top-right: the rail floats over the top-left corner now that the map is
+     the background, and the default control sat underneath it. */
+  function L2() {
+    return window.L.map("map", { zoomControl: false, preferCanvas: true });
+  }
+  window.L.control.zoom({ position: "topright" }).addTo(map);
+  /* CARTO's raster basemaps now require an API key. Without one every tile
+     comes back stamped "API KEY REQUIRED" — the map still works, but the
+     product looks broken in exactly the screenshot that ends up in a deck.
+     The key is free (5M tile requests a month, no approval queue) from
+     carto.com/basemaps/apikey.
+
+     It is not a secret and there is nowhere to hide it in a static page, so
+     it sits in config rather than pretending otherwise. Set window.CS_TILE_KEY
+     in omega-brand.js or config.js per tenant, or pass ?tilekey= for a
+     one-off. The raster service is also on its way out; when it goes, the
+     move is MapLibre against the vector style, which is more than a one-line
+     change and should be planned rather than discovered. */
+  var TILE_KEY = window.CS_TILE_KEY ||
+                 (location.search.match(/[?&]tilekey=([^&]+)/) || [])[1] || "";
+  window.L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" +
+      (TILE_KEY ? "?key=" + encodeURIComponent(TILE_KEY) : ""),
+    { maxZoom: 19, subdomains: "abcd",
+      attribution: "&copy; OpenStreetMap &copy; CARTO" }
+  ).addTo(map);
+  if (!TILE_KEY && window.console) {
+    console.warn("clearsky-sitefinder: no CARTO basemap key. Tiles will be " +
+                 "watermarked 'API KEY REQUIRED'. Set window.CS_TILE_KEY — " +
+                 "free key at carto.com/basemaps/apikey");
+  }
+  var markerLayer = window.L.layerGroup().addTo(map);
+  var MARKERS = {};
+
+  /* ------------------------------------------------------------- provider
+     Demo until a contract exists. Switching source is one line — see the
+     README for what each provider needs before it can be turned on. */
+  SRC.use(SRC.providers.comed ? "comed" : "demo");
+  function isSample() { return !!(SRC.active && SRC.active.sample); }
+
+  /* =========================================================== the search */
+
+  function bounds() {
+    var b = map.getBounds();
+    return { s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() };
+  }
+  function boundsKey() {
+    var b = bounds();
+    return [b.s, b.n, b.w, b.e].map(function (x) { return x.toFixed(3); }).join(",");
+  }
+
+  function run(force) {
+    if (ST.busy) return;
+    /* A hidden or unsized map pane reports a zero-area viewport. Searching it
+       returns nothing and would wipe the results the rep is reading. */
+    var b0 = bounds();
+    if (!(b0.n > b0.s) || !(b0.e > b0.w)) return;
+    var key = boundsKey();
+    if (!force && key === ST.lastKey) return;
+    if (map.getZoom() < 12) {
+      head("Zoom in to search", "The area is too large to pull property records for. Zoom to a neighbourhood or a corridor.");
+      return;
+    }
+    ST.busy = true; ST.lastKey = key;
+    document.getElementById("run").disabled = true;
+    head("Searching\u2026", "Pulling property records and matching each parcel to its distribution circuit.");
+
+    SRC.search(bounds(), { limit: 400, minSqft: 0 }, function (err, rows) {
+      ST.busy = false;
+      document.getElementById("run").disabled = false;
+      document.getElementById("mapNote").hidden = true;
+      if (err) {
+        head("Search failed", err.message + " Nothing was returned, so the list below is unchanged.");
+        return;
+      }
+      ingest(rows || []);
+      render();
+      /* A provider that partly failed says so on the header. A short list
+         that looks complete is the failure mode this whole tool exists to
+         avoid — a rep reads an empty corridor as no opportunity. */
+      var note = SRC.active && SRC.active.lastNote;
+      if (note) document.getElementById("resS").textContent += " " + note;
+    });
+  }
+
+  /* Registering circuit capacity is a separate step from reading properties,
+     and stays separate. The listing source knows nothing about the grid; the
+     grid source knows nothing about buildings. Joining them here keeps either
+     one swappable without touching the other. */
+  function ingest(rows) {
+    ST.rows = []; ST.byId = {};
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r || r.lat == null || r.lon == null) continue;
+
+      /* Real circuit first: the hosting polygons the map is shaded with are
+         already in memory, so this is a point-in-polygon, not a query. */
+      if (!r.feederId && LAY && LAY.feederAt) {
+        var hit = LAY.feederAt(r.lat, r.lon), cap0 = hit ? LAY.capacityOf(hit) : null;
+        if (cap0 && cap0.nameplate != null) {
+          r.feederId = cap0.feederId; r.sub = r.sub || cap0.sub;
+          r.nameplate = cap0.nameplate; r.queue = cap0.queue;
+        }
+      }
+      /* Only sample data gets a synthetic circuit. A real parcel with no
+         polygon over it keeps a blank feeder and says so on the card — a
+         made-up circuit id under real data is a number a rep will quote. */
+      if (!r.feederId && isSample()) {
+        var f = SRC.demoFeederFor(r.lat, r.lon);
+        r.feederId = f.feederId; r.sub = r.sub || f.sub;
+      }
+      if (!r.feederId) { r.feederId = "\u2014"; r.noCircuit = true; }
+      if (L.getFeeder(r.feederId) == null && !r.noCircuit) {
+        var cap = r.nameplate != null
+          ? { nameplate: r.nameplate, queue: r.queue || 0 }
+          : SRC.demoCapacityFor(r.feederId);
+        L.setFeeder(r.feederId, { nameplate: cap.nameplate, queue: cap.queue, sub: r.sub });
+      }
+      enrich(r);
+      ST.rows.push(r);
+      ST.byId[r.id] = r;
+    }
+  }
+
+  /* --------------------------------------------------------------- sizing
+     Two ceilings, reported separately, because they fail for different
+     reasons and a rep needs to know which conversation they are in:
+
+       load ceiling    — the customer's own peak justifies this much shaving
+       circuit ceiling — the wire accepts this much AFTER everyone's claims
+
+     Collapsing them into one number is how a proposal ends up promising
+     900 kW on a circuit with 200 kW left. */
+  /* Load factors come from the shared table so the page, the demo provider
+     and the ComEd provider cannot disagree about how a type converts annual
+     kWh into a peak. The local literal is only a fallback for a host that has
+     an older omega-listings-source.js on it. */
+  var EUI_LF = (window.OmegaListings && window.OmegaListings.EUI_LF) ||
+               { "Warehouse":0.38,"Industrial":0.55,"Manufacturing":0.60,"Cold Storage":0.72,
+                 "Flex":0.50,"Retail":0.45,"Office":0.50,"Data Center":0.85,
+                 "Institutional":0.42,"Multifamily":0.55,"Vacant Land":0,"Other":0.50 };
+  var DEMAND_LO = 8, DEMAND_HI = 14;   /* $/kW-month, ComEd C&I delivery + capacity */
+
+  function enrich(r) {
+    var lf = r.loadFactor || EUI_LF[r.type] || 0.5;
+    var kwh = r.annualKwh ? r.annualKwh.value : null;
+    var peakKw = (kwh && lf) ? (kwh / 8760) / lf : null;
+    /* 15% of peak at 2 hours is the standard opening screen for a C&I
+       demand-charge deal. Going deeper needs interval data we do not have. */
+    var loadKw = peakKw ? peakKw * 0.15 : null;
+
+    var sz = L.sizeAt({ feederId: r.feederId, siteId: r.id, loadKw: loadKw, hours: 2 });
+    r.peakKw = peakKw;
+    r.lf = lf;
+    r.sz = sz;
+    r.circ = sz.state;   /* circuit state. NOT r.state — that is the postal state. */
+    r.cst = L.circuitStatus(sz.state);
+    r.claims = L.neighbourClaims(r.feederId, r.id);
+    r.mine = L.allocationsForSite(r.id);
+    r.saveLo = sz.kw ? sz.kw * DEMAND_LO * 12 : null;
+    r.saveHi = sz.kw ? sz.kw * DEMAND_HI * 12 : null;
+    r.score = score(r);
+    return r;
+  }
+
+  /* Weighted on what can actually be delivered and sold, not on how big the
+     building is. A large load on a full circuit is not a deal, and neither
+     is an empty circuit next to a small load. */
+  function score(r) {
+    var s = 0;
+    s += Math.min((r.sz.kw || 0) / 1200, 1) * 45;              /* deliverable now  */
+    s += Math.min((r.peakKw || 0) / 2000, 1) * 20;             /* customer's peak  */
+    s += Math.min((r.circ.sellable || 0) / 4000, 1) * 15;     /* room to grow     */
+    s += r.sz.circuitLimited ? 0 : 10;                          /* not wire-capped  */
+    s += /Warehouse|Industrial|Manufacturing|Cold Storage|Flex/.test(r.type) ? 10 : 3;
+    return Math.round(s);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     SETTINGS
+
+     Everything a rep can change about what they are looking at, in one place
+     rather than scattered across the chrome. Two kinds of thing live here and
+     they are deliberately not mixed in the UI:
+
+       what the map MEANS   — which capacity column, whether to net the queue
+       what the cards SHOW  — field visibility
+
+     Card fields are display-only. Turning one off does not stop it loading
+     and does not change any filter or score; the drawer still shows
+     everything. A setting that silently changed the data behind a number
+     would be worse than no setting.
+     ══════════════════════════════════════════════════════════════════════ */
+
+  /* Field registry. `always` is the spine of the card and cannot be hidden —
+     an address with no deliverable kW is not a result, it is a row. */
+  var FIELDS = [
+    { k: "kw",      label: "Deliverable kW", always: true },
+    { k: "addr",    label: "Address",        always: true },
+    { k: "circuit", label: "Circuit meter",  on: true },
+    { k: "type",    label: "Use / class",    on: true },
+    { k: "size",    label: "Building size",  on: true },
+    { k: "owner",   label: "Owner",          on: true },
+    { k: "score",   label: "Deal score",     on: true },
+    { k: "feeder",  label: "Feeder id",      on: true },
+    { k: "energy",  label: "Annual kWh",     on: false },
+    { k: "sale",    label: "Last sale",      on: false },
+    { k: "listed",  label: "On the market",  on: true }
+  ];
+  var SET = { use: "bess", prospect: true, netQueue: true, enrich: false, show: {} };
+  (function () { for (var i = 0; i < FIELDS.length; i++)
+    SET.show[FIELDS[i].k] = FIELDS[i].always || FIELDS[i].on; })();
+  function shows(k) { return !!SET.show[k]; }
+
+  /* ── background layers ────────────────────────────────────────────────
+     ComEd hosting capacity, C&I parcels and Illinois Shines all come from
+     omega-comed-layers.js, which is the same definition comed-capacity.html
+     uses. Two copies of the ArcGIS query would drift inside a month and the
+     two tools would then disagree about how much capacity a circuit has,
+     which is the one thing they must never do. */
+  var LAY = window.OmegaComEdLayers || null;
+  if (LAY) LAY.init(map);
+
+  function layNote(t) { var e = document.getElementById("lgNote"); if (e) e.textContent = t || ""; }
+  function layCount(id, n, err) {
+    var e = document.getElementById(id); if (!e) return;
+    e.textContent = err ? "!" : n === -1 ? "zoom in" : n == null ? "\u2013" : Number(n).toLocaleString();
+    e.title = err ? err.message : "";
+  }
+
+  function refreshLayers() {
+    if (!LAY) return;
+    var notes = [];
+    if (document.getElementById("lyHost").checked)
+      LAY.refreshHosting(function (n, err) {
+        layCount("cHost", n, err);
+        if (n === -1) notes.push("Zoom to 12+ to draw circuits.");
+        layNote(notes.join(" "));
+      });
+    if (document.getElementById("lyCI").checked)
+      LAY.refreshCI(function (n, err) {
+        /* Parcels arrive as one bundle per county, so a pan across a county
+           line can lose a shard while the rest of the map draws normally.
+           The count keeps reporting what DID draw and the note names what did
+           not — a badge reading "!" over a map with parcels on it is less
+           honest than a number plus the county that is missing from it. */
+        layCount("cCI", n, err && !(n > 0) ? err : null);
+        if (err) notes.push(err.message);
+        if (n === -1) notes.push("Zoom to 13+ for parcels.");
+        layNote(notes.join(" "));
+      });
+    if (document.getElementById("lyILS").checked)
+      LAY.refreshILS(function (n) { layCount("cILS", n); });
+  }
+
+  function wireLayers() {
+    if (!LAY) { document.getElementById("legend").style.display = "none"; return; }
+
+    document.getElementById("lyHost").onchange = function () {
+      document.getElementById("hostKey").hidden = !this.checked;
+      LAY.hosting(this.checked, function (n, err) {
+        layCount("cHost", n, err);
+        layNote(n === -1 ? "Zoom to 12+ to draw circuits." : "");
+      });
+    };
+    document.getElementById("lyCI").onchange = function () {
+      var on = this.checked;
+      LAY.ci(on, function (n, err) {
+        layCount("cCI", n, err && !(n > 0) ? err : null);
+        /* The error says which county shards are missing, or that no bundle
+           is deployed at all. Naming one file here was true when the parcels
+           were a single ci-industrial.js and is a wrong answer now — the
+           tenant may have twenty-four counties working and one absent. */
+        if (err) layNote(err.message);
+        else if (n === -1) layNote("Zoom to 13+ for parcels.");
+        else if (on) layNote("");
+      });
+    };
+    document.getElementById("lyILS").onchange = function () {
+      document.getElementById("ilsKey").hidden = !this.checked;
+      LAY.ilshines(this.checked, function (n, err) {
+        layCount("cILS", n, err);
+        /* Said out loud every time the layer is on. These are ZIP centroids,
+           and a rep who reads them as parcel locations drives to the wrong
+           block. */
+        layNote(err ? "ilshines-sites.js is not deployed on this tenant." : LAY.ILS_NOTE);
+      });
+    };
+
+    /* Draw the capacity layer on first paint — it is the reason the map is
+       in the background at all. */
+    LAY.hosting(true, function (n, err) {
+      layCount("cHost", n, err);
+      if (n === -1) layNote("Zoom to 12+ to draw circuits.");
+    });
+  }
+
+  /* ── settings wiring ─────────────────────────────────────────────────── */
+  function wireSettings() {
+    var panel = document.getElementById("settings");
+    document.getElementById("setOpen").onclick = function () { panel.className = "open"; };
+    document.getElementById("setX").onclick = function () { panel.className = ""; };
+
+    var segs = document.querySelectorAll("#setUse button");
+    for (var i = 0; i < segs.length; i++) segs[i].onclick = (function (b) { return function () {
+      for (var q = 0; q < segs.length; q++) segs[q].className = "";
+      b.className = "on";
+      SET.use = b.getAttribute("data-use");
+      if (LAY) { LAY.useField = SET.use; LAY.refreshHosting(function (n, e) { layCount("cHost", n, e); }); }
+      /* The circuit column changed, so every ledger figure derived from it is
+         now wrong until the rows are re-registered. */
+      ingest(ST.rows.slice());
+      render();
+    }; })(segs[i]);
+
+    document.getElementById("setProspect").onchange = function () {
+      SET.prospect = this.checked;
+      if (LAY) { LAY.prospect = this.checked; LAY.refreshHosting(function () {}); }
+      var k = document.getElementById("hostKey").children;
+      var c = this.checked ? ["#E8590C", "#F2B705", "#C9CDD2"] : ["#8C8C8C", "#00DB00", "#A900E6"];
+      for (var q = 0; q < 3; q++) k[q].firstChild.style.background = c[q];
+    };
+    document.getElementById("setNetQueue").onchange = function () {
+      SET.netQueue = this.checked;
+      if (LAY) { LAY.netQueue = this.checked; LAY.refreshHosting(function () {}); }
+    };
+    document.getElementById("setEnrich").onchange = function () { SET.enrich = this.checked; };
+
+    var g = document.getElementById("setFields"), h = "";
+    for (var f = 0; f < FIELDS.length; f++) {
+      var F = FIELDS[f];
+      h += '<label><input type="checkbox" data-f="' + F.k + '"' +
+           (SET.show[F.k] ? " checked" : "") + (F.always ? " disabled" : "") + '>' +
+           esc(F.label) + '</label>';
+    }
+    g.innerHTML = h;
+    g.onchange = function (ev) {
+      var t = ev.target; if (!t.getAttribute) return;
+      var k = t.getAttribute("data-f"); if (!k) return;
+      SET.show[k] = t.checked;
+      render();
+    };
+
+    var sel = document.getElementById("setSrc"), o = "";
+    for (var key in SRC.providers) {
+      var P = SRC.providers[key];
+      o += '<option value="' + key + '"' + (key === SRC.name ? " selected" : "") + '>' +
+           esc(P.label || key) + (P.enrichOnly ? " (enrichment only)" : "") + '</option>';
+    }
+    sel.innerHTML = o;
+    srcNote();
+    sel.onchange = function () {
+      var P = SRC.providers[this.value];
+      if (P && P.enrichOnly) {
+        document.getElementById("setSrcNote").innerHTML =
+          "<b>Crexi covers what is on the market.</b> A listed building carries a verified " +
+          "address, size and a named broker \u2014 the fields a county parcel file is worst at. " +
+          "It does not cover the owner-occupied plant that has never been listed, which is most " +
+          "of the target set. Use it to enrich, not as the source.";
+        this.value = SRC.name;
+        return;
+      }
+      SRC.use(this.value);
+      srcNote();
+      ST.lastKey = "";
+      run(true);
+    };
+  }
+  function srcNote() {
+    var P = SRC.active, e = document.getElementById("setSrcNote");
+    if (!P || !e) return;
+    if (P.note) { e.textContent = P.note; return; }
+    e.textContent = P.sample
+      ? "Deterministic sample data. The same viewport returns the same properties every time, so a demo never reshuffles itself in front of a customer."
+      : P.url ? ("Reads " + P.url + ", built offline by the harvest pipeline.")
+      : "Routed through the Cloudflare worker \u2014 the vendor key never reaches the browser.";
+  }
+
+  /* ========================================================== rendering */
+
+  function head(n, s) {
+    document.getElementById("resN").textContent = n;
+    document.getElementById("resS").textContent = s;
+  }
+
+  function filtered() {
+    var minKw = +document.getElementById("fKw").value || 0;
+    var minSf = +document.getElementById("fSqft").value || 0;
+    var type = document.getElementById("fType").value;
+    var circ = document.getElementById("fCirc").value;
+    var sort = document.getElementById("fSort").value;
+
+    var out = ST.rows.filter(function (r) {
+      if ((r.sz.kw || 0) < minKw) return false;
+      if (minSf && (r.sqft || 0) < minSf) return false;
+      if (type === "__ci" && !/Warehouse|Industrial|Manufacturing|Cold Storage|Flex/.test(r.type)) return false;
+      else if (type && type !== "__ci" && r.type !== type) return false;
+      if (circ === "sellable" && !(r.circ.sellable > 0)) return false;
+      if (circ === "open" && r.cst.key !== "open") return false;
+      if (circ === "partial" && r.cst.key !== "partial") return false;
+      if (circ === "closed" && r.cst.key !== "closed" && r.cst.key !== "over") return false;
+      if (circ === "mine" && !r.mine.length) return false;
+      return true;
+    });
+
+    var K = { kw: function (r) { return r.sz.kw || 0; },
+              score: function (r) { return r.score; },
+              head: function (r) { return r.circ.sellable || 0; },
+              sqft: function (r) { return r.sqft || 0; },
+              load: function (r) { return r.peakKw || 0; } }[sort];
+    out.sort(function (a, b) { return K(b) - K(a); });
+    return out;
+  }
+
+  function render() {
+    var rows = filtered();
+    var wrap = document.getElementById("cards");
+
+    if (!ST.rows.length) {
+      head("Pan the map, then search", "Every result is scored on what the circuit will still accept, not on what the building could theoretically host.");
+      wrap.innerHTML = '<div class="empty"><h3>No area searched yet</h3>' +
+        '<p>Move the map over a corridor you want to work and press <b>Search this area</b>. ' +
+        'Properties come back with the circuit they sit on, how much of that circuit is left, ' +
+        'and who on the team has already claimed part of it.</p></div>';
+      drawMarkers([]);
+      return;
+    }
+    if (!rows.length) {
+      head("0 of " + ST.rows.length + " match", "Nothing in this area clears the filters. Lower the minimum kW or widen the use type.");
+      wrap.innerHTML = '<div class="empty"><h3>No matches</h3><p>The area has ' +
+        ST.rows.length + ' properties, but none clear the current filters.</p></div>';
+      drawMarkers([]);
+      return;
+    }
+
+    var claimed = 0, blocked = 0, i;
+    for (i = 0; i < rows.length; i++) {
+      if (rows[i].claims.length) claimed++;
+      if ((rows[i].circ.sellable || 0) <= 0) blocked++;
+    }
+    head(rows.length.toLocaleString() + (rows.length === 1 ? " site" : " sites") +
+         (rows.length < ST.rows.length ? " of " + ST.rows.length : ""),
+      claimed
+        ? claimed + " sit on a circuit somebody has already claimed" +
+          (blocked ? ", and " + blocked + " have nothing left to sell." : ".")
+        : "No circuit in this set has been claimed yet.");
+
+    var h = [];
+    for (i = 0; i < rows.length; i++) h.push(cardHtml(rows[i]));
+    wrap.innerHTML = h.join("");
+    drawMarkers(rows);
+  }
+
+  /* ------------------------------------------------------- circuit meter */
+  function meterHtml(st, tall) {
+    if (!st.known) {
+      return '<div class="meter' + (tall ? ' tall' : '') + '">' +
+        '<div class="track" style="background:#e3e7ec"></div>' +
+        '<div class="lg"><span>Circuit capacity unknown</span><span>&mdash;</span></div></div>';
+    }
+    var np = st.nameplate || 1;
+    var pct = function (v) { return Math.max(0, Math.min(100, (v / np) * 100)); };
+    var segs = "";
+    if (st.oversubscribed) {
+      segs = '<div class="seg o" style="width:100%"></div>';
+    } else {
+      if (st.queue) segs += '<div class="seg q" style="width:' + pct(st.queue) + '%"></div>';
+      if (st.firm)  segs += '<div class="seg f" style="width:' + pct(st.firm) + '%"></div>';
+      if (st.soft)  segs += '<div class="seg s" style="width:' + pct(st.soft) + '%"></div>';
+    }
+    var right = st.oversubscribed
+      ? "over by " + fmt(st.overBy) + " kW"
+      : fmt(st.sellable) + " kW free";
+    return '<div class="meter' + (tall ? ' tall' : '') + '">' +
+      '<div class="track">' + segs + '</div>' +
+      '<div class="lg"><span>' + fmt(st.nameplate) + ' kW circuit</span><span>' + right + '</span></div></div>';
+  }
+
+  function keysHtml() {
+    var k = [["#8a5cd1", "Other developers' queue"], ["#0a6ed1", "Our filed projects"],
+             ["#c98a2b", "Our live holds"], ["#2ea043", "Still for sale"]];
+    var h = '<div class="keys">';
+    for (var i = 0; i < k.length; i++)
+      h += '<div class="k"><span class="sw" style="background:' + k[i][0] + '"></span>' + k[i][1] + '</div>';
+    return h + '</div>';
+  }
+
+  /* ---------------------------------------------------------------- card */
+  function cardHtml(r) {
+    var blockedBy = liveClaims(r);
+    var warn = "";
+    if (blockedBy.length) {
+      var a = blockedBy[0];
+      var sev = (r.circ.sellable || 0) <= 0;
+      warn = '<div class="warn' + (sev ? '' : ' hold') + '">' +
+        (sev ? '<b>Do not sell this circuit.</b> ' : '<b>Circuit partly claimed.</b> ') +
+        esc(L.statusOf(a.status).label) + ' at <b>' + esc(a.address || a.siteId) + '</b>' +
+        (a.rep ? ' by ' + esc(a.rep) : '') + ' takes ' + fmt(a.kw) + ' kW' +
+        (blockedBy.length > 1 ? ', plus ' + (blockedBy.length - 1) + ' more claim' +
+          (blockedBy.length > 2 ? 's' : '') : '') + '.</div>';
+    }
+
+    var kwTxt = r.sz.kw == null ? "&mdash;" : fmt(r.sz.kw);
+    var sub = r.sz.kw == null ? "No load or circuit data"
+            : r.sz.circuitLimited
+              ? "Circuit-capped \u00b7 load supports " + fmt(r.sz.loadCeiling) + " kW"
+              : "Load-sized \u00b7 circuit allows " + fmt(r.sz.circuitCeiling) + " kW";
+
+    return '<article class="card' + ((r.circ.sellable || 0) <= 0 ? ' blocked' : '') +
+      '" tabindex="0" role="button" data-id="' + esc(r.id) + '">' +
+      '<div class="ph">' + photo(r) +
+        '<span class="badge">' + esc(r.type) + '</span>' +
+        '<span class="cst" style="background:' + r.cst.color + '">' + esc(r.cst.label) + '</span>' +
+      '</div>' +
+      '<div class="bd">' +
+        '<div class="kw">' + kwTxt + ' <small>kW deliverable</small></div>' +
+        '<div class="kwsub">' + sub + '</div>' +
+        '<div class="ad">' + esc(r.addr) + '</div>' +
+        /* Every line below is switchable in Settings. Display only — nothing
+           here changes a filter, a score or what was loaded. */
+        (shows("size") || shows("type")
+          ? '<div class="mt">' +
+            (shows("size") ? (r.sqft ? fmt(r.sqft) + " SF" : "Land, " + (r.lotAcres || "?") + " ac") : "") +
+            (shows("size") && shows("type") ? ' &middot; ' : '') +
+            (shows("type") ? esc(r.subtype || r.type) +
+              (r.yearBuilt ? ' &middot; built ' + r.yearBuilt : '') : '') + '</div>'
+          : '') +
+        (shows("owner") ? '<div class="own">' + esc(r.owner.name || "Owner not resolved") + '</div>' : '') +
+        (shows("energy") && r.annualKwh
+          ? '<div class="own">' + fmt(r.annualKwh.value) + ' kWh/yr \u00b7 ' + esc(r.annualKwh.src) + '</div>' : '') +
+        (shows("sale") && r.lastSale && r.lastSale.price
+          ? '<div class="own">last sold ' + money(r.lastSale.price) +
+            (r.lastSale.date ? ' \u00b7 ' + esc(r.lastSale.date) : '') + '</div>' : '') +
+        /* A site under offer is a different conversation: the buyer signs the
+           twenty-year lease, not the seller. Worth its own line. */
+        (shows("listed") && r.listed && (r.listed.forSale || r.listed.forLease)
+          ? '<div class="own" style="color:var(--accent);font-weight:600">On the market \u00b7 ' +
+            (r.listed.forSale && r.listed.forLease ? "sale &amp; lease"
+             : r.listed.forSale ? "for sale" : "for lease") +
+            (r.broker && r.broker.name ? ' \u00b7 ' + esc(r.broker.name) : '') + '</div>' : '') +
+        (shows("circuit") ? meterHtml(r.circ) : '') +
+        (shows("feeder") || shows("score")
+          ? '<div class="mt" style="margin-top:7px;font-family:var(--mono);font-size:11px">' +
+            (shows("feeder") ? esc(r.feederId) + (r.sub ? ' \u00b7 ' + esc(r.sub) : '') : '') +
+            (shows("feeder") && shows("score") ? ' &middot; ' : '') +
+            (shows("score") ? 'score ' + r.score : '') + '</div>'
+          : '') +
+        warn +
+      '</div></article>';
+  }
+
+  function liveClaims(r) {
+    var out = [], i;
+    for (i = 0; i < r.claims.length; i++)
+      if (!L.isExpired(r.claims[i])) out.push(r.claims[i]);
+    return out;
+  }
+
+  /* Type-specific line art. Generated, not fetched: a listing source may
+     return no photo at all, and an empty grey box on every card makes the
+     whole list read as broken. */
+  function photo(r) {
+    var pal = { "Warehouse":["#e6ecf2","#b9c8d6","#8fa2b4"], "Industrial":["#e9eae6","#c2c7bf","#98a094"],
+                "Manufacturing":["#ece7e1","#cbc0b2","#a2947f"], "Cold Storage":["#e2eef4","#b4cfdd","#87aabf"],
+                "Flex":["#eae8ef","#c6c0d5","#9a92b3"], "Retail":["#f0e6e2","#d5bdb4","#b0938a"],
+                "Office":["#e6ebf1","#bcc8d6","#909fb2"], "Data Center":["#e4ede9","#b8ccc4","#8ba79c"],
+                "Institutional":["#ede9e1","#cdc3b1","#a3977f"], "Multifamily":["#ebe8e5","#c8c1ba","#9e9691"],
+                "Vacant Land":["#e9eee2","#c4d1b4","#9aab88"] }[r.type] || ["#e7eaee","#c2cad4","#96a1ae"];
+    var mid = pal[1], dark = pal[2];
+    var art;
+
+    switch (r.type) {
+      case "Vacant Land":
+        art = '<path d="M0 92 L54 82 L128 90 L196 78 L262 86 L320 76 L320 132 L0 132 Z" fill="' + mid + '"/>' +
+              '<path d="M0 108 L84 100 L172 108 L248 99 L320 106 L320 132 L0 132 Z" fill="' + dark + '" opacity=".55"/>' +
+              '<g stroke="' + dark + '" stroke-width="1.4" opacity=".7">' +
+              '<path d="M46 92 v-9 M52 92 v-13 M58 92 v-8"/><path d="M214 86 v-10 M220 86 v-14 M226 86 v-9"/></g>';
+        break;
+      case "Data Center":
+        art = '<rect x="40" y="58" width="240" height="60" fill="' + mid + '"/>' +
+              '<rect x="40" y="58" width="240" height="7" fill="' + dark + '"/>' +
+              '<g fill="' + dark + '" opacity=".5">' +
+              '<rect x="58" y="74" width="34" height="30"/><rect x="100" y="74" width="34" height="30"/>' +
+              '<rect x="142" y="74" width="34" height="30"/><rect x="184" y="74" width="34" height="30"/>' +
+              '<rect x="226" y="74" width="34" height="30"/></g>' +
+              '<g fill="' + dark + '"><rect x="70" y="42" width="30" height="16" rx="2"/>' +
+              '<rect x="112" y="42" width="30" height="16" rx="2"/><rect x="154" y="42" width="30" height="16" rx="2"/>' +
+              '<rect x="196" y="42" width="30" height="16" rx="2"/></g>';
+        break;
+      case "Office":
+        art = '<rect x="98" y="18" width="124" height="100" fill="' + mid + '"/>' +
+              '<rect x="98" y="18" width="124" height="6" fill="' + dark + '"/>' +
+              '<g fill="' + dark + '" opacity=".45">' +
+              '<rect x="110" y="34" width="20" height="15"/><rect x="140" y="34" width="20" height="15"/>' +
+              '<rect x="170" y="34" width="20" height="15"/><rect x="200" y="34" width="10" height="15"/>' +
+              '<rect x="110" y="58" width="20" height="15"/><rect x="140" y="58" width="20" height="15"/>' +
+              '<rect x="170" y="58" width="20" height="15"/><rect x="200" y="58" width="10" height="15"/>' +
+              '<rect x="110" y="82" width="20" height="15"/><rect x="140" y="82" width="20" height="15"/>' +
+              '<rect x="170" y="82" width="20" height="15"/><rect x="200" y="82" width="10" height="15"/></g>';
+        break;
+      case "Retail":
+        art = '<rect x="46" y="52" width="228" height="66" fill="' + mid + '"/>' +
+              '<path d="M46 52 L160 30 L274 52 Z" fill="' + dark + '" opacity=".8"/>' +
+              '<rect x="64" y="72" width="66" height="46" fill="' + dark + '" opacity=".35"/>' +
+              '<rect x="142" y="72" width="66" height="46" fill="' + dark + '" opacity=".35"/>' +
+              '<rect x="220" y="72" width="40" height="46" fill="' + dark + '" opacity=".5"/>';
+        break;
+      case "Cold Storage":
+        art = '<rect x="60" y="34" width="200" height="84" fill="' + mid + '"/>' +
+              '<g stroke="' + dark + '" stroke-width="2" opacity=".45">' +
+              '<path d="M76 34 v84 M100 34 v84 M124 34 v84 M148 34 v84 M172 34 v84 M196 34 v84 M220 34 v84 M244 34 v84"/></g>' +
+              '<rect x="112" y="82" width="46" height="36" fill="' + dark + '" opacity=".7"/>' +
+              '<rect x="170" y="82" width="46" height="36" fill="' + dark + '" opacity=".7"/>';
+        break;
+      case "Manufacturing":
+        art = '<path d="M34 66 L34 118 L286 118 L286 60 L226 60 L226 74 L166 74 L166 60 L106 60 L106 74 L34 66 Z" fill="' + mid + '"/>' +
+              '<g fill="' + dark + '"><rect x="228" y="18" width="15" height="42"/><rect x="252" y="28" width="12" height="32"/></g>' +
+              '<g fill="' + dark + '" opacity=".4"><rect x="52" y="92" width="34" height="26"/>' +
+              '<rect x="100" y="92" width="34" height="26"/><rect x="148" y="92" width="34" height="26"/>' +
+              '<rect x="196" y="92" width="34" height="26"/></g>';
+        break;
+      case "Institutional":
+        art = '<rect x="70" y="56" width="180" height="62" fill="' + mid + '"/>' +
+              '<rect x="140" y="30" width="40" height="26" fill="' + dark + '" opacity=".8"/>' +
+              '<path d="M132 30 L160 12 L188 30 Z" fill="' + dark + '"/>' +
+              '<g fill="' + dark + '" opacity=".4"><rect x="86" y="72" width="20" height="30"/>' +
+              '<rect x="118" y="72" width="20" height="30"/><rect x="182" y="72" width="20" height="30"/>' +
+              '<rect x="214" y="72" width="20" height="30"/></g>' +
+              '<rect x="148" y="86" width="24" height="32" fill="' + dark + '" opacity=".65"/>';
+        break;
+      default:  /* Warehouse, Industrial, Flex, Multifamily, Other — the long shed */
+        art = '<path d="M30 68 L160 40 L290 68 L290 118 L30 118 Z" fill="' + mid + '"/>' +
+              '<path d="M30 68 L160 40 L290 68 L290 76 L160 48 L30 76 Z" fill="' + dark + '" opacity=".7"/>' +
+              '<g fill="' + dark + '" opacity=".42">' +
+              '<rect x="52" y="88" width="42" height="30"/><rect x="104" y="88" width="42" height="30"/>' +
+              '<rect x="156" y="88" width="42" height="30"/><rect x="208" y="88" width="42" height="30"/></g>' +
+              '<rect x="258" y="94" width="30" height="24" fill="' + dark + '" opacity=".22"/>';
+    }
+
+    return '<svg viewBox="0 0 320 132" xmlns="http://www.w3.org/2000/svg" ' +
+      'preserveAspectRatio="xMidYMid slice" role="img" aria-label="' + esc(r.type) + '">' +
+      '<defs><linearGradient id="sky' + esc(r.id) + '" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#fff" stop-opacity=".85"/>' +
+      '<stop offset="1" stop-color="' + pal[0] + '"/></linearGradient></defs>' +
+      '<rect width="320" height="132" fill="url(#sky' + esc(r.id) + ')"/>' +
+      art +
+      '<rect y="118" width="320" height="14" fill="' + dark + '" opacity=".28"/></svg>';
+  }
+
+  /* --------------------------------------------------------------- map */
+  function drawMarkers(rows) {
+    markerLayer.clearLayers(); MARKERS = {};
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var kw = r.sz.kw || 0;
+      var d = kw > 1500 ? 26 : kw > 700 ? 22 : kw > 250 ? 18 : 14;
+      var m = window.L.marker([r.lat, r.lon], {
+        icon: window.L.divIcon({
+          className: "", iconSize: [d, d], iconAnchor: [d / 2, d / 2],
+          html: '<div class="mk" style="width:' + d + 'px;height:' + d + 'px;background:' +
+                r.cst.color + '">' + (d >= 22 ? Math.round(kw / 100) : "") + '</div>'
+        })
+      });
+      (function (row) {
+        m.on("click", function () { select(row.id, true); });
+      })(r);
+      m.addTo(markerLayer);
+      MARKERS[r.id] = m;
+    }
+  }
+
+  function select(id, fromMap) {
+    var r = ST.byId[id]; if (!r) return;
+    ST.sel = id;
+    var c = document.querySelectorAll(".card"), i;
+    for (i = 0; i < c.length; i++) c[i].className = c[i].className.replace(/ ?hot/, "");
+    var el = document.querySelector('.card[data-id="' + cssEsc(id) + '"]');
+    if (el) {
+      el.className += " hot";
+      if (fromMap) el.scrollIntoView({ block: "center" });
+    }
+    openDrawer(r);
+  }
+
+  /* ======================================================== the drawer */
+
+  function openDrawer(r) {
+    document.getElementById("dAddr").textContent = r.addr;
+    document.getElementById("dSub").textContent =
+      r.city + ", " + r.state + " " + r.zip + "  \u00b7  " + (r.subtype || r.type);
+    document.getElementById("dBody").innerHTML = drawerHtml(r);
+    document.getElementById("drawer").className = "open";
+    wireDrawer(r);
+  }
+  function closeDrawer() {
+    document.getElementById("drawer").className = "";
+    ST.sel = null;
+  }
+
+  function drawerHtml(r) {
+    var st = r.circ, sz = r.sz, h = [];
+    var live = liveClaims(r);
+
+    /* -- headline ------------------------------------------------------- */
+    h.push('<div class="sec"><div class="hero">' +
+      '<div class="big">' + (sz.kw == null ? "&mdash;" : fmt(sz.kw)) +
+        ' <small>kW</small> &nbsp;/&nbsp; ' + (sz.kwh == null ? "&mdash;" : fmt(sz.kwh)) + ' <small>kWh</small></div>' +
+      '<div class="cap">' + (sz.kw == null
+        ? 'Not enough data to size a system here.'
+        : sz.circuitLimited
+          ? 'The circuit is the binding constraint. This customer\u2019s load would justify ' +
+            fmt(sz.loadCeiling) + ' kW, but only ' + fmt(sz.circuitCeiling) + ' kW is still available on ' +
+            esc(r.feederId) + '.'
+          : 'The load is the binding constraint. The circuit would accept ' + fmt(sz.circuitCeiling) +
+            ' kW; this customer\u2019s peak only justifies ' + fmt(sz.loadCeiling) + ' kW of shaving.') +
+      '</div></div>' +
+      (r.saveLo ? '<div class="note">Demand-charge exposure removed: <b>' + money(r.saveLo) +
+        '\u2013' + money(r.saveHi) + '</b> a year at $' + DEMAND_LO + '\u2013' + DEMAND_HI +
+        '/kW-month. Screening range, not a quote.</div>' : '') +
+      '</div>');
+
+    /* -- circuit -------------------------------------------------------- */
+    h.push('<div class="sec"><h4>Circuit ' + esc(r.feederId) + (r.sub ? ' \u00b7 ' + esc(r.sub) : '') + '</h4>' +
+      meterHtml(st, true) + keysHtml() +
+      '<div class="grid2" style="margin-top:13px">' +
+        g("Hosting capacity", st.known ? fmt(st.nameplate) + " kW" : "unknown") +
+        g("Other developers in queue", st.queue ? fmt(st.queue) + " kW" : "none") +
+        g("Our filed projects", st.firm ? fmt(st.firm) + " kW" : "none") +
+        g("Our live holds", st.soft ? fmt(st.soft) + " kW" : "none") +
+        g("<b>Left to sell</b>", st.known ? "<b>" + fmt(st.sellable) + " kW</b>" : "\u2014") +
+      '</div>' +
+      (st.oversubscribed
+        ? '<div class="note bad"><b>Oversubscribed by ' + fmt(st.overBy) + ' kW.</b> ' +
+          'More has been promised on this circuit than it will carry. Something here has to be released ' +
+          'before any of it can be filed.</div>'
+        : '<div class="note">' + esc(r.cst.note) + '</div>') +
+      '</div>');
+
+    /* -- who else is on this circuit ------------------------------------
+       The reason the tool exists. Anything live here means the circuit is
+       spoken for and a second battery on the next block is not a deal. */
+    h.push('<div class="sec"><h4>Interconnection activity on this circuit</h4>');
+    if (!live.length && !st.queue) {
+      h.push('<div class="note">Nothing filed and nothing held. The full ' +
+        (st.known ? fmt(st.sellable) + " kW" : "circuit") + ' is available.</div>');
+    } else {
+      if (st.queue) h.push('<div class="note warnb"><b>' + fmt(st.queue) +
+        ' kW</b> is already held by other developers\u2019 pending applications. That capacity is not ours ' +
+        'and was never available \u2014 it is subtracted before anything below.</div>');
+      if (live.length) {
+        h.push('<table class="t" style="margin-top:11px"><tr><th>Site</th><th>Stage</th>' +
+          '<th class="r">kW</th><th class="r">Expires</th></tr>');
+        for (var i = 0; i < live.length; i++) {
+          var a = live[i], s = L.statusOf(a.status), d = L.daysLeft(a);
+          h.push('<tr><td><b>' + esc(a.address || a.siteId) + '</b>' +
+            (a.rep ? '<br><span style="color:var(--dim)">' + esc(a.rep) + '</span>' : '') + '</td>' +
+            '<td><span class="pill" style="background:' + s.color + '">' + esc(s.label) + '</span></td>' +
+            '<td class="r mono">' + fmt(a.kw) + '</td>' +
+            '<td class="r mono">' + (d == null ? "\u2014" : d + "d") + '</td></tr>');
+        }
+        h.push('</table>');
+      }
+    }
+    h.push('</div>');
+
+    /* -- claim form ----------------------------------------------------- */
+    var own = r.mine.length ? r.mine[0] : null;
+    h.push('<div class="sec"><h4>' + (own ? 'Your claim on this site' : 'Claim capacity here') + '</h4>');
+    if (own) {
+      var os = L.statusOf(own.status), od = L.daysLeft(own);
+      h.push('<div class="note' + (L.isExpired(own) ? ' bad' : '') + '">' +
+        '<b>' + fmt(own.kw) + ' kW \u00b7 ' + esc(os.label) + '</b>' +
+        (own.rep ? ' \u00b7 ' + esc(own.rep) : '') +
+        (od == null ? '' : L.isExpired(own)
+          ? ' \u2014 lapsed ' + Math.abs(od) + ' days ago, capacity has returned to the circuit.'
+          : ' \u2014 releases in ' + od + ' days.') +
+        '</div>');
+    }
+    h.push('<div class="form" style="margin-top:11px">' +
+      '<div><label for="rKw">Hold (kW)</label><input id="rKw" type="number" min="1" step="25" value="' +
+        (own ? own.kw : Math.max(0, Math.min(sz.kw || 0, st.sellable || 0))) + '"></div>' +
+      '<div><label for="rSt">Stage</label><select id="rSt">' + statusOpts(own && own.status) + '</select></div>' +
+      '<div class="full"><label for="rNote">Note</label>' +
+        '<input id="rNote" type="text" placeholder="Who you spoke to, what is next" value="' +
+        esc(own && own.note || "") + '"></div>' +
+      '<div class="full" style="display:flex;gap:8px;margin-top:2px">' +
+        '<button class="btn pri" id="rSave" type="button" style="flex:1">' +
+          saveLabel(own && own.status || "reserved", !!own) + '</button>' +
+        (own ? '<button class="btn warn" id="rRel" type="button">Release</button>' +
+               (L.isExpired(own) ? '<button class="btn" id="rRen" type="button">Renew</button>' : '')
+             : '') +
+      '</div></div>' +
+      '<div class="msg" id="rMsg"></div>' +
+      '<div class="note" style="margin-top:11px">A hold is soft and expires in ' + L.SOFT_HOLD_DAYS +
+        ' days. Filing an application makes it firm with no expiry. Either way it comes off the ' +
+        'circuit for everyone on the team immediately.</div>' +
+      '</div>');
+
+    /* -- property ------------------------------------------------------- */
+    h.push('<div class="sec"><h4>Property</h4><div class="grid2">' +
+      g("Use", esc(r.subtype || r.type)) +
+      g("Building", r.sqft ? fmt(r.sqft) + " SF" : "\u2014") +
+      g("Lot", r.lotAcres ? r.lotAcres + " ac" : "\u2014") +
+      g("Built", r.yearBuilt || "\u2014") +
+      g("Assessed", r.assessedValue ? money(r.assessedValue) : "\u2014") +
+      g("Last sale", r.lastSale && r.lastSale.price
+        ? money(r.lastSale.price) + ' <small>' + esc(r.lastSale.date || "") + '</small>' : "\u2014") +
+      '</div></div>');
+
+    /* -- load ----------------------------------------------------------- */
+    h.push('<div class="sec"><h4>Energy</h4><div class="grid2">' +
+      g("Annual use", r.annualKwh ? fmt(r.annualKwh.value) + " kWh" : "\u2014") +
+      g("Source", r.annualKwh ? '<small>' + esc(r.annualKwh.src) + '</small>' : "\u2014") +
+      g("Load factor", r.lf ? r.lf.toFixed(2) : "\u2014") +
+      g("Estimated peak", r.peakKw ? fmt(r.peakKw) + " kW" : "\u2014") +
+      '</div>' +
+      (r.annualKwh && r.annualKwh.src !== "metered"
+        ? '<div class="note">Consumption is <b>' + esc(r.annualKwh.src) + '</b> from building type and floor area, ' +
+          'not read off a meter. Confirm against twelve months of bills before pricing.</div>' : '') +
+      '</div>');
+
+    /* -- owner ---------------------------------------------------------- */
+    h.push('<div class="sec"><h4>Owner</h4><div class="grid2">' +
+      g("Name", esc(r.owner.name || "\u2014")) +
+      g("Phone", r.owner.phone ? esc(r.owner.phone) : "\u2014") +
+      g("Email", r.owner.email ? esc(r.owner.email) : "\u2014") +
+      '</div></div>');
+
+    return h.join("");
+  }
+
+  /* Defaults to Held, not Prospect. The primary button says "Hold this
+     capacity"; a default stage that consumes nothing would make the button
+     lie the first time anyone presses it. */
+  function statusOpts(cur) {
+    var o = "", i, k, s, def = cur || "reserved";
+    for (i = 0; i < L.STATUS_ORDER.length; i++) {
+      k = L.STATUS_ORDER[i];
+      if (k === "lost") continue;
+      s = L.STATUS[k];
+      o += '<option value="' + k + '"' + (def === k ? " selected" : "") + '>' + s.label + '</option>';
+    }
+    return o;
+  }
+
+  /* Prospect is a bookmark, not a claim. The button has to say so. */
+  function saveLabel(status, existing) {
+    if (status === "prospect") return existing ? "Save as prospect" : "Save as prospect";
+    return existing ? "Update claim" : "Hold this capacity";
+  }
+
+  function wireDrawer(r) {
+    var save = document.getElementById("rSave");
+    var msg = document.getElementById("rMsg");
+    function say(t, cls) { msg.textContent = t || ""; msg.className = "msg" + (cls ? " " + cls : ""); }
+
+    var stSel = document.getElementById("rSt");
+    if (stSel && save) stSel.onchange = function () {
+      save.textContent = saveLabel(stSel.value, !!(r.mine && r.mine.length));
+      say(stSel.value === "prospect"
+        ? "Prospect holds no capacity \u2014 the circuit stays open to everyone."
+        : L.statusOf(stSel.value).help);
+    };
+
+    if (save) save.onclick = function () {
+      var kw = +document.getElementById("rKw").value;
+      var status = document.getElementById("rSt").value;
+      var note = document.getElementById("rNote").value;
+      if (!ST.rep) { say("Set your name in the top right first \u2014 a claim with no owner is not a claim.", "err"); return; }
+      L.reserve({
+        feederId: r.feederId, siteId: r.id, address: r.addr, lat: r.lat, lon: r.lon,
+        kw: kw, status: status, note: note, rep: ST.rep, hours: 2
+      }, function (err) {
+        if (err) { say(err.message, "err"); return; }
+        say(status === "prospect"
+          ? "Saved as a prospect. No capacity is held \u2014 " + r.feederId +
+            " is still open to the rest of the team."
+          : "Held. " + r.feederId + " now shows " + fmt(L.feederState(r.feederId).sellable) +
+            " kW left for everyone on the team.", "ok");
+        refreshAll(r.id);
+      });
+    };
+
+    var rel = document.getElementById("rRel");
+    if (rel) rel.onclick = function () {
+      L.release(L.allocId(r.feederId, r.id), function (err) {
+        if (err) { say(err.message, "err"); return; }
+        say("Released. The capacity is back on " + r.feederId + ".", "ok");
+        refreshAll(r.id);
+      });
+    };
+    var ren = document.getElementById("rRen");
+    if (ren) ren.onclick = function () {
+      L.renew(L.allocId(r.feederId, r.id), L.SOFT_HOLD_DAYS, function () { refreshAll(r.id); });
+    };
+  }
+
+  /* A claim changes what every OTHER site on that circuit can be sold. The
+     whole list is re-enriched, not just the row that was edited — that is
+     the entire point of the ledger. */
+  function refreshAll(keepId) {
+    for (var i = 0; i < ST.rows.length; i++) enrich(ST.rows[i]);
+    render();
+    if (keepId && ST.byId[keepId]) openDrawer(ST.byId[keepId]);
+    if (document.body.className.indexOf("v-ledger") >= 0) renderLedger();
+  }
+
+  /* ========================================================== the ledger */
+
+  function renderLedger() {
+    var rows = L.ledgerRows();
+    var soon = L.expiringSoon(7);
+    var over = 0, held = 0, sites = {}, i;
+    for (i = 0; i < rows.length; i++) {
+      if (rows[i].status.key === "over") over++;
+      held += (rows[i].state.firm + rows[i].state.soft);
+      for (var j = 0; j < rows[i].state.allocations.length; j++)
+        if (L.statusOf(rows[i].state.allocations[j].status).kind !== "none")
+          sites[rows[i].state.allocations[j].siteId] = 1;
+    }
+    var nSites = 0; for (i in sites) nSites++;
+
+    var h = ['<div class="lgHead"><div><h2>Circuit ledger</h2>' +
+      '<p>Every circuit the team has touched, and what is left on it. A claim here is what stops ' +
+      'two reps selling the same wire twice \u2014 it applies the moment it is saved, to everyone.</p></div></div>'];
+
+    h.push('<div class="kpis">' +
+      kpi(rows.length, "Circuits touched") +
+      kpi(nSites, "Sites with a claim") +
+      kpi(fmt(held) + " kW", "Capacity we hold") +
+      kpi(soon.length, "Holds lapsing in 7 days", soon.length > 0) +
+      kpi(over, "Oversubscribed circuits", over > 0) +
+      '</div>');
+
+    if (!rows.length) {
+      h.push('<div class="empty"><h3>Nothing claimed yet</h3><p>Search an area, open a site and hold ' +
+        'capacity on it. Circuits appear here as soon as they carry a claim.</p></div>');
+      document.getElementById("ledgerPane").innerHTML = h.join("");
+      return;
+    }
+
+    if (soon.length) {
+      h.push('<div class="lgCard" style="border-color:#f0dcb4;background:#fffdf7">' +
+        '<div class="lgTop"><b>Lapsing this week</b><div class="sp"></div></div>' +
+        '<table class="t"><tr><th>Site</th><th>Circuit</th><th>Rep</th><th class="r">kW</th><th class="r">Days</th></tr>');
+      for (i = 0; i < soon.length; i++) {
+        var a = soon[i];
+        h.push('<tr><td>' + esc(a.address || a.siteId) + '</td><td class="mono">' + esc(a.feederId) +
+          '</td><td>' + esc(a.rep || "\u2014") + '</td><td class="r mono">' + fmt(a.kw) +
+          '</td><td class="r mono">' + L.daysLeft(a) + '</td></tr>');
+      }
+      h.push('</table></div>');
+    }
+
+    for (i = 0; i < rows.length; i++) {
+      /* ledgerRows() rows are the ledger's own shape, not property rows. */
+      var R = rows[i], st = R.state;
+      h.push('<div class="lgCard' + (R.status.key === "over" ? " over" : "") + '">' +
+        '<div class="lgTop"><span class="fid">' + esc(R.feederId) + '</span>' +
+        (st.sub ? '<span class="sb">' + esc(st.sub) + '</span>' : '') +
+        '<span class="pill" style="background:' + R.status.color + '">' + esc(R.status.label) + '</span>' +
+        '<div class="sp"></div><span class="sb">' + esc(R.status.note) + '</span></div>' +
+        meterHtml(st, true));
+
+      if (st.allocations.length) {
+        h.push('<table class="t" style="margin-top:13px"><tr><th>Site</th><th>Stage</th><th>Rep</th>' +
+          '<th class="r">kW</th><th class="r">Expires</th></tr>');
+        for (var q = 0; q < st.allocations.length; q++) {
+          var al = st.allocations[q], s2 = L.statusOf(al.status), d2 = L.daysLeft(al);
+          var lapsed = L.isExpired(al);
+          h.push('<tr' + (lapsed || s2.kind === "none" ? ' style="opacity:.5"' : '') + '>' +
+            '<td>' + esc(al.address || al.siteId) + '</td>' +
+            '<td><span class="pill" style="background:' + s2.color + '">' + esc(s2.label) + '</span></td>' +
+            '<td>' + esc(al.rep || "\u2014") + '</td>' +
+            '<td class="r mono">' + fmt(al.kw) + '</td>' +
+            '<td class="r mono">' + (d2 == null ? "\u2014" : lapsed ? "lapsed" : d2 + "d") + '</td></tr>');
+        }
+        h.push('</table>');
+      }
+      h.push('</div>');
+    }
+    document.getElementById("ledgerPane").innerHTML = h.join("");
+  }
+
+  function kpi(n, l, alert) {
+    return '<div class="kpi' + (alert ? " alert" : "") + '"><div class="n">' + n +
+      '</div><div class="l">' + l + '</div></div>';
+  }
+
+  /* ============================================================= plumbing */
+
+  function g(k, v) { return '<div class="lab">' + k + '</div><div class="val">' + v + '</div>'; }
+  function fmt(n) { return n == null ? "\u2014" : Math.round(n).toLocaleString(); }
+  function money(n) { return "$" + Math.round(n).toLocaleString(); }
+  function esc(s) {
+    s = (s == null ? "" : "" + s);
+    return s.replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function cssEsc(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+
+  /* --------------------------------------------------------------- wiring */
+  document.getElementById("cards").addEventListener("click", function (e) {
+    var c = e.target.closest ? e.target.closest(".card") : null;
+    if (c) select(c.getAttribute("data-id"));
+  });
+  document.getElementById("cards").addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var c = e.target.closest ? e.target.closest(".card") : null;
+    if (c) { e.preventDefault(); select(c.getAttribute("data-id")); }
+  });
+  document.getElementById("dClose").onclick = closeDrawer;
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeDrawer(); });
+
+  document.getElementById("run").onclick = function () { run(true); };
+  document.getElementById("mapNote").onclick = function () { run(true); };
+
+  var views = document.querySelectorAll(".views button");
+  for (var v = 0; v < views.length; v++) {
+    views[v].onclick = function () {
+      var name = this.getAttribute("data-view");
+      for (var i = 0; i < views.length; i++) views[i].className = "";
+      this.className = "on";
+      document.body.className = "v-" + name;
+      ST.view = name;
+      if (name === "ledger") { closeDrawer(); renderLedger(); }
+      else setTimeout(function () { map.invalidateSize(); }, 60);
+    };
+  }
+
+  var fids = ["fKw", "fType", "fSqft", "fCirc", "fSort"];
+  for (var f = 0; f < fids.length; f++) {
+    document.getElementById(fids[f]).onchange = render;
+    document.getElementById(fids[f]).oninput = render;
+  }
+
+  /* Type list is built from what actually came back, so a rep is never
+     offered a filter that returns nothing. */
+  function refreshTypes() {
+    var sel = document.getElementById("fType"), cur = sel.value, seen = {}, i;
+    for (i = 0; i < ST.rows.length; i++) seen[ST.rows[i].type] = (seen[ST.rows[i].type] || 0) + 1;
+    var opts = '<option value="">Any use</option><option value="__ci">Industrial &amp; warehouse</option>';
+    for (i = 0; i < SRC.TYPES.length; i++)
+      if (seen[SRC.TYPES[i]]) opts += '<option value="' + SRC.TYPES[i] + '">' + SRC.TYPES[i] +
+        ' (' + seen[SRC.TYPES[i]] + ')</option>';
+    sel.innerHTML = opts;
+    sel.value = cur;
+  }
+  var _render = render;
+  render = function () { refreshTypes(); _render(); };
+
+  map.on("moveend", function () {
+    refreshLayers();
+    if (ST.view === "ledger" || ST.view === "list") return;
+    if (document.getElementById("fFollow").checked) run(false);
+    else if (boundsKey() !== ST.lastKey) document.getElementById("mapNote").hidden = false;
+  });
+
+  /* -------------------------------------------------------------- search */
+  document.getElementById("qGo").onclick = doSearch;
+  document.getElementById("q").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") doSearch();
+  });
+  function doSearch() {
+    var raw = document.getElementById("q").value.trim();
+    if (!raw) return;
+
+    /* A circuit id is a first-class search term. Reps think in feeders long
+       before they think in addresses. */
+    var f = L.getFeeder(raw.toUpperCase());
+    if (f) {
+      document.body.className = "v-ledger";
+      var vb = document.querySelectorAll(".views button");
+      for (var i = 0; i < vb.length; i++) vb[i].className = vb[i].getAttribute("data-view") === "ledger" ? "on" : "";
+      ST.view = "ledger"; renderLedger();
+      return;
+    }
+    head("Locating\u2026", raw);
+    var url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=" +
+      encodeURIComponent(raw);
+    var x = new XMLHttpRequest();
+    x.open("GET", url, true);
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      var j = null;
+      try { j = JSON.parse(x.responseText); } catch (e) {}
+      if (!j || !j.length) { head("Not found", "No match for \u201c" + raw + "\u201d. Try a ZIP or a cross street."); return; }
+      map.setView([+j[0].lat, +j[0].lon], 15);
+      run(true);
+    };
+    x.send();
+  }
+
+  /* ----------------------------------------------------------------- rep */
+  document.getElementById("repChip").onclick = function () {
+    var n = window.prompt("Your name. It is stamped on every claim you make, so the team knows who to call.", ST.rep || "");
+    if (n == null) return;
+    ST.rep = n.trim();
+    document.getElementById("repName").textContent = ST.rep || "Set your name";
+    document.getElementById("repAv").textContent = ST.rep
+      ? ST.rep.split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0).toUpperCase(); }).join("")
+      : "\u2014";
+  };
+
+  /* -------------------------------------------------------------- export */
+  document.getElementById("expCsv").onclick = function () {
+    var rows = ST.view === "ledger" ? null : filtered();
+    var text, name;
+    if (rows) {
+      var head2 = ["address", "city", "type", "sqft", "owner", "circuit", "substation",
+        "circuit_kw", "queue_kw", "our_firm_kw", "our_holds_kw", "sellable_kw",
+        "deliverable_kw", "deliverable_kwh", "binding_constraint", "peak_kw", "annual_kwh",
+        "kwh_source", "score", "circuit_status", "lat", "lon"];
+      var out = [head2];
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i], s = r.circ;
+        out.push([r.addr, r.city, r.type, r.sqft, r.owner.name, r.feederId, r.sub,
+          s.nameplate, s.queue, s.firm, s.soft, s.sellable, r.sz.kw, r.sz.kwh, r.sz.binds,
+          r.peakKw == null ? "" : Math.round(r.peakKw),
+          r.annualKwh ? r.annualKwh.value : "", r.annualKwh ? r.annualKwh.src : "",
+          r.score, r.cst.label, r.lat, r.lon]);
+      }
+      text = out.map(function (rr) {
+        return rr.map(function (c) {
+          c = c == null ? "" : String(c);
+          return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c;
+        }).join(",");
+      }).join("\n");
+      name = "clearsky-sites.csv";
+    } else {
+      text = L.csv(); name = "clearsky-circuit-ledger.csv";
+    }
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+    a.download = name; a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+  };
+
+  /* ------------------------------------------------------------ firestore
+     Optional. Without it the ledger still works, but claims live only in
+     this tab — which for a tool whose entire job is stopping two reps from
+     colliding, is worth saying out loud rather than failing quietly. */
+  function connect() {
+    if (!window.firebase || !window.firebase.apps) { localMode(); return; }
+    try {
+      if (!firebase.apps.length && window.FIREBASE_CONFIG) firebase.initializeApp(window.FIREBASE_CONFIG);
+      if (!firebase.apps.length) { localMode(); return; }
+      var db = firebase.firestore();
+      firebase.auth().onAuthStateChanged(function (u) {
+        if (!u) { localMode(); return; }
+        L.attach(db, ORG, function (err) {
+          if (err) { localMode(); return; }
+          document.getElementById("srcTag").textContent = "Shared ledger";
+          document.getElementById("srcTag").style.cssText =
+            "color:#2ea043;background:#eef8f0;border-color:#c6e6cd";
+          refreshAll(ST.sel);
+        });
+      });
+    } catch (e) { localMode(); }
+  }
+  function localMode() {
+    var t = document.getElementById("srcTag");
+    t.textContent = isSample() ? "Sample data \u00b7 local only" : "Local only";
+    t.title = "Claims are not shared with the team. Sign in to use the shared ledger.";
+  }
+
+  L.onChange(function () { /* stream repaints handled by refreshAll */ });
+
+  /* ---------------------------------------------------------------- boot */
+  connect();
+  wireSettings();
+  wireLayers();
+  render();
+  setTimeout(function () { run(true); }, 200);
+})();
+</script>
+</body>
+</html>
