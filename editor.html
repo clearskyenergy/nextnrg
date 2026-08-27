@@ -133803,6 +133803,11 @@ else watchRibbon();
 window.OmegaSiteVis = {
   open: open,
   close: close,
+  /* The live scene state, so the buildings layer and its alignment probe
+     can attach to the same groups the site is drawn into rather than
+     rebuilding a parallel guess at the scene. */
+  _V: function(){ return V; },
+  _THREE: function(){ try { return THREE; } catch(e){ return null; } },
   refresh: reload,
   snapshot: snapshot,
   read: readSite,
@@ -139510,6 +139515,13 @@ function projector(site){
      So compare them when the zoom is known, and say so rather than
      rendering a confident lie. */
   var scaleWarn = null;
+  /* _liveMapState() returns null once the plot is frozen, so on a locked
+     site the check never ran — which is exactly the case where the drawing
+     scale and the captured imagery are most likely to have drifted apart.
+     Fall back to the saved state's zoom. */
+  if (!ms || !isFinite(+ms.zoom)) {
+    try { if (root._savedMapState && isFinite(+root._savedMapState.zoom)) ms = root._savedMapState; } catch (e) {}
+  }
   if (ms && isFinite(+ms.zoom)) {
     var mPerPx = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, +ms.zoom);
     var ppfFromMap = 1 / (mPerPx * 3.28084);
@@ -139898,6 +139910,80 @@ function load(V, THREE, site, cb){
   });
 }
 
+/* ── ALIGNMENT PROBE ─────────────────────────────────────────────────
+   OmegaContextBuildings.probe()
+
+   Every diagnosis of this layer so far has been an inference from a
+   screenshot, and inference has been wrong twice. This draws three posts
+   into the scene at points whose correct positions are not a matter of
+   opinion:
+
+     RED    the map centre. It must stand at the exact centre of the
+            satellite rectangle. If it does not, the anchor is wrong.
+     GREEN  500 ft due north of it.
+     BLUE   500 ft due east of it.
+
+   Both coloured posts are placed through the SAME projection the
+   buildings use. So:
+
+     red off-centre            -> anchor or origin is wrong
+     red centred, posts skewed -> the imagery is rotated and the
+                                  projection is not
+     everything lines up but
+     buildings still look off  -> scale, and the readout gives the number
+
+   probe(false) removes it. */
+var probeGrp = null;
+function probe(show){
+  var V = null;
+  try { if (root.OmegaSiteVis && root.OmegaSiteVis._V) V = root.OmegaSiteVis._V(); } catch (e) {}
+  if (!V || !V.scene) {
+    if (root.console) console.warn('[Buildings] open the Site Visualizer first, then run probe().');
+    return null;
+  }
+  var THREE = root.THREE;
+  try { if (!THREE && root.OmegaSiteVis && root.OmegaSiteVis._THREE) THREE = root.OmegaSiteVis._THREE(); } catch (e) {}
+  if (!THREE) { if (root.console) console.warn('[Buildings] THREE not reachable.'); return null; }
+
+  if (probeGrp) {
+    try { probeGrp.parent && probeGrp.parent.remove(probeGrp); } catch (e) {}
+    probeGrp = null;
+  }
+  if (show === false) { V.needsRender = true; return null; }
+
+  var proj = projector(V.site);
+  if (!proj) { if (root.console) console.warn('[Buildings] no map position.'); return null; }
+
+  var g = new THREE.Group();
+  g.name = 'alignment-probe';
+  function post(x, z, colour, h2){
+    var m = new THREE.Mesh(
+      new THREE.CylinderGeometry(6, 6, h2, 10),
+      new THREE.MeshBasicMaterial({ color: colour }));
+    m.position.set(x, h2 / 2, z);
+    g.add(m);
+  }
+  var c = proj.toWorld(proj.lat, proj.lng);
+  var M = 0.3048;
+  var n = proj.toWorld(proj.lat + (500 * M) / 110540, proj.lng);
+  var e = proj.toWorld(proj.lat, proj.lng + (500 * M) / (111320 * Math.cos(proj.lat * Math.PI / 180)));
+  post(c.x, c.z, 0xff2d2d, 320);   /* map centre  */
+  post(n.x, n.z, 0x22c55e, 240);   /* 500 ft north */
+  post(e.x, e.z, 0x3b82f6, 240);   /* 500 ft east  */
+
+  try { V.root.add(g); } catch (e2) { V.scene.add(g); }
+  probeGrp = g;
+  V.needsRender = true;
+  if (root.console) {
+    console.log('[Buildings] probe placed. RED = map centre (must sit at the centre of the ' +
+                'satellite rectangle). GREEN = 500 ft north. BLUE = 500 ft east. ' +
+                'probe(false) to remove.');
+    console.log('  map centre in scene feet: x ' + c.x.toFixed(0) + ', z ' + c.z.toFixed(0));
+    if (proj.scaleWarn) console.warn('  ' + proj.scaleWarn);
+  }
+  return { centre: c, north: n, east: e, anchor: proj.anchor, scaleWarn: proj.scaleWarn };
+}
+
 /* ── SELF-TEST ────────────────────────────────────────────────────────
    Run OmegaContextBuildings.selfTest() in the console.
 
@@ -139974,7 +140060,7 @@ function selfTest(){
 }
 
 root.OmegaContextBuildings = {
-  selfTest: selfTest,
+  selfTest: selfTest, probe: probe,
   state: state,
   load: load,
   clear: clear,
