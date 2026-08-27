@@ -139282,8 +139282,32 @@ function projector(site){
   var ppf = site.ppf, ox = site.originPx.x, oy = site.originPx.y;
   var cosLat = Math.cos(lat * Math.PI / 180);
 
+  /* ── SCALE CROSS-CHECK ──────────────────────────────────────────
+     Everything here is placed with the DRAWING's pixels-per-foot, which
+     is what keeps buildings on the same grid as the arrays and the
+     satellite plate. But ppf comes from the drawing's calibration, while
+     the imagery's true scale comes from the map's zoom. If those two
+     disagree, every footprint is placed at the wrong distance from the
+     site centre — near ones look fine and far ones drift, which reads as
+     "roughly right" and is the hardest kind of wrong to notice.
+
+     So compare them when the zoom is known, and say so rather than
+     rendering a confident lie. */
+  var scaleWarn = null;
+  if (ms && isFinite(+ms.zoom)) {
+    var mPerPx = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, +ms.zoom);
+    var ppfFromMap = 1 / (mPerPx * 3.28084);
+    var ratio = ppf / ppfFromMap;
+    if (ratio > 1.12 || ratio < 0.89) {
+      scaleWarn = 'The drawing scale (' + ppf.toFixed(3) + ' px/ft) and the map scale at zoom ' +
+                  (+ms.zoom) + ' (' + ppfFromMap.toFixed(3) + ' px/ft) disagree by ' +
+                  Math.round(Math.abs(ratio - 1) * 100) + '%. Buildings are placed on the drawing scale, ' +
+                  'so they will sit at the wrong distance from the site. Re-check the drawing scale.';
+    }
+  }
+
   return {
-    lat: lat, lng: lng, ppf: ppf,
+    lat: lat, lng: lng, ppf: ppf, scaleWarn: scaleWarn,
     /* Equirectangular about the site centre. Over a few thousand feet the
        error against a proper projection is well under a foot. */
     toWorld: function (plat, plng) {
@@ -139382,18 +139406,50 @@ function ringArea(pts){
   return a / 2;
 }
 
+/* Signed area of a closed ring given as {x,y} in SHAPE space. */
+function shapeArea(pts){
+  var a = 0;
+  for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    a += (pts[j].x * pts[i].y) - (pts[i].x * pts[j].y);
+  }
+  return a / 2;
+}
+
 function buildMesh(THREE, ring, heightFt, mat){
+  /* ── THE SIGN THAT MATTERS ────────────────────────────────────────
+     ExtrudeGeometry builds in the local XY plane and extrudes along
+     local +Z. The scene is Y-up, so the slab gets rotated upright with
+     rotateX(-PI/2), which maps
+
+         local +Z (the extrusion) -> world +Y   (up, correct)
+         local +Y                 -> world -Z   (NOT +Z)
+
+     The first version fed each vertex's world z straight into the
+     shape's y. That last mapping then negated it, so every footprint
+     came out mirrored about the site's east-west axis: a warehouse to
+     the north rendered to the south, and the whole neighbourhood was a
+     reflection of itself. It looked plausible from directly overhead,
+     which is exactly why it survived a bounding-box check — the extents
+     were right, only the sign was wrong.
+
+     Negating here cancels the rotation's negation and puts each vertex
+     back on its true northing. */
+  var pts = [], i;
+  for (i = 0; i < ring.length; i++) pts.push({ x: ring[i].x, y: -ring[i].z });
+
+  /* Winding is decided in SHAPE space, after the flip — deciding it on
+     the world ring would be the opposite answer, and the side walls
+     would face inward. */
+  if (shapeArea(pts) < 0) pts.reverse();
+
   var shape = new THREE.Shape();
-  shape.moveTo(ring[0].x, ring[0].z);
-  for (var i = 1; i < ring.length; i++) shape.lineTo(ring[i].x, ring[i].z);
+  shape.moveTo(pts[0].x, pts[0].y);
+  for (i = 1; i < pts.length; i++) shape.lineTo(pts[i].x, pts[i].y);
   shape.closePath();
 
   var geo = new THREE.ExtrudeGeometry(shape, {
     depth: heightFt, bevelEnabled: false, curveSegments: 1
   });
-  /* ExtrudeGeometry builds in the XY plane and extrudes along +Z. The
-     scene is Y-up, so rotate the slab upright. -PI/2 about X sends +Z to
-     -Y; the mesh is then flipped so the extrusion goes up, not down. */
   geo.rotateX(-Math.PI / 2);
   geo.computeVertexNormals();
 
@@ -139451,7 +139507,7 @@ function render(V, THREE, site, elements, proj){
   }
 
   var stats = { total: 0, measured: 0, derived: 0, assumed: 0, skipped: 0,
-                tallestFt: 0, tallestName: null };
+                tallestFt: 0, tallestName: null, scaleWarn: proj.scaleWarn || null };
   var maxR = state.radiusFt;
 
   for (var e = 0; e < elements.length; e++) {
@@ -139480,10 +139536,6 @@ function render(V, THREE, site, elements, proj){
     /* Reject slivers: a 30 sq ft "building" is a mapping artefact. */
     var areaFt2 = Math.abs(ringArea(ring));
     if (areaFt2 < 120) { stats.skipped++; continue; }
-
-    /* ExtrudeGeometry wants a consistent winding or the side walls face
-       inward and the building renders inside-out. */
-    if (ringArea(ring) < 0) ring.reverse();
 
     var hh = heightOf(el.tags);
     var hFt = Math.max(6, hh.m * FT_PER_M);
@@ -139585,6 +139637,7 @@ root.OmegaContextBuildings = {
       out += ' Tallest ' + Math.round(s.tallestFt) + ' ft' +
              (s.tallestName ? ' (' + s.tallestName + ')' : '') + '.';
     }
+    if (s.scaleWarn) out += '  \u26a0 ' + s.scaleWarn;
     return out;
   }
 };
