@@ -130809,12 +130809,32 @@ function readSite(){
 
   var shapes = S_.shapes || [], elements = S_.elements || [];
 
-  /* Site latitude drives the real sun path. The project stores it two
-     ways depending on how the site was located, so try both. */
+  /* SITE COORDINATES for the sun path.
+
+     S.lat is usually empty: the position lives on the live Google Map,
+     not on the project record, which is why the panel kept reporting "no
+     site coordinates" on a site that plainly had them. omegaGeo() is the
+     app's own resolver and already walks every source in order — the
+     lexical _gmap binding, window._gmap, _liveMapState(), the saved map
+     state for a locked plot, and the mosaic. Using it means this agrees
+     with the Latitude the Results panel shows instead of disagreeing. */
   try{
-    if(isFinite(+S_.lat) && +S_.lat !== 0){ out.lat = +S_.lat; out.lng = +S_.lng; }
-    else if(S_.siteLat != null){ out.lat = +S_.siteLat; out.lng = +S_.siteLng; }
+    if(typeof omegaGeo === 'function'){
+      var geo = omegaGeo();
+      if(geo && isFinite(+geo.lat)){ out.lat = +geo.lat; out.lng = +geo.lng; }
+    }
   }catch(e0){}
+  try{
+    if(out.lat == null && isFinite(+S_.lat) && +S_.lat !== 0){
+      out.lat = +S_.lat; out.lng = +S_.lng;
+    }
+    if(out.lat == null && S_.siteLat != null){
+      out.lat = +S_.siteLat; out.lng = +S_.siteLng;
+    }
+    if(out.lat == null && window._savedMapState && window._savedMapState.lat != null){
+      out.lat = +window._savedMapState.lat; out.lng = +window._savedMapState.lng;
+    }
+  }catch(e1){}
 
   /* --- context pass -------------------------------------------------
      Solar classification needs to know where the parking and the
@@ -131120,7 +131140,17 @@ function mkItem(ref, src, c, geo){
   return it;
 }
 
-/* Write an override back onto the drawing object. */
+/* Clear an override and let classification decide again.
+   Without this an override is permanent: _visArch rides on the shape and
+   is saved with the project, so one wrong pick in the dropdown removes an
+   object from the model for good. That is how a BESS pad became a canopy
+   and the storage count went to zero, with no way back. */
+function clearArch(item){
+  try{ delete item.ref._visArch; }catch(e){ try{ item.ref._visArch = null; }catch(e2){} }
+}
+function hasOverride(item){
+  try{ return !!item.ref._visArch; }catch(e){ return false; }
+}
 function setArch(item, arch){
   if(!ARCH[arch]) return;
   /* An unlabelled item shows its archetype's name as its title. If that
@@ -131151,7 +131181,7 @@ function canvasTex(w, h, draw, repX, repY){
   var t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   if(repX||repY) t.repeat.set(repX||1, repY||1);
-  t.anisotropy = 8;
+  t.anisotropy = (QUALITY[V.opts.quality] || QUALITY.high).aniso;
   /* These are colour maps, so they have to be tagged sRGB or the tone
      mapper double-applies gamma and everything renders washed out. */
   try{ if(THREE.sRGBEncoding !== undefined) t.encoding = THREE.sRGBEncoding; }catch(e){}
@@ -131230,14 +131260,18 @@ function buildTextures(){
 function buildMaterials(){
   function std(o){ return new THREE.MeshStandardMaterial(o); }
   MAT = {
-    panel:      std({ map:TEX.panel, color:0xffffff, metalness:0.32, roughness:0.26 }),
+    /* envMapIntensity is what decides how much sky each surface picks up.
+       Modules are close to a mirror, so they take the most; concrete and
+       asphalt take almost none or they look wet. */
+    panel:      std({ map:TEX.panel, color:0xffffff, metalness:0.34, roughness:0.22,
+                      envMapIntensity:1.15 }),
     panelBack:  std({ color:0x6f7681, metalness:0.25, roughness:0.72 }),
-    steel:      std({ color:0x8d949c, metalness:0.72, roughness:0.42 }),
-    galv:       std({ color:0xa9b0b7, metalness:0.66, roughness:0.38 }),
-    darkSteel:  std({ color:0x54595f, metalness:0.62, roughness:0.5  }),
-    concrete:   std({ map:TEX.concrete, color:0xffffff, roughness:0.94, metalness:0.02 }),
-    asphalt:    std({ map:TEX.asphalt, color:0xffffff, roughness:0.96, metalness:0.0 }),
-    ground:     std({ map:TEX.ground, color:0xffffff, roughness:1.0, metalness:0.0 }),
+    steel:      std({ color:0x8d949c, metalness:0.72, roughness:0.42, envMapIntensity:0.9 }),
+    galv:       std({ color:0xa9b0b7, metalness:0.66, roughness:0.36, envMapIntensity:0.9 }),
+    darkSteel:  std({ color:0x54595f, metalness:0.62, roughness:0.48, envMapIntensity:0.8 }),
+    concrete:   std({ map:TEX.concrete, color:0xffffff, roughness:0.94, metalness:0.02, envMapIntensity:0.25 }),
+    asphalt:    std({ map:TEX.asphalt, color:0xffffff, roughness:0.96, metalness:0.0, envMapIntensity:0.2 }),
+    ground:     std({ map:TEX.ground, color:0xffffff, roughness:1.0, metalness:0.0, envMapIntensity:0.2 }),
     container:  std({ map:TEX.corrugate, color:0xe8ecef, roughness:0.62, metalness:0.22 }),
     containerTop:std({ color:0xd2d7db, roughness:0.7, metalness:0.2 }),
     cabinet:    std({ color:0x9aa1a8, roughness:0.5, metalness:0.42 }),
@@ -131248,7 +131282,7 @@ function buildMaterials(){
     stripe:     std({ color:0xeceae4, roughness:0.85, metalness:0.0 }),
     wall:       std({ color:0xa9a49a, roughness:0.86, metalness:0.02 }),
     roofDeck:   std({ color:0x6d6f70, roughness:0.9,  metalness:0.04 }),
-    glass:      std({ color:0x2c4f6b, roughness:0.12, metalness:0.85 }),
+    glass:      std({ color:0x2c4f6b, roughness:0.10, metalness:0.88, envMapIntensity:1.3 }),
     trunk:      std({ color:0x5b4735, roughness:0.95, metalness:0.0 }),
     leaves:     std({ color:0x44703a, roughness:0.92, metalness:0.0, flatShading:true }),
     mesh:       new THREE.MeshStandardMaterial({ color:0x9aa2a8, roughness:.6,
@@ -132129,9 +132163,9 @@ function buildCamera(it, arch){
 var V = {
   scene:null, camera:null, renderer:null, root:null, groundGrp:null,
   site:null, raf:null, canvas:null,
-  sun:null, hemi:null, sunInfo:null,
+  sun:null, hemi:null, sunInfo:null, onCamera:null,
   target:null, sph:{ r:400, theta:0.85, phi:0.95 },
-  layers:{}, opts:{ hour:13, day:172, shadows:true, sat:true, showAll:false },
+  layers:{}, opts:{ hour:13, day:172, shadows:true, sat:true, showAll:false, quality:'high' },
   needsRender:true, disposed:false
 };
 
@@ -132217,10 +132251,18 @@ function sunFor(hour, day, latDeg, radius){
   };
 }
 
+var QUALITY = {
+  low:    { px:1,   shadow:1024, aniso:4  },
+  medium: { px:1.5, shadow:2048, aniso:8  },
+  high:   { px:2,   shadow:4096, aniso:16 }
+};
+
 function initRenderer(canvas){
   var r = new THREE.WebGLRenderer({ canvas:canvas, antialias:true, alpha:false,
-                                    preserveDrawingBuffer:true });
-  r.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+                                    preserveDrawingBuffer:true,
+                                    powerPreference:'high-performance' });
+  var q = QUALITY[V.opts.quality] || QUALITY.high;
+  r.setPixelRatio(Math.min(window.devicePixelRatio||1, q.px));
   r.shadowMap.enabled = true;
   r.shadowMap.type = THREE.PCFSoftShadowMap;
   /* r128 names. Guarded because these move between revisions and a hard
@@ -132238,7 +132280,14 @@ function buildScene(site){
   var span = Math.max(60, Math.max(site.sizeFt.w, site.sizeFt.h));
   var far  = Math.max(4000, span*8);
 
-  sc.background = skyTexture(V.opts.hour);
+  var skyTex = skyTexture(V.opts.hour);
+  sc.background = skyTex;
+  /* The same gradient serves as the environment map. Without one, every
+     metal and glass surface is lit only by the two lights and reads flat
+     and plasticky — modules in particular, which in life are mostly a
+     mirror of the sky. This is the single cheapest realism win available
+     without a postprocessing chain. */
+  sc.environment = skyTex;
   sc.fog = new THREE.Fog(0xbcd0e0, span*2.2, far*0.9);
 
   V.hemi = new THREE.HemisphereLight(0xbcd8f5, 0x5d5a4a, 0.62);
@@ -132248,7 +132297,8 @@ function buildScene(site){
   var sun = new THREE.DirectionalLight(0xffffff, 1.5);
   sun.castShadow = true;
   var sExtent = span * 0.78;
-  sun.shadow.mapSize.width = 2048; sun.shadow.mapSize.height = 2048;
+  var q2 = QUALITY[V.opts.quality] || QUALITY.high;
+  sun.shadow.mapSize.width = q2.shadow; sun.shadow.mapSize.height = q2.shadow;
   sun.shadow.camera.left = -sExtent; sun.shadow.camera.right = sExtent;
   sun.shadow.camera.top  =  sExtent; sun.shadow.camera.bottom= -sExtent;
   sun.shadow.camera.near = 1; sun.shadow.camera.far = span*6;
@@ -132292,7 +132342,14 @@ function applySun(span){
   }
   V.sun.target.position.set(0,0,0);
   V.sun.target.updateMatrixWorld();
-  if(V.scene) V.scene.background = skyTexture(V.opts.hour, s);
+  if(V.scene){
+    var st2 = skyTexture(V.opts.hour, s);
+    if(V.scene.background && V.scene.background.dispose){
+      try{ V.scene.background.dispose(); }catch(e){}
+    }
+    V.scene.background = st2;
+    V.scene.environment = st2;      /* reflections track the sky */
+  }
   V.needsRender = true;
 }
 
@@ -132350,7 +132407,7 @@ function buildGround(site, span){
   loader.load(src, function(tex){
     if(V.disposed) return;
     try{ if(THREE.sRGBEncoding !== undefined) tex.encoding = THREE.sRGBEncoding; }catch(e){}
-    tex.anisotropy = 8;
+    tex.anisotropy = (QUALITY[V.opts.quality] || QUALITY.high).aniso;
     var m = new THREE.MeshStandardMaterial({ map:tex, roughness:0.97, metalness:0.0 });
     var g = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m);
     g.rotation.x = -Math.PI/2;
@@ -132500,6 +132557,7 @@ function updateCamera(){
     V.target.y + s.r * cp,
     V.target.z + s.r * sp * Math.cos(s.theta));
   V.camera.lookAt(V.target);
+  if(V.onCamera){ try{ V.onCamera(); }catch(e){} }
   V.needsRender = true;
 }
 
@@ -132574,6 +132632,33 @@ function setView(kind){
   updateCamera();
 }
 
+/* Re-apply the quality tier without rebuilding the scene. Pixel ratio and
+   shadow map size can both change live; texture anisotropy is baked at
+   creation, so existing maps are updated in place rather than remade. */
+function applyQuality(){
+  var q = QUALITY[V.opts.quality] || QUALITY.high;
+  if(V.renderer) V.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, q.px));
+  if(V.sun){
+    V.sun.shadow.mapSize.width = q.shadow;
+    V.sun.shadow.mapSize.height = q.shadow;
+    if(V.sun.shadow.map){
+      try{ V.sun.shadow.map.dispose(); }catch(e){}
+      V.sun.shadow.map = null;      /* forces a rebuild at the new size */
+    }
+  }
+  if(V.scene){
+    V.scene.traverse(function(o){
+      if(o.isMesh && o.material && o.material.map
+         && o.material.map.anisotropy !== q.aniso){
+        o.material.map.anisotropy = q.aniso;
+        o.material.map.needsUpdate = true;
+      }
+    });
+  }
+  resize();
+  V.needsRender = true;
+}
+
 function renderLoop(){
   if(V.disposed) return;
   V.raf = requestAnimationFrame(renderLoop);
@@ -132609,9 +132694,7 @@ var CSS = ''
 + '#ovis .ov-beta{display:inline-block;margin-left:7px;padding:1px 5px;border-radius:2px;'
 +   'background:#E0A83C;color:#141416;font-size:8.5px;font-weight:800;letter-spacing:.8px;'
 +   'vertical-align:2px;font-family:"IBM Plex Mono",monospace}'
-+ '#ov-ribbon-btn .rb-badge{position:absolute;top:2px;right:3px;background:#E0A83C;'
-+   'color:#141416;font-size:7.5px;font-weight:800;letter-spacing:.5px;padding:0 3px;'
-+   'border-radius:2px;line-height:11px;font-family:"IBM Plex Mono",monospace}'
++ '#ov-ribbon-btn{position:relative}'
 + '#ovis .ov-sp{flex:1}'
 + '#ovis .ov-b{background:#2D2D2D;border:1px solid #3A3A3A;color:#E0E0E0;border-radius:3px;'
 +   'padding:5px 11px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap}'
@@ -132629,6 +132712,10 @@ var CSS = ''
 + '#ovis .ov-h:first-child{margin-top:0}'
 + '#ovis .ov-row{display:flex;align-items:center;gap:7px;padding:4px 0;font-size:11.5px}'
 + '#ovis .ov-row label{flex:1;cursor:pointer;color:#CFCFCF}'
++ '#ovis .ov-undo{background:#2D2D2D;border:1px solid #3A3A3A;color:#9FB8DE;'
++   'border-radius:2px;padding:0 5px;font-size:9px;line-height:15px;cursor:pointer;'
++   'font-family:"IBM Plex Mono",monospace}'
++ '#ovis .ov-undo:hover{background:#3C3C3C;color:#CFE0F5}'
 + '#ovis .ov-chip{display:inline-block;font-size:9px;font-weight:700;padding:1px 5px;'
 +   'border-radius:2px;letter-spacing:.4px;font-family:"IBM Plex Mono",monospace}'
 + '#ovis .c-explicit{background:rgba(47,181,74,.18);color:#7FDE9A}'
@@ -132652,6 +132739,27 @@ var CSS = ''
 + '#ovis .ov-kl{font-size:8.5px;color:#8A8A8A;text-transform:uppercase;letter-spacing:.5px;margin-top:1px}'
 + '#ovis .ov-vb{display:flex;gap:4px;flex-wrap:wrap}'
 + '#ovis .ov-vb .ov-b{flex:1;text-align:center;padding:5px 4px;font-size:10px}'
++ '#ovis .ov-card{position:absolute;top:18px;left:18px;z-index:4;pointer-events:none;'
++   'background:rgba(16,18,22,.86);border:1px solid rgba(255,255,255,.09);'
++   'border-left:3px solid #2FB54A;border-radius:7px;padding:13px 16px;max-width:330px;'
++   'opacity:0;transition:opacity .25s ease}'
++ '#ovis.present .ov-card{opacity:1}'
++ '#ovis .ov-card h1{margin:0 0 2px;font-size:16px;font-weight:700;letter-spacing:-.2px;color:#F2F2F2}'
++ '#ovis .ov-card p{margin:0 0 10px;font-size:11px;color:#9A9A9A}'
++ '#ovis .ov-cstats{display:grid;grid-template-columns:1fr 1fr;gap:7px}'
++ '#ovis .ov-cs{background:rgba(255,255,255,.045);border-radius:4px;padding:6px 8px}'
++ '#ovis .ov-cs i{display:block;font-style:normal;font-size:8.5px;letter-spacing:.5px;'
++   'text-transform:uppercase;color:#8A8A8A;margin-bottom:2px}'
++ '#ovis .ov-cs b{font-size:13px;font-family:"IBM Plex Mono",monospace;color:#2FB54A}'
++ '#ovis .ov-compass{position:absolute;top:18px;right:18px;z-index:4;pointer-events:none;'
++   'width:46px;height:46px;border-radius:50%;background:rgba(16,18,22,.86);'
++   'border:1px solid rgba(255,255,255,.09);display:flex;flex-direction:column;'
++   'align-items:center;justify-content:center;line-height:1;color:#E05C5C;'
++   'font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:800}'
++ '#ovis .ov-compass b{color:#CFCFCF;font-size:9px;margin-top:1px}'
++ '#ovis.present .ov-side{display:none}'
++ '#ovis.present .ov-bar{opacity:.10}'
++ '#ovis.present .ov-bar:hover{opacity:1}'
 + '#ovis .ov-load{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;'
 +   'flex-direction:column;gap:9px;background:#0f1013;color:#9A9A9A;font-size:12px}'
 + '#ovis .ov-spin{width:26px;height:26px;border:2.5px solid #2C2C2E;border-top-color:#2FB54A;'
@@ -132683,6 +132791,7 @@ function shell(){
   +     '<span class="ov-beta">BETA</span></div>'
   +   '<div class="ov-sub" id="ov-scale"></div>'
   +   '<div class="ov-sp"></div>'
+  +   '<button class="ov-b" id="ov-present" title="Hide the panel for a clean image">&#9635; Presentation</button>'
   +   '<button class="ov-b" id="ov-refresh" title="Re-read the site map">&#8635; Refresh</button>'
   +   '<button class="ov-b" id="ov-snap" title="Save this view as a PNG">&#9112; Snapshot</button>'
   +   '<button class="ov-b ov-x" id="ov-close" title="Close">&times;</button>'
@@ -132690,11 +132799,30 @@ function shell(){
   + '<div class="ov-body">'
   +   '<div class="ov-stage" id="ov-stage">'
   +     '<canvas id="ov-canvas"></canvas>'
+  +     '<div class="ov-card" id="ov-card">'
+  +       '<h1 id="ov-card-t">&nbsp;</h1><p id="ov-card-s">&nbsp;</p>'
+  +       '<div class="ov-cstats" id="ov-card-k"></div>'
+  +     '</div>'
+  +     '<div class="ov-compass" id="ov-compass" title="Drawing is north-up">'
+  +       '<span>\u25B2</span><b>N</b></div>'
   +     '<div class="ov-load" id="ov-load"><div class="ov-spin"></div><div id="ov-loadmsg">Loading 3D engine\u2026</div></div>'
   +   '</div>'
   +   '<div class="ov-side" id="ov-side"></div>'
   + '</div>';
   document.body.appendChild(d);
+
+  /* PRESENTATION MODE.
+     Hides the panel and fades the toolbar so the render fills the frame
+     with only the project card and compass over it — what actually goes
+     in front of a customer. The toolbar comes back on hover so the view
+     is not trapped. */
+  el('ov-present').onclick = function(){
+    d.classList.toggle('present');
+    var on = d.classList.contains('present');
+    el('ov-present').classList.toggle('on', on);
+    if(on) paintCard();
+    setTimeout(resize, 60);        /* the stage just got wider */
+  };
 
   el('ov-close').onclick   = close;
   el('ov-refresh').onclick = function(){ reload(); };
@@ -132759,7 +132887,16 @@ function paintSide(){
     +  '<div class="ov-row"><input type="checkbox" id="ov-shadow"' + (V.opts.shadows?' checked':'') + '>'
     +  '<label for="ov-shadow">Cast shadows</label></div>'
     +  '<div class="ov-row"><input type="checkbox" id="ov-sat"' + (V.opts.sat?' checked':'') + '>'
-    +  '<label for="ov-sat">Satellite ground</label></div>';
+    +  '<label for="ov-sat">Satellite ground</label></div>'
+    +  '<div class="ov-h">Quality</div>'
+    +  '<div class="ov-vb">'
+    +  ['low','medium','high'].map(function(q){
+         return '<button class="ov-b' + (V.opts.quality===q?' on':'') + '" data-q="' + q + '">'
+              + q.charAt(0).toUpperCase() + q.slice(1) + '</button>';
+       }).join('')
+    +  '</div>'
+    +  '<div class="ov-hint">Higher quality raises render resolution, shadow '
+    +  'detail and texture sharpness. Drop it if the view feels sluggish.</div>';
 
   h += '<div class="ov-h">Layers</div>';
   ARCH_GROUPS.forEach(function(g){
@@ -132797,7 +132934,15 @@ function paintSide(){
   });
 
   var nGuess = vis.filter(function(it){ return it.why === 'inferred'; }).length;
+  var nOver  = vis.filter(function(it){ return it.why === 'explicit'; }).length;
   h += '<div class="ov-h">What\u2019s on the site (' + vis.length + ')</div>';
+  if(nOver){
+    h += '<div class="ov-row" style="margin-bottom:7px">'
+      +  '<label style="color:#9A9A9A;font-size:10.5px">' + nOver
+      +  ' item' + (nOver>1?'s have':' has') + ' a manual override</label>'
+      +  '<button class="ov-b" id="ov-resetall" style="flex:0 0 auto;padding:3px 8px;'
+      +  'font-size:10px">Reset all</button></div>';
+  }
   if(nGuess){
     h += '<div class="ov-hint" style="margin-bottom:8px">' + nGuess
       +  ' item' + (nGuess>1?'s were':' was') + ' worked out from geometry rather than '
@@ -132817,6 +132962,10 @@ function paintSide(){
     var q = (it.why === 'inferred');
     h += '<div class="ov-item' + (q?' q':'') + '">'
       +  '<div class="ov-il"><div class="ov-in">' + esc(it.label || '(unlabelled)') + '</div>'
+      +  (it.why === 'explicit'
+          ? '<button class="ov-undo" data-undo="' + esc(it.id) + '" '
+            + 'title="Clear this override and classify it automatically again">'
+            + 'auto</button>' : '')
       +  '<span class="ov-chip c-' + it.why + '">' + it.why.toUpperCase() + '</span></div>'
       +  '<div class="ov-im" style="margin:-2px 0 4px">' + esc(it.kind)
       +  (it.boxSrc ? ' \u00b7 size from ' + esc(it.boxSrc) : '') + '</div>'
@@ -132873,6 +133022,51 @@ function fmtDay(doy){
   var m = 11;
   while(m > 0 && MONTH_CUM[m] >= doy) m--;
   return MONTH_NM[m] + ' ' + (doy - MONTH_CUM[m]);
+}
+
+/* The client-facing card. Only real figures from the model go on it — an
+   invented CO2 number on a proposal is a liability, not a feature. */
+function paintCard(){
+  var s = V.site; if(!s) return;
+  var name = 'Site Layout';
+  try{
+    var pn = document.getElementById('pname');
+    if(pn && pn.value.trim()) name = pn.value.trim();
+  }catch(e){}
+  var t = el('ov-card-t'), sub = el('ov-card-s'), k = el('ov-card-k');
+  if(t) t.textContent = name;
+  if(sub){
+    var where = (s.lat != null)
+      ? s.lat.toFixed(4) + '\u00b0, ' + s.lng.toFixed(4) + '\u00b0'
+      : 'Site layout';
+    sub.textContent = where + ' \u00b7 ' + Math.round(s.sizeFt.w) + ' \u00d7 '
+                    + Math.round(s.sizeFt.h) + ' ft';
+  }
+  if(!k) return;
+  var nSolar = 0, nStore = 0;
+  s.items.forEach(function(it){
+    if(it.hidden) return;
+    var gp = ARCH[it.arch] && ARCH[it.arch].group;
+    if(gp === 'solar') nSolar++;
+    if(gp === 'storage') nStore++;
+  });
+  var cells = [];
+  if(s.kw)     cells.push(['System size', Math.round(s.kw).toLocaleString() + ' kW-DC']);
+  if(nSolar)   cells.push(['PV arrays', String(nSolar)]);
+  if(s.tables) cells.push(['Tables', s.tables.toLocaleString()]);
+  if(s.acres)  cells.push(['PV acres', s.acres.toFixed(2)]);
+  if(nStore)   cells.push(['Storage units', String(nStore)]);
+  if(s.kwh)    cells.push(['Storage', Math.round(s.kwh).toLocaleString() + ' kWh']);
+  k.innerHTML = cells.slice(0,4).map(function(c){
+    return '<div class="ov-cs"><i>' + esc(c[0]) + '</i><b>' + esc(c[1]) + '</b></div>';
+  }).join('');
+}
+
+/* The compass turns with the camera. The drawing is north-up, so world
+   -Z is north and the camera azimuth is theta. */
+function paintCompass(){
+  var c = el('ov-compass'); if(!c) return;
+  c.style.transform = 'rotate(' + (V.sph.theta * 180/Math.PI) + 'deg)';
 }
 
 function fmtHour(v){
@@ -132948,6 +133142,32 @@ function wireSide(){
   /* Reclassifying rebuilds the model. It is fast enough to do on change
      rather than behind an Apply button, and an Apply button on a
      classification list is where mistakes hide. */
+  side.querySelectorAll('[data-q]').forEach(function(b){
+    b.onclick = function(){
+      V.opts.quality = b.getAttribute('data-q');
+      applyQuality();
+      paintSide();
+    };
+  });
+
+  side.querySelectorAll('[data-undo]').forEach(function(b){
+    b.onclick = function(){
+      var id = b.getAttribute('data-undo');
+      for(var i=0;i<V.site.items.length;i++){
+        if(V.site.items[i].id === id){ clearArch(V.site.items[i]); break; }
+      }
+      reload();
+      try{ if(typeof pushHist === 'function') pushHist(); }catch(e){}
+    };
+  });
+
+  var ra = el('ov-resetall');
+  if(ra) ra.onclick = function(){
+    V.site.items.forEach(function(it){ clearArch(it); });
+    reload();
+    try{ if(typeof pushHist === 'function') pushHist(); }catch(e){}
+  };
+
   side.querySelectorAll('select[data-item]').forEach(function(sel){
     sel.onchange = function(){
       var id = sel.getAttribute('data-item');
@@ -132965,12 +133185,118 @@ function wireSide(){
   });
 }
 
-/* ---- snapshot ------------------------------------------------------- */
+/* ---- snapshot ------------------------------------------------------
+   In presentation mode the card and compass are DOM overlays, which
+   toDataURL knows nothing about — so the exported image came out bare
+   while the screen looked right. They are redrawn here with canvas 2D so
+   the file matches what was on screen. */
+function roundRect(g, x, y, w, h, r){
+  g.beginPath();
+  g.moveTo(x+r, y);
+  g.arcTo(x+w, y,   x+w, y+h, r);
+  g.arcTo(x+w, y+h, x,   y+h, r);
+  g.arcTo(x,   y+h, x,   y,   r);
+  g.arcTo(x,   y,   x+w, y,   r);
+  g.closePath();
+}
+
+function drawOverlay(g, W, H, dpr){
+  var s = V.site; if(!s) return;
+  var P = 18*dpr, pad = 15*dpr;
+  var name = 'Site Layout';
+  try{
+    var pn = document.getElementById('pname');
+    if(pn && pn.value.trim()) name = pn.value.trim();
+  }catch(e){}
+
+  var nSolar=0, nStore=0;
+  s.items.forEach(function(it){
+    if(it.hidden) return;
+    var gp = ARCH[it.arch] && ARCH[it.arch].group;
+    if(gp==='solar') nSolar++;
+    if(gp==='storage') nStore++;
+  });
+  var cells = [];
+  if(s.kw)     cells.push(['SYSTEM SIZE', Math.round(s.kw).toLocaleString()+' kW-DC']);
+  if(nSolar)   cells.push(['PV ARRAYS', String(nSolar)]);
+  if(s.tables) cells.push(['TABLES', s.tables.toLocaleString()]);
+  if(s.acres)  cells.push(['PV ACRES', s.acres.toFixed(2)]);
+  if(nStore)   cells.push(['STORAGE UNITS', String(nStore)]);
+  cells = cells.slice(0,4);
+
+  var cw = 330*dpr;
+  var rows = Math.ceil(cells.length/2);
+  var ch = pad*2 + 20*dpr + 15*dpr + rows*(38*dpr) + (rows>1?7*dpr:0);
+
+  g.save();
+  g.fillStyle = 'rgba(16,18,22,.86)';
+  roundRect(g, P, P, cw, ch, 7*dpr); g.fill();
+  g.strokeStyle = 'rgba(255,255,255,.09)'; g.lineWidth = 1*dpr; g.stroke();
+  g.fillStyle = '#2FB54A';
+  g.fillRect(P, P+3*dpr, 3*dpr, ch-6*dpr);
+
+  g.textBaseline = 'top';
+  g.fillStyle = '#F2F2F2';
+  g.font = '700 ' + (16*dpr) + 'px "IBM Plex Sans",system-ui,sans-serif';
+  g.fillText(name, P+pad, P+pad);
+  g.fillStyle = '#9A9A9A';
+  g.font = (11*dpr) + 'px "IBM Plex Sans",system-ui,sans-serif';
+  var where = (s.lat != null)
+    ? s.lat.toFixed(4)+'\u00b0, '+s.lng.toFixed(4)+'\u00b0'
+    : 'Site layout';
+  g.fillText(where + '  \u00b7  ' + Math.round(s.sizeFt.w) + ' \u00d7 '
+             + Math.round(s.sizeFt.h) + ' ft', P+pad, P+pad+22*dpr);
+
+  var gx = P+pad, gy = P+pad+45*dpr;
+  var bw = (cw - pad*2 - 7*dpr)/2, bh = 34*dpr;
+  cells.forEach(function(c, i){
+    var x = gx + (i%2)*(bw+7*dpr), y = gy + Math.floor(i/2)*(bh+7*dpr);
+    g.fillStyle = 'rgba(255,255,255,.045)';
+    roundRect(g, x, y, bw, bh, 4*dpr); g.fill();
+    g.fillStyle = '#8A8A8A';
+    g.font = '600 ' + (8.5*dpr) + 'px "IBM Plex Mono",monospace';
+    g.fillText(c[0], x+8*dpr, y+6*dpr);
+    g.fillStyle = '#2FB54A';
+    g.font = '700 ' + (13*dpr) + 'px "IBM Plex Mono",monospace';
+    g.fillText(c[1], x+8*dpr, y+17*dpr);
+  });
+
+  /* compass, rotated to match the camera */
+  var cr = 23*dpr, ccx = W - P - cr, ccy = P + cr;
+  g.fillStyle = 'rgba(16,18,22,.86)';
+  g.beginPath(); g.arc(ccx, ccy, cr, 0, Math.PI*2); g.fill();
+  g.strokeStyle = 'rgba(255,255,255,.09)'; g.stroke();
+  g.save();
+  g.translate(ccx, ccy); g.rotate(V.sph.theta);
+  g.fillStyle = '#E05C5C';
+  g.font = '800 ' + (13*dpr) + 'px "IBM Plex Mono",monospace';
+  g.textAlign = 'center';
+  g.fillText('\u25B2', 0, -13*dpr);
+  g.fillStyle = '#CFCFCF';
+  g.font = '800 ' + (9*dpr) + 'px "IBM Plex Mono",monospace';
+  g.fillText('N', 0, 1*dpr);
+  g.restore();
+  g.restore();
+}
+
 function snapshot(){
   if(!V.renderer) return;
   try{
     V.renderer.render(V.scene, V.camera);      /* guarantee a fresh buffer */
-    var url = V.renderer.domElement.toDataURL('image/png');
+    var src = V.renderer.domElement;
+    var out = src;
+
+    if(el('ovis') && el('ovis').classList.contains('present')){
+      var c = document.createElement('canvas');
+      c.width = src.width; c.height = src.height;
+      var g = c.getContext('2d');
+      g.drawImage(src, 0, 0);
+      var dpr = src.width / (src.clientWidth || src.width);
+      drawOverlay(g, c.width, c.height, Math.max(1, dpr));
+      out = c;
+    }
+
+    var url = out.toDataURL('image/png');
     var name = 'site-render';
     try{
       var pn = document.getElementById('pname');
@@ -133049,6 +133375,9 @@ function open(){
     paintSide();
     updScaleLine();
 
+    paintCard();
+    paintCompass();
+    V.onCamera = paintCompass;
     if(load) load.style.display = 'none';
     if(!V.raf) renderLoop();
     V.needsRender = true;
@@ -133092,12 +133421,14 @@ function injectButton(){
     b.id = 'ov-ribbon-btn';
     b.title = '3D Site Visualizer \u2014 render the drawn site map as a lit 3D model: '
             + 'carports, rooftop and ground arrays, BESS, transformers and parking';
-    /* Flagged BETA: this is under active development and the
-       classification of drawn objects is still being tuned. */
-    b.innerHTML = '<span class="rb-badge">BETA</span>'
-                + '<span class="rb-ico" style="color:#2FB54A">\u25E9</span>'
-                + '<span class="rb-lbl">3D Site<br>Visualizer</span>';
-    b.style.position = 'relative';
+    /* BETA, using the app's OWN badge class and markup order rather than
+       a bespoke one. The custom badge sat in front of the icon and used a
+       different colour and size, so it read as a broken button next to
+       the Permitting Matrix and Bill Analysis tags beside it. */
+    b.className = 'rbtn omega-beta';
+    b.innerHTML = '<span class="rb-ico" style="color:#2FB54A">\u25E9</span>'
+                + '<span class="rb-lbl">3D Site<br>Visualizer</span>'
+                + '<span class="omega-beta-tag">BETA</span>';
     b.onclick = function(){
       if(typeof rbRun === 'function') rbRun(open); else open();
     };
