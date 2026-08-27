@@ -137768,6 +137768,13 @@ function reportHTML(res){
   try { if (typeof brandName === 'function') brand = brandName(); } catch (e) {}
   var where = res.address || (res.location.lat.toFixed(5) + ', ' + res.location.lon.toFixed(5));
 
+  /* "1.87 GWh" -> number at full size, unit small. Keeps a stat card one
+     line wide whatever the magnitude turns out to be. */
+  function unitful(s){
+    var m = String(s).match(/^([^A-Za-z$]*[\d.,]+)\s*(.+)$/);
+    return m ? m[1] + '<u>' + m[2] + '</u>' : s;
+  }
+
   function card(label, value, sub, col){
     /* The default was #E2EEF9 — a near-white meant for a dark slide, which
        on a white page rendered Specific Yield, Capacity Factor and Peak
@@ -137790,7 +137797,8 @@ function reportHTML(res){
     '.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin:14px 0}' +
     '.card{background:#'+C.panel+';border:1px solid #'+C.rule+';border-radius:9px;padding:12px 13px}' +
     '.lbl{font-size:8.5px;color:#'+C.dim+';text-transform:uppercase;letter-spacing:.8px;font-weight:700}' +
-    '.val{font-size:21px;font-weight:800;margin-top:3px}' +
+    '.val{font-size:21px;font-weight:800;margin-top:3px;line-height:1.15;white-space:nowrap}' +
+    '.val u{font-size:.56em;font-weight:700;font-style:normal;text-decoration:none;margin-left:3px;letter-spacing:.2px}' +
     '.sub{font-size:9.5px;color:#'+C.dim+';margin-top:3px;line-height:1.45}' +
     '.panel{background:#'+C.panel+';border:1px solid #'+C.rule+';border-radius:9px;padding:14px;margin:12px 0}' +
     'table{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}' +
@@ -137827,10 +137835,10 @@ function reportHTML(res){
 
   h += '<h2>Annual generation</h2>';
   h += '<div class="grid">' +
-    card('Annual output', kwh(res.acAnnualKwh), kwF(res.kwDc) + '-DC \u00b7 ' + kwF(res.kwAc) + '-AC', C.accent) +
-    card('Specific yield', Math.round(res.specificYield).toLocaleString() + ' kWh/kW', 'per kW-DC per year') +
+    card('Annual output', unitful(kwh(res.acAnnualKwh)), kwF(res.kwDc) + '-DC \u00b7 ' + kwF(res.kwAc) + '-AC', C.accent) +
+    card('Specific yield', Math.round(res.specificYield).toLocaleString() + '<u>kWh/kW</u>', 'per kW-DC per year') +
     card('Capacity factor', pct(res.capacityFactorAcPct), 'on AC \u00b7 ' + pct(res.capacityFactorDcPct) + ' on DC') +
-    card('Peak output', kwF(res.peakOutputKw), 'highest modelled hour') + '</div>';
+    card('Peak output', unitful(kwF(res.peakOutputKw)), 'highest modelled hour') + '</div>';
   h += '<div class="panel">' + svgBars([{ name: 'MWh', color: '#' + C.gen,
         values: res.monthAc.map(function (v) { return v / 1000; }) }], MON.slice(), { grid: '#' + C.rule, label: '#' + C.dim, legend: '#' + C.sub, h: 200, w: 900 }) +
        '<div class="sub" style="margin-top:8px">Monthly energy, MWh.</div></div>';
@@ -137867,9 +137875,9 @@ function reportHTML(res){
     var wm = sh.worstMonth;
     h += '<h2>Peak demand shaving</h2>';
     h += '<div class="grid">' +
-      card('Peak before', kwF(wm.peakLoadKw), wm.label + ' billing demand', C.warn) +
-      card('After solar', kwF(wm.peakAfterSolarKw), '\u2212' + kwF(wm.solarReductionKw), C.gen) +
-      card('After battery', kwF(wm.peakAfterBessKw), '\u2212' + kwF(wm.bessReductionKw) + ' more', C.good) +
+      card('Peak before', unitful(kwF(wm.peakLoadKw)), wm.label + ' billing demand', C.warn) +
+      card('After solar', unitful(kwF(wm.peakAfterSolarKw)), '\u2212' + kwF(wm.solarReductionKw), C.gen) +
+      card('After battery', unitful(kwF(wm.peakAfterBessKw)), '\u2212' + kwF(wm.bessReductionKw) + ' more', C.good) +
       card('Annual saving', money(sh.annual.demandSavingTotal), '$' + sh.tariff.demandPerKwMonth.toFixed(2) + '/kW-mo', C.good) +
       '</div>';
     if (sh.worstDay) {
