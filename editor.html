@@ -8760,6 +8760,44 @@ function showProps(id){
   if(iconEl) iconEl.textContent = icons[el.type]||' ';
   if(nameEl) nameEl.textContent = typNames[el.type]||el.type;
   if(specEl) specEl.textContent = el.spec ? el.spec.split('\n')[0] : (el.eqId||'');
+
+  /* FUTURE-PROOFED. A ribbon button is fine once you know it exists; the
+     place someone looks when they want to change what a charger IS is the
+     panel that opens when they click it. Injected here rather than into
+     the static markup so it appears only for chargers. */
+  try{
+    var _pf=document.getElementById('pf');
+    var _row=document.getElementById('p-evfuture-row');
+    var _isChg = window.OmegaEVFuture && OmegaEVFuture.isCharger(el);
+    if(_pf && _isChg){
+      if(!_row){
+        _row=document.createElement('div');
+        _row.id='p-evfuture-row';
+        _row.style.cssText='margin:8px 0;padding:8px 10px;background:rgba(251,191,36,.07);'
+          +'border:1px solid rgba(251,191,36,.28);border-radius:7px';
+        _row.innerHTML='<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">'
+          +'<input type="checkbox" id="p-evfuture" style="margin-top:2px;accent-color:#FBBF24">'
+          +'<span><span style="font-size:11px;font-weight:700;color:#FBBF24">Future-proofed stall</span>'
+          +'<span style="display:block;font-size:9px;color:var(--sub);margin-top:2px;line-height:1.45">'
+          +'Trench, conduit, junction box and breaker go in now; the charger is a later phase. '
+          +'Drops out of connected load and out of the hardware cost \u2014 the make-ready is priced instead.'
+          +'</span></span></label>'
+          +'<div id="p-evfuture-sum" style="font-size:9px;color:var(--sub);margin-top:6px"></div>';
+        _pf.appendChild(_row);
+        _row.querySelector('#p-evfuture').addEventListener('change',function(){
+          var cur=S.elements.find(function(x){return x.id===S.sel;});
+          if(!cur) return;
+          OmegaEVFuture.setFuture(cur,this.checked);
+          OmegaEVFuture.refresh();
+          showProps(S.sel);
+        });
+      }
+      _row.style.display='block';
+      _row.querySelector('#p-evfuture').checked=!!OmegaEVFuture.isFuture(el);
+      var _s=document.getElementById('p-evfuture-sum');
+      if(_s) _s.textContent=OmegaEVFuture.summary();
+    } else if(_row){ _row.style.display='none'; }
+  }catch(_e){}
 }
 function _setRot(deg){
   if(!S.sel)return;
@@ -16855,12 +16893,21 @@ function renderLegend(){
            double-count the same object. */
         if(e && e.id!=null && _fleetElIds[e.id]) return;
         var id=e.eqId||e.evKind||'jbox';
+        /* A future-proofed stall is not a charger the customer owns. Give it
+           its own legend key so two installed and two future read as exactly
+           that, instead of collapsing into one row of four. */
+        try {
+          if(window.OmegaEVFuture && OmegaEVFuture.isCharger(e) && OmegaEVFuture.isFuture(e)) id = id + '__future';
+        } catch(_e){}
+        /* EQ chargers carry no evModel, so record the catalog label for the
+           future row too or it prints a raw id. */
         counts[id]=(counts[id]||0)+1;
         /* Keep the real unit name and rating so the legend reads
            "Autel MaxiCharger AC Ultra", not "charger". */
         if(e.type==='evgear' && !evMeta[id]){
           evMeta[id]={ label:e.evModel||e.label||null, kw:e.kw||0,
-                       ports:e.ports||0, amps:e.amps||0, spec:e.spec||'' };
+                       ports:e.ports||0, amps:e.amps||0, spec:e.spec||'',
+                       future:/__future$/.test(id) };
         }
       });
     Object.keys(counts).forEach(function(id){
@@ -16891,10 +16938,16 @@ function renderLegend(){
         /* Last resort: never print a raw snake_case id at a customer. */
         return String(k).replace(/[_-]+/g,' ').replace(/\b\w/g,function(c){ return c.toUpperCase(); });
       }
+      var _isFut=/__future$/.test(id);
+      var _base=_isFut ? id.replace(/__future$/,'') : id;
+      if(_isFut && !eq) eq=(typeof EQ!=='undefined')?EQ.find(x=>x.id===_base):null;
       var label=(ev&&ev.label) ? ev.label
               : (eq ? eq.label
-              : (dc ? (dc.model||dc.label||_prettyId(id))
-              : _prettyId(id)));
+              : (dc ? (dc.model||dc.label||_prettyId(_base))
+              : _prettyId(_base)));
+      /* Say it on the drawing, not just in the estimate: a reviewer reading
+         the legend has to be able to see which stalls are being built. */
+      if(_isFut) label += ' \u2014 future (conduit and breaker only)';
       /* The same physical item can arrive under two ids — a battery placed as
          'acblock' in one build and 'bess' in another both read "BESS AC Block".
          Merge on the printed label so the legend lists equipment, not ids. */
@@ -62794,12 +62847,19 @@ function evShapeCost(sh){
 }
 /* Sum charger equipment + install across the map, grouped by model. */
 function evChargerCosts(){
-  var out={ eq:0, install:0, total:0, units:0, byModel:{} };
+  var out={ eq:0, install:0, total:0, units:0, futureUnits:0, futureMakeReady:0, byModel:{} };
   if(typeof S==='undefined') return out;
+  /* A future-proofed stall is make-ready, not hardware. Quoting the unit
+     and its commissioning for a charger the customer has not ordered is
+     the single most expensive way this drawing can be wrong. */
+  function _fut(o){
+    try { return !!(window.OmegaEVFuture && OmegaEVFuture.isFuture(o)); } catch(e){ return false; }
+  }
   var i,s,c,key;
   for(i=0;S.shapes&&i<S.shapes.length;i++){
     s=S.shapes[i];
     if(s.kind!=='evpost' && s.kind!=='evunit' && s.kind!=='evl2' && s.kind!=='evcab') continue;
+    if(_fut(s)){ out.futureUnits++; continue; }
     c=evShapeCost(s);
     out.eq+=c.eq; out.install+=c.install; out.units++;
     key=s.model||s.evId||s.kind;
@@ -62810,6 +62870,7 @@ function evChargerCosts(){
   for(i=0;S.elements&&i<S.elements.length;i++){
     var e=S.elements[i];
     if(e.type!=='evgear' || e.evKind!=='charger') continue;
+    if(_fut(e)){ out.futureUnits++; continue; }
     var cc=(e.evId && typeof EVC_COST!=='undefined' && EVC_COST[e.evId])
            ? { eq:EVC_COST[e.evId].eq, install:EVC_COST[e.evId].install }
            : _evEstCost('evunit', { kw:e.kw||0 });
@@ -62818,23 +62879,43 @@ function evChargerCosts(){
     if(!out.byModel[key]) out.byModel[key]={ qty:0, eq:0, install:0, kw:(e.kw||0), mfr:(e.mfr||'') };
     out.byModel[key].qty++; out.byModel[key].eq+=cc.eq; out.byModel[key].install+=cc.install;
   }
+  /* The make-ready that DOES get built today, itemised in the module. */
+  try {
+    if(window.OmegaEVFuture && out.futureUnits>0){
+      var _f=OmegaEVFuture.cost();
+      out.futureMakeReady=_f.total;
+      out.install+=_f.total;
+    }
+  } catch(e){}
   out.total=out.eq+out.install;
   return out;
 }
 
 function evChargerTotals(){
-  var t={ dcfcKw:0, dcfcUnits:0, l2Kw:0, l2Units:0, ports:0 };
+  var t={ dcfcKw:0, dcfcUnits:0, l2Kw:0, l2Units:0, ports:0,
+          futureUnits:0, futureKw:0, futurePorts:0 };
   if(typeof S==='undefined') return t;
+  /* Future stalls are deliberately kept OUT of the connected-load figures.
+     They draw nothing until the units are bought, and counting them now
+     inflates the service sizing and the interconnection screen against
+     capacity nobody is using. They are reported separately so the future
+     phase is still visible. */
+  function _fut(o){
+    try { return !!(window.OmegaEVFuture && OmegaEVFuture.isFuture(o)); } catch(e){ return false; }
+  }
   var i,s;
   for(i=0;S.shapes&&i<S.shapes.length;i++){
     s=S.shapes[i];
-    if(s.kind==='evpost'){ t.dcfcKw+=(s.kw||0); t.dcfcUnits++; t.ports+=(s.ports||1); }
-    else if(s.kind==='evunit'){ t.dcfcKw+=(s.kw||0); t.dcfcUnits++; t.ports+=(s.ports||1); }
-    else if(s.kind==='evl2'){ t.l2Kw+=(s.kw||0); t.l2Units++; t.ports+=(s.ports||1); }
+    var _k=s.kind;
+    if(_k!=='evpost' && _k!=='evunit' && _k!=='evl2') continue;
+    if(_fut(s)){ t.futureUnits++; t.futureKw+=(s.kw||0); t.futurePorts+=(s.ports||1); continue; }
+    if(_k==='evpost'||_k==='evunit'){ t.dcfcKw+=(s.kw||0); t.dcfcUnits++; t.ports+=(s.ports||1); }
+    else { t.l2Kw+=(s.kw||0); t.l2Units++; t.ports+=(s.ports||1); }
   }
   for(i=0;S.elements&&i<S.elements.length;i++){
     var e=S.elements[i];
-    if(e.type==='evgear' && e.evKind==='charger'){ t.dcfcKw+=(e.kw||0); t.dcfcUnits++; t.ports+=(e.ports||2); }
+    if(e.type==='evgear' && e.evKind==='charger' && _fut(e)){ t.futureUnits++; t.futureKw+=(e.kw||0); t.futurePorts+=(e.ports||1); }
+    else if(e.type==='evgear' && e.evKind==='charger'){ t.dcfcKw+=(e.kw||0); t.dcfcUnits++; t.ports+=(e.ports||2); }
   }
   return t;
 }
@@ -65471,8 +65552,30 @@ function _evPackSite(name){
   }catch(err){}
   var evT = (typeof evChargerTotals==='function') ? evChargerTotals() : null;
 
+  /* Future-proofing goes across as its own itemised lines, so the workbook
+     shows what the make-ready buys rather than a lump the customer has to
+     take on trust. Trench and conduit are NOT repeated here — they are
+     already in `lines` from the conduit schedule, measured off the drawing. */
+  var evFuture = null;
+  try {
+    if(window.OmegaEVFuture){
+      var _fc = OmegaEVFuture.cost();
+      if(_fc.stalls > 0){
+        OmegaEVFuture.workbookLines().forEach(function(l){ lines.push(l); });
+        evFuture = {
+          stalls: _fc.stalls,
+          perStall: Math.round(_fc.perStall.total),
+          mat: _fc.mat, labor: _fc.labor, hrs: _fc.hrs, total: _fc.total,
+          components: _fc.components,
+          excludes: _fc.excludes
+        };
+      }
+    }
+  } catch(err){}
+
   return {
     lines: lines,
+    evFuture: evFuture,
     crewRate: ELEC_BID.crewRate,
     trenchFt: (e.bom && e.bom.trenchFt) || 0,
     /* measured geometry — without this the workbook derives conduit from
@@ -65483,7 +65586,10 @@ function _evPackSite(name){
     chargers: chargers,
     priceBasis: (typeof OMEGA_PRICE_BASIS!=='undefined') ? OMEGA_PRICE_BASIS : 'cost',
     evTotals: evT ? { ports:evT.ports, l2Units:evT.l2Units, dcfcUnits:evT.dcfcUnits,
-                      l2Kw:evT.l2Kw, dcfcKw:evT.dcfcKw } : null,
+                      l2Kw:evT.l2Kw, dcfcKw:evT.dcfcKw,
+                      /* reported, but deliberately not added to the load above */
+                      futureUnits:evT.futureUnits||0, futureKw:evT.futureKw||0,
+                      futurePorts:evT.futurePorts||0 } : null,
     site: {
       /* the tab name is how the workbook tells the sites apart and how the
          Unique Site Name column of the UI application reads */
@@ -139918,6 +140024,347 @@ root.OmegaContextBuildings = {
     return out;
   }
 };
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script id="omega-ev-future-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  FUTURE-PROOFED EV STALLS
+ *
+ *  A site plan routinely shows more stalls than the customer is buying.
+ *  Two chargers go in now; two more are trenched, conduited and breakered
+ *  today so the concrete is never cut again, with the units bought in a
+ *  later phase. Until now the drawing had no way to say that, so four
+ *  boxes on the map meant four chargers everywhere it mattered:
+ *
+ *    · the legend read "Autel AC Pro x5" for two real chargers
+ *    · connected load counted every future stall at full kW, which walks
+ *      straight into the service sizing and the interconnection screen
+ *    · the cost workbook bought and installed every unit
+ *
+ *  The last one is the expensive mistake: it quotes hardware the customer
+ *  did not order. The second is the dangerous one, because an inflated
+ *  connected load can size a service or fail a screen on capacity that is
+ *  not actually being drawn.
+ *
+ *  ── WHAT A FUTURE STALL COSTS TODAY ────────────────────────────────
+ *
+ *  Not nothing, and not the charger. The make-ready that gets installed
+ *  now is itemised below rather than buried in a single rate, because the
+ *  trench and the conduit are ALREADY measured off the drawing and priced
+ *  by the conduit schedule. Charging a per-stall figure that silently
+ *  included them would double-count the most expensive part of the job.
+ *
+ *  So this allowance covers only what the conduit schedule does not: the
+ *  capped termination and pull string, the junction box, the spare
+ *  breaker and panel space, and the NEC 625 labelling — plus the labour
+ *  to set them. Everything is editable and every component is named on
+ *  the workbook line, so a reviewer can argue with a number instead of
+ *  guessing at one.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+/* Per-stall make-ready, EXCLUDING trench and conduit (measured separately
+   off the drawing). Dollars, except hours. */
+var EV_FUTURE = {
+  stubKit:  250,   /* capped conduit termination, pull string, weatherhead */
+  jbox:     120,   /* junction box at the stall                            */
+  breaker:  180,   /* spare breaker and the panel space it occupies        */
+  labeling:  40,   /* NEC 625 / stall marking                              */
+  laborHrs: 2.5    /* set, terminate, label \u2014 priced at the crew rate     */
+};
+
+function crewRate(){
+  try { if (typeof ELEC_BID !== 'undefined' && ELEC_BID.crewRate > 0) return ELEC_BID.crewRate; } catch (e) {}
+  return 125;
+}
+function perStall(){
+  var m = EV_FUTURE.stubKit + EV_FUTURE.jbox + EV_FUTURE.breaker + EV_FUTURE.labeling;
+  var l = EV_FUTURE.laborHrs * crewRate();
+  return { mat: m, labor: l, total: m + l, hrs: EV_FUTURE.laborHrs };
+}
+
+/* ── the flag ─────────────────────────────────────────────────────────
+   One predicate, used everywhere, so the legend, the load totals and the
+   workbook can never disagree about which stalls are real. */
+/* Chargers arrive from three different places and the first version only
+   knew two of them. Insert › EV Charger drops a plain EQ element with
+   eqId 'charger' — which is what most people actually use — so the
+   feature did nothing for the commonest case. */
+function isCharger(o){
+  if (!o) return false;
+  if (o.type === 'evgear' && o.evKind === 'charger') return true;   /* guided build   */
+  if (o.type === 'eq' && (o.eqId === 'charger' || o.eqId === 'evse')) return true;  /* Insert palette */
+  var k = o.kind;                                                    /* drawn shapes   */
+  return k === 'evpost' || k === 'evunit' || k === 'evl2' || k === 'evcab';
+}
+function isFuture(o){
+  if (!o) return false;
+  if (o.evFuture === true) return true;
+  /* _autoBollardsFor() already refuses to place bollards on a charger with
+     .futureProof set. That field predates this module, so both are read and
+     both are written — otherwise the drawing and the bollard logic would
+     hold different opinions about the same stall. */
+  if (o.futureProof === true) return true;
+  /* People already write it on the drawing. Honour an explicit "future"
+     in a label the user typed, because a plan that says FUTURE and a
+     model that charges for it is the disagreement this exists to end. */
+  var t = String(o.label || o.text || o.note || '');
+  return /\bfuture\b|\bfuture[- ]?proof/i.test(t);
+}
+function setFuture(o, v){
+  if (!o) return;
+  if (v) { o.evFuture = true; o.futureProof = true; }
+  else   { delete o.evFuture; delete o.futureProof; }
+  syncBollards(o, !!v);
+}
+
+/* ── BOLLARDS FOLLOW THE CHARGER ──────────────────────────────────────
+   A future stall has no equipment standing in it, so there is nothing for
+   a bollard to protect — and a bollard on the plan is a bollard in the
+   estimate and a hole in the concrete. Marking a charger future takes its
+   bollards away; unmarking puts them back.
+
+   Only AUTO-PLACED bollards are touched. Those carry ._autoFor pointing at
+   the charger that spawned them. A bollard someone dropped by hand is left
+   exactly where they put it — deleting a user's own object because of a
+   checkbox elsewhere is not a trade worth making, and they may have had a
+   reason for it. */
+function syncBollards(charger, future){
+  if (!charger || !charger.id) return 0;
+  var n = 0;
+  try {
+    if (future) {
+      var doomed = (S.elements || []).filter(function (e) {
+        return e && e.eqId === 'bollard' && e._autoFor === charger.id;
+      });
+      doomed.forEach(function (b) {
+        n++;
+        try {
+          if (typeof removeEl === 'function') removeEl(b.id);
+          else {
+            var i = S.elements.indexOf(b);
+            if (i >= 0) S.elements.splice(i, 1);
+            var d = document.querySelector('[data-elid="' + b.id + '"]');
+            if (d && d.parentNode) d.parentNode.removeChild(d);
+          }
+        } catch (e) {}
+      });
+      /* Let them be re-created if the stall is un-marked later. */
+      charger._bollardsDone = false;
+      /* The hatched protection island is drawn for the same reason the
+         bollards are; with nothing to protect it should not be on the plan. */
+      charger.bollardPad = false;
+    } else {
+      delete charger.bollardPad;
+      charger._bollardsDone = false;
+      try { if (typeof _autoBollardsFor === 'function') n = _autoBollardsFor(charger); } catch (e) {}
+    }
+  } catch (e) {}
+  return n;
+}
+
+/* Every charger on the drawing, from both stores, tagged. */
+function all(){
+  var out = [];
+  try {
+    (S.shapes || []).forEach(function (s) { if (isCharger(s)) out.push({ o: s, store: 'shape' }); });
+    (S.elements || []).forEach(function (e) { if (isCharger(e)) out.push({ o: e, store: 'element' }); });
+  } catch (e) {}
+  out.forEach(function (r) { r.future = isFuture(r.o); });
+  return out;
+}
+
+function counts(){
+  var c = { total: 0, installed: 0, future: 0, installedKw: 0, futureKw: 0,
+            installedPorts: 0, futurePorts: 0, byModel: {} };
+  all().forEach(function (r) {
+    var o = r.o;
+    var kw = +(o.kw || 0), ports = +(o.ports || 1);
+    /* An EQ charger has no evModel; its catalog label is the name the user
+       sees on the drawing and in the legend, so group on that. */
+    var model = o.evModel || o.model || o.label || o.evId || o.kind || 'EV charger';
+    if (!c.byModel[model]) c.byModel[model] = { installed: 0, future: 0, kw: kw };
+    c.total++;
+    if (r.future) {
+      c.future++; c.futureKw += kw; c.futurePorts += ports;
+      c.byModel[model].future++;
+    } else {
+      c.installed++; c.installedKw += kw; c.installedPorts += ports;
+      c.byModel[model].installed++;
+    }
+  });
+  return c;
+}
+
+/* Cost of the future stalls, itemised. */
+function futureCost(){
+  var c = counts(), p = perStall();
+  var n = c.future;
+  return {
+    stalls: n,
+    perStall: p,
+    mat: Math.round(p.mat * n),
+    labor: Math.round(p.labor * n),
+    hrs: +(p.hrs * n).toFixed(1),
+    total: Math.round(p.total * n),
+    components: [
+      { item: 'Capped conduit termination and pull string', each: EV_FUTURE.stubKit, qty: n, ext: EV_FUTURE.stubKit * n },
+      { item: 'Junction box at stall',                      each: EV_FUTURE.jbox,     qty: n, ext: EV_FUTURE.jbox * n },
+      { item: 'Spare breaker and panel space',              each: EV_FUTURE.breaker,  qty: n, ext: EV_FUTURE.breaker * n },
+      { item: 'NEC 625 labelling and stall marking',        each: EV_FUTURE.labeling, qty: n, ext: EV_FUTURE.labeling * n },
+      { item: 'Labour (' + EV_FUTURE.laborHrs + ' hr/stall at $' + crewRate() + '/hr)',
+        each: Math.round(p.labor), qty: n, ext: Math.round(p.labor * n) }
+    ],
+    excludes: 'Trench and conduit are measured off the drawing and priced in the conduit schedule; ' +
+              'they are not repeated here. Charger hardware and its commissioning are not included \u2014 ' +
+              'that is the later phase.'
+  };
+}
+
+/* A workbook line set: one row per component, so the customer sees what
+   the make-ready buys rather than a lump sum. */
+function workbookLines(){
+  var f = futureCost();
+  if (!f.stalls) return [];
+  var rate = crewRate();
+  return f.components.map(function (c) {
+    var isLabor = /Labour/.test(c.item);
+    return {
+      category: 'EV \u2014 future-proofing',
+      description: c.item + (isLabor ? '' : ' \u2014 future stall, charger by others'),
+      size: '', qty: c.qty, unit: 'stall',
+      mat: isLabor ? 0 : c.each,
+      lab: isLabor ? c.each : 0
+    };
+  });
+}
+
+/* ── mark the selection ───────────────────────────────────────────── */
+var lastBollardDelta = 0;
+
+function markSelected(v){
+  var id = null;
+  try { id = (typeof S !== 'undefined') ? S.sel : null; } catch (e) {}
+  if (!id) { toast('Select a charger on the map first, then press Future EV.'); return 0; }
+  var n = 0;
+  lastBollardDelta = 0;
+  all().forEach(function (r) {
+    if (r.o.id !== id) return;
+    var want = (v === undefined) ? !isFuture(r.o) : v;
+    var before = (S.elements || []).filter(function (e) {
+      return e && e.eqId === 'bollard' && e._autoFor === r.o.id; }).length;
+    setFuture(r.o, want);
+    var after = (S.elements || []).filter(function (e) {
+      return e && e.eqId === 'bollard' && e._autoFor === r.o.id; }).length;
+    lastBollardDelta += (after - before);
+    n++;
+  });
+  if (!n) { toast('The selected item is not an EV charger.'); return 0; }
+  refresh();
+  var c = counts();
+  var msg = c.installed + ' charger' + (c.installed === 1 ? '' : 's') + ' to be installed, ' +
+            c.future + ' future-proofed.';
+  if (lastBollardDelta) {
+    msg += ' ' + (lastBollardDelta > 0
+      ? lastBollardDelta + ' bollard' + (lastBollardDelta === 1 ? '' : 's') + ' restored.'
+      : Math.abs(lastBollardDelta) + ' bollard' + (Math.abs(lastBollardDelta) === 1 ? '' : 's') +
+        ' removed — nothing to protect until the unit is installed.');
+  }
+  toast(msg);
+  return n;
+}
+function markAll(v){
+  var n = 0;
+  all().forEach(function (r) { setFuture(r.o, v); n++; });
+  refresh();
+  return n;
+}
+
+function refresh(){
+  try { if (typeof renderAll === 'function') renderAll(); } catch (e) {}
+  try { if (typeof renderLegend === 'function') renderLegend(); } catch (e) {}
+  try { if (typeof render === 'function') render(); } catch (e) {}
+  try { if (typeof pushHist === 'function') pushHist(); } catch (e) {}
+  try { if (typeof _setSaved === 'function') _setSaved('unsaved'); } catch (e) {}
+}
+
+function toast(msg){
+  try {
+    var d = document.getElementById('omega-evf-toast');
+    if (!d) {
+      d = document.createElement('div');
+      d.id = 'omega-evf-toast';
+      d.style.cssText = 'position:fixed;left:50%;bottom:34px;transform:translateX(-50%);' +
+        'background:#132844;border:1px solid #1E3A5F;border-radius:9px;padding:10px 15px;' +
+        'z-index:100050;font:600 12px system-ui,-apple-system,sans-serif;color:#E2EEF9;' +
+        'box-shadow:0 14px 40px rgba(0,0,0,.55);max-width:min(460px,92vw)';
+      document.body.appendChild(d);
+    }
+    d.textContent = msg;
+    clearTimeout(d.__t);
+    d.__t = setTimeout(function(){ if (d.parentNode) d.parentNode.removeChild(d); }, 4200);
+  } catch (e) {}
+}
+
+root.OmegaEVFuture = {
+  rates: EV_FUTURE,
+  isCharger: isCharger, isFuture: isFuture, setFuture: setFuture,
+  all: all, counts: counts, perStall: perStall, syncBollards: syncBollards,
+  cost: futureCost, workbookLines: workbookLines,
+  mark: markSelected, markAll: markAll, refresh: refresh,
+  setRate: function (k, v) { if (EV_FUTURE.hasOwnProperty(k) && isFinite(+v)) { EV_FUTURE[k] = +v; refresh(); } },
+  summary: function(){
+    var c = counts(), f = futureCost();
+    if (!c.total) return 'No EV chargers on the drawing.';
+    var s = c.installed + ' to install';
+    if (c.installedKw) s += ' (' + Math.round(c.installedKw) + ' kW)';
+    if (c.future) {
+      s += ' \u00b7 ' + c.future + ' future-proofed';
+      if (c.futureKw) s += ' (' + Math.round(c.futureKw) + ' kW when built, not counted as load today)';
+      s += ' \u00b7 make-ready $' + f.total.toLocaleString();
+    }
+    return s;
+  }
+};
+
+/* ── ribbon button, next to the EV tools ──────────────────────────── */
+(function addButton(){
+  if (typeof document === 'undefined') return;
+  var tries = 0;
+  var iv = setInterval(function(){
+    if (++tries > 80) { clearInterval(iv); return; }
+    try {
+      if (document.getElementById('rb-ev-future')) { clearInterval(iv); return; }
+      var all2 = document.querySelectorAll('#ribbon .rbtn'), host = null;
+      for (var i = 0; i < all2.length; i++) {
+        var oc = all2[i].getAttribute('onclick') || '';
+        /* Insert › EV Charger first — that is the button beside which this
+           makes sense and the tab the user is on when placing chargers.
+           The EV Charging panel is the fallback. */
+        if (/rbInsert\(['"]charger['"]\)/.test(oc)) { host = all2[i]; break; }
+        if (!host && /openEvChargerDialog|stampEV/.test(oc)) host = all2[i];
+      }
+      if (!host || !host.parentNode) return;
+      var b = document.createElement('button');
+      b.className = host.className || 'rbtn';
+      b.id = 'rb-ev-future';
+      b.title = 'Mark the selected EV charger as future-proofed \u2014 trench, conduit, junction box and ' +
+                'breaker installed now, unit bought later. It drops out of connected load and out of ' +
+                'the charger hardware cost, and the make-ready is priced instead.';
+      b.setAttribute('onclick', 'OmegaEVFuture.mark()');
+      b.innerHTML = '<span class="rb-ico">\u25F1</span><span class="rb-lbl">Future<br>EV</span>';
+      host.parentNode.insertBefore(b, host.nextSibling);
+      clearInterval(iv);
+    } catch (e) { clearInterval(iv); }
+  }, 250);
+})();
+
+if (root.console && console.info) {
+  console.info('[EV Future] ready \u2014 select a charger and press Insert \u203a Future EV, or OmegaEVFuture.mark()');
+}
 
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
