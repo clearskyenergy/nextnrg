@@ -9402,6 +9402,29 @@ const SNAP_R=40;
 function getCenter(id){
   const el=S.elements.find(e=>e.id===id);
   const dom=document.querySelector(`[data-elid="${id}"]`);
+
+  /* SHAPES CAN BE CONDUIT HOSTS TOO.
+
+     This looked only in S.elements and returned null for anything else,
+     so every conduit bonded to a SHAPE silently stopped being re-bonded.
+     The guided build's PV leg is exactly that: when it snaps to an array
+     you already drew, the run is bonded to a dersolar SHAPE, not an
+     element. updateAttached() then found no centre, left the endpoint
+     where it was, and the line jumped away from the array on the next
+     pan, zoom or move — the array reprojected and the conduit end did not.
+
+     Shapes have no [data-elid] node, so the DOM path cannot serve them;
+     _elBox already knows how to centre one, in the same model pixel space
+     the conduit points use. */
+  if(!el){
+    try{
+      const sh=(S.shapes||[]).find(s=>s&&s.id===id);
+      if(sh && typeof _elBox==='function'){
+        const b=_elBox(sh);
+        if(b && isFinite(b.cx) && isFinite(b.cy)) return { x:b.cx, y:b.cy };
+      }
+    }catch(e){}
+  }
   if(!el||!dom)return null;
   const r=dom.getBoundingClientRect(),sr=document.getElementById('sc').getBoundingClientRect();
   var _z=(window._plotView&&window._plotView.z)?window._plotView.z:1;
@@ -61067,6 +61090,25 @@ function _dcfcConduitAlongRun(el, run, snap, condType, label){
   if(!el||!run||!run.pts||run.pts.length<2) return null;
   var b=(typeof _elBox==='function')?_elBox(el):null;
   var cx=b?b.cx:el.x, cy=b?b.cy:el.y;
+
+  /* A drawn PV array is a POLYGON. _elBox falls back to pts[0] plus a
+     nominal box for a shape with no lf/wf, which puts the tie point at a
+     corner rather than in the array — and if the shape carries neither,
+     at NaN, which stamps a broken anchor and is the other half of the
+     jumping. Use the polygon's own centroid when there is one. */
+  try{
+    if((!isFinite(cx)||!isFinite(cy)) || (el.pts && el.pts.length>2)){
+      if(typeof _shapeCenter==='function'){
+        var _sc=_shapeCenter(el);
+        if(_sc && isFinite(_sc.x) && isFinite(_sc.y)){ cx=_sc.x; cy=_sc.y; }
+      }
+    }
+  }catch(e){}
+  if(!isFinite(cx)||!isFinite(cy)){
+    /* Never stamp an anchor on a non-number. Fall back to the snap point,
+       which is at least on the trench. */
+    cx=snap.x; cy=snap.y;
+  }
   var pts=[{x:cx,y:cy,elId:el.id},{x:snap.x,y:snap.y}];
   for(var i=snap.seg-1;i>=0;i--){ pts.push({x:run.pts[i].x,y:run.pts[i].y}); }
   var c={ id:uid(), condType:condType, pts:pts, pxLen:_polyLen(pts),
@@ -61494,14 +61536,57 @@ function _bgbSeq(){
            : tie==='utilxfmr' ? ['service','utilxfmr']
            : null;
 
-  return base.filter(function(k){
+  var seq=base.filter(function(k){
     if(upTo && upTo.indexOf(k)>=0) return false;
     if(k==='xfmr'  && BGB.incXfmr)  return false;
     if(k==='disco' && BGB.incDisco) return false;
     return true;
   });
+
+  /* MORE THAN ONE PV SYSTEM.
+     A site often carries several arrays that cannot share an inverter — a
+     roof and a carport, or two fields either side of a road. Each needs its
+     own inverter next to its own array, and its own DC run between them;
+     only the AC leg back to the switchgear is common. So the inverter and
+     array steps repeat as a PAIR, which keeps each DC run short and local
+     rather than dragging one home run across the site.
+
+     The pair repeats in place so the order stays inverter, array, inverter,
+     array — walking the user around one system at a time instead of
+     placing every inverter and then hunting for which array each belongs
+     to. Same reasoning as the charger loop. */
+  var n=Math.max(1, +BGB.pvSystems || 1);
+  if(n>1 && seq.indexOf('pvinv')>=0 && seq.indexOf('pv')>=0){
+    var out=[], i;
+    for(i=0;i<seq.length;i++){
+      if(seq[i]==='pvinv' && seq[i+1]==='pv'){
+        for(var r=0;r<n;r++) out.push('pvinv','pv');
+        i++;                       /* the 'pv' is consumed by the loop */
+      } else out.push(seq[i]);
+    }
+    seq=out;
+  }
+  return seq;
 }
 function _bgbCurKind(){ var sq=_bgbSeq(); return BGB.stepIx<sq.length ? sq[BGB.stepIx] : null; }
+
+/* Which PV system the current step belongs to, counting the pvinv/pv pairs
+   ahead of it. With several systems on a site, "PV Inverter" three times
+   over is not a drawing anybody can read — and the estimate cannot tell
+   which array a run belongs to either. */
+function _bgbPvSysNo(ix){
+  try{
+    var sq=_bgbSeq(), n=0, i;
+    if((+BGB.pvSystems||1) < 2) return 0;
+    for(i=0;i<=Math.min(ix,sq.length-1);i++) if(sq[i]==='pvinv') n++;
+    return n;
+  }catch(e){ return 0; }
+}
+function _bgbPvSuffix(){
+  var n=_bgbPvSysNo(BGB.stepIx);
+  return n ? ' \u00b7 System '+n : '';
+}
+window._bgbPvSysNo=_bgbPvSysNo;
 function _bgbLegCond(kind){ return (BGB_PRESETS[BGB.mode]||BGB_PRESETS.BTM).legs[kind]||'EV-FEEDER'; }
 function _bgbLegColor(kind){ var c=_bgbLegCond(kind); return c==='EV-MAIN'?'#FF0000':c==='EV-FEEDER'?'#FFFF00':c==='EV-BRANCH'?'#00FFFF':c==='EMT-BMS'?'#2563EB':c==='MV-UG'?'#EF4444':'#00FF00'; }
 
@@ -61806,6 +61891,7 @@ function _bgbStartPlacing(){
   /* Seed the tie-in so the first drawn leg has something real to start
      from. Without this the sequence would begin with a step whose parent
      was never placed, and the run would start at nothing. */
+  BGB.pvSysIx=0;
   BGB.tieKind=null; BGB.tieEl=null;
   try{
     var _tieId=window.__omegaTieFrom; window.__omegaTieFrom=null;
@@ -61991,12 +62077,16 @@ function placeBgbAt(p){
       if(_arr && _arr.shape){
         var _sh=_arr.shape;
         _sh._bgbUsedAsPv=true; _sh.bgbRole='pv';
+        var _sysN=_bgbPvSysNo(BGB.stepIx);
+        if(_sysN){ _sh.bgbPvSys=_sysN;
+          if(_sh.label && !/System \d/.test(_sh.label)) _sh.label=_sh.label+' \u00b7 System '+_sysN; }
         BGB.placed[kind]=_sh; BGB.lastEl=_sh;
         /* run the conduit from the trench to the array's connection point */
         try{ _dcfcConduitAlongRun(_sh, run, snap, _bgbLegCond(kind), (BGB_LEGNAME[kind]||n.label)); }catch(e){}
         /* mark the connection visibly + tell the user it snapped */
         try{ if(typeof renderShape==='function') renderShape(_sh); }catch(e){}
-        if(typeof _evBanner==='function') _evBanner('\u2713 Connected to your drawn PV array \u2014 no duplicate placed.');
+        if(typeof _evBanner==='function') _evBanner('\u2713 Connected to your drawn PV array'
+          + (_sysN? ' (System '+_sysN+' of '+(+BGB.pvSystems||1)+')' : '') + ' \u2014 no duplicate placed.');
         if(typeof _reRenderEl==='function' && _sh.id) { try{ _reRenderEl(_sh.id); }catch(e){} }
         BGB.stepIx++;
         if(BGB.stepIx>=sq.length){ _bgbFinish(); if(typeof updateSummaryPanel==='function') updateSummaryPanel(); return; }
@@ -62100,6 +62190,14 @@ function placeBgbAt(p){
       el.loadPue  = (BGB.loadKind==='datacenter') ? BGB.loadPue : null;
       el.loadHours= _bgbLoadHours();
     }
+    /* Tag and name the PV pair by system before it is filed. */
+    try{
+      if(kind==='pvinv'||kind==='pv'){
+        var _sn=_bgbPvSysNo(BGB.stepIx);
+        if(_sn){ el.bgbPvSys=_sn;
+          if(el.label && !/System \d/.test(el.label)) el.label=el.label+' \u00b7 System '+_sn; }
+      }
+    }catch(e){}
     BGB.placed[kind]=el; BGB.lastEl=el;
     _dcfcConduitAlongRun(el, run, snap, _bgbLegCond(kind), (BGB_LEGNAME[kind]||n.label));
     /* Bollards are protection detail, not topology - off unless asked for. */
@@ -74855,6 +74953,11 @@ if (_omPrevOmegaSite) { Object.keys(_omPrevOmegaSite).forEach(function (k) {
       +       '<input id="sos-pv" type="number" min="0" step="10" value="0" oninput="_sosSpec()"></div>'
       +   '</div>'
       +   '<div class="sos-two">'
+      +     '<div><label for="sos-pvsys">PV systems</label>'
+      +       '<input id="sos-pvsys" type="number" min="1" max="12" step="1" value="1" oninput="_sosSpec()"></div>'
+      +     '<div></div>'
+      +   '</div>'
+      +   '<div class="sos-two">'
       +     '<div><label for="sos-load">Building load (kW)</label>'
       +       '<input id="sos-load" type="number" min="0" step="10" value="" '
       +         'placeholder="optional" oninput="_sosSpec()"></div>'
@@ -74982,6 +75085,13 @@ if (_omPrevOmegaSite) { Object.keys(_omPrevOmegaSite).forEach(function (k) {
       if(typeof BGB!=='undefined'){
         BGB.mode='SOLAR_BESS';
         BGB.model=k; BGB.units=units; BGB.pvKw=pv;
+        /* Separate roofs, separate carports, separate fields — each wants its
+           own inverter beside its own array, exactly as a charger bank wants
+           its own runs. One number, and the sequence repeats the pair. */
+        try{
+          var _ns=parseInt((document.getElementById('sos-pvsys')||{}).value,10)||1;
+          BGB.pvSystems=Math.max(1,Math.min(12,_ns));
+        }catch(e){ BGB.pvSystems=1; }
         /* Typed here, so the loads step does not ask again. Facility load is
            what the design is sized against; the IT figure and PUE are kept so
            a data-centre sheet can show how it was derived. */
