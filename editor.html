@@ -27211,6 +27211,23 @@ function computeInterconnectScore(){
     capScore = ratio>=2 ? 95 : ratio>=1.2 ? 78 : ratio>=1 ? 60 : ratio>=0.6 ? 38 : 18;
     capDetail = Math.round(D.hostingCapacityKW).toLocaleString()+' kW feeder headroom vs '+Math.round(sysKW).toLocaleString()+' kW system';
     capReal = true;
+  } else if(D.gridAtlas && D.gridAtlas.nearestSubstationKm!=null){
+    /* A MEASURED substation distance beats a size heuristic. This is not
+       hosting capacity — proximity is not headroom, and a site can sit beside
+       a substation with nothing available in it — so it does not claim to be.
+       But "the nearest substation is 1.4 km away" is a fact somebody can
+       check on a map, and the fallback below is a guess from system size
+       alone. The curve is steep early because that is where the
+       interconnection cost lives: 0.5 km versus 2 km is most of the spend,
+       while 20 versus 30 km barely differ because both need a line. */
+    var _km = +D.gridAtlas.nearestSubstationKm;
+    capScore = _km<=0.8 ? 92 : _km<=2 ? 80 : _km<=5 ? 62 : _km<=10 ? 44 : _km<=20 ? 30 : 20;
+    var _kv = D.gridAtlas.nearestSubstationKv;
+    capDetail = 'Nearest substation ' + _km.toFixed(1) + ' km'
+              + (_kv ? ' at ' + _kv + ' kV' : '')
+              + (D.gridAtlas.nearestSubstationName ? ' (' + D.gridAtlas.nearestSubstationName + ')' : '')
+              + ' — Grid Atlas. Proximity, not available headroom.';
+    capReal = true;
   } else {
     // Heuristic: smaller systems interconnect more easily (fast-track thresholds).
     capScore = sysKW<=0 ? 55 : sysKW<250 ? 82 : sysKW<1000 ? 68 : sysKW<5000 ? 50 : 34;
@@ -140450,6 +140467,466 @@ root.OmegaEVFuture = {
 
 if (root.console && console.info) {
   console.info('[EV Future] ready \u2014 select a charger and press Insert \u203a Future EV, or OmegaEVFuture.mark()');
+}
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script id="omega-grid-prescreen-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  GRID ATLAS PRE-SCREEN  —  Analyze tab
+ *
+ *  The portfolio console already runs every deal through Grid Atlas at
+ *  screening. The editor is where somebody is actually looking at the
+ *  parcel, and it had no way to ask the same question — so the grid answer
+ *  lived in a different tool from the site design it decides.
+ *
+ *  This calls THE SAME SERVICE the console calls, /api/grid-atlas, with the
+ *  same body and the same contract. Not a reimplementation. The file
+ *  grid-atlas.js says it plainly and it is right: two copies of one scoring
+ *  model will disagree within a month, and the disagreement surfaces as two
+ *  different numbers for one site with nobody able to say which is correct.
+ *
+ *  ── ONE ADVANTAGE THE EDITOR HAS ───────────────────────────────────
+ *
+ *  It does not need to geocode. The console starts from a free-text address
+ *  and has to turn it into a point, which is most of the complexity in the
+ *  service and the source of its "location is approximate" findings. Here
+ *  the site is already on a map at a known latitude and longitude, so the
+ *  coordinates go straight across and the answer is for the parcel rather
+ *  than for whatever the geocoder made of the street address.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+function cfg(){
+  var c = {};
+  try { c = ((root.CLEARSKY_CONFIG || {}).portfolio || {}).gridAtlas || {}; } catch (e) {}
+  return {
+    /* Grid Atlas lives in the OPS deployment. A relative path 404s from the
+       editor's host, so an absolute default \u2014 same reasoning config.js
+       gives for the page URL. Override with OmegaGridPrescreen.setService(). */
+    serviceUrl: localGet('omega.gridatlas.service') || c.serviceUrl || 'https://osa.clearskyomega.com/api/grid-atlas',
+    pageUrl:    c.url || 'https://tools.csebuilders.com/grid-atlas.html',
+    org:        c.org || 'clearsky-usa.com',
+    threshold:  c.prescreenThreshold == null ? 35 : c.prescreenThreshold,
+    /* config.js turns this on for the console at screening; the editor's
+       equivalent trigger is the site gaining coordinates. */
+    autoRun:    c.autoRunOnScreening !== false
+  };
+}
+function localGet(k){ try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+
+var LAST = null, BUSY = false;
+
+function site(){
+  var lat = null, lng = null;
+  try { var g = omegaGeo(); if (g && isFinite(+g.lat) && +g.lat !== 0) { lat = +g.lat; lng = +g.lng; } } catch (e) {}
+  var addr = '';
+  try { addr = (S && (S.siteAddr || S.address || S.projName)) || ''; } catch (e) {}
+  var mw = 0;
+  try {
+    var t = (typeof derTotals === 'function') ? derTotals() : null;
+    if (t) mw = ((+t.solarKwDc || 0) + (+t.windKw || 0) + (+t.altKw || 0)) / 1000;
+    if (typeof _ppCollectFleet === 'function') {
+      var f = _ppCollectFleet();
+      mw = Math.max(mw, (+f.totalKw || 0) / 1000);
+    }
+  } catch (e) {}
+  return { lat: lat, lng: lng, address: addr, sizeMw: +mw.toFixed(3) };
+}
+
+/* ── run it ─────────────────────────────────────────────────────────── */
+function run(cb){
+  cb = cb || function(){};
+  if (BUSY) return cb(null, 'already running');
+  var s = site(), C = cfg();
+  if (s.lat == null && !s.address) {
+    return cb(null, 'This site has no coordinates and no address. Place or lock the map first.');
+  }
+  BUSY = true;
+  paint();
+
+  var body = { lat: s.lat, lng: s.lng, address: s.address, sizeMw: s.sizeMw,
+               dealId: (function(){ try { return new URLSearchParams(location.search).get('id') || ''; } catch (e) { return ''; } })() };
+
+  var done = false;
+  var to = setTimeout(function(){
+    if (done) return; done = true; BUSY = false;
+    LAST = null;
+    paint('Grid Atlas did not answer in 20 seconds. The service may not be deployed on this host.');
+    cb(null, 'timeout');
+  }, 20000);
+
+  fetch(C.serviceUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body) })
+    .then(function (r) {
+      return r.json().catch(function(){ return null; }).then(function (j) {
+        if (!r.ok) {
+          var m = (j && (j.error || j.detail)) || ('Grid Atlas returned ' + r.status);
+          if (r.status === 404) m = 'No Grid Atlas service at ' + C.serviceUrl +
+            '. It lives in the OPS deployment \u2014 set the full URL with ' +
+            'OmegaGridPrescreen.setService(\'https://\u2026/api/grid-atlas\'), or use Open Grid Atlas below.';
+          var e = new Error(m); e.build = j && j.build; throw e;
+        }
+        return j;
+      });
+    })
+    .then(function (j) {
+      if (done) return; done = true; clearTimeout(to); BUSY = false;
+      LAST = j; LAST.ranAt = Date.now(); LAST.site = s;
+      /* A manual run stores exactly like an automatic one — same path, same
+         rules — so the two can never leave the project in different states. */
+      try { saveToProject(j); feedSiteScore(j); } catch (e) {}
+      paint();
+      cb(j, null);
+    })
+    .catch(function (e) {
+      if (done) return; done = true; clearTimeout(to); BUSY = false;
+      LAST = null;
+      paint((e && e.message) || 'Grid Atlas could not be reached.');
+      cb(null, (e && e.message) || 'failed');
+    });
+}
+
+/* ── the verdict ─────────────────────────────────────────────────────
+   Deliberately refuses to produce one when the score is null. This is the
+   whole lesson of the file: with the layer lookups stubbed, a Hillside NJ
+   site that Grid Atlas rates 56 scored 21 here and was marked FAIL. The
+   number was confident, precise and fabricated. No score means no verdict,
+   and the panel says which layers were not measured. */
+function verdict(j){
+  if (!j || j.score == null) return { state: 'unscored', label: 'Not scored' };
+  var t = cfg().threshold;
+  return j.score >= t
+    ? { state: 'pass', label: 'Pass \u2014 worth screening', threshold: t }
+    : { state: 'fail', label: 'Below the pre-screen bar', threshold: t };
+}
+function criterion(j){
+  if (!j || j.score == null) return null;
+  return Math.round(j.score / 10);   /* 0-100 measurement -> the 0-10 criterion */
+}
+
+/* ── panel ───────────────────────────────────────────────────────────── */
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+function open(){
+  var h = document.getElementById('omega-gridatlas-panel');
+  if (h) { h.remove(); return; }
+  h = document.createElement('div');
+  h.id = 'omega-gridatlas-panel';
+  h.setAttribute('style', 'position:fixed;inset:0;background:rgba(6,12,22,.82);z-index:100002;' +
+    'display:flex;align-items:center;justify-content:center;padding:18px');
+  h.onclick = function (e) { if (e.target === h) h.remove(); };
+  h.innerHTML = '<div id="ga-card" style="background:#0F1D30;border:1px solid #1E3A5F;border-radius:12px;' +
+    'max-width:820px;width:100%;max-height:92vh;display:flex;flex-direction:column;' +
+    'box-shadow:0 24px 70px rgba(0,0,0,.65);font-family:system-ui,-apple-system,Segoe UI,sans-serif">' +
+    '<div style="padding:15px 20px;border-bottom:1px solid #1E3A5F;display:flex;align-items:center;justify-content:space-between">' +
+    '<div><div style="font-size:9px;font-weight:700;letter-spacing:1.6px;color:#FBBF24;text-transform:uppercase">Grid Atlas</div>' +
+    '<div style="font-size:16px;font-weight:800;color:#E2EEF9">Interconnection pre-screen</div></div>' +
+    '<button onclick="document.getElementById(\'omega-gridatlas-panel\').remove()" style="background:none;border:none;' +
+    'color:#64748B;font-size:22px;cursor:pointer;line-height:1;padding:0 4px">\u00d7</button></div>' +
+    '<div id="ga-body" style="padding:18px 20px;overflow:auto;flex:1 1 auto"></div></div>';
+  document.body.appendChild(h);
+  paint();
+  if (!LAST && !BUSY) run();
+}
+
+function stat(label, value, sub, col){
+  return '<div style="background:#0B1626;border:1px solid #1E3A5F;border-radius:8px;padding:10px 12px">' +
+    '<div style="font-size:8.5px;color:#64748B;text-transform:uppercase;letter-spacing:.7px;font-weight:700">' + esc(label) + '</div>' +
+    '<div style="font-size:20px;font-weight:800;color:' + (col || '#E2EEF9') + ';margin-top:3px">' + value + '</div>' +
+    (sub ? '<div style="font-size:9.5px;color:#64748B;margin-top:2px;line-height:1.4">' + sub + '</div>' : '') + '</div>';
+}
+function rows(list, cols){
+  if (!list || !list.length) return '<div style="font-size:11px;color:#64748B;padding:6px 0">None returned.</div>';
+  return '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#CBD5E1">' +
+    list.slice(0, 6).map(function (r) {
+      return '<tr style="border-top:1px solid #1E3A5F">' + cols.map(function (c) {
+        var v = r[c.k];
+        return '<td style="padding:5px 7px' + (c.r ? ';text-align:right' : '') + '">' +
+               esc(v == null ? '\u2014' : v) + (c.u && v != null ? ' ' + c.u : '') + '</td>';
+      }).join('') + '</tr>';
+    }).join('') + '</table>';
+}
+
+function paint(err){
+  var b = document.getElementById('ga-body');
+  if (!b) return;
+  var C = cfg(), s = site();
+
+  if (BUSY) {
+    b.innerHTML = '<div style="text-align:center;padding:52px 20px;color:#8FA3B8;font-size:13px">' +
+      '<div style="font-size:28px;margin-bottom:10px">\u26a1</div>Asking Grid Atlas\u2026' +
+      '<div style="font-size:10.5px;color:#475569;margin-top:8px">' +
+      (s.lat != null ? s.lat.toFixed(5) + ', ' + s.lng.toFixed(5) + ' \u2014 coordinates sent directly, no geocoding'
+                     : esc(s.address)) + '</div></div>';
+    return;
+  }
+
+  var h = '';
+  if (err) {
+    h += '<div style="background:#1A1210;border:1px solid #7C2D12;border-radius:8px;padding:14px;' +
+      'color:#FDBA74;font-size:12px;line-height:1.6;margin-bottom:14px">' + esc(err) + '</div>';
+  }
+
+  if (LAST) {
+    var v = verdict(LAST), cr = criterion(LAST);
+    var vc = v.state === 'pass' ? '#4ADE80' : v.state === 'fail' ? '#F97316' : '#8FA3B8';
+    h += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">' +
+      stat('Grid score', LAST.score == null ? '\u2014' : LAST.score + '<span style="font-size:12px;color:#64748B">/100</span>',
+           LAST.model || '', LAST.score == null ? '#8FA3B8' : '#FBBF24') +
+      stat('Pre-screen', v.label, v.threshold != null ? 'bar is ' + v.threshold + '/100' : 'no score, so no verdict', vc) +
+      stat('Interconnect criterion', cr == null ? '\u2014' : cr + '<span style="font-size:12px;color:#64748B">/10</span>',
+           'prefills the scoring form', cr == null ? '#8FA3B8' : '#E2EEF9') +
+      '</div>';
+
+    if (LAST.summary) {
+      h += '<div style="font-size:12px;color:#CBD5E1;line-height:1.6;margin-bottom:12px">' + esc(LAST.summary) + '</div>';
+    }
+
+    /* The unscored count is the headline when it is non-zero. */
+    if (LAST.unscored > 0) {
+      var miss = (LAST.criteria || []).filter(function (r) { return r.unscored; })
+                   .map(function (r) { return r.key; });
+      h += '<div style="background:#1A1408;border:1px solid #78350F;border-radius:8px;padding:12px;' +
+        'font-size:11.5px;color:#FBBF24;line-height:1.6;margin-bottom:14px">\u26a0 ' +
+        LAST.unscored + ' of ' + (LAST.criteria || []).length + ' measurements were not taken' +
+        (miss.length ? ' (' + esc(miss.join(', ')) + ')' : '') + '. ' +
+        (LAST.score == null
+          ? 'Nothing was measured, so no score was produced and no verdict was written. That is deliberate \u2014 ' +
+            'a score built from stubbed lookups is confident, precise and fabricated.'
+          : 'An unmeasured layer drops out of the calculation rather than counting against the site, ' +
+            'so the score reflects only what was actually looked at.') +
+        ' The substation, line and plant lookups live in <code style="color:#FDBA74">api/grid-atlas.js</code> ' +
+        'under \u26a0 DATA SOURCE.</div>';
+    }
+
+    if ((LAST.findings || []).length) {
+      h += '<div style="font-size:11px;font-weight:700;color:#FBBF24;text-transform:uppercase;letter-spacing:.7px;margin:14px 0 6px">Findings</div>';
+      LAST.findings.forEach(function (f) {
+        var c = f.severity === 'risk' ? '#F97316' : f.severity === 'good' ? '#4ADE80' : '#8FA3B8';
+        h += '<div style="font-size:11.5px;color:' + c + ';line-height:1.55;margin:3px 0">\u2022 ' + esc(f.text) + '</div>';
+      });
+    }
+
+    h += '<div style="font-size:11px;font-weight:700;color:#FBBF24;text-transform:uppercase;letter-spacing:.7px;margin:16px 0 4px">Nearest substations</div>' +
+      rows(LAST.substations, [{k:'name'},{k:'voltageKv',u:'kV',r:1},{k:'distanceKm',u:'km',r:1},{k:'owner'}]);
+    h += '<div style="font-size:11px;font-weight:700;color:#FBBF24;text-transform:uppercase;letter-spacing:.7px;margin:16px 0 4px">Transmission lines</div>' +
+      rows(LAST.lines, [{k:'name'},{k:'voltageKv',u:'kV',r:1},{k:'distanceKm',u:'km',r:1}]);
+    h += '<div style="font-size:11px;font-weight:700;color:#FBBF24;text-transform:uppercase;letter-spacing:.7px;margin:16px 0 4px">Generating plants nearby</div>' +
+      rows(LAST.plants, [{k:'name'},{k:'fuel'},{k:'capacityMw',u:'MW',r:1},{k:'distanceKm',u:'km',r:1}]);
+
+    h += '<div style="font-size:9.5px;color:#475569;margin-top:16px;line-height:1.55;border-top:1px solid #1E3A5F;padding-top:10px">' +
+      'Service build ' + esc(LAST.build || 'unknown') + ' \u00b7 model ' + esc(LAST.model || '\u2014') +
+      ' \u00b7 ' + (LAST.lat != null ? (+LAST.lat).toFixed(5) + ', ' + (+LAST.lng).toFixed(5) : 'no point') +
+      (LAST.geocode ? ' \u00b7 geocode ' + esc(LAST.geocode.precision || '') : ' \u00b7 coordinates from the drawing, not geocoded') +
+      '. Grid proximity is one input; a site can sit beside a substation with no capacity in it.</div>';
+  } else if (!err) {
+    h += '<div style="font-size:12px;color:#8FA3B8;line-height:1.6">Ready to run against ' +
+      (s.lat != null ? '<b style="color:#E2EEF9">' + s.lat.toFixed(5) + ', ' + s.lng.toFixed(5) + '</b>'
+                     : esc(s.address) || 'this site') + '.</div>';
+  }
+
+  h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:18px;' +
+    'padding-top:14px;border-top:1px solid #1E3A5F">' +
+    '<span style="font-size:9.5px;color:#475569">' + esc(C.serviceUrl) + '</span><div>' +
+    '<button onclick="OmegaGridPrescreen.openPage()" style="background:#1E3A5F;border:none;color:#E2EEF9;' +
+    'border-radius:6px;padding:8px 13px;font-size:11.5px;font-weight:700;cursor:pointer;margin-left:8px">Open Grid Atlas</button>' +
+    '<button onclick="OmegaGridPrescreen.run()" style="background:#B45309;border:none;color:#FFF7E6;' +
+    'border-radius:6px;padding:8px 14px;font-size:11.5px;font-weight:700;cursor:pointer;margin-left:8px">\u26a1 Run pre-screen</button>' +
+    '</div></div>';
+  b.innerHTML = h;
+}
+
+/* The fallback the adapter describes: open the real tool with the site
+   prefilled, so the worst case is one click rather than a dead button. */
+function openPage(){
+  var C = cfg(), s = site(), q = [];
+  ['address','q','search','site'].forEach(function (k) { q.push(k + '=' + encodeURIComponent(s.address || '')); });
+  if (s.lat != null) q.push('lat=' + s.lat, 'lng=' + s.lng);
+  q.push('org=' + encodeURIComponent(C.org));
+  try { root.open(C.pageUrl + (C.pageUrl.indexOf('?') >= 0 ? '&' : '?') + q.join('&'), '_blank', 'noopener'); } catch (e) {}
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  AUTOMATION  —  the same shape the portfolio console uses
+ *
+ *  In the console, Grid Atlas runs the moment a deal reaches screening:
+ *  silently, because a failure there must not look like the assignment
+ *  failed; automatically, because "it costs nothing and having it there
+ *  already is the difference between a screening that happens and one
+ *  that gets deferred."
+ *
+ *  The editor's equivalent moment is the site acquiring coordinates. Once
+ *  the map is placed or locked there is a point to measure, and that is
+ *  when the lookup the designer would do by hand becomes free.
+ *
+ *  Four rules carried across from portfolio-data.js, all of them earned:
+ *
+ *   1 STORE IT AS A MEASUREMENT. It goes on the project as S.grid,
+ *     separate from the site score. A substation 1.4 km away is a fact;
+ *     the score is a judgement. Re-scoring must not change the fact.
+ *
+ *   2 NO SCORE, NO VERDICT. gridPrescreen() returns null when score is
+ *     null. Writing "fail" from an absent measurement is the exact
+ *     failure that marked a workable NJ site as not viable.
+ *
+ *   3 NEVER OVERWRITE A PERSON. A prescreen someone entered by hand
+ *     outranks a distance measurement. Only a previous grid-atlas
+ *     verdict gets replaced.
+ *
+ *   4 IT IS AN INPUT, NOT THE ANSWER. It prefills the Grid Capacity
+ *     factor and is labelled as measured; a site can sit beside a
+ *     substation with no capacity in it.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+function stamp(){ return new Date().toISOString(); }
+
+/* Rule 2 and 3 together. */
+function prescreenFor(g){
+  if (!g || g.score == null) return null;
+  var t = cfg().threshold;
+  return {
+    verdict: g.score >= t ? 'pass' : 'fail',
+    reason: (g.summary || 'Grid Atlas') + ' \u2014 scored ' + g.score + ' against a bar of ' + t,
+    source: 'grid-atlas', at: stamp()
+  };
+}
+
+function saveToProject(g){
+  try {
+    if (typeof S === 'undefined') return;
+    S.grid = {
+      score: g.score, summary: g.summary || '',
+      substations: g.substations || [], lines: g.lines || [], plants: g.plants || [],
+      findings: g.findings || [], criteria: g.criteria || [], unscored: g.unscored,
+      lat: g.lat, lng: g.lng, model: g.model, build: g.build,
+      ranAt: stamp(), source: 'grid-atlas-service'
+    };
+    var pre = prescreenFor(g);
+    /* Rule 3: a hand-entered verdict is not ours to replace. */
+    if (pre && (!S.prescreen || S.prescreen.source === 'grid-atlas')) S.prescreen = pre;
+    try { if (typeof _setSaved === 'function') _setSaved('unsaved'); } catch (e) {}
+    try { if (typeof _siteScoreRefresh === 'function') _siteScoreRefresh(); } catch (e) {}
+  } catch (e) {}
+}
+
+/* Rule 4. _SITE_DATA is what the Interconnection-Ease score reads, and its
+   Grid Capacity factor is a size heuristic until something real is on file.
+   A measured substation distance is something real \u2014 so it goes in, flagged
+   as measured, and the score panel stops calling that row an estimate. */
+function feedSiteScore(g){
+  try {
+    if (!g || !g.substations || !g.substations.length) return;
+    var s = g.substations[0];
+    if (s.distanceKm == null) return;
+    root._SITE_DATA = root._SITE_DATA || {};
+    root._SITE_DATA.gridAtlas = {
+      score: g.score,
+      nearestSubstationKm: s.distanceKm,
+      nearestSubstationKv: s.voltageKv == null ? null : s.voltageKv,
+      nearestSubstationName: s.name || '',
+      owner: s.owner || '',
+      at: stamp()
+    };
+  } catch (e) {}
+}
+
+/* Auto-run. Once per set of coordinates, silent, and it never blocks or
+   reports \u2014 exactly like doGridAtlas(true) in the console. */
+var autoDone = null;
+function autoRun(){
+  try {
+    var c = cfg();
+    if (c.autoRun === false) return;
+    var s = site();
+    if (s.lat == null) return;                       /* no point to measure yet */
+    var key = s.lat.toFixed(5) + ',' + s.lng.toFixed(5);
+    if (autoDone === key) return;
+    /* Already measured this point on a previous session? Leave it alone. */
+    if (typeof S !== 'undefined' && S.grid && S.grid.lat != null &&
+        Math.abs(+S.grid.lat - s.lat) < 1e-5 && Math.abs(+S.grid.lng - s.lng) < 1e-5) {
+      autoDone = key; return;
+    }
+    autoDone = key;
+    run(function (j) {
+      if (!j) return;                                /* silent on failure */
+      saveToProject(j); feedSiteScore(j);
+      if (root.console) console.info('[Grid Atlas] auto-run: ' +
+        (j.score == null ? 'not scored (layers not connected)' : j.score + '/100'));
+    });
+  } catch (e) {}
+}
+
+/* Watch for the site gaining coordinates. Polled rather than hooked into the
+   map, because the coordinates can arrive from a geocode, a lock, a project
+   load or a paste, and a poll catches all four without four hooks to keep
+   in sync. */
+(function watch(){
+  if (typeof document === 'undefined') return;
+  var n = 0;
+  var iv = setInterval(function(){
+    if (++n > 240) { clearInterval(iv); return; }    /* give up after ~8 min */
+    autoRun();
+  }, 2000);
+})();
+
+root.OmegaGridPrescreen = {
+  open: open, run: run, openPage: openPage, site: site, cfg: cfg,
+  autoRun: autoRun, saveToProject: saveToProject, prescreenFor: prescreenFor, feedSiteScore: feedSiteScore,
+  last: function(){ return LAST; },
+  verdict: function(){ return verdict(LAST); },
+  criterion: function(){ return criterion(LAST); },
+  setService: function (u) {
+    try { if (u) localStorage.setItem('omega.gridatlas.service', String(u).trim());
+          else localStorage.removeItem('omega.gridatlas.service'); } catch (e) {}
+    paint();
+    return cfg().serviceUrl;
+  },
+  /* Health check without finding a site and pressing a button \u2014 the service
+     answers GET with its build and which layers are connected. */
+  health: function(){
+    return fetch(cfg().serviceUrl).then(function (r) { return r.json(); })
+      .then(function (j) { if (root.console) console.log('[Grid Atlas]', j); return j; })
+      .catch(function (e) { if (root.console) console.warn('[Grid Atlas] unreachable:', e.message); throw e; });
+  }
+};
+
+/* ── Analyze ribbon button ───────────────────────────────────────────── */
+(function addButton(){
+  if (typeof document === 'undefined') return;
+  var n = 0;
+  var iv = setInterval(function(){
+    if (++n > 80) { clearInterval(iv); return; }
+    try {
+      if (document.getElementById('rb-gridatlas')) { clearInterval(iv); return; }
+      var list = document.querySelectorAll('button.rbtn'), host = null;
+      for (var i = 0; i < list.length; i++) {
+        var oc = list[i].getAttribute('onclick') || '';
+        if (/openGridPreQual|runComedPreQual|openSubstation|OmegaSubstation/.test(oc)) { host = list[i]; break; }
+      }
+      if (!host || !host.parentNode) return;
+      var b = document.createElement('button');
+      b.className = host.className || 'rbtn';
+      b.id = 'rb-gridatlas';
+      b.setAttribute('onclick', 'OmegaGridPrescreen.open()');
+      b.title = 'Grid Atlas interconnection pre-screen \u2014 nearest substations, transmission and ' +
+                'generation, scored 0-100. Same service the portfolio console runs at screening, ' +
+                'called with this site\u2019s coordinates so nothing has to be geocoded.';
+      b.innerHTML = '<span class="rb-ico">\u26a1</span><span class="rb-lbl">Grid<br>Atlas</span>';
+      host.parentNode.insertBefore(b, host.nextSibling);
+      clearInterval(iv);
+    } catch (e) { clearInterval(iv); }
+  }, 250);
+})();
+
+if (root.console && console.info) {
+  console.info('[Grid Atlas] ready \u2014 Analyze \u203a Grid Atlas, or OmegaGridPrescreen.open()');
 }
 
 })(typeof window !== 'undefined' ? window : globalThis);
