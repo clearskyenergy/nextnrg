@@ -141868,12 +141868,23 @@ function unbind(padId){
   return true;
 }
 
-/* Recompute one bound pad from its charger. */
-function apply(p){
+/* A signature of everything about the charger that the pad depends on.
+   Cheap to compute, and it is what makes the sync loop free when nothing
+   has moved — which is almost always. */
+function srcSig(el, clearFt, s){
+  return [el.x, el.y, el.w, el.h, el.rot || 0, clearFt, s].join(',');
+}
+
+/* Recompute one bound pad from its charger. Returns true only if it
+   actually CHANGED, so the caller can skip the redraw. */
+function apply(p, force){
   if (!p || !p.bindTo) return false;
   var el = (S.elements || []).find(function (e) { return e.id === p.bindTo; });
   if (!el) { delete p.bindTo; return false; }   /* charger deleted: release it */
   var s = ppf();
+  var sig = srcSig(el, p.bindClearFt, s);
+  if (!force && p._srcSig === sig) return false;   /* nothing moved */
+  p._srcSig = sig;
   var u = elCenter(el);
   var g = (p.bindClearFt != null ? +p.bindClearFt : 2.5) * s;
 
@@ -141900,14 +141911,36 @@ function apply(p){
 
 /* Recompute every bound pad. Cheap, and the only way to be sure a move
    that happened through a path we do not know about is still honoured. */
-function applyAll(){
-  var n = 0;
-  pads().forEach(function (p) { if (p.bindTo && apply(p)) n++; });
-  if (n) {
-    try { if (typeof renderShape === 'function') pads().forEach(function (p) { if (p.bindTo) renderShape(p); }); } catch (e) {}
-    try { if (typeof _geoStampAll === 'function') _geoStampAll(); } catch (e) {}
+/* commit=true means the gesture has finished: that is when the ground
+   anchor is worth re-cutting.
+
+   The first version called _geoStampAll() on every pass — which walks
+   every element, every shape and every conduit on the site — and it ran on
+   a 40 ms debounce during drags and again every three seconds. That is the
+   lag: the work was proportional to the whole drawing, repeated constantly,
+   to move one rectangle. Now only the pads that actually changed are
+   redrawn, and only at the end of a gesture is anything re-anchored. */
+function applyAll(commit){
+  var changed = [];
+  pads().forEach(function (p) { if (p.bindTo && apply(p)) changed.push(p); });
+  if (!changed.length) return 0;
+  try {
+    if (typeof renderShape === 'function') changed.forEach(function (p) { renderShape(p); });
+  } catch (e) {}
+  if (commit) {
+    /* Stamp just these pads rather than the whole site. */
+    try {
+      if (typeof _geoStampShape === 'function' && typeof _liveMapState === 'function') {
+        var ms = _liveMapState();
+        if (ms && typeof _pxToLatLng === 'function' && typeof _getCanvasSize === 'function') {
+          var sz = _getCanvasSize();
+          var toGeo = function (x, y) { return _pxToLatLng(x, y, ms, sz.w, sz.h); };
+          changed.forEach(function (p) { _geoStampShape(p, toGeo, true); });
+        }
+      }
+    } catch (e) {}
   }
-  return n;
+  return changed.length;
 }
 
 /* ── auto-bind ───────────────────────────────────────────────────────
@@ -141982,18 +142015,36 @@ root.OmegaPadBind = {
     if (got >= 2) clearInterval(iv);
   }, 400);
 
-  /* A drag fires hundreds of these; coalesce to one pass per frame. */
-  var q = null;
+  /* One pass per animation frame, not one per event. A drag fires hundreds
+     of these and a 40 ms timer both lagged behind the cursor and fired more
+     often than the screen refreshes. */
+  var q = 0;
   function schedule(){
     if (q) return;
-    q = setTimeout(function(){ q = null; applyAll(); }, 40);
+    q = (root.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(function(){
+      q = 0; applyAll(false);
+    });
   }
 
-  /* Mouse-up covers drags that move the wrapper directly without going
-     through a render call. */
+  /* Track the pointer while a drag is in progress so the pad moves WITH the
+     charger instead of catching up when something else happens to trigger a
+     render. This is why it appeared to need a zoom out and back: nothing was
+     redrawing it in between. */
+  var dragging = false;
   try {
-    document.addEventListener('mouseup', function(){ setTimeout(applyAll, 60); }, true);
-    document.addEventListener('touchend', function(){ setTimeout(applyAll, 60); }, true);
+    document.addEventListener('mousedown', function(){ dragging = true; }, true);
+    document.addEventListener('mousemove', function(){ if (dragging) schedule(); }, true);
+    document.addEventListener('mouseup', function(){
+      dragging = false;
+      schedule();
+      setTimeout(function(){ applyAll(true); }, 50);   /* commit: re-anchor */
+    }, true);
+    document.addEventListener('touchstart', function(){ dragging = true; }, true);
+    document.addEventListener('touchmove', function(){ if (dragging) schedule(); }, true);
+    document.addEventListener('touchend', function(){
+      dragging = false;
+      setTimeout(function(){ applyAll(true); }, 50);
+    }, true);
   } catch (e) {}
 })();
 
@@ -142020,7 +142071,9 @@ root.OmegaPadBind = {
         console.info('[pad] linked ' + got.length + ' BESS pad' + (got.length === 1 ? '' : 's') +
                      ' to the charger standing on ' + (got.length === 1 ? 'it' : 'them'));
       }
-      applyAll();
+      /* Costs nothing when nothing moved — the signature check short-circuits
+         before any geometry is touched. */
+      applyAll(true);
     } catch (e) {}
   }
   setTimeout(tick, 2500);
