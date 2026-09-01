@@ -61873,6 +61873,22 @@ function _bgbGuideRender(){
       +'<div style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:'+icBg+';color:'+icCol+';font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center">'+ic+'</div>'
       +'<div style="font-size:11px;font-weight:'+(active?'800':'600')+';color:'+txtCol+'">'+BGB_NODES[k].label+'</div></div>';
   }).join('');
+
+  /* Show what the build is tying INTO as a completed step. It is not in the
+     sequence — it is already built — but leaving it off made the panel look
+     as though the choice had been ignored, which is exactly what it looked
+     like from the user's side. */
+  try{
+    if(BGB.tieEl){
+      rows = '<div style="display:flex;align-items:center;gap:9px;padding:6px 0;opacity:.85">'
+        +'<div style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#22C55E;'
+        +'color:#0A1628;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center">\u2713</div>'
+        +'<div><div style="font-size:11px;font-weight:600;color:#8FA3B8">'
+        + String(BGB.tieEl.label||'Existing equipment').replace(/[<>&]/g,'') + '</div>'
+        +'<div style="font-size:9px;color:#64748B">already on the drawing \u2014 tying in here</div></div></div>'
+        + rows;
+    }
+  }catch(e){}
   var legName={ 'EV-MAIN':'MAIN','EV-FEEDER':'FEEDER','EV-BRANCH':'COLLECTION','EMT-BMS':'DATA' }[_bgbLegCond(kind||'xfmr')]||'RUN';
   var legCol=_bgbLegColor(kind||'xfmr');
   var hint='', actions='';
@@ -61966,10 +61982,38 @@ function _bgbStartPlacing(){
         BGB.tieEl=_te;
         BGB.placed[BGB.tieKind]=_te;
         BGB.lastEl=_te;
+
+        /* START BY DRAWING THE RUN, NOT BY PLACING THE NEXT BOX.
+
+           Phase 'poi' means "drop the first piece", and it draws no conduit
+           because on a greenfield build there is nothing yet to run from.
+           With a tie-in there IS: the transformer is already on the drawing.
+           Leaving the phase at 'poi' put the switchgear down with nothing
+           connecting it to the equipment it was supposed to tie into — the
+           build looked like it had ignored the choice.
+
+           Starting in 'drawtrench' with the run seeded at the existing
+           equipment's centre gives the same gesture as every other leg:
+           click along the route, and placing the next piece lays the
+           conduit behind you. */
+        BGB.phase='drawtrench';
+        BGB.stepIx=0;
+        BGB._activeRun=null;
+        try{
+          var _sz=(typeof _elRenderSize==='function') ? _elRenderSize(_te)
+                 : { w:(_te.w||60), h:(_te.h||_te.w||60) };
+          var _cx=(+_te.x||0)+_sz.w/2, _cy=(+_te.y||0)+_sz.h/2;
+          if(typeof _dcfcDraw!=='undefined'){
+            _dcfcDraw={ pts:[{x:_cx,y:_cy}], preview:null,
+                        leg:(typeof _bgbLegColor==='function') ? _bgbLegColor(_bgbCurKind()) : '#FFFF00' };
+          }
+        }catch(e){}
+        try{ if(typeof _dcfcRenderTrenches==='function') _dcfcRenderTrenches(); }catch(e){}
+
         try{ if(typeof _evBanner==='function'){
           _evBanner('\u26a1 Tying into '+(_te.label||'existing equipment')
-                    +' \u2014 the service and transformer are already on the drawing, '
-                    +'so the build starts at the next piece.');
+                    +'. The run starts there \u2014 click along the route, then place the '
+                    +(BGB.tieKind==='mainswgr'?'BESS AC block':'switchgear')+' at the end of it.');
         } }catch(e){}
       }
     }
