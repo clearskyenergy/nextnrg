@@ -8576,7 +8576,10 @@ function renderEl(el){
     const _padOn = (el.eqId==='charger') && (el.bollardPad !== false)
                    && (window.OMEGA_EV_PAD !== false);
     const _pad = _padOn ? (function(){
-      const g = Math.round(sz*0.42);                 // apron around the unit
+      // Clearance in FEET when specified; otherwise the old ratio.
+      const g = (el.padFt!=null && isFinite(+el.padFt))
+        ? Math.max(0, Math.round(+el.padFt * (S.pxPerFt>0?S.pxPerFt:4)))
+        : Math.round(sz*0.42);
       const W = sz + g*2;
       const uid = 'evpad-'+String(el.id).replace(/[^A-Za-z0-9_-]/g,'');
       return `<svg class="ev-bollard-pad" width="${W}" height="${W}" viewBox="0 0 ${W} ${W}"
@@ -8635,7 +8638,15 @@ function renderEl(el){
        units that actually needed it. */
     var _evPad='';
     if(el.evKind==='charger' && el.bollardPad!==false && window.OMEGA_EV_PAD!==false){
-      var _pg=Math.round(Math.max(gw,gh)*0.42);
+      /* Pad clearance is a real dimension in FEET when one is set, not a
+         fixed fraction of the unit. A 3 ft bollard island and a 10 ft
+         striped apron are both specified in feet and both have to be
+         drawable on the same charger. */
+      var _pg;
+      if(el.padFt!=null && isFinite(+el.padFt)){
+        var _pp=(S.pxPerFt>0?S.pxPerFt:4);
+        _pg=Math.max(0,Math.round(+el.padFt*_pp));
+      } else _pg=Math.round(Math.max(gw,gh)*0.42);
       var _pw2=gw+_pg*2, _ph2=gh+_pg*2;
       var _pid='evpad-'+String(el.id).replace(/[^A-Za-z0-9_-]/g,'');
       _evPad='<svg class="ev-bollard-pad" width="'+_pw2+'" height="'+_ph2+'" viewBox="0 0 '+_pw2+' '+_ph2+'"'
@@ -8798,6 +8809,9 @@ function showProps(id){
       if(_s) _s.textContent=OmegaEVFuture.summary();
     } else if(_row){ _row.style.display='none'; }
   }catch(_e){}
+
+  /* DCFC size + shared-trench controls, for chargers only. */
+  try{ if(window._dcfcProps) window._dcfcProps(el); }catch(_e){}
 }
 function _setRot(deg){
   if(!S.sel)return;
@@ -141091,6 +141105,336 @@ root.OmegaGridPrescreen = {
 
 if (root.console && console.info) {
   console.info('[Grid Atlas] ready \u2014 Analyze \u203a Grid Atlas, or OmegaGridPrescreen.open()');
+}
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script id="omega-dcfc-tools-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  DCFC — SHARED TRENCH AND SIZING
+ *
+ *  Two things the DCFC build could not do that the job requires.
+ *
+ *  ── 1. MULTIPLE UNITS ON ONE TRENCH ────────────────────────────────
+ *
+ *  placeDcfcAt() ran _dcfcRun(panel -> charger) for every unit, so four
+ *  chargers meant four home runs back to the panel. That is a legitimate
+ *  design and sometimes the right one, but it is not how a DCFC bank is
+ *  usually built: the units sit in a row and the branch runs down the row,
+ *  each unit tapping the trench beside it.
+ *
+ *  Four home runs across a parking field is a great deal more trench and
+ *  a great deal more conductor than one run with three taps, and since the
+ *  estimate measures trench off the drawing, the drawing was quoting a
+ *  more expensive job than the one being built.
+ *
+ *  Daisy mode branches each unit off the PREVIOUS unit instead of the
+ *  panel. The first still home-runs, so the panel is still fed.
+ *
+ *  WHAT THIS DOES NOT DO is decide the conductor. A daisy chain carries
+ *  the full downstream load in its first segment, so segment one of four
+ *  480 kW units is a 4-unit feeder, not a 1-unit branch. Ampacity is not
+ *  something to infer from a drawing gesture, so the segments are labelled
+ *  with how many units they carry and the sizing is left to the engineer.
+ *
+ *  ── 2. RESIZING THE PAD AND THE UNIT ───────────────────────────────
+ *
+ *  The protection pad was hardcoded at 42% of the unit on every side, so
+ *  it could not be drawn to the real island, and the unit itself could
+ *  only be resized by the generic width box which pulled the pad with it.
+ *  Both are now real dimensions in FEET, independent of each other,
+ *  because that is how they are specified and how they get built.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+function ppf(){
+  try { if (S.pxPerFt > 0) return S.pxPerFt; } catch (e) {}
+  return 4;
+}
+function isDcfc(el){
+  if (!el) return false;
+  if (el.type === 'evgear' && el.evKind === 'charger') return true;
+  if (el.type === 'eq' && (el.eqId === 'charger' || el.eqId === 'evse')) return true;
+  return false;
+}
+
+/* ── sizing ───────────────────────────────────────────────────────────
+   Stored in feet on the element, so it survives a re-scale of the drawing
+   and reads the same as the spec sheet. Pixels are derived at render. */
+/* FEET ARE THE SOURCE OF TRUTH, not pixels.
+
+   Deriving the dimension back out of el.w was wrong, because the render
+   floors an element at 12 x 10 px so it stays visible and clickable. On a
+   site drawn at 0.57 px/ft a 6 ft charger is 3.4 px, hits the floor, and
+   read back as 21 ft — the number the user typed was silently replaced by
+   the minimum drawable size. Keep the real dimension on the element and
+   read from that; the pixel floor then affects only what is drawn, which
+   is what a floor should do. */
+function unitFt(el){
+  if (el && el.evFtL != null && el.evFtW != null) {
+    return { l: +el.evFtL, w: +el.evFtW };
+  }
+  var p = ppf();
+  return { l: +((el.w || 60) / p).toFixed(1),
+           w: +((el.h || Math.round((el.w || 60) * (el.aspect || 0.72))) / p).toFixed(1) };
+}
+function setUnitFt(el, lengthFt, widthFt){
+  if (!el) return;
+  var p = ppf();
+  var L = Math.max(0.5, +lengthFt || unitFt(el).l);
+  var W = Math.max(0.5, +widthFt || unitFt(el).w);
+  /* Record the specified size first so it survives the drawing floor. */
+  el.evFtL = L; el.evFtW = W;
+  el.w = Math.max(12, Math.round(L * p));
+  el.h = Math.max(10, Math.round(W * p));
+  el.aspect = el.h / el.w;
+  /* If the floor kicked in, the symbol is bigger than the equipment. Say so
+     rather than letting a plan imply a 6 ft unit occupies 21 ft of kerb. */
+  el.evSymbolOversized = (L * p < 12 || W * p < 10);
+  redraw(el);
+}
+
+/* Pad clearance, in feet, on each side of the unit. Independent of the
+   unit so a 3 ft bollard island and a 10 ft striped apron are both
+   drawable on the same charger. */
+function padFt(el){
+  if (el && el.padFt != null) return +el.padFt;
+  var u = unitFt(el);
+  return +(Math.max(u.l, u.w) * 0.42).toFixed(1);   /* the old hardcoded ratio */
+}
+/* True footprint including the pad, which is what the civil quantity and
+   the stall layout actually need. */
+function totalFt(el){
+  var u = unitFt(el), g = padFt(el);
+  return { l: +(u.l + g * 2).toFixed(1), w: +(u.w + g * 2).toFixed(1) };
+}
+function setPadFt(el, ft){
+  if (!el) return;
+  if (ft === null || ft === '') { delete el.padFt; }
+  else el.padFt = Math.max(0, +ft || 0);
+  redraw(el);
+}
+function setPadOn(el, on){
+  if (!el) return;
+  if (on) delete el.bollardPad; else el.bollardPad = false;
+  redraw(el);
+}
+
+function redraw(el){
+  try { if (typeof _reRenderEl === 'function') _reRenderEl(el.id); }
+  catch (e) {}
+  try { if (typeof rerouteTrenchConduits === 'function') rerouteTrenchConduits(); } catch (e) {}
+  try { if (typeof _setSaved === 'function') _setSaved('unsaved'); } catch (e) {}
+  try { if (typeof updateSummaryPanel === 'function') updateSummaryPanel(); } catch (e) {}
+}
+
+/* ── shared trench ────────────────────────────────────────────────────
+   Re-point the branch conduits so the bank runs down one trench. The
+   first unit keeps its home run; each later unit is fed from the one
+   before it. Reversible. */
+function chargers(){
+  var out = [];
+  try {
+    (S.elements || []).forEach(function (e) { if (isDcfc(e)) out.push(e); });
+  } catch (e) {}
+  /* Order along the run, so the chain follows the row rather than the
+     order somebody happened to click. */
+  if (out.length > 1) {
+    var dx = Math.abs(out[out.length - 1].x - out[0].x);
+    var dy = Math.abs(out[out.length - 1].y - out[0].y);
+    out.sort(function (a, b) { return dx >= dy ? a.x - b.x : a.y - b.y; });
+  }
+  return out;
+}
+
+function branchesFor(el){
+  var out = [];
+  try {
+    (S.conduits || []).forEach(function (c) {
+      if (!c) return;
+      if (/BRANCH|TRENCH/i.test(c.evRole || '') && (c.toId === el.id || c.bId === el.id || c.b === el.id)) out.push(c);
+    });
+  } catch (e) {}
+  return out;
+}
+
+function daisy(on){
+  var list = chargers();
+  if (list.length < 2) {
+    toast('Daisy-chaining needs at least two chargers on the drawing.');
+    return 0;
+  }
+  var n = 0, i;
+  for (i = 1; i < list.length; i++) {
+    var el = list[i], prev = list[i - 1];
+    var runs = branchesFor(el);
+    if (!runs.length) continue;
+    runs.forEach(function (c) {
+      if (on) {
+        if (c._homeFrom == null) c._homeFrom = (c.fromId != null ? c.fromId : (c.aId != null ? c.aId : c.a));
+        setFrom(c, prev.id);
+        c.label = 'Branch \u2014 tap from ' + (prev.label || 'previous unit');
+        /* How many units this segment carries, counting downstream. */
+        c.carries = list.length - i + 1 - 1;
+        c.spec = (c.carries) + ' unit' + (c.carries === 1 ? '' : 's') + ' downstream \u2014 size for the group';
+      } else if (c._homeFrom != null) {
+        setFrom(c, c._homeFrom);
+        delete c._homeFrom; delete c.carries;
+        c.label = 'Branch \u2014 panel\u2192' + (el.label || 'charger');
+        delete c.spec;
+      }
+      n++;
+    });
+  }
+  /* The first unit's run carries the whole bank when daisied. */
+  var first = branchesFor(list[0]);
+  first.forEach(function (c) {
+    if (on) { c.carries = list.length;
+      c.spec = list.length + ' units downstream \u2014 this segment carries the whole bank'; }
+    else { delete c.carries; delete c.spec; }
+  });
+
+  try { if (typeof rerouteTrenchConduits === 'function') rerouteTrenchConduits(); } catch (e) {}
+  try { if (typeof renderAll === 'function') renderAll(); } catch (e) {}
+  try { if (typeof _setSaved === 'function') _setSaved('unsaved'); } catch (e) {}
+  try { if (typeof updateSummaryPanel === 'function') updateSummaryPanel(); } catch (e) {}
+
+  toast(on
+    ? list.length + ' chargers on one trench. The first segment carries all ' + list.length +
+      ' \u2014 size the conductor for the group, not for one unit.'
+    : 'Back to individual home runs to the panel.');
+  return n;
+}
+
+/* Conduit endpoint field names vary across the file's vintages. */
+function setFrom(c, id){
+  if ('fromId' in c) c.fromId = id;
+  else if ('aId' in c) c.aId = id;
+  else c.a = id;
+}
+
+function toast(msg){
+  try {
+    var d = document.getElementById('omega-dcfc-toast');
+    if (!d) {
+      d = document.createElement('div');
+      d.id = 'omega-dcfc-toast';
+      d.style.cssText = 'position:fixed;left:50%;bottom:34px;transform:translateX(-50%);' +
+        'background:#132844;border:1px solid #1E3A5F;border-radius:9px;padding:10px 15px;z-index:100050;' +
+        'font:600 12px system-ui,-apple-system,sans-serif;color:#E2EEF9;' +
+        'box-shadow:0 14px 40px rgba(0,0,0,.55);max-width:min(520px,92vw)';
+      document.body.appendChild(d);
+    }
+    d.textContent = msg;
+    clearTimeout(d.__t);
+    d.__t = setTimeout(function(){ if (d.parentNode) d.parentNode.removeChild(d); }, 5000);
+  } catch (e) {}
+}
+
+root.OmegaDCFC = {
+  isDcfc: isDcfc, chargers: chargers,
+  unitFt: unitFt, setUnitFt: setUnitFt,
+  padFt: padFt, setPadFt: setPadFt, setPadOn: setPadOn, totalFt: totalFt,
+  daisy: daisy, ppf: ppf,
+  /* Apply one size to every charger — a bank is normally one model. */
+  sizeAll: function (lengthFt, widthFt, pad) {
+    var n = 0;
+    chargers().forEach(function (el) {
+      setUnitFt(el, lengthFt, widthFt);
+      if (pad != null) setPadFt(el, pad);
+      n++;
+    });
+    toast(n + ' charger' + (n === 1 ? '' : 's') + ' set to ' + lengthFt + ' \u00d7 ' + widthFt + ' ft' +
+          (pad != null ? ' with a ' + pad + ' ft pad' : ''));
+    return n;
+  }
+};
+
+/* ── properties-panel fields ─────────────────────────────────────────── */
+root._dcfcProps = function (el) {
+  if (typeof document === 'undefined') return;
+  var pf = document.getElementById('pf');
+  var row = document.getElementById('p-dcfc-row');
+  if (!pf || !isDcfc(el)) { if (row) row.style.display = 'none'; return; }
+
+  if (!row) {
+    row = document.createElement('div');
+    row.id = 'p-dcfc-row';
+    row.style.cssText = 'margin:8px 0;padding:9px 10px;background:rgba(47,127,224,.07);' +
+      'border:1px solid rgba(47,127,224,.28);border-radius:7px';
+    row.innerHTML =
+      '<div style="font-size:11px;font-weight:700;color:#60A5FA;margin-bottom:6px">Charger &amp; pad size</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">' +
+        fld('p-dcfc-l', 'Unit length ft') + fld('p-dcfc-w', 'Unit width ft') + fld('p-dcfc-pad', 'Pad clear ft') +
+      '</div>' +
+      '<label style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:10px;color:var(--sub);cursor:pointer">' +
+        '<input type="checkbox" id="p-dcfc-padon" style="accent-color:#F4A020"> Show protection pad</label>' +
+      '<div style="display:flex;gap:6px;margin-top:8px">' +
+        '<button id="p-dcfc-all" style="flex:1;background:rgba(255,255,255,.06);border:1px solid var(--border);' +
+        'color:var(--text);border-radius:5px;padding:5px;font-size:10px;cursor:pointer;font-family:inherit">Apply to all chargers</button>' +
+        '<button id="p-dcfc-daisy" style="flex:1;background:rgba(47,127,224,.15);border:1px solid rgba(47,127,224,.45);' +
+        'color:#93C5FD;border-radius:5px;padding:5px;font-size:10px;cursor:pointer;font-family:inherit">Share one trench</button>' +
+      '</div>' +
+      '<div id="p-dcfc-note" style="font-size:8.5px;color:var(--sub);margin-top:6px;line-height:1.45"></div>';
+    pf.appendChild(row);
+
+    function get(id){ return document.getElementById(id); }
+    function cur(){ try { return S.elements.find(function (x) { return x.id === S.sel; }); } catch (e) { return null; } }
+    function push(){
+      var c = cur(); if (!c) return;
+      setUnitFt(c, get('p-dcfc-l').value, get('p-dcfc-w').value);
+      var p = get('p-dcfc-pad').value;
+      setPadFt(c, p === '' ? null : p);
+    }
+    ['p-dcfc-l','p-dcfc-w','p-dcfc-pad'].forEach(function (id) {
+      get(id).addEventListener('change', push);
+    });
+    get('p-dcfc-padon').addEventListener('change', function(){
+      var c = cur(); if (c) setPadOn(c, this.checked);
+    });
+    get('p-dcfc-all').addEventListener('click', function(){
+      var p = get('p-dcfc-pad').value;
+      root.OmegaDCFC.sizeAll(get('p-dcfc-l').value, get('p-dcfc-w').value, p === '' ? null : +p);
+    });
+    get('p-dcfc-daisy').addEventListener('click', function(){
+      root.OmegaDCFC.daisy(this.dataset.on !== '1');
+      this.dataset.on = this.dataset.on === '1' ? '' : '1';
+      this.textContent = this.dataset.on === '1' ? 'Back to home runs' : 'Share one trench';
+    });
+  }
+
+  row.style.display = 'block';
+  var u = unitFt(el);
+  document.getElementById('p-dcfc-l').value = u.l;
+  document.getElementById('p-dcfc-w').value = u.w;
+  document.getElementById('p-dcfc-pad').value = el.padFt != null ? el.padFt : '';
+  document.getElementById('p-dcfc-pad').placeholder = padFt(el) + ' auto';
+  document.getElementById('p-dcfc-padon').checked = (el.bollardPad !== false);
+  var note = document.getElementById('p-dcfc-note');
+  if (note) {
+    var t = totalFt(el);
+    note.innerHTML = 'Footprint with pad: <b style="color:var(--text)">' + t.l + ' \u00d7 ' + t.w + ' ft</b>. ' +
+      'Sizes are in feet and independent \u2014 the pad is the clear distance on each side, ' +
+      'not a multiple of the unit.' +
+      (el.evSymbolOversized
+        ? '<br><span style="color:#F4A020">At this drawing scale the unit is smaller than the minimum ' +
+          'drawable symbol, so it is shown larger than it is. The stored size is still ' +
+          unitFt(el).l + ' \u00d7 ' + unitFt(el).w + ' ft.</span>'
+        : '');
+  }
+};
+
+function fld(id, label){
+  return '<div><label style="display:block;font-size:8.5px;color:var(--sub);text-transform:uppercase;' +
+    'letter-spacing:.4px;margin-bottom:2px">' + label + '</label>' +
+    '<input id="' + id + '" type="number" step="0.5" min="0" style="width:100%;background:var(--surface);' +
+    'border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:5px;font-size:11px"></div>';
+}
+
+if (root.console && console.info) {
+  console.info('[DCFC] ready \u2014 select a charger for size fields, or OmegaDCFC.daisy(true)');
 }
 
 })(typeof window !== 'undefined' ? window : globalThis);
