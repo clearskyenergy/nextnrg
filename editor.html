@@ -140506,7 +140506,8 @@ function cfg(){
     /* Grid Atlas lives in the OPS deployment. A relative path 404s from the
        editor's host, so an absolute default \u2014 same reasoning config.js
        gives for the page URL. Override with OmegaGridPrescreen.setService(). */
-    serviceUrl: localGet('omega.gridatlas.service') || c.serviceUrl || 'https://osa.clearskyomega.com/api/grid-atlas',
+    serviceUrl: candidates()[0],
+    candidates: candidates(),
     pageUrl:    c.url || 'https://tools.csebuilders.com/grid-atlas.html',
     org:        c.org || 'clearsky-usa.com',
     threshold:  c.prescreenThreshold == null ? 35 : c.prescreenThreshold,
@@ -140516,6 +140517,38 @@ function cfg(){
   };
 }
 function localGet(k){ try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+
+/* ── WHICH ENDPOINT ──────────────────────────────────────────────────
+   SAME ORIGIN FIRST, and that removes the problem rather than working
+   around it. A request to the host the page came from has no CORS step,
+   no preflight, and no origin allowlist to keep in sync as hosts are
+   added. If api/grid-atlas.js is deployed alongside the editor, that is
+   the endpoint and nothing needs configuring, ever.
+
+   The cross-origin OPS URL stays as the fallback for hosts that do not
+   carry their own copy. Whichever answers is remembered, so the wasted
+   attempt happens once rather than on every run. */
+function candidates(){
+  var explicit = localGet('omega.gridatlas.service');
+  if (explicit) return [explicit];
+  var c = {};
+  try { c = ((root.CLEARSKY_CONFIG || {}).portfolio || {}).gridAtlas || {}; } catch (e) {}
+  var out = [], remembered = localGet('omega.gridatlas.worked');
+  if (remembered) out.push(remembered);
+  /* Same origin first: no CORS step at all if this host carries its own
+     copy. Then the hosts Grid Atlas is actually deployed on. The page lives
+     at tools.csebuilders.com per config.js, so the function most likely
+     ships beside it; the portal and OPS follow. Order is cheapest-to-
+     most-likely-to-fail, and whichever answers is remembered. */
+  ['/api/grid-atlas',
+   c.serviceUrl,
+   'https://tools.csebuilders.com/api/grid-atlas',
+   'https://clearsky-portal.vercel.app/api/grid-atlas',
+   'https://osa.clearskyomega.com/api/grid-atlas'
+  ].forEach(function (u) { if (u && out.indexOf(u) < 0) out.push(u); });
+  return out;
+}
+function remember(u){ try { localStorage.setItem('omega.gridatlas.worked', u); } catch (e) {} }
 
 var LAST = null, BUSY = false;
 
@@ -140546,6 +140579,8 @@ function run(cb){
   }
   BUSY = true;
   paint();
+  var list = C.candidates || [C.serviceUrl];
+  var idx = 0, target = list[0];
 
   var body = { lat: s.lat, lng: s.lng, address: s.address, sizeMw: s.sizeMw,
                dealId: (function(){ try { return new URLSearchParams(location.search).get('id') || ''; } catch (e) { return ''; } })() };
@@ -140558,13 +140593,15 @@ function run(cb){
     cb(null, 'timeout');
   }, 20000);
 
-  fetch(C.serviceUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+  function attempt(){
+  target = list[idx];
+  fetch(target, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(body) })
     .then(function (r) {
       return r.json().catch(function(){ return null; }).then(function (j) {
         if (!r.ok) {
           var m = (j && (j.error || j.detail)) || ('Grid Atlas returned ' + r.status);
-          if (r.status === 404) m = 'No Grid Atlas service at ' + C.serviceUrl +
+          if (r.status === 404) m = 'No Grid Atlas service at ' + target +
             '. It lives in the OPS deployment \u2014 set the full URL with ' +
             'OmegaGridPrescreen.setService(\'https://\u2026/api/grid-atlas\'), or use Open Grid Atlas below.';
           var e = new Error(m); e.build = j && j.build; throw e;
@@ -140574,7 +140611,8 @@ function run(cb){
     })
     .then(function (j) {
       if (done) return; done = true; clearTimeout(to); BUSY = false;
-      LAST = j; LAST.ranAt = Date.now(); LAST.site = s;
+      LAST = j; LAST.ranAt = Date.now(); LAST.site = s; LAST.endpoint = target;
+      remember(target);
       /* A manual run stores exactly like an automatic one — same path, same
          rules — so the two can never leave the project in different states. */
       try { saveToProject(j); feedSiteScore(j); } catch (e) {}
@@ -140584,6 +140622,17 @@ function run(cb){
     .catch(function (e) {
       if (done) return; done = true; clearTimeout(to); BUSY = false;
       LAST = null;
+      /* Next candidate before diagnosing. A same-origin 404 just means this
+         host does not carry its own copy — not an error worth showing
+         anybody, it is the reason the fallback exists. */
+      if (idx + 1 < list.length) {
+        idx++; done = false;
+        to = setTimeout(function(){
+          if (done) return; done = true; BUSY = false;
+          paint('Grid Atlas did not answer in 20 seconds.'); cb(null, 'timeout');
+        }, 20000);
+        return attempt();
+      }
       var msg = (e && e.message) || 'Grid Atlas could not be reached.';
       /* "Failed to fetch" is the browser's word for every network-layer
          refusal and covers several problems with different fixes. Probe
@@ -140594,7 +140643,7 @@ function run(cb){
          on the answer. That splits the two cases cleanly. */
       if (/failed to fetch|networkerror|load failed/i.test(msg)) {
         paint('No answer \u2014 working out why\u2026');
-        fetch(C.serviceUrl, { mode: 'no-cors', method: 'POST',
+        fetch(target, { mode: 'no-cors', method: 'POST',
                               headers: { 'Content-Type': 'text/plain' }, body: '{}' })
           .then(function () {
             paint('The service answered, but this browser threw the reply away: no ' +
@@ -140602,13 +140651,16 @@ function run(cb){
                   'The editor runs on a different host from Grid Atlas, so the endpoint has to ' +
                   'allow this origin \u2014 that is the CORS block added to api/grid-atlas.js. ' +
                   'Deploy the updated file, or add this host to GRID_ATLAS_ORIGINS. ' +
-                  'Open ' + C.serviceUrl + ' in a tab: if it shows build ' +
+                  'Simplest of all: put api/grid-atlas.js in THIS site\u2019s repo so it answers at ' +
+                  location.origin + '/api/grid-atlas \u2014 same origin means no CORS at all, and the ' +
+                  'editor already tries that first. ' +
+                  'Open ' + target + ' in a tab: if it shows build ' +
                   '"2026-09-01.layers-connected" it is deployed and the origin list is the issue; ' +
                   'anything older means api/ has not shipped yet.');
             cb(null, 'cors');
           })
           .catch(function () {
-            paint('Nothing is answering at ' + C.serviceUrl + ' at all \u2014 not a CORS problem. ' +
+            paint('Nothing is answering at ' + target + ' at all \u2014 not a CORS problem. ' +
                   'Either the endpoint is not deployed on that host, or the host is wrong. ' +
                   'Open it in a tab to check, and set the right one with ' +
                   'OmegaGridPrescreen.setService(\'https://…/api/grid-atlas\'). ' +
@@ -140620,6 +140672,8 @@ function run(cb){
       paint(msg);
       cb(null, msg);
     });
+  }
+  attempt();
 }
 
 /* ── the verdict ─────────────────────────────────────────────────────
@@ -140767,6 +140821,9 @@ function paint(err){
   h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:18px;' +
     'padding-top:14px;border-top:1px solid #1E3A5F">' +
     '<span style="font-size:9.5px;color:#475569">' + esc(C.serviceUrl) + '</span><div>' +
+    '<button onclick="OmegaGridPrescreen.find()" title="Probe every candidate host and print which one has the service" ' +
+    'style="background:#1E3A5F;border:none;color:#E2EEF9;border-radius:6px;padding:8px 13px;font-size:11.5px;' +
+    'font-weight:700;cursor:pointer;margin-left:8px">Find the service</button>' +
     '<button onclick="OmegaGridPrescreen.openPage()" style="background:#1E3A5F;border:none;color:#E2EEF9;' +
     'border-radius:6px;padding:8px 13px;font-size:11.5px;font-weight:700;cursor:pointer;margin-left:8px">Open Grid Atlas</button>' +
     '<button onclick="OmegaGridPrescreen.run()" style="background:#B45309;border:none;color:#FFF7E6;' +
@@ -140909,7 +140966,81 @@ function autoRun(){
   }, 2000);
 })();
 
+/* ── WHERE IS IT? ────────────────────────────────────────────────────
+   OmegaGridPrescreen.find()
+
+   Guessing which host carries the function has now cost two rounds. This
+   asks all of them and prints what came back, so the answer is a fact.
+
+   Each candidate gets two probes, because "is it there" and "can this page
+   read it" are different questions with different fixes:
+
+     GET             succeeds only if the endpoint exists AND allows this
+                     origin. A build stamp means fully working.
+     GET (no-cors)   sent but never read, so it succeeds whenever the host
+                     ANSWERED. Success here after the first fails means the
+                     endpoint exists and the CORS allowlist is the problem.
+
+   Whatever is found working is offered as a one-line fix. */
+function find(){
+  var list = candidates(), out = [], i = 0;
+  var log = (root.console && console.log) ? console.log.bind(console) : function(){};
+  log('%c[Grid Atlas] probing ' + list.length + ' candidate hosts\u2026', 'font-weight:700');
+  function next(){
+    if (i >= list.length) {
+      var good = out.filter(function (r) { return r.state === 'ok'; });
+      var cors = out.filter(function (r) { return r.state === 'cors'; });
+      log('');
+      if (good.length) {
+        log('%cWORKING: ' + good[0].url + (good[0].build ? '  (build ' + good[0].build + ')' : ''), 'color:#4ADE80;font-weight:700');
+        log('Lock it in:  OmegaGridPrescreen.setService(\'' + good[0].url + '\')');
+      } else if (cors.length) {
+        log('%cFOUND but blocked by CORS: ' + cors[0].url, 'color:#F97316;font-weight:700');
+        log('The endpoint is deployed there. It is not sending Access-Control-Allow-Origin for '
+          + location.origin + '. Either deploy the updated api/grid-atlas.js (it allows this host '
+          + 'by default), add the host to GRID_ATLAS_ORIGINS, or put api/grid-atlas.js in THIS '
+          + 'site\u2019s repo so it answers same-origin and CORS stops applying.');
+      } else {
+        log('%cNothing answered on any candidate.', 'color:#F97316;font-weight:700');
+        log('api/grid-atlas.js is not deployed on any of them. Add it to whichever repo serves '
+          + 'this editor \u2014 same origin is simplest \u2014 then run find() again.');
+      }
+      return out;
+    }
+    var url = list[i++];
+    var t0 = Date.now();
+    fetch(url, { method: 'GET' })
+      .then(function (r) { return r.json().catch(function(){ return null; }).then(function (j) { return { r: r, j: j }; }); })
+      .then(function (x) {
+        var rec = { url: url, state: 'ok', http: x.r.status, ms: Date.now() - t0,
+                    build: x.j && x.j.build, layers: x.j && x.j.dataSources };
+        if (!x.r.ok) rec.state = 'http' + x.r.status;
+        out.push(rec);
+        log('  ' + (rec.state === 'ok' ? '\u2713' : '\u2717') + ' ' + url + '  ' + rec.state
+          + (rec.build ? '  build ' + rec.build : '') + '  ' + rec.ms + 'ms');
+        next();
+      })
+      .catch(function () {
+        /* Reached, or not there at all? */
+        fetch(url, { mode: 'no-cors', method: 'GET' })
+          .then(function () {
+            out.push({ url: url, state: 'cors', ms: Date.now() - t0 });
+            log('  \u26a0 ' + url + '  answered, but blocked by CORS');
+            next();
+          })
+          .catch(function () {
+            out.push({ url: url, state: 'absent', ms: Date.now() - t0 });
+            log('  \u2717 ' + url + '  nothing there');
+            next();
+          });
+      });
+  }
+  next();
+  return 'probing\u2026 results follow';
+}
+
 root.OmegaGridPrescreen = {
+  find: find,
   open: open, run: run, openPage: openPage, site: site, cfg: cfg,
   autoRun: autoRun, saveToProject: saveToProject, prescreenFor: prescreenFor, feedSiteScore: feedSiteScore,
   last: function(){ return LAST; },
