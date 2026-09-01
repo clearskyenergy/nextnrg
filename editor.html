@@ -52763,11 +52763,23 @@ function _connectToEms(ems, el, eqId){
           chainFromEms:true, labelDx:50, labelDy:-28 };
   S.conduits.push(c);
 
-  /* Cut the ground anchor immediately — waiting for a later pass means the
-     first zoom after a build is the one that breaks it. */
+  /* Cut the ground anchor for CONDUITS only, and only when the map can
+     actually answer.
+
+     The first version fell back to _geoStampAll() when OmegaAnchorCond was
+     unavailable. That was a bad trade: _geoStampAll stamps SHAPES too, and
+     OmegaAnchorCond.stamp() returns 0 without doing anything whenever the
+     map is frozen — which is most of a build. So on a frozen map every
+     conduit creation fell through to re-anchoring every array on the
+     drawing, mid-build, from whatever pixel geometry existed at that
+     instant. The next reprojection then moved the arrays to those anchors
+     and they vanished off the sheet, and the trenches shifted with them.
+
+     A MISSING ANCHOR IS RECOVERABLE; A WRONG ONE IS NOT. The audit and the
+     post-build pass both re-cut anything unstamped a moment later, so
+     doing nothing here is strictly safer than guessing. */
   try{
     if(window.OmegaAnchorCond && typeof OmegaAnchorCond.stamp==='function') OmegaAnchorCond.stamp();
-    else if(typeof _geoStampAll==='function') _geoStampAll();
   }catch(e){}
   if(typeof renderConduit==='function') renderConduit(c);
   if(typeof updCondStat==='function') updCondStat();
@@ -61216,11 +61228,23 @@ function _dcfcConduitAlongRun(el, run, snap, condType, label){
 
   S.conduits.push(c);
 
-  /* Cut the ground anchor immediately — waiting for a later pass means the
-     first zoom after a build is the one that breaks it. */
+  /* Cut the ground anchor for CONDUITS only, and only when the map can
+     actually answer.
+
+     The first version fell back to _geoStampAll() when OmegaAnchorCond was
+     unavailable. That was a bad trade: _geoStampAll stamps SHAPES too, and
+     OmegaAnchorCond.stamp() returns 0 without doing anything whenever the
+     map is frozen — which is most of a build. So on a frozen map every
+     conduit creation fell through to re-anchoring every array on the
+     drawing, mid-build, from whatever pixel geometry existed at that
+     instant. The next reprojection then moved the arrays to those anchors
+     and they vanished off the sheet, and the trenches shifted with them.
+
+     A MISSING ANCHOR IS RECOVERABLE; A WRONG ONE IS NOT. The audit and the
+     post-build pass both re-cut anything unstamped a moment later, so
+     doing nothing here is strictly safer than guessing. */
   try{
     if(window.OmegaAnchorCond && typeof OmegaAnchorCond.stamp==='function') OmegaAnchorCond.stamp();
-    else if(typeof _geoStampAll==='function') _geoStampAll();
   }catch(e){}
   if(typeof renderConduit==='function') renderConduit(c);
   if(typeof updCondStat==='function') updCondStat();
