@@ -132790,31 +132790,171 @@ function buildCabinet(it, arch, mat){
   return g;
 }
 
-function buildXfmr(it, arch){
-  var g = buildCabinet(it, arch, MAT.xfmr);
-  /* HV/LV bushing hump on top — the pad-mount tell */
-  var w = Math.max(2, it.wf), h = arch.h;
-  var hump = box(w*0.5, 0.8, Math.max(1.2, it.lf*0.5), MAT.xfmr);
-  hump.position.y = 0.45 + h + 0.4; g.add(hump);
-  for(var i=0;i<3;i++){
-    var b = cyl(0.16,0.2,0.7,MAT.cabinet,8);
-    b.position.set(-w*0.18 + i*w*0.18, 0.45+h+1.05, 0); g.add(b);
+/* PAD-MOUNT TRANSFORMER.
+
+   A pad-mount is not a cube with a bump. What makes one recognisable from
+   fifty feet is the SPLIT FRONT: a tall, narrow cabinet on one end housing
+   the HV and LV compartments behind hinged doors, with the lower oil tank
+   running back from it, and cooling fins down both flanks. That silhouette
+   is what an engineer reads, so that is what gets built. */
+/* BESS ENCLOSURE.
+
+   Routed to buildCabinet, which is the generic box used for a junction box
+   and a meter as well — so a 2 MWh battery drew as the same object as a
+   disconnect, only larger. That is the whole reason the storage on this
+   site looked like nothing.
+
+   A modern AC block is a walk-in or bay-access enclosure, and it is read by
+   the row of BATTERY BAY DOORS down the long face, the THERMAL MANAGEMENT
+   units breaking the roofline, and the fact that it stands on a skid. All
+   three are cheap to draw and none of them appear on a junction box. */
+function buildBessCabinet(it, arch){
+  var g = new THREE.Group();
+  var w = Math.max(6, it.wf), d = Math.max(3, it.lf), h = arch.h;
+
+  var pad = box(w+2.4, 0.5, d+2.4, MAT.concrete); pad.position.y=0.25; g.add(pad);
+  /* Skid: the enclosure is set on rails, not poured onto the slab. */
+  [-1,1].forEach(function(s){
+    var rail = box(w*0.96, 0.3, 0.45, MAT.darkSteel);
+    rail.position.set(0, 0.5+0.15, s*(d*0.34)); g.add(rail);
+  });
+  var y0 = 0.5+0.3;
+
+  var body = box(w, h, d, MAT.container);
+  body.position.y = y0 + h/2; g.add(body);
+
+  /* Battery bay doors down the long face — the identifying feature. */
+  var bays = Math.max(3, Math.round(w/3.4));
+  var bw = w/bays;
+  for(var i=0;i<bays;i++){
+    var cx = -w/2 + bw*(i+0.5);
+    var door = box(bw*0.84, h*0.74, 0.07, MAT.containerTop);
+    door.position.set(cx, y0+h*0.44, d/2+0.04); g.add(door);
+    var hn = box(0.09, 0.45, 0.11, MAT.galv);
+    hn.position.set(cx + bw*0.34, y0+h*0.46, d/2+0.10); g.add(hn);
+    /* Vent grille low on each bay. */
+    var vg = box(bw*0.46, 0.22, 0.05, MAT.darkSteel);
+    vg.position.set(cx, y0+h*0.14, d/2+0.07); g.add(vg);
   }
+
+  /* Thermal management: the units on the roof are what stop this reading
+     as a shipping crate, and every AC block has them. */
+  var hvN = Math.max(2, Math.round(w/6));
+  for(var k=0;k<hvN;k++){
+    var hx = -w/2 + (w/hvN)*(k+0.5);
+    var hvac = box(Math.min(2.6, w/hvN*0.62), 0.85, d*0.5, MAT.gear);
+    hvac.position.set(hx, y0+h+0.42, 0); g.add(hvac);
+    var fan = cyl(0.42,0.42,0.12, MAT.darkSteel, 12);
+    fan.position.set(hx, y0+h+0.88, 0); g.add(fan);
+  }
+  /* Roof lip and a cable-entry hood on the end. */
+  var lip = box(w+0.2, 0.16, d+0.2, MAT.containerTop);
+  lip.position.y = y0+h+0.08; g.add(lip);
+  var hood = box(w*0.16, h*0.34, 0.5, MAT.darkSteel);
+  hood.position.set(w/2 - w*0.10, y0+h*0.30, -d/2-0.22); g.add(hood);
+
   return g;
 }
 
+function buildXfmr(it, arch){
+  var g = new THREE.Group();
+  var w = Math.max(4, it.wf), d = Math.max(3, it.lf), h = arch.h;
+
+  /* Concrete pad with the cable-entry well the conduits actually land in. */
+  var pad = box(w+2.2, 0.5, d+2.2, MAT.concrete); pad.position.y=0.25; g.add(pad);
+  var well = box(w*0.42, 0.12, d*0.42, MAT.darkSteel);
+  well.position.set(-w*0.18, 0.51, 0); g.add(well);
+
+  /* Oil tank: the low body, two thirds of the footprint, slightly inset. */
+  var tankH = h*0.72, tankW = w*0.62;
+  var tank = box(tankW, tankH, d*0.94, MAT.xfmr);
+  tank.position.set(w/2 - tankW/2, 0.5 + tankH/2, 0); g.add(tank);
+  /* Sloped tank lid so rain sheds — and so it does not read as a crate. */
+  var lid = box(tankW+0.2, 0.16, d*0.96, MAT.xfmr);
+  lid.position.set(w/2 - tankW/2, 0.5 + tankH + 0.08, 0);
+  lid.rotation.z = -0.035; g.add(lid);
+
+  /* Cooling fins down both flanks — the single most identifying feature. */
+  var finN = Math.max(4, Math.round(tankW/1.1));
+  for(var f=0; f<finN; f++){
+    var fx = (w/2 - tankW) + (tankW/finN)*(f+0.5);
+    ['+','-'].forEach(function(side){
+      var fin = box(tankW/finN*0.55, tankH*0.66, 0.34, MAT.xfmr);
+      fin.position.set(fx, 0.5 + tankH*0.44, (side==='+'? 1:-1) * (d*0.47 + 0.17));
+      g.add(fin);
+    });
+  }
+
+  /* HV / LV cabinet: the tall front end, taller than the tank, with the
+     vertical seam between the two compartments. */
+  var cabW = w*0.38, cabH = h*1.02;
+  var cab = box(cabW, cabH, d*0.98, MAT.xfmr);
+  cab.position.set(-w/2 + cabW/2, 0.5 + cabH/2, 0); g.add(cab);
+  var hood = box(cabW+0.3, 0.22, d*1.02, MAT.darkSteel);
+  hood.position.set(-w/2 + cabW/2, 0.5 + cabH + 0.11, 0); g.add(hood);
+  /* Door split + handles, so the front reads as a door and not a face. */
+  var split = box(0.07, cabH*0.86, 0.09, MAT.darkSteel);
+  split.position.set(-w/2 + cabW/2, 0.5 + cabH/2, d*0.49 + 0.05); g.add(split);
+  [-1,1].forEach(function(s){
+    var hn = box(0.10, 0.5, 0.10, MAT.galv);
+    hn.position.set(-w/2 + cabW/2 + s*cabW*0.22, 0.5 + cabH*0.52, d*0.49+0.09);
+    g.add(hn);
+  });
+  /* Warning placard — small, but it is the thing on every one of these. */
+  var plc = box(cabW*0.4, 0.34, 0.05, MAT.yellow);
+  plc.position.set(-w/2 + cabW/2, 0.5 + cabH*0.78, d*0.49+0.07); g.add(plc);
+
+  return g;
+}
+
+/* SWITCHGEAR LINEUP.
+
+   Read from a distance by three things: it is a ROW of equal vertical
+   sections, each section has a full-height door with a handle, and the
+   whole run carries a continuous top hat and a base channel it stands on.
+   The old version was a row of plain boxes with one vent each, which is
+   the same silhouette as a row of anything. */
 function buildSwitchgear(it, arch){
   var g = new THREE.Group();
   var w = Math.max(6, it.wf), d = Math.max(3, it.lf), h = arch.h;
+
   var pad = box(w+2.5, 0.55, d+2.5, MAT.concrete); pad.position.y=0.27; g.add(pad);
-  var secs = Math.max(2, Math.round(w/6));
+  /* Base channel: the lineup sits proud of the pad, it is not poured in. */
+  var base = box(w+0.2, 0.35, d+0.2, MAT.darkSteel);
+  base.position.y = 0.55+0.17; g.add(base);
+  var y0 = 0.55+0.35;
+
+  var secs = Math.max(2, Math.round(w/3.2));
+  var sw = w/secs;
   for(var i=0;i<secs;i++){
-    var sw = w/secs;
-    var s = box(sw*0.96, h, d, MAT.gear);
-    s.position.set(-w/2 + sw*(i+0.5), 0.55+h/2, 0); g.add(s);
-    var v = box(sw*0.5, 0.5, 0.08, MAT.darkSteel);
-    v.position.set(-w/2 + sw*(i+0.5), 0.55+h*0.72, d/2+0.05); g.add(v);
+    var cx = -w/2 + sw*(i+0.5);
+    var s = box(sw*0.985, h, d, MAT.gear);
+    s.position.set(cx, y0+h/2, 0); g.add(s);
+
+    /* Door: inset panel with a seam all round, so the section reads as a
+       cubicle you could open rather than a solid block. */
+    var door = box(sw*0.82, h*0.80, 0.06, MAT.darkSteel);
+    door.position.set(cx, y0+h*0.46, d/2+0.035); g.add(door);
+    var hnd = box(0.10, 0.55, 0.12, MAT.galv);
+    hnd.position.set(cx + sw*0.33, y0+h*0.50, d/2+0.10); g.add(hnd);
+
+    /* Louvred vent band near the top of each section. */
+    for(var v=0; v<3; v++){
+      var lv = box(sw*0.5, 0.07, 0.05, MAT.darkSteel);
+      lv.position.set(cx, y0+h*0.80 + v*0.13, d/2+0.07); g.add(lv);
+    }
+    /* Section divider between cubicles. */
+    if(i<secs-1){
+      var dv = box(0.07, h, d*1.01, MAT.darkSteel);
+      dv.position.set(-w/2 + sw*(i+1), y0+h/2, 0); g.add(dv);
+    }
   }
+
+  /* Continuous top hat across the whole lineup. */
+  var hat = box(w+0.3, 0.4, d+0.3, MAT.gear);
+  hat.position.y = y0+h+0.2; g.add(hat);
+  var lip = box(w+0.45, 0.1, d+0.45, MAT.darkSteel);
+  lip.position.y = y0+h+0.42; g.add(lip);
   return g;
 }
 
@@ -133287,7 +133427,7 @@ function populate(site){
         it._impliedRoof = ru.implied;
         g = buildSolarRoof(it, arch, ru.y, ru.implied); break;
       case 'bess-container': g = buildContainer(it, arch); break;
-      case 'bess-cabinet':   g = buildCabinet(it, arch); break;
+      case 'bess-cabinet':   g = buildBessCabinet(it, arch); break;
       case 'pcs':            g = buildCabinet(it, arch); break;
       case 'ems':            g = buildCabinet(it, arch); break;
       case 'ups':            g = buildCabinet(it, arch); break;
