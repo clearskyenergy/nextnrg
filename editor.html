@@ -9467,9 +9467,33 @@ function getCenter(id){
 function _elCenter(id){
   var el=null;
   try{ el=S.elements.find(function(e){return e.id===id;}); }catch(e){}
-  if(!el) return null;
-  var s=_elBoxSize(el);
-  return { x:(+el.x||0)+s.w/2, y:(+el.y||0)+s.h/2 };
+  if(el){
+    var s=_elBoxSize(el);
+    return { x:(+el.x||0)+s.w/2, y:(+el.y||0)+s.h/2 };
+  }
+
+  /* SHAPES ARE CONDUIT HOSTS TOO, AND THIS IS WHERE THE PV RUN JUMPED.
+
+     getCenter() was taught about shapes; this was not, and the ENDPOINT
+     WELD in _geoReprojectAll goes through here. So for a run bonded to a
+     dersolar SHAPE — which is exactly what the guided build makes when its
+     PV leg snaps to an array you already drew — this returned null, the
+     weld hit `if(!ctr) continue`, and the endpoint was never moved.
+
+     Reprojection then rebuilt the array's geometry from lat/lng while the
+     conduit end stayed on the old pixel. The array walked and the line did
+     not, so the run appeared to jump off it on every zoom or pan.
+
+     _elBox answers in the same model pixel space the conduit points use,
+     which is the whole reason getCenter uses it for shapes. */
+  try{
+    var sh=(S.shapes||[]).find(function(s){ return s && s.id===id; });
+    if(sh && typeof _elBox==='function'){
+      var b=_elBox(sh);
+      if(b && isFinite(b.cx) && isFinite(b.cy)) return { x:b.cx, y:b.cy };
+    }
+  }catch(e){}
+  return null;
 }
 
 /* Shared size lookup. _elRenderSize lives in a later script block, so it is
@@ -36261,7 +36285,8 @@ function _ppBuildModal(){
     '<p id="pp-note" style="font-size:10px;color:var(--sub);margin-bottom:12px"></p>'+
     '<div style="display:flex;gap:6px;justify-content:flex-end">'+
     '<button onclick="_ppClose()" style="padding:7px 14px;border-radius:5px;border:none;cursor:pointer;font-size:12px;background:var(--surface);color:var(--sub)">Cancel</button>'+
-    '<button id="pp-export-btn" onclick="_ppExport()" style="padding:7px 14px;border-radius:5px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:var(--accent);color:var(--navy)">Export</button></div>'+
+    '<button id="pp-pptx-btn" onclick="_ppExportPPTX()" title="Same sheets as a PowerPoint \u2014 one sheet per slide, sized to the sheet rather than squeezed onto 16:9. For the meeting, not the permit." style="padding:7px 14px;border-radius:5px;border:1px solid var(--border);cursor:pointer;font-size:12px;font-weight:700;background:var(--surface);color:var(--text)">Export PPTX</button>'+
+    '<button id="pp-export-btn" onclick="_ppExport()" style="padding:7px 14px;border-radius:5px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:var(--accent);color:var(--navy)">Export PDF</button></div>'+
     '</div>';
   document.body.appendChild(m);
   return m;
@@ -38808,6 +38833,16 @@ async function _ppCaptureLiveMap(){
   }catch(e){ console.warn('Live map capture failed:', e && e.message); return false; }
 }
 
+/* PPTX runs the SAME sheet assembly as the PDF path — it sets a flag and
+   calls it. Duplicating the assembly would give two lists that drift, and
+   a PowerPoint missing a sheet the PDF has is exactly the kind of quiet
+   disagreement that gets noticed in front of a customer. */
+window._ppExportPPTX = function(){
+  window.__ppWantPPTX = true;
+  try { return _ppExport(); }
+  catch (e) { window.__ppWantPPTX = false; throw e; }
+};
+
 async function _ppExport(){
   var _btn=document.getElementById('pp-export-btn');
   var _btnTxt=_btn?_btn.textContent:'';
@@ -38902,6 +38937,33 @@ async function _ppExport(){
   window._ppTempMapImg=null; window._ppCanvasCapture=null;
   _resetBtn();
   if(!sheets.length){ alert('Select at least one sheet.'); return; }
+
+  /* PPTX takes the SAME assembled sheet list and stops here — the SVG and
+     PDF writers are skipped so pressing it does not also drop a dozen files
+     in Downloads. */
+  if(window.__ppWantPPTX){
+    window.__ppWantPPTX=false;
+    if(!window.OmegaPlotPPT){
+      _resetBtn();
+      alert('The PowerPoint exporter is not loaded on this build.');
+      return;
+    }
+    var _pb=document.getElementById('pp-pptx-btn');
+    var _pbTxt=_pb?_pb.textContent:'';
+    if(_pb){ _pb.disabled=true; _pb.style.opacity='0.75'; }
+    OmegaPlotPPT.build(sheets, {
+      title: pname || 'Plot plan',
+      dpi: 200,
+      onProgress: function(i,n,no){
+        if(_pb) _pb.textContent='Sheet '+i+' of '+n+' \u2014 '+no;
+      }
+    }, function(count, err){
+      if(_pb){ _pb.textContent=_pbTxt||'Export PPTX'; _pb.disabled=false; _pb.style.opacity='1'; }
+      if(err){ alert('PowerPoint export failed: '+err); return; }
+      _ppClose();
+    });
+    return;
+  }
 
   _ppClose();
 
@@ -142302,6 +142364,146 @@ if (root.console && console.info) {
   console.info('[pad] BESS pads follow the charger they sit under — ' +
                'OMEGA_PAD_AUTOBIND=false to disable, or untick per charger');
 }
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script id="omega-plotplan-pptx-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  PLOT PLAN → POWERPOINT
+ *
+ *  The sheet set already renders to SVG and then to PDF. PDF is right for
+ *  a permit submittal and wrong for the meeting where somebody wants to
+ *  talk over the site plan, drop it into a client deck, or annotate a
+ *  sheet on a call.
+ *
+ *  Same sheets, same renderers, same numbers — only the container changes.
+ *  Nothing here re-derives geometry, so a PPTX and a PDF exported a second
+ *  apart cannot disagree.
+ *
+ *  ── WHY THE SHEETS ARE RASTERISED ──────────────────────────────────
+ *
+ *  Each sheet becomes a full-bleed PNG at 200 DPI rather than embedded
+ *  vector. PowerPoint has no SVG import that survives a round trip
+ *  through Keynote and Google Slides, and this deck is going to be opened
+ *  in all three. A sheet that renders everywhere beats a sheet that stays
+ *  vector in one application and disappears in the other two — the same
+ *  reasoning that fixed the blank charts in the DER deck.
+ *
+ *  Sheet size drives the slide size, so a D-size sheet gets a 34x22
+ *  slide rather than being squeezed onto 16:9 and becoming unreadable.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+/* Rasterise one SVG string to a PNG data URL at print resolution. */
+function svgToPng(svg, dpi, cb){
+  try {
+    var wIn = 34, hIn = 22;
+    var vb = /viewBox\s*=\s*["']([\d.\-\s]+)["']/i.exec(svg);
+    var wA = /\swidth\s*=\s*["']([\d.]+)/i.exec(svg);
+    var hA = /\sheight\s*=\s*["']([\d.]+)/i.exec(svg);
+    if (vb) {
+      var p = vb[1].trim().split(/\s+/).map(Number);
+      if (p.length === 4 && p[2] > 0 && p[3] > 0) { wIn = p[2]; hIn = p[3]; }
+    } else if (wA && hA) { wIn = +wA[1]; hIn = +hA[1]; }
+
+    /* The sheet renderers work in points at 72/in; a D sheet comes out
+       2448 x 1584. Treat those units as the aspect source and scale to
+       the requested DPI. */
+    var aspect = wIn / hIn;
+    var pxW = Math.min(4400, Math.round((wIn / 72) * dpi));
+    var pxH = Math.round(pxW / aspect);
+
+    var blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var img = new Image();
+    var done = false;
+    var to = setTimeout(function(){ if (!done) { done = true; URL.revokeObjectURL(url); cb(null); } }, 15000);
+    img.onload = function(){
+      if (done) return; done = true; clearTimeout(to);
+      try {
+        var cv = document.createElement('canvas');
+        cv.width = pxW; cv.height = pxH;
+        var g = cv.getContext('2d');
+        /* White, not transparent: a permit sheet on a dark slide theme with
+           black linework is unreadable, and these are line drawings. */
+        g.fillStyle = '#ffffff'; g.fillRect(0, 0, pxW, pxH);
+        g.drawImage(img, 0, 0, pxW, pxH);
+        URL.revokeObjectURL(url);
+        cb({ data: cv.toDataURL('image/png'), w: pxW, h: pxH, aspect: aspect });
+      } catch (e) { URL.revokeObjectURL(url); cb(null); }
+    };
+    img.onerror = function(){
+      if (done) return; done = true; clearTimeout(to);
+      URL.revokeObjectURL(url); cb(null);
+    };
+    img.src = url;
+  } catch (e) { cb(null); }
+}
+
+/* Rasterise a list in sequence. Parallel decoding of a dozen D-size sheets
+   is a reliable way to run a browser tab out of memory. */
+function rasterise(sheets, dpi, onProgress, cb){
+  var out = [], i = 0;
+  (function next(){
+    if (i >= sheets.length) return cb(out);
+    var s = sheets[i];
+    if (onProgress) onProgress(i + 1, sheets.length, s.no);
+    svgToPng(s.svg, dpi, function (png) {
+      if (png) out.push({ no: s.no, png: png });
+      i++;
+      /* Yield so the progress text can paint between sheets. */
+      setTimeout(next, 0);
+    });
+  })();
+}
+
+function build(sheets, opts, cb){
+  opts = opts || {};
+  var PptxGenJS = root.PptxGenJS;
+  if (!PptxGenJS) { cb(null, 'The PowerPoint library did not load \u2014 it comes from a CDN, so this needs a network connection.'); return; }
+  if (!sheets || !sheets.length) { cb(null, 'No sheets were rendered.'); return; }
+
+  rasterise(sheets, opts.dpi || 200, opts.onProgress, function (imgs) {
+    if (!imgs.length) { cb(null, 'The sheets could not be rasterised.'); return; }
+    try {
+      var pptx = new PptxGenJS();
+      /* Slide matches the sheet, so the drawing is not squeezed into 16:9.
+         Capped at PowerPoint's 56 in limit. */
+      var a = imgs[0].png.aspect || (34 / 22);
+      var sw = Math.min(56, opts.slideWidthIn || 34);
+      var sh = +(sw / a).toFixed(2);
+      pptx.defineLayout({ name: 'SHEET', width: sw, height: sh });
+      pptx.layout = 'SHEET';
+      pptx.author = 'ClearSky OMEGA';
+      pptx.title = opts.title || 'Plot plan';
+
+      imgs.forEach(function (r) {
+        var s = pptx.addSlide();
+        s.background = { color: 'FFFFFF' };
+        /* Full bleed: the sheet already carries its own border and title
+           block, so a second frame around it just wastes the page. */
+        var ia = r.png.aspect || a;
+        var w = sw, h = sw / ia;
+        if (h > sh) { h = sh; w = sh * ia; }
+        s.addImage({ data: r.png.data, x: (sw - w) / 2, y: (sh - h) / 2, w: w, h: h });
+        try { s.addNotes('Sheet ' + r.no + (opts.title ? ' \u2014 ' + opts.title : '')); } catch (e) {}
+      });
+
+      var base = (opts.title || 'Plot-Plan').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 48);
+      var slug = 'ClearSky';
+      try { if (typeof brandSlug === 'function') slug = brandSlug(); } catch (e) {}
+      pptx.writeFile({ fileName: base + '-' + slug + '-Sheets.pptx' })
+        .then(function(){ cb(imgs.length, null); })
+        .catch(function (e) { cb(null, (e && e.message) || 'Could not write the file.'); });
+    } catch (e) {
+      cb(null, (e && e.message) || 'Could not build the presentation.');
+    }
+  });
+}
+
+root.OmegaPlotPPT = { build: build, svgToPng: svgToPng, rasterise: rasterise };
 
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
