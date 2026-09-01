@@ -140584,8 +140584,41 @@ function run(cb){
     .catch(function (e) {
       if (done) return; done = true; clearTimeout(to); BUSY = false;
       LAST = null;
-      paint((e && e.message) || 'Grid Atlas could not be reached.');
-      cb(null, (e && e.message) || 'failed');
+      var msg = (e && e.message) || 'Grid Atlas could not be reached.';
+      /* "Failed to fetch" is the browser's word for every network-layer
+         refusal and covers several problems with different fixes. Probe
+         rather than guess — same discriminator used for the NREL lookups.
+
+         A no-cors request is sent but its reply is never read, so it
+         succeeds whenever the server was REACHED, even with no CORS headers
+         on the answer. That splits the two cases cleanly. */
+      if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+        paint('No answer \u2014 working out why\u2026');
+        fetch(C.serviceUrl, { mode: 'no-cors', method: 'POST',
+                              headers: { 'Content-Type': 'text/plain' }, body: '{}' })
+          .then(function () {
+            paint('The service answered, but this browser threw the reply away: no ' +
+                  'Access-Control-Allow-Origin header for ' + location.origin + '. ' +
+                  'The editor runs on a different host from Grid Atlas, so the endpoint has to ' +
+                  'allow this origin \u2014 that is the CORS block added to api/grid-atlas.js. ' +
+                  'Deploy the updated file, or add this host to GRID_ATLAS_ORIGINS. ' +
+                  'Open ' + C.serviceUrl + ' in a tab: if it shows build ' +
+                  '"2026-09-01.layers-connected" it is deployed and the origin list is the issue; ' +
+                  'anything older means api/ has not shipped yet.');
+            cb(null, 'cors');
+          })
+          .catch(function () {
+            paint('Nothing is answering at ' + C.serviceUrl + ' at all \u2014 not a CORS problem. ' +
+                  'Either the endpoint is not deployed on that host, or the host is wrong. ' +
+                  'Open it in a tab to check, and set the right one with ' +
+                  'OmegaGridPrescreen.setService(\'https://…/api/grid-atlas\'). ' +
+                  'Open Grid Atlas below works either way.');
+            cb(null, 'unreachable');
+          });
+        return;
+      }
+      paint(msg);
+      cb(null, msg);
     });
 }
 
