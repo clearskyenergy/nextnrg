@@ -141823,11 +141823,20 @@ function pads(){
   try { return (S.shapes || []).filter(function (s) { return s && s.kind === 'bespad'; }); }
   catch (e) { return []; }
 }
+/* WHERE THE PAD ACTUALLY IS ON SCREEN, which is not where pts says.
+   _shapeTransform applies tx/ty and scale on top of the stored geometry, so
+   a pad that has been dragged is drawn somewhere else entirely. Testing
+   proximity against pts alone meant auto-bind looked for the charger at a
+   position the pad had not occupied since the first time anyone moved it,
+   and silently found nothing. */
 function padCenter(p){
   var s = ppf();
   var pt = (p.pts && p.pts[0]) || { x: 0, y: 0 };
-  var w = (p.lf || 10) * s, h = (p.wf || 8) * s;
-  return { x: pt.x + w / 2, y: pt.y + h / 2, w: w, h: h };
+  var sc = p.scale || 1;
+  var w = (p.lf || 10) * s * sc, h = (p.wf || 8) * s * sc;
+  return { x: pt.x + ((p.lf || 10) * s) / 2 + (p.tx || 0),
+           y: pt.y + ((p.wf || 8) * s) / 2 + (p.ty || 0),
+           w: w, h: h };
 }
 
 /* ── the binding ─────────────────────────────────────────────────────── */
@@ -141872,6 +141881,13 @@ function apply(p){
   p.lf = +(w / s).toFixed(2);
   p.wf = +(h / s).toFixed(2);
   p.pts = [{ x: u.x - w / 2, y: u.y - h / 2 }];
+
+  /* _shapeTransform applies tx/ty and scale ON TOP of pts. A pad that has
+     ever been dragged carries a leftover translate, so writing pts alone
+     put the geometry in the right place and then the transform moved it
+     away again — the pad looked stuck and the charger sat off-centre in it.
+     pts is now absolute truth for a bound pad, so the leftovers go. */
+  p.tx = 0; p.ty = 0; p.scale = 1;
   /* Turn with the unit. A pad set square to a charger that has been
      rotated to face a drive aisle is not square to anything. */
   p.rot = +el.rot || 0;
@@ -141981,8 +141997,39 @@ root.OmegaPadBind = {
   } catch (e) {}
 })();
 
+/* ── ON BY DEFAULT ───────────────────────────────────────────────────
+   A pad with a charger standing in the middle of it is that charger's
+   pad. Making somebody tick a box to state that is asking them to do the
+   software's job, and the whole complaint was that the two did not move
+   together. So it binds on load and after new placements.
+
+   The per-charger checkbox still turns it off, and unbinding leaves the
+   pad exactly where it is — so the default is a convenience, not a trap. */
+(function autoRun(){
+  if (typeof document === 'undefined') return;
+  if (root.OMEGA_PAD_AUTOBIND === false) return;
+  var last = 0, seen = 0;
+  function tick(){
+    try {
+      var n = ((S.shapes || []).length) + ((S.elements || []).length);
+      /* Only look when something has actually been added or removed. */
+      if (n === seen && Date.now() - last < 8000) return;
+      seen = n; last = Date.now();
+      var got = autoBind();
+      if (got.length && root.console && console.info) {
+        console.info('[pad] linked ' + got.length + ' BESS pad' + (got.length === 1 ? '' : 's') +
+                     ' to the charger standing on ' + (got.length === 1 ? 'it' : 'them'));
+      }
+      applyAll();
+    } catch (e) {}
+  }
+  setTimeout(tick, 2500);
+  setInterval(tick, 3000);
+})();
+
 if (root.console && console.info) {
-  console.info('[pad] OmegaPadBind.autoBind() links BESS pads to the charger standing on them');
+  console.info('[pad] BESS pads follow the charger they sit under — ' +
+               'OMEGA_PAD_AUTOBIND=false to disable, or untick per charger');
 }
 
 })(typeof window !== 'undefined' ? window : globalThis);
