@@ -131314,10 +131314,45 @@ var EQ_ARCH = {
   dc_leviathan:'bess-container'
 };
 
+/* THE GUIDED BUILDS DO NOT SET eqId.
+
+   classifyElement read el.eqId and nothing else. Everything the Insert
+   palette drops carries one, so authored equipment resolved fine — but
+   every piece a guided build places is type:'evgear' with evKind and
+   bgbRole instead, and no eqId at all. All of it therefore fell through
+   to 'jbox' and rendered as an anonymous grey box.
+
+   That is why a site built through Solar + Storage or the DCFC flow shows
+   a field of identical boxes and reports 0 STORAGE while the 2D legend
+   plainly lists a 1 MW / 2 MWh battery: the 3D view was not failing to
+   draw the BESS, it had never been told which one it was.
+
+   bgbRole is the build's own name for the piece and is the more specific
+   of the two, so it is read first. */
+var ROLE_ARCH = {
+  /* guided-build roles (BGB / DCFC) */
+  bess:'bess-cabinet', acblock:'bess-cabinet', pcs:'pcs', ems:'ems',
+  xfmr:'xfmr', utilxfmr:'xfmr', stepup:'xfmr',
+  mainswgr:'switchgear', swgr:'switchgear', panel:'panel', mainpanel:'panel',
+  disco:'disco', meter:'meter', service:'meter', poi:'meter',
+  pvinv:'pcs', inverter:'pcs', solarinv:'pcs',
+  charger:'charger', evse:'charger', dcfc:'charger',
+  loads:'building', datacenter:'building', datactr:'building',
+  genset:'genset', ups:'ups', jbox:'jbox'
+};
+
 function classifyElement(el){
   if(el._visArch && ARCH[el._visArch]) return { arch:el._visArch, why:'explicit' };
   var id = String(el.eqId||'');
   if(EQ_ARCH[id]) return { arch:EQ_ARCH[id], why:'authored' };
+
+  /* Guided-build pieces: role first, then the gear kind. */
+  var role = String(el.bgbRole||el.evRole||'').toLowerCase();
+  if(ROLE_ARCH[role]) return { arch:ROLE_ARCH[role], why:'authored' };
+  var ek = String(el.evKind||'').toLowerCase();
+  if(ROLE_ARCH[ek]) return { arch:ROLE_ARCH[ek], why:'authored' };
+  if(EQ_ARCH[ek]) return { arch:EQ_ARCH[ek], why:'authored' };
+
   if(el.type==='logo') return { arch:'ignore', why:'authored' };
   return { arch:'jbox', why:'inferred' };
 }
