@@ -52762,6 +52762,13 @@ function _connectToEms(ems, el, eqId){
           fromId:ems.id, toId:el.id, fromElId:ems.id, toElId:el.id,
           chainFromEms:true, labelDx:50, labelDy:-28 };
   S.conduits.push(c);
+
+  /* Cut the ground anchor immediately — waiting for a later pass means the
+     first zoom after a build is the one that breaks it. */
+  try{
+    if(window.OmegaAnchorCond && typeof OmegaAnchorCond.stamp==='function') OmegaAnchorCond.stamp();
+    else if(typeof _geoStampAll==='function') _geoStampAll();
+  }catch(e){}
   if(typeof renderConduit==='function') renderConduit(c);
   if(typeof updCondStat==='function') updCondStat();
   return c;
@@ -61177,7 +61184,44 @@ function _dcfcConduitAlongRun(el, run, snap, condType, label){
           ftLen:+(_polyLen(pts)/((typeof S!=='undefined'&&S.pxPerFt)||6)).toFixed(1),
           fromId:el.id, toId:null, route:'trench', trenchIn:run.in||'soil',
           evRun:run.id, evRole:condType, label:label||'', labelDx:50, labelDy:-28 };
+  /* BOND THE FAR END, AND ANCHOR IT NOW.
+
+     Every run the guided build created was pushed with toId:null and no
+     _geoPts. Two consequences, both of which look like the trench
+     wandering off its equipment:
+
+       toId:null    the far end is bonded to nothing, so the ENDPOINT WELD
+                    in _geoReprojectAll has no element to hold it to and
+                    leaves it wherever the last pixel put it.
+       no _geoPts   the run has no ground reference, so on the next pan or
+                    zoom it is reprojected from an anchor that does not
+                    exist — which is to say, not reprojected at all.
+
+     A run made during a build is exactly the one about to be zoomed, so
+     this is the worst place to leave either undone. The far end terminates
+     at the node this leg came FROM, which the sequence already knows. */
+  try{
+    var _par=null;
+    var _pre=(typeof BGB!=='undefined' && typeof BGB_PRESETS!=='undefined') ? BGB_PRESETS[BGB.mode] : null;
+    if(_pre && _pre.parents && el && el.bgbRole){
+      var _pk=_pre.parents[el.bgbRole];
+      var _pe=_pk && BGB.placed && BGB.placed[_pk];
+      if(_pe && _pe.id) _par=_pe.id;
+    }
+    if(_par){
+      c.toId=_par;
+      if(c.pts && c.pts.length) c.pts[c.pts.length-1].elId=_par;
+    }
+  }catch(e){}
+
   S.conduits.push(c);
+
+  /* Cut the ground anchor immediately — waiting for a later pass means the
+     first zoom after a build is the one that breaks it. */
+  try{
+    if(window.OmegaAnchorCond && typeof OmegaAnchorCond.stamp==='function') OmegaAnchorCond.stamp();
+    else if(typeof _geoStampAll==='function') _geoStampAll();
+  }catch(e){}
   if(typeof renderConduit==='function') renderConduit(c);
   if(typeof updCondStat==='function') updCondStat();
   return c;
@@ -75100,6 +75144,37 @@ if (_omPrevOmegaSite) { Object.keys(_omPrevOmegaSite).forEach(function (k) {
       +   '<button class="go" onclick="startSolarStorage()">Start build \u2192</button>'
       + '</div></div>';
     document.body.appendChild(d);
+
+    /* DEFAULT THE SYSTEM COUNT TO THE ARRAYS ALREADY DRAWN.
+
+       The field defaulted to 1, so a site with two arrays on it got one
+       inverter and one claimed array — which reads as the build refusing
+       to place the second inverter, when in fact it was asked for one.
+
+       If somebody has drawn two arrays they want two systems; that is what
+       drawing two arrays means. Still editable, and still 1 when there is
+       nothing drawn. */
+    try{
+      var _s=S_();
+      var _n=0;
+      if(_s && _s.shapes){
+        _s.shapes.forEach(function(sh){
+          if(!sh) return;
+          if(sh.kind!=='solar' && sh.kind!=='dersolar') return;
+          if(sh._bgbUsedAsPv) return;      /* already claimed by an earlier build */
+          _n++;
+        });
+      }
+      if(_n>1){
+        var _f=document.getElementById('sos-pvsys');
+        if(_f){
+          _f.value=Math.min(12,_n);
+          var _lb=document.querySelector('label[for="sos-pvsys"]');
+          if(_lb) _lb.textContent='PV systems ('+_n+' arrays drawn)';
+        }
+      }
+    }catch(e){}
+
     spec();
     return true;
   };
