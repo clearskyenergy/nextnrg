@@ -141464,5 +141464,263 @@ if (root.console && console.info) {
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 
+<script id="omega-save-doctor-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  ANCHOR AUDIT AND SAVE DOCTOR
+ *
+ *  Two things, both about work not surviving.
+ *
+ *  ── ANCHORS ACROSS MULTIPLE BUILDS ─────────────────────────────────
+ *
+ *  Every trench is stored in canvas PIXELS and anchored to lat/lng so it
+ *  tracks the ground when the map pans or zooms. OmegaAnchorCond already
+ *  does that well. The gap is WHEN it runs.
+ *
+ *  A guided build creates conduits and immediately reroutes them; a second
+ *  build on the same site does it again; daisy-chaining rewrites the
+ *  endpoints of runs that already existed. Each of those rewrites c.pts in
+ *  pixel space. If the anchor is not re-cut afterwards, the run is pinned
+ *  to coordinates it no longer occupies, and the failure only shows on the
+ *  next zoom — by which time nobody connects it to the build they ran ten
+ *  minutes ago.
+ *
+ *  So: audit after every build, and re-stamp what drifted.
+ *
+ *  ── SAVE ───────────────────────────────────────────────────────────
+ *
+ *  Firestore caps a document at 1 MB. A site with several builds on it
+ *  carries anchor arrays on every run, and a PV field carries per-table
+ *  geometry — 285 tables is not unusual. When that crosses the line the
+ *  save fails, and "!! Save failed" does not say which part is too big or
+ *  what to drop.
+ *
+ *  check() weighs the payload section by section and names the offender.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+function S_(){ try { return (typeof S !== 'undefined' && S) ? S : null; } catch (e) { return null; } }
+function bytes(o){
+  try { return new Blob([JSON.stringify(o)]).size; }
+  catch (e) { try { return JSON.stringify(o).length; } catch (e2) { return 0; } }
+}
+function kb(n){ return (n / 1024).toFixed(0) + ' KB'; }
+
+/* ── anchors ─────────────────────────────────────────────────────────── */
+function auditAnchors(){
+  var s = S_(); if (!s) return null;
+  var cs = s.conduits || [];
+  var r = { total: cs.length, anchored: 0, missing: 0, stale: 0, partial: 0, noPts: 0, offenders: [] };
+
+  cs.forEach(function (c) {
+    if (!c) return;
+    if (!c.pts || !c.pts.length) { r.noPts++; return; }
+    if (!c._geoPts) { r.missing++; r.offenders.push(label(c) + ' \u2014 never anchored'); return; }
+    if (c._geoPts.length !== c.pts.length) {
+      r.stale++; r.offenders.push(label(c) + ' \u2014 ' + c.pts.length + ' points but ' +
+        c._geoPts.length + ' anchors (rerouted since it was stamped)');
+      return;
+    }
+    var bad = 0;
+    for (var i = 0; i < c._geoPts.length; i++) {
+      var g = c._geoPts[i];
+      if (!g || g.lat == null || g.lng == null) bad++;
+    }
+    if (bad) {
+      /* A PARTIAL anchor is the dangerous one: the reprojector moves only
+         the points that have coordinates, so one end tracks the ground and
+         the other stays pinned to a screen pixel and the run tears apart. */
+      r.partial++;
+      r.offenders.push(label(c) + ' \u2014 ' + bad + ' of ' + c._geoPts.length +
+        ' points unanchored (this run will tear on the next zoom)');
+      return;
+    }
+    /* Anchor exists and is complete \u2014 but is it CURRENT? */
+    try {
+      if (typeof root.__omegaCondPxSig === 'function' && c._pxSig &&
+          c._pxSig !== root.__omegaCondPxSig(c)) {
+        r.stale++;
+        r.offenders.push(label(c) + ' \u2014 geometry changed after stamping');
+        return;
+      }
+    } catch (e) {}
+    r.anchored++;
+  });
+  return r;
+}
+function label(c){
+  return (c.label || c.evRole || c.type || 'run') + (c.id ? ' [' + String(c.id).slice(-6) + ']' : '');
+}
+
+/* Re-anchor whatever drifted. Safe to call repeatedly. */
+function fixAnchors(){
+  var before = auditAnchors();
+  if (!before) return null;
+  var n = 0;
+  try {
+    if (root.OmegaAnchorCond && typeof root.OmegaAnchorCond.restampAll === 'function') {
+      n = root.OmegaAnchorCond.restampAll();
+    } else if (typeof root._geoStampAll === 'function') {
+      root._geoStampAll(); n = before.missing + before.stale + before.partial;
+    }
+  } catch (e) {}
+  var after = auditAnchors();
+  return { before: before, after: after, restamped: n };
+}
+
+/* Run after anything that rewrites conduit geometry in bulk. Debounced,
+   because a guided build fires several of these in a row. */
+var pending = null;
+function afterBuild(why){
+  clearTimeout(pending);
+  pending = setTimeout(function(){
+    var a = auditAnchors();
+    if (!a) return;
+    var broken = a.missing + a.stale + a.partial;
+    if (!broken) return;
+    var f = fixAnchors();
+    if (root.console && console.info) {
+      console.info('[anchors] ' + (why || 'build') + ': re-anchored ' + broken +
+        ' of ' + a.total + ' runs' +
+        (f && f.after ? ' \u2014 ' + f.after.anchored + ' now current' : ''));
+    }
+  }, 700);
+}
+
+/* ── save ────────────────────────────────────────────────────────────── */
+var LIMIT = 1048576;                      /* Firestore hard cap, 1 MB */
+function check(){
+  var s = S_();
+  if (!s) { log('No project state.'); return null; }
+  var parts = [
+    ['elements',  s.elements],
+    ['shapes',    s.shapes],
+    ['conduits',  s.conduits],
+    ['loadProfile', s.loadProfile],
+    ['grid',      s.grid],
+    ['billImport', s.billImport],
+    ['terrain',   s.terrain || s._terrain],
+    ['results',   s.results]
+  ];
+  var rows = [], total = 0;
+  parts.forEach(function (p) {
+    if (p[1] == null) return;
+    var b = bytes(p[1]);
+    total += b;
+    rows.push({ part: p[0], bytes: b,
+                count: Array.isArray(p[1]) ? p[1].length : null });
+  });
+  rows.sort(function (a, b) { return b.bytes - a.bytes; });
+
+  log('%c[save] payload \u2248 ' + kb(total) + ' of a 1 MB document limit ' +
+      '(' + Math.round(total / LIMIT * 100) + '%)',
+      total > LIMIT * 0.8 ? 'color:#F97316;font-weight:700' : 'color:#4ADE80;font-weight:700');
+  rows.forEach(function (r) {
+    log('   ' + r.part.padEnd(13) + kb(r.bytes).padStart(9) +
+        (r.count != null ? '   ' + r.count + ' items' : ''));
+  });
+
+  /* Name the heaviest single objects, because "shapes is 600 KB" is not
+     actionable but "this PV array carries 285 tables" is. */
+  var heavy = [];
+  ['shapes', 'conduits', 'elements'].forEach(function (k) {
+    (s[k] || []).forEach(function (o) {
+      var b = bytes(o);
+      if (b > 20000) heavy.push({ k: k, b: b, name: (o.label || o.kind || o.type || o.id) });
+    });
+  });
+  heavy.sort(function (a, b) { return b.b - a.b; });
+  if (heavy.length) {
+    log('   heaviest objects:');
+    heavy.slice(0, 6).forEach(function (x) {
+      log('     ' + kb(x.b).padStart(9) + '  ' + x.k + '  ' + x.name);
+    });
+  }
+
+  if (total > LIMIT) {
+    log('%c   OVER THE LIMIT \u2014 the save will be refused. The usual cause is per-table ' +
+        'PV geometry or terrain samples; both can be recomputed from the design, so they ' +
+        'are the safe things to drop.', 'color:#F97316');
+  } else if (total > LIMIT * 0.8) {
+    log('%c   Close to the limit. Another build or two on this site will cross it.', 'color:#FBBF24');
+  }
+
+  var anch = auditAnchors();
+  if (anch) {
+    log('[anchors] ' + anch.anchored + ' of ' + anch.total + ' runs anchored and current' +
+        (anch.missing ? ', ' + anch.missing + ' never stamped' : '') +
+        (anch.stale ? ', ' + anch.stale + ' stale' : '') +
+        (anch.partial ? ', ' + anch.partial + ' PARTIAL' : ''));
+    anch.offenders.slice(0, 8).forEach(function (o) { log('   \u2717 ' + o); });
+    if (anch.missing + anch.stale + anch.partial) {
+      log('   OmegaSaveDoctor.fixAnchors() re-cuts them.');
+    }
+  }
+  return { total: total, rows: rows, heavy: heavy, anchors: anch };
+}
+
+function log(a, b){
+  if (!root.console || !console.log) return;
+  if (b) console.log(a, b); else console.log(a);
+}
+
+root.OmegaSaveDoctor = {
+  check: check, auditAnchors: auditAnchors, fixAnchors: fixAnchors,
+  afterBuild: afterBuild, bytes: bytes
+};
+
+/* ── hook the build paths ────────────────────────────────────────────
+   Wrap rather than edit, so the guided builds keep their own behaviour
+   and this cannot be the thing that breaks one. */
+(function hook(){
+  var tries = 0;
+  var iv = setInterval(function(){
+    if (++tries > 60) { clearInterval(iv); return; }
+    var done = 0;
+    ['_dcfcFinish', 'rerouteTrenchConduits'].forEach(function (fn) {
+      try {
+        var f = root[fn];
+        if (typeof f !== 'function' || f.__anchorHooked) { if (typeof f === 'function') done++; return; }
+        var wrapped = function(){
+          var r = f.apply(this, arguments);
+          afterBuild(fn);
+          return r;
+        };
+        wrapped.__anchorHooked = true;
+        root[fn] = wrapped;
+        done++;
+      } catch (e) {}
+    });
+    if (done >= 2) clearInterval(iv);
+  }, 500);
+})();
+
+/* Daisy-chaining rewrites endpoints, so it needs the same treatment. */
+(function hookDaisy(){
+  var tries = 0;
+  var iv = setInterval(function(){
+    if (++tries > 60) { clearInterval(iv); return; }
+    if (!root.OmegaDCFC || root.OmegaDCFC.__anchorHooked) {
+      if (root.OmegaDCFC) clearInterval(iv);
+      return;
+    }
+    var d = root.OmegaDCFC.daisy;
+    root.OmegaDCFC.daisy = function(){
+      var r = d.apply(this, arguments);
+      afterBuild('daisy');
+      return r;
+    };
+    root.OmegaDCFC.__anchorHooked = true;
+    clearInterval(iv);
+  }, 500);
+})();
+
+if (root.console && console.info) {
+  console.info('[save] OmegaSaveDoctor.check() weighs the payload and audits trench anchors');
+}
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
 </body>
 </html>
