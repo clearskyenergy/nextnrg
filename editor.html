@@ -8852,8 +8852,35 @@ function uP(k,v){
     const bh2=Math.round((+v)*0.55);dom.style.width=(+v)+'px';dom.style.height=bh2+'px';
     const bd3=dom.querySelector('.elbody');if(bd3){bd3.style.width=(+v)+'px';bd3.style.height=bh2+'px';}}
   }
-  else if(k==='rot'){el.rot=+v;if(el.type==='evgear'){var _bd=dom.querySelector('.elbody');if(_bd){_bd.style.transform='rotate('+v+'deg)'+(el.flip?' scaleX(-1)':'');_bd.style.transformOrigin='center';}}else{const bd=dom.querySelector('.elbody');if(bd){bd.style.transform=`rotate(${v}deg)`;bd.style.transformOrigin='center';}}}
+  else if(k==='rot'){el.rot=+v;_syncElTransforms(el,dom);if(el.type==='evgear'){var _bd=dom.querySelector('.elbody');if(_bd){_bd.style.transform='rotate('+v+'deg)'+(el.flip?' scaleX(-1)':'');_bd.style.transformOrigin='center';}}else{const bd=dom.querySelector('.elbody');if(bd){bd.style.transform=`rotate(${v}deg)`;bd.style.transformOrigin='center';}}}
 }
+
+/* THE PAD AND THE BODY MUST TURN TOGETHER.
+
+   Rotation was applied to '.elbody' alone. The protection pad is a sibling
+   SVG, so it kept whatever angle it happened to be rendered at: rotate a
+   charger and the pad stayed put, or the pad turned and the cabinet did
+   not, depending on which path last touched it. Three places set rotation
+   and only one of them knew about the pad.
+
+   One helper now sets both, from the model, and it is called from all of
+   them. Both are centred on the wrapper, so rotating about 'center' turns
+   them about the same point and the pad stays under the unit. */
+function _syncElTransforms(el, dom){
+  if(!el) return;
+  try{
+    dom = dom || document.querySelector('[data-elid="'+el.id+'"]');
+    if(!dom) return;
+    var t = 'rotate('+(+el.rot||0)+'deg)' + (el.flip ? ' scaleX(-1)' : '');
+    var bd = dom.querySelector('.elbody');
+    if(bd){ bd.style.transform = t; bd.style.transformOrigin = 'center'; }
+    var pd = dom.querySelector('.ev-bollard-pad');
+    /* The pad is never flipped — a mirrored hatch is still a hatch, and
+       flipping it would shift it off centre for no visual gain. */
+    if(pd){ pd.style.transform = 'rotate('+(+el.rot||0)+'deg)'; pd.style.transformOrigin = 'center'; }
+  }catch(e){}
+}
+try{ window._syncElTransforms=_syncElTransforms; }catch(e){}
 
 function delSel(){if(S.sel)removeEl(S.sel);}
 function updCount(){document.getElementById('elcnt').textContent=S.elements.length;}
@@ -35299,16 +35326,10 @@ function _geoReprojectAll(){
         /* Reproject moves the wrapper but never rebuilt the body, so a
            rotation applied since the last full render survived only by
            luck. Re-assert it from the model, which is the truth. */
-        var _bd=dom.querySelector('.elbody');
-        if(_bd && el.rot){
-          _bd.style.transform='rotate('+el.rot+'deg)';
-          _bd.style.transformOrigin='center';
-        }
-        var _pd=dom.querySelector('.ev-bollard-pad');
-        if(_pd && el.rot){
-          _pd.style.transform='rotate('+el.rot+'deg)';
-          _pd.style.transformOrigin='center';
-        }
+        /* Unconditional: guarding on el.rot being truthy meant rotating a
+           unit back to 0 left the old transform on the DOM, so it never
+           came back to square. */
+        if(typeof _syncElTransforms==='function') _syncElTransforms(el, dom);
       }
     });
     /* Shapes: rebuild the WHOLE geometry from lat/lng, and re-derive table
@@ -141395,6 +141416,8 @@ root._dcfcProps = function (el) {
       '</div>' +
       '<label style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:10px;color:var(--sub);cursor:pointer">' +
         '<input type="checkbox" id="p-dcfc-padon" style="accent-color:#F4A020"> Show protection pad</label>' +
+      '<label style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:10px;color:var(--sub);cursor:pointer">' +
+        '<input type="checkbox" id="p-dcfc-padbind" style="accent-color:#2F7FE0"> BESS pad follows this charger</label>' +
       '<div style="display:flex;gap:6px;margin-top:8px">' +
         '<button id="p-dcfc-all" style="flex:1;background:rgba(255,255,255,.06);border:1px solid var(--border);' +
         'color:var(--text);border-radius:5px;padding:5px;font-size:10px;cursor:pointer;font-family:inherit">Apply to all chargers</button>' +
@@ -141411,12 +141434,34 @@ root._dcfcProps = function (el) {
       setUnitFt(c, get('p-dcfc-l').value, get('p-dcfc-w').value);
       var p = get('p-dcfc-pad').value;
       setPadFt(c, p === '' ? null : p);
+      /* A bound BESS pad uses the same clearance, so one box drives both
+         rather than two numbers that mean the same thing. */
+      try {
+        if (root.OmegaPadBind && p !== '') root.OmegaPadBind.setClearance(c.id, +p);
+        else if (root.OmegaPadBind) root.OmegaPadBind.applyAll();
+      } catch (e) {}
     }
     ['p-dcfc-l','p-dcfc-w','p-dcfc-pad'].forEach(function (id) {
       get(id).addEventListener('change', push);
     });
     get('p-dcfc-padon').addEventListener('change', function(){
       var c = cur(); if (c) setPadOn(c, this.checked);
+    });
+    get('p-dcfc-padbind').addEventListener('change', function(){
+      var c = cur(); if (!c || !root.OmegaPadBind) return;
+      var B = root.OmegaPadBind;
+      if (this.checked) {
+        /* Claim the pad the charger is standing on, if there is one. */
+        var got = B.autoBind().filter(function (r) { return r.el === c.id; });
+        if (!got.length) {
+          this.checked = false;
+          alert('No BESS pad found under this charger. Drop one from Draw \u203a BESS Pad ' +
+                'so it overlaps the unit, then tick this again.');
+        }
+      } else {
+        B.boundTo(c.id).forEach(function (p) { B.unbind(p.id); });
+      }
+      try { if (typeof renderAll === 'function') renderAll(); } catch (e) {}
     });
     get('p-dcfc-all').addEventListener('click', function(){
       var p = get('p-dcfc-pad').value;
@@ -141436,6 +141481,10 @@ root._dcfcProps = function (el) {
   document.getElementById('p-dcfc-pad').value = el.padFt != null ? el.padFt : '';
   document.getElementById('p-dcfc-pad').placeholder = padFt(el) + ' auto';
   document.getElementById('p-dcfc-padon').checked = (el.bollardPad !== false);
+  try {
+    var _pb = document.getElementById('p-dcfc-padbind');
+    if (_pb && root.OmegaPadBind) _pb.checked = root.OmegaPadBind.boundTo(el.id).length > 0;
+  } catch (e) {}
   var note = document.getElementById('p-dcfc-note');
   if (note) {
     var t = totalFt(el);
@@ -141717,6 +141766,223 @@ root.OmegaSaveDoctor = {
 
 if (root.console && console.info) {
   console.info('[save] OmegaSaveDoctor.check() weighs the payload and audits trench anchors');
+}
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script id="omega-pad-bind-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  PAD FOLLOWS CHARGER
+ *
+ *  There are two different orange things under a charger and they behave
+ *  differently, which is why one of them kept not resizing.
+ *
+ *    · The PROTECTION PAD is CSS, drawn inside the element. It already
+ *      tracks the unit because it is part of it.
+ *
+ *    · A BESS PAD is a SHAPE (kind 'bespad'), placed by the pad tool with
+ *      its own footprint, its own handles, and no relationship to anything
+ *      near it. Dropping one under a charger puts two independent objects
+ *      in the same place. Move, rotate or resize the charger and the pad
+ *      does not follow, because nothing ever told it to.
+ *
+ *  That is not a bug in the pad tool \u2014 a BESS pad under a container is
+ *  supposed to be independent. It is a missing relationship, so this adds
+ *  the relationship rather than changing either object.
+ *
+ *  BINDING. A bound pad recomputes from its charger on every change:
+ *  centred on it, rotated with it, and sized to the unit's footprint plus
+ *  a clearance in feet. Unbinding leaves the pad exactly where it is, so
+ *  the escape hatch costs nothing.
+ *
+ *  The pad's own handles still work while bound \u2014 dragging one edits the
+ *  CLEARANCE rather than fighting the binding, so the gesture does the
+ *  thing it looks like it does instead of being silently undone on the
+ *  next charger move.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+function ppf(){
+  try { if (S.pxPerFt > 0) return S.pxPerFt; } catch (e) {}
+  try { if (root.OmegaScale) return OmegaScale.pxPerFt(); } catch (e) {}
+  return 4;
+}
+function isCharger(el){
+  if (!el) return false;
+  if (el.type === 'evgear' && el.evKind === 'charger') return true;
+  if (el.type === 'eq' && (el.eqId === 'charger' || el.eqId === 'evse')) return true;
+  return false;
+}
+function elCenter(el){
+  var w = el.w || 40, h = el.h || Math.round(w * (el.aspect || 0.72));
+  return { x: (el.x || 0) + w / 2, y: (el.y || 0) + h / 2, w: w, h: h };
+}
+function pads(){
+  try { return (S.shapes || []).filter(function (s) { return s && s.kind === 'bespad'; }); }
+  catch (e) { return []; }
+}
+function padCenter(p){
+  var s = ppf();
+  var pt = (p.pts && p.pts[0]) || { x: 0, y: 0 };
+  var w = (p.lf || 10) * s, h = (p.wf || 8) * s;
+  return { x: pt.x + w / 2, y: pt.y + h / 2, w: w, h: h };
+}
+
+/* ── the binding ─────────────────────────────────────────────────────── */
+function bind(padId, elId, clearFt){
+  var p = (S.shapes || []).find(function (s) { return s.id === padId; });
+  var el = (S.elements || []).find(function (e) { return e.id === elId; });
+  if (!p || !el) return false;
+  var u = elCenter(el), s = ppf();
+  /* Keep whatever clearance the pad already has, so binding does not
+     resize it out from under somebody who sized it deliberately — but
+     only if it is a plausible clearance. A pad dropped at its default
+     footprint and left there can sit thirty feet proud of a three-foot
+     dispenser, and inheriting that just preserves the thing the binding
+     was turned on to fix. Above the cutoff, fall back to a real setback. */
+  if (clearFt == null) {
+    var pc = padCenter(p);
+    var inherited = Math.max(0, +(((pc.w - u.w) / 2) / s).toFixed(1));
+    clearFt = (inherited > 0.5 && inherited <= 15) ? inherited : 2.5;
+  }
+  p.bindTo = elId;
+  p.bindClearFt = clearFt;
+  apply(p);
+  return true;
+}
+function unbind(padId){
+  var p = (S.shapes || []).find(function (s) { return s.id === padId; });
+  if (!p) return false;
+  delete p.bindTo; delete p.bindClearFt;
+  return true;
+}
+
+/* Recompute one bound pad from its charger. */
+function apply(p){
+  if (!p || !p.bindTo) return false;
+  var el = (S.elements || []).find(function (e) { return e.id === p.bindTo; });
+  if (!el) { delete p.bindTo; return false; }   /* charger deleted: release it */
+  var s = ppf();
+  var u = elCenter(el);
+  var g = (p.bindClearFt != null ? +p.bindClearFt : 2.5) * s;
+
+  var w = u.w + g * 2, h = u.h + g * 2;
+  p.lf = +(w / s).toFixed(2);
+  p.wf = +(h / s).toFixed(2);
+  p.pts = [{ x: u.x - w / 2, y: u.y - h / 2 }];
+  /* Turn with the unit. A pad set square to a charger that has been
+     rotated to face a drive aisle is not square to anything. */
+  p.rot = +el.rot || 0;
+  /* The pad is anchored to the ground like everything else; its old anchor
+     described where it used to be. Drop it so the anchor pass re-cuts it,
+     otherwise the next zoom drags it back to the old spot. */
+  delete p._geoPts; delete p._geo; delete p._geoCx; delete p._geoCy;
+  return true;
+}
+
+/* Recompute every bound pad. Cheap, and the only way to be sure a move
+   that happened through a path we do not know about is still honoured. */
+function applyAll(){
+  var n = 0;
+  pads().forEach(function (p) { if (p.bindTo && apply(p)) n++; });
+  if (n) {
+    try { if (typeof renderShape === 'function') pads().forEach(function (p) { if (p.bindTo) renderShape(p); }); } catch (e) {}
+    try { if (typeof _geoStampAll === 'function') _geoStampAll(); } catch (e) {}
+  }
+  return n;
+}
+
+/* ── auto-bind ───────────────────────────────────────────────────────
+   A pad whose centre sits inside a charger is under that charger, and
+   asking somebody to state the obvious is a poor use of their afternoon.
+   Only claims pads that clearly belong to one \u2014 an unrelated pad twenty
+   feet away is left alone. */
+function autoBind(){
+  var out = [];
+  var chargers = (S.elements || []).filter(isCharger);
+  pads().forEach(function (p) {
+    if (p.bindTo) return;
+    var pc = padCenter(p);
+    var best = null, bestD = Infinity;
+    chargers.forEach(function (el) {
+      var u = elCenter(el);
+      var d = Math.hypot(pc.x - u.x, pc.y - u.y);
+      /* Within half the pad, i.e. the charger really is standing on it. */
+      if (d < Math.max(pc.w, pc.h) / 2 && d < bestD) { bestD = d; best = el; }
+    });
+    if (best) { bind(p.id, best.id); out.push({ pad: p.id, el: best.id, d: Math.round(bestD) }); }
+  });
+  if (out.length) {
+    try { if (typeof renderAll === 'function') renderAll(); } catch (e) {}
+    try { if (typeof _setSaved === 'function') _setSaved('unsaved'); } catch (e) {}
+  }
+  return out;
+}
+
+root.OmegaPadBind = {
+  bind: bind, unbind: unbind, apply: apply, applyAll: applyAll,
+  autoBind: autoBind, pads: pads, isCharger: isCharger,
+  boundTo: function (elId) {
+    return pads().filter(function (p) { return p.bindTo === elId; });
+  },
+  setClearance: function (elId, ft) {
+    var n = 0;
+    pads().forEach(function (p) {
+      if (p.bindTo !== elId) return;
+      p.bindClearFt = Math.max(0, +ft || 0);
+      apply(p); n++;
+    });
+    if (n) { try { if (typeof renderAll === 'function') renderAll(); } catch (e) {} }
+    return n;
+  }
+};
+
+/* ── keep it in sync ─────────────────────────────────────────────────
+   Wrapped, not edited, so the element paths keep their own behaviour and
+   this can never be the thing that breaks a drag. */
+(function hook(){
+  if (typeof document === 'undefined') return;
+  var tries = 0;
+  var iv = setInterval(function(){
+    if (++tries > 80) { clearInterval(iv); return; }
+    var got = 0;
+    ['_reRenderEl', 'renderEl', '_syncElTransforms'].forEach(function (fn) {
+      try {
+        var f = root[fn];
+        if (typeof f !== 'function') return;
+        got++;
+        if (f.__padBound) return;
+        var wrapped = function(){
+          var r = f.apply(this, arguments);
+          try { schedule(); } catch (e) {}
+          return r;
+        };
+        wrapped.__padBound = true;
+        root[fn] = wrapped;
+      } catch (e) {}
+    });
+    if (got >= 2) clearInterval(iv);
+  }, 400);
+
+  /* A drag fires hundreds of these; coalesce to one pass per frame. */
+  var q = null;
+  function schedule(){
+    if (q) return;
+    q = setTimeout(function(){ q = null; applyAll(); }, 40);
+  }
+
+  /* Mouse-up covers drags that move the wrapper directly without going
+     through a render call. */
+  try {
+    document.addEventListener('mouseup', function(){ setTimeout(applyAll, 60); }, true);
+    document.addEventListener('touchend', function(){ setTimeout(applyAll, 60); }, true);
+  } catch (e) {}
+})();
+
+if (root.console && console.info) {
+  console.info('[pad] OmegaPadBind.autoBind() links BESS pads to the charger standing on them');
 }
 
 })(typeof window !== 'undefined' ? window : globalThis);
