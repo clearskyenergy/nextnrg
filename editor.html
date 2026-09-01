@@ -61483,7 +61483,19 @@ var BGB_LEGNAME = {
 
 function _bgbSeq(){
   var base=(BGB_PRESETS[BGB.mode]||BGB_PRESETS.BTM).seq.slice();
+
+  /* Tying into equipment that is already on the drawing: everything from
+     the utility down TO AND INCLUDING that piece is already built, so it
+     is dropped from the sequence rather than drawn a second time. The
+     piece itself is seeded into BGB.placed, so the first remaining step
+     still finds its parent and runs a real conduit to it. */
+  var tie=BGB.tieKind||null;
+  var upTo = tie==='mainswgr' ? ['service','utilxfmr','mainswgr']
+           : tie==='utilxfmr' ? ['service','utilxfmr']
+           : null;
+
   return base.filter(function(k){
+    if(upTo && upTo.indexOf(k)>=0) return false;
     if(k==='xfmr'  && BGB.incXfmr)  return false;
     if(k==='disco' && BGB.incDisco) return false;
     return true;
@@ -61790,6 +61802,30 @@ function _bgbStartPlacing(){
   _bgbSync();
   var m=document.getElementById('bgb-modal'); if(m) m.remove();
   BGB.active=true; BGB.phase='poi'; BGB.stepIx=0; BGB.placed={}; BGB.lastEl=null;
+
+  /* Seed the tie-in so the first drawn leg has something real to start
+     from. Without this the sequence would begin with a step whose parent
+     was never placed, and the run would start at nothing. */
+  BGB.tieKind=null; BGB.tieEl=null;
+  try{
+    var _tieId=window.__omegaTieFrom; window.__omegaTieFrom=null;
+    if(_tieId && typeof S!=='undefined' && S.elements){
+      var _te=S.elements.filter(function(e){ return e && e.id===_tieId; })[0];
+      if(_te){
+        var _id=(_te.eqId||_te.evKind||'');
+        BGB.tieKind = (/swgr|switchgear|panel/i.test(_id) || /switchgear|panelboard/i.test(_te.label||''))
+                      ? 'mainswgr' : 'utilxfmr';
+        BGB.tieEl=_te;
+        BGB.placed[BGB.tieKind]=_te;
+        BGB.lastEl=_te;
+        try{ if(typeof _evBanner==='function'){
+          _evBanner('\u26a1 Tying into '+(_te.label||'existing equipment')
+                    +' \u2014 the service and transformer are already on the drawing, '
+                    +'so the build starts at the next piece.');
+        } }catch(e){}
+      }
+    }
+  }catch(e){}
   BGB._surface='soil'; BGB._activeRun=null; BGB._lastEnd=null;
   BGB.seq=_bgbSeq().slice();
   if(typeof _dcfcDraw!=='undefined') _dcfcDraw=null;
@@ -74732,7 +74768,70 @@ if (_omPrevOmegaSite) { Object.keys(_omPrevOmegaSite).forEach(function (k) {
           +'not yet selected \u2014 the capacity above carries through the design '
           +'and the layout does not change when a real unit is chosen.</div>'):'');
   }
+  /* The note has always described a build that starts at the utility POI.
+     When a tie-in is chosen that is no longer what happens, and a note
+     describing the wrong sequence is worse than none. */
+  function _sosNote(){
+    var n=document.getElementById('sos-note'); if(!n) return;
+    var v=(document.getElementById('sos-start')||{}).value||'';
+    if(!v){
+      n.textContent='Builds AC-coupled: the BESS AC block and the solar inverter each tap the '
+        + 'main switchgear and share the interconnection. Seven pieces, starting at the utility '
+        + 'POI. Leave solar at 0 for storage only.';
+      return;
+    }
+    var c=_sosTieCandidates().filter(function(x){ return x.id===v; })[0];
+    var isSwgr = c && c.kind==='mainswgr';
+    n.textContent='Ties into '+((c&&c.label)||'existing equipment')+'. The service'
+      + (isSwgr?', transformer and switchgear are':' and transformer are')
+      + ' already on the drawing, so they are not drawn again — the build starts at the '
+      + (isSwgr?'AC block':'switchgear')+' and the first run comes off the existing equipment. '
+      + 'Check its spare capacity carries the new load before you commit to it.';
+  }
+  window._sosNote=_sosNote;
+  var _specInner=spec;
+  spec=function(){ try{ _specInner(); }catch(e){} try{ _sosNote(); }catch(e){} };
   window._sosSpec=spec;
+
+  /* ── START FROM EXISTING SERVICE ──────────────────────────────────
+     The build has always begun at the utility POI and drawn its own
+     service and transformer. That is right for a greenfield tie-in and
+     wrong the moment a service already exists — which it usually does by
+     the time somebody adds storage. A DCFC build that has already set a
+     750 kVA pad-mount is the common case: the transformer is on the
+     drawing, it is sized, and the BESS should land on it rather than
+     beside a second one nobody is going to build.
+
+     Anything already placed that can be tied into is offered here. The
+     sequence then starts below it, and the first leg runs from the real
+     equipment. */
+  function _sosTieCandidates(){
+    var s=S_(); if(!s || !s.elements) return [];
+    var out=[];
+    s.elements.forEach(function(e){
+      if(!e) return;
+      var kind=null;
+      var id=(e.eqId||e.evKind||'');
+      if(/xfmr|transformer/i.test(id) || /transformer/i.test(e.label||'')) kind='utilxfmr';
+      else if(/swgr|switchgear|panel/i.test(id) || /switchgear|panelboard/i.test(e.label||'')) kind='mainswgr';
+      if(!kind) return;
+      out.push({ id:e.id, kind:kind,
+                 label:(e.label||(kind==='utilxfmr'?'Transformer':'Switchgear'))
+                       + (e.spec ? ' \u2014 '+String(e.spec).split('\n')[0] : '') });
+    });
+    return out;
+  }
+  window._sosTieCandidates=_sosTieCandidates;
+
+  function _sosStartOptions(){
+    var list=_sosTieCandidates();
+    var o='<option value="">Utility POI \u2014 draw a new service and transformer</option>';
+    list.forEach(function(c){
+      o+='<option value="'+c.id+'">Tie into: '+String(c.label).replace(/[<>&"]/g,'')+'</option>';
+    });
+    return o;
+  }
+  window._sosStartOptions=_sosStartOptions;
 
   window.closeSolarStorage=function(){
     var m=document.getElementById('sos-modal'); if(m) m.remove();
@@ -74780,8 +74879,10 @@ if (_omPrevOmegaSite) { Object.keys(_omPrevOmegaSite).forEach(function (k) {
       +     '<div><label for="sos-gen-kw">Power (kW)</label>'
       +       '<input id="sos-gen-kw" type="number" min="0" step="10" value="1000" oninput="_sosSpec()"></div>'
       +   '</div>'
+      +   '<label for="sos-start">Start from</label>'
+      +   '<select id="sos-start" onchange="_sosSpec()">'+_sosStartOptions()+'</select>'
       +   '<div id="sos-spec">Select a battery system.</div>'
-      +   '<div class="sos-note">Builds AC-coupled: the BESS AC block and the solar inverter '
+      +   '<div class="sos-note" id="sos-note">Builds AC-coupled: the BESS AC block and the solar inverter '
       +     'each tap the main switchgear and share the interconnection. Seven pieces, '
       +     'starting at the utility POI. Leave solar at 0 for storage only.</div>'
       + '</div>'
@@ -74869,6 +74970,13 @@ if (_omPrevOmegaSite) { Object.keys(_omPrevOmegaSite).forEach(function (k) {
                        model:(m&&m.model)||'', mfr:(m&&m.mfr)||'',
                        kwh:num(m&&m.kwh)*units, kw:num(m&&m.kw)*units };
       }
+      /* Tie-in point, if one was chosen. Kept on BGB so _bgbSeq() can drop
+         the steps that already exist and _bgbStartPlacing can seed them. */
+      try{
+        var _tie=(document.getElementById('sos-start')||{}).value||'';
+        window.__omegaTieFrom = _tie || null;
+      }catch(e){ window.__omegaTieFrom=null; }
+
       /* survives _bgbLoadConfig(), which runs inside _bgbStartPlacing */
       window.__omegaForceMode='SOLAR_BESS';
       if(typeof BGB!=='undefined'){
