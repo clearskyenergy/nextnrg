@@ -8576,10 +8576,12 @@ function renderEl(el){
     const _padOn = (el.eqId==='charger') && (el.bollardPad !== false)
                    && (window.OMEGA_EV_PAD !== false);
     const _pad = _padOn ? (function(){
-      // Clearance in FEET when specified; otherwise the old ratio.
-      const g = (el.padFt!=null && isFinite(+el.padFt))
-        ? Math.max(0, Math.round(+el.padFt * (S.pxPerFt>0?S.pxPerFt:4)))
-        : Math.round(sz*0.42);
+      // Clearance in FEET, defaulting to a real bollard setback. See the
+      // note in the evgear branch: taking a fraction of the DRAWN size made
+      // the island grow as the drawing scale shrank.
+      const _gp = (S.pxPerFt>0?S.pxPerFt:4);
+      const _gft = (el.padFt!=null && isFinite(+el.padFt)) ? +el.padFt : 2.5;
+      const g = Math.max(3, Math.round(_gft * _gp));
       const W = sz + g*2;
       const uid = 'evpad-'+String(el.id).replace(/[^A-Za-z0-9_-]/g,'');
       return `<svg class="ev-bollard-pad" width="${W}" height="${W}" viewBox="0 0 ${W} ${W}"
@@ -8638,15 +8640,21 @@ function renderEl(el){
        units that actually needed it. */
     var _evPad='';
     if(el.evKind==='charger' && el.bollardPad!==false && window.OMEGA_EV_PAD!==false){
-      /* Pad clearance is a real dimension in FEET when one is set, not a
-         fixed fraction of the unit. A 3 ft bollard island and a 10 ft
-         striped apron are both specified in feet and both have to be
-         drawable on the same charger. */
-      var _pg;
-      if(el.padFt!=null && isFinite(+el.padFt)){
-        var _pp=(S.pxPerFt>0?S.pxPerFt:4);
-        _pg=Math.max(0,Math.round(+el.padFt*_pp));
-      } else _pg=Math.round(Math.max(gw,gh)*0.42);
+      /* Pad clearance is a real dimension in FEET, never a fraction of the
+         DRAWN size.
+
+         The old rule was 42% of the drawn pixel size on every side. A DCFC
+         dispenser is 2.9 x 3.1 ft, which at a typical site scale is about
+         7 px — under the 28 px minimum symbol size, so it drew at 28. The
+         pad then took 42% of the FLOOR, and a 3 ft dispenser got a 21 x 18
+         ft protection island. The smaller the drawing scale, the worse it
+         got, because the floor is a constant and the pad multiplied it.
+
+         Clearance is now feet, defaulting to a real bollard setback, with a
+         small pixel minimum so it stays visible rather than growing. */
+      var _pp=(S.pxPerFt>0?S.pxPerFt:4);
+      var _pgFt=(el.padFt!=null && isFinite(+el.padFt)) ? +el.padFt : 2.5;
+      var _pg=Math.max(3, Math.round(_pgFt*_pp));
       var _pw2=gw+_pg*2, _ph2=gh+_pg*2;
       var _pid='evpad-'+String(el.id).replace(/[^A-Za-z0-9_-]/g,'');
       _evPad='<svg class="ev-bollard-pad" width="'+_pw2+'" height="'+_ph2+'" viewBox="0 0 '+_pw2+' '+_ph2+'"'
@@ -60526,7 +60534,20 @@ window._bessFootprint=_bessFootprint;
 
 function _evPx(kind, fp){
   var f=fp||EV_FOOTPRINT[kind]||{lf:5,wf:4};
-  if(S.pxPerFt&&S.pxPerFt>0){ return { w:Math.max(28,Math.round(f.lf*S.pxPerFt)), h:Math.max(20,Math.round(f.wf*S.pxPerFt)) }; }
+  if(S.pxPerFt&&S.pxPerFt>0){
+    /* The floor keeps a symbol clickable, but 28 x 20 was set for the big
+       plant — a transformer, a switchgear lineup. A DCFC dispenser is
+       2.9 x 3.1 ft, so at a normal site scale it was inflated four to five
+       times, and everything drawn around it (the protection pad above all)
+       inherited that. Small equipment gets a smaller floor: still an easy
+       click target, no longer a symbol that swamps its own island. */
+    /* Only genuinely small kit: a dispenser (2.9 x 3.1) and a service
+       pedestal (3 x 2.5). A pad-mount transformer at 6 x 4 and a switchgear
+       lineup at 6 x 2.5 keep the original floor, so existing drawings do
+       not shift under anyone. */
+    var _small = (f.lf <= 4 && f.wf <= 4);
+    var _fw = _small ? 14 : 28, _fh = _small ? 12 : 20;
+    return { w:Math.max(_fw,Math.round(f.lf*S.pxPerFt)), h:Math.max(_fh,Math.round(f.wf*S.pxPerFt)) }; }
   var base={ xfmr:{w:70,h:50}, panel:{w:80,h:40}, service:{w:44,h:44}, charger:{w:40,h:52} };
   if(base[kind]) return base[kind];
   /* OMEGA PATCH 15.
@@ -141199,10 +141220,12 @@ function setUnitFt(el, lengthFt, widthFt){
 /* Pad clearance, in feet, on each side of the unit. Independent of the
    unit so a 3 ft bollard island and a 10 ft striped apron are both
    drawable on the same charger. */
+/* A bollard set around a DCFC dispenser sits roughly two to three feet
+   off the cabinet. That is the default — a real setback, not a ratio. */
+var DEFAULT_PAD_FT = 2.5;
 function padFt(el){
   if (el && el.padFt != null) return +el.padFt;
-  var u = unitFt(el);
-  return +(Math.max(u.l, u.w) * 0.42).toFixed(1);   /* the old hardcoded ratio */
+  return DEFAULT_PAD_FT;
 }
 /* True footprint including the pad, which is what the civil quantity and
    the stall layout actually need. */
@@ -141337,6 +141360,7 @@ root.OmegaDCFC = {
   isDcfc: isDcfc, chargers: chargers,
   unitFt: unitFt, setUnitFt: setUnitFt,
   padFt: padFt, setPadFt: setPadFt, setPadOn: setPadOn, totalFt: totalFt,
+  defaultPadFt: function(v){ if(v!=null && isFinite(+v)) DEFAULT_PAD_FT=+v; return DEFAULT_PAD_FT; },
   daisy: daisy, ppf: ppf,
   /* Apply one size to every charger — a bank is normally one model. */
   sizeAll: function (lengthFt, widthFt, pad) {
