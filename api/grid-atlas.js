@@ -640,7 +640,49 @@ function distanceKm(aLat, aLng, bLat, bLng) {
   return Math.round(2 * R * Math.asin(Math.sqrt(h)) * 100) / 100;
 }
 
+/* ── CROSS-ORIGIN ────────────────────────────────────────────────────────
+   The portfolio console is served from the same deployment as this function,
+   so it never needed CORS. The site editor is not: it runs on
+   nextnrg.csebuilders.com and alpha.clearskyomega.com and calls this at
+   osa.clearskyomega.com. Without the headers below the browser blocks the
+   reply and the editor reports "Failed to fetch" — the same opaque failure
+   the NREL lookups hit, and just as slow to diagnose from the symptom.
+
+   A JSON POST also triggers a preflight OPTIONS, which this handler answered
+   with 405 "GET or POST." — so the real request was never even sent.
+
+   An allowlist rather than '*', because GRID_ATLAS_KEY exists to keep this
+   off the open internet and a wildcard would undo that. Add hosts with
+   GRID_ATLAS_ORIGINS, comma separated. */
+const ALLOWED_ORIGINS = (process.env.GRID_ATLAS_ORIGINS
+  || 'https://osa.clearskyomega.com,https://alpha.clearskyomega.com,'
+   + 'https://nextnrg.csebuilders.com,https://tools.csebuilders.com')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
+function applyCors(req, res) {
+  /* Guarded: a header helper must never be the thing that takes the endpoint
+     down. Any runtime whose response object differs still gets a working
+     answer, just without the CORS headers. */
+  if (!res || typeof res.setHeader !== 'function') return;
+  const origin = req && req.headers && (req.headers.origin || req.headers.Origin);
+  if (origin && ALLOWED_ORIGINS.indexOf(origin) >= 0) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else if (origin && /^https?:\/\/localhost(:\d+)?$/.test(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);  /* local development */
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Grid-Atlas-Key');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
+
 module.exports = async function handler(req, res) {
+  applyCors(req, res);
+  /* Preflight. Must answer before the method check below, which used to
+     reject OPTIONS with a 405 and stop every cross-origin call dead. */
+  if (req.method === 'OPTIONS') return res.status(204).end();
+
   /* GET is a health check. "Is it deployed and what is configured" should be
      answerable from a browser address bar rather than by finding a deal with
      an address on it and pressing a button. */
