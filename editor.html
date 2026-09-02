@@ -54553,7 +54553,12 @@ function openDcfcBuild(){
           +'<input id="dcfc-spare" type="number" min="0" max="10" value="'+DCFC.spare+'" style="width:100%;background:#0A1628;border:1px solid #26364d;color:#E2EEF9;padding:7px 8px;border-radius:6px;font-size:13px;font-family:monospace;box-sizing:border-box"></div>'
       +'</div>'
       +'<div id="dcfc-summary" style="font-size:10px;color:#8FA3B8;background:rgba(245,166,35,.06);border:1px solid rgba(245,166,35,.2);border-radius:7px;padding:9px 11px;margin-bottom:14px;line-height:1.6"></div>'
-      +'<div style="font-size:9px;color:#8FA3B8;background:rgba(0,0,0,.2);border-radius:6px;padding:8px 10px;line-height:1.5;margin-bottom:14px">'
+      +'<div style="margin-bottom:12px">'
+        +'<label style="display:block;font-size:9px;color:#8FA3B8;text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px">Start from</label>'
+        +'<select id="dcfc-tie" onchange="_dcfcTieNote()" style="width:100%;padding:9px;background:#0A1628;border:1px solid rgba(255,255,255,.15);border-radius:6px;color:#E8F0FE;font-size:12px">'
+        + (window.OmegaTieIn ? OmegaTieIn.optionsHtml('Utility POI \u2014 draw a new service and transformer') : '<option value="">Utility POI</option>')
+        +'</select></div>'
+      +'<div id="dcfc-tie-note" style="font-size:9px;color:#8FA3B8;background:rgba(0,0,0,.2);border-radius:6px;padding:8px 10px;line-height:1.5;margin-bottom:14px">'
         +'<span style="color:#F5A623;font-weight:700">Placement:</span> you\u2019ll click the map for each node in order \u2014 '
         +'<span style="color:#F59E0B">\u2b24 Utility Service</span> \u2192 <span style="color:#F59E0B">\u2b24 Transformer</span> \u2192 '
         +'<span style="color:#EF4444">\u2b24 Switchgear/Panel</span> \u2192 then each <span style="color:#2563EB">\u2b24 charger stall</span>. '
@@ -60595,12 +60600,65 @@ function _dcfcCancel(){
 }
 window._dcfcCancel=_dcfcCancel;
 
+/* Describe what the chosen tie-in actually changes. The stock blurb walks
+   through service → transformer → switchgear → stalls, which stops being
+   true the moment somebody ties in halfway down it. */
+window._dcfcTieNote=function(){
+  var n=document.getElementById('dcfc-tie-note');
+  var v=(document.getElementById('dcfc-tie')||{}).value||'';
+  if(!n) return;
+  if(!v || !window.OmegaTieIn){
+    n.innerHTML='<span style="color:#F5A623;font-weight:700">Placement:</span> you\u2019ll click the map for each node in order \u2014 '
+      +'<span style="color:#F59E0B">\u2b24 Utility Service</span> \u2192 <span style="color:#F59E0B">\u2b24 Transformer</span> \u2192 '
+      +'<span style="color:#EF4444">\u2b24 Switchgear/Panel</span> \u2192 then each <span style="color:#2563EB">\u2b24 charger stall</span>. '
+      +'Conduit auto-routes through one shared trench.';
+    return;
+  }
+  var d=OmegaTieIn.describe(v, DCFC.seq||['service','xfmr','panel']);
+  n.innerHTML='<span style="color:#F5A623;font-weight:700">Tie-in:</span> '
+    + (d ? String(d.text).replace(/[<>]/g,'') : 'starts at the selected equipment.')
+    + ' The first run starts there \u2014 click along the route, then place each charger stall.';
+};
+
+/* _dcfcDraw is block-scoped to this script. Anything outside it that needs
+   to seed a run has to come through here. */
+window._dcfcSetDraw=function(v){ _dcfcDraw=v; };
+
 function _dcfcStartPlacing(){
   _dcfcSyncPorts();
   var m=document.getElementById('dcfc-modal'); if(m) m.remove();
   DCFC.active=true;
   DCFC.phase='poi'; DCFC.stepIx=0; DCFC.placed={}; DCFC.chargerEls=[]; DCFC.chargersLeft=DCFC.chargers;
   DCFC.trench=null; DCFC.trenchConfirmed=false; DCFC.lastEl=null;
+  DCFC.tieKind=null; DCFC.tieEl=null;
+
+  /* Tie into existing equipment, same as the Solar + Storage build. The
+     stages already on the drawing are dropped from the sequence and the
+     first run starts at the real piece instead of at a second service. */
+  try{
+    var _tv=(document.getElementById('dcfc-tie')||{}).value||'';
+    if(_tv && window.OmegaTieIn){
+      var _baseSeq=['service','xfmr','panel'];
+      /* The DCFC sequence names its middle stages differently to the BGB
+         one; map through so a switchgear reads as a switchgear either way. */
+      var _r=OmegaTieIn.resolve(_tv, ['service','utilxfmr','mainswgr']);
+      if(_r){
+        var _map={ service:'service', utilxfmr:'xfmr', mainswgr:'panel' };
+        var _stop=_map[_r.stage]||'service';
+        var _keep=[], _hit=false;
+        _baseSeq.forEach(function(k){
+          if(!_hit){ if(k===_stop){ _hit=true; } return; }
+          _keep.push(k);
+        });
+        DCFC.seq=_keep;
+        DCFC.tieKind=_stop; DCFC.tieEl=_r.el;
+        DCFC.placed[_stop]=_r.el; DCFC.lastEl=_r.el;
+        OmegaTieIn.seed(DCFC, _r.el, _stop);
+        DCFC.phase='drawtrench';
+      }
+    }
+  }catch(e){}
+
   _dcfcGuidePos=null;   // fresh build opens in the default corner
   if(typeof setMode==='function') setMode('dcfcplace'); else S.mode='dcfcplace';
   _dcfcGuideRender();
@@ -140781,6 +140839,182 @@ root.OmegaContextBuildings = {
     return out;
   }
 };
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script id="omega-tiein-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  TIE INTO WHAT IS ALREADY THERE  —  shared by every guided build
+ *
+ *  Solar + Storage learned to start from existing equipment instead of
+ *  always drawing its own service. That is not a solar problem: by the
+ *  time anybody runs a SECOND build on a site, the service exists. A DCFC
+ *  bank added to a site that already has a 4000 kVA pad-mount should hang
+ *  off that pad-mount, not stand up a parallel one nobody will build.
+ *
+ *  So the picker lives here once rather than being copied into each
+ *  dialog. Copies drift: the day somebody teaches one of them about a new
+ *  kind of tie point, the others quietly keep guessing.
+ *
+ *  ── WHAT COUNTS AS A TIE POINT ──────────────────────────────────────
+ *
+ *  Anything that can carry the new load and has a downstream side: a
+ *  service or POI, a transformer, a switchgear lineup or panel. Chargers,
+ *  bollards and arrays are not tie points \u2014 they are the things being fed.
+ *
+ *  Each candidate reports WHICH STAGE it represents, so the build can drop
+ *  the steps that already exist rather than asking the user to work out
+ *  which ones to skip.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+/* stage keys are the build sequences' own names, so a caller can filter
+   its sequence directly against them. */
+var PATTERNS = [
+  { stage:'service',  re:/\b(service|poi|utility)\b/i,          eq:/^(service|poi|meter)$/i,  label:'Service / POI' },
+  { stage:'utilxfmr', re:/transformer|xfmr|pad[- ]?mount/i,     eq:/^(xfmr|transformer)$/i,   label:'Transformer' },
+  { stage:'mainswgr', re:/switchgear|swgr|panelboard|main panel/i, eq:/^(panel|swgr|switchgear)$/i, label:'Switchgear / Panel' }
+];
+
+function stageOf(el){
+  if (!el) return null;
+  var id  = String(el.eqId || el.evKind || '');
+  var role= String(el.bgbRole || el.evRole || '');
+  var lab = String(el.label || '');
+  for (var i = 0; i < PATTERNS.length; i++) {
+    var P = PATTERNS[i];
+    /* Role first \u2014 it is the build's own word for the piece and cannot be
+       confused by a label somebody retyped. */
+    if (role && (role === P.stage || P.re.test(role))) return P;
+    if (id && (P.eq.test(id) || P.re.test(id))) return P;
+    if (lab && P.re.test(lab)) return P;
+  }
+  return null;
+}
+
+/* Everything on the drawing worth offering, nearest-to-most-downstream. */
+function candidates(){
+  var out = [];
+  try {
+    (S.elements || []).forEach(function (e) {
+      if (!e || e.hidden) return;
+      var P = stageOf(e);
+      if (!P) return;
+      out.push({
+        id: e.id, stage: P.stage, kind: P.label, el: e,
+        label: (e.label || P.label) +
+               (e.spec ? ' \u2014 ' + String(e.spec).split('\n')[0] : '')
+      });
+    });
+  } catch (e) {}
+  /* Service, then transformer, then switchgear \u2014 the order they occur in
+     a one-line, so the list reads the way the system does. */
+  /* Service, then transformer, then switchgear — the order they occur in a
+     one-line, so the list reads the way the system does. Index carried as a
+     tiebreak so equal stages keep drawing order rather than relying on the
+     engine's sort being stable. */
+  var order = { service:0, utilxfmr:1, mainswgr:2 };
+  out.forEach(function (c, i) { c._i = i; });
+  out.sort(function (a, b) {
+    var d = (order[a.stage] == null ? 9 : order[a.stage]) -
+            (order[b.stage] == null ? 9 : order[b.stage]);
+    return d !== 0 ? d : a._i - b._i;
+  });
+  out.forEach(function (c) { delete c._i; });
+  return out;
+}
+
+function optionsHtml(placeholder){
+  var o = '<option value="">' + (placeholder || 'Utility POI \u2014 draw a new service') + '</option>';
+  candidates().forEach(function (c) {
+    o += '<option value="' + c.id + '">Tie into: ' +
+         String(c.label).replace(/[<>&"]/g, '') + '</option>';
+  });
+  return o;
+}
+
+/* A one-line description of what choosing this does, for the dialog note. */
+function describe(id, seq){
+  if (!id) return null;
+  var c = candidates().filter(function (x) { return x.id === id; })[0];
+  if (!c) return null;
+  var skipped = [], hit = false;
+  (seq || []).forEach(function (k) {
+    if (hit) return;
+    skipped.push(k);
+    if (k === c.stage) hit = true;
+  });
+  return {
+    cand: c,
+    skipped: skipped,
+    text: 'Ties into ' + c.label + '. ' +
+          (skipped.length
+            ? 'The ' + skipped.join(', ') + ' ' + (skipped.length === 1 ? 'is' : 'are') +
+              ' already on the drawing, so ' + (skipped.length === 1 ? 'it is' : 'they are') +
+              ' not drawn again \u2014 the run starts at the existing equipment. '
+            : '') +
+          'Check its spare capacity carries the new load before you commit to it.'
+  };
+}
+
+/* Everything a build needs to begin AT an existing piece:
+   the element, the stage it occupies, and the steps to drop. */
+function resolve(id, seq){
+  if (!id) return null;
+  var c = candidates().filter(function (x) { return x.id === id; })[0];
+  if (!c) return null;
+  var drop = [], hit = false;
+  (seq || []).forEach(function (k) {
+    if (hit) return;
+    drop.push(k);
+    if (k === c.stage) hit = true;
+  });
+  return { el: c.el, stage: c.stage, drop: drop, label: c.label };
+}
+
+/* Seed a build's state so its first leg runs FROM the existing equipment.
+   Takes the build object (BGB, DCFC, \u2026) because they all keep the same
+   three things under the same names. */
+function seed(BUILD, el, stage){
+  if (!BUILD || !el) return false;
+  BUILD.tieKind = stage;
+  BUILD.tieEl = el;
+  BUILD.placed = BUILD.placed || {};
+  BUILD.placed[stage] = el;
+  BUILD.lastEl = el;
+  BUILD.phase = 'drawtrench';
+  BUILD.stepIx = 0;
+  BUILD._activeRun = null;
+  /* Seed the run at the equipment's centre.
+
+     _dcfcDraw is declared with `var` inside the build's own script block,
+     so assigning it from this module created a NEW global and left the real
+     one untouched — the run silently started nowhere. It has to be set
+     through the setter the build exposes, or on window where the build
+     actually reads it. */
+  try {
+    var sz = (typeof _elRenderSize === 'function')
+             ? _elRenderSize(el) : { w:(el.w||60), h:(el.h||el.w||60) };
+    var cx = (+el.x||0) + sz.w/2, cy = (+el.y||0) + sz.h/2;
+    var run = { pts:[{ x:cx, y:cy }], preview:null, leg:'#FFFF00' };
+    root._omegaSeedRun = { x:cx, y:cy };
+    if (typeof root._dcfcSetDraw === 'function') root._dcfcSetDraw(run);
+    else root._dcfcDraw = run;
+    try { if (typeof root._dcfcRenderTrenches === 'function') root._dcfcRenderTrenches(); } catch (e) {}
+  } catch (e) {}
+  return true;
+}
+
+root.OmegaTieIn = {
+  candidates: candidates, optionsHtml: optionsHtml,
+  describe: describe, resolve: resolve, seed: seed, stageOf: stageOf
+};
+
+if (root.console && console.info) {
+  console.info('[tie-in] shared picker ready \u2014 OmegaTieIn.candidates()');
+}
 
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
