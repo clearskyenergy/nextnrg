@@ -60636,15 +60636,27 @@ function _dcfcStartPlacing(){
      stages already on the drawing are dropped from the sequence and the
      first run starts at the real piece instead of at a second service. */
   try{
-    var _tv=(document.getElementById('dcfc-tie')||{}).value||'';
+    var _tv=window.__omegaTiePick || (document.getElementById('dcfc-tie')||{}).value||'';
+    window.__omegaTiePick='';
     if(_tv && window.OmegaTieIn){
-      var _baseSeq=['service','xfmr','panel'];
+      /* The CALLER'S sequence, not a hardcoded one. DCFC runs
+         service\u2192xfmr\u2192panel; Level 2 runs service\u2192panel with no transformer
+         at all. Hardcoding the DCFC list meant a Level 2 tie-in filtered
+         against stages that job does not have. */
+      var _baseSeq=(DCFC.seq&&DCFC.seq.length)?DCFC.seq.slice():['service','xfmr','panel'];
       /* The DCFC sequence names its middle stages differently to the BGB
          one; map through so a switchgear reads as a switchgear either way. */
       var _r=OmegaTieIn.resolve(_tv, ['service','utilxfmr','mainswgr']);
       if(_r){
         var _map={ service:'service', utilxfmr:'xfmr', mainswgr:'panel' };
         var _stop=_map[_r.stage]||'service';
+        /* Tying into a transformer on a job whose sequence has none (Level 2)
+           still means everything upstream of the panel is built — fall to the
+           nearest stage the sequence actually contains. */
+        if(_baseSeq.indexOf(_stop)<0){
+          if(_r.stage==='utilxfmr') _stop=(_baseSeq.indexOf('service')>=0)?'service':_baseSeq[0];
+          else _stop=_baseSeq[0];
+        }
         var _keep=[], _hit=false;
         _baseSeq.forEach(function(k){
           if(!_hit){ if(k===_stop){ _hit=true; } return; }
@@ -61054,7 +61066,12 @@ function openLevel2Build(){
       +'</label>'
       +'<div style="font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#8FA3B8;margin-bottom:6px">Load Check</div>'
       +'<div id="l2-summary" style="font-size:10px;color:#8FA3B8;background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.22);border-radius:7px;padding:9px 11px;line-height:1.6;margin-bottom:14px"></div>'
-      +'<div style="font-size:9px;color:#8FA3B8;background:rgba(0,0,0,.2);border-radius:6px;padding:8px 10px;line-height:1.5;margin-bottom:14px">'
+      +'<div style="margin-bottom:12px">'
+        +'<label style="display:block;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#8FA3B8;margin-bottom:6px">Start from</label>'
+        +'<select id="l2-tie" onchange="_l2TieNote()" style="width:100%;padding:9px;background:#0A1628;border:1px solid rgba(255,255,255,.15);border-radius:6px;color:#E8F0FE;font-size:12px">'
+        + (window.OmegaTieIn ? OmegaTieIn.optionsHtml('Existing meter bank \u2014 place a new one') : '<option value="">Existing meter bank</option>')
+        +'</select></div>'
+      +'<div id="l2-tie-note" style="font-size:9px;color:#8FA3B8;background:rgba(0,0,0,.2);border-radius:6px;padding:8px 10px;line-height:1.5;margin-bottom:14px">'
         +'<span style="color:#22D3EE;font-weight:700">You\u2019ll place:</span> '
         +'<span style="color:#F59E0B">\u2b24 Existing Meter Bank</span> \u2192 draw the trench \u2192 '
         +'<span style="color:#EF4444">\u2b24 Outdoor Panel</span> \u2192 '
@@ -61084,6 +61101,23 @@ function _l2ModelChanged(){
 }
 window._l2ModelChanged=_l2ModelChanged;
 
+window._l2TieNote=function(){
+  var n=document.getElementById('l2-tie-note');
+  var v=(document.getElementById('l2-tie')||{}).value||'';
+  if(!n) return;
+  if(!v || !window.OmegaTieIn){
+    n.innerHTML='<span style="color:#22D3EE;font-weight:700">You\u2019ll place:</span> '
+      +'<span style="color:#F59E0B">\u2b24 Existing Meter Bank</span> \u2192 draw the trench \u2192 '
+      +'<span style="color:#EF4444">\u2b24 Outdoor Panel</span> \u2192 <span style="color:#22D3EE">\u2b24 EVSE</span>'
+      +'<br>Conduit auto-routes: interior feed in yellow, trenched branch in cyan.';
+    return;
+  }
+  var d=OmegaTieIn.describe(v, ['service','utilxfmr','mainswgr']);
+  n.innerHTML='<span style="color:#22D3EE;font-weight:700">Tie-in:</span> '
+    + (d ? String(d.text).replace(/[<>]/g,'') : 'starts at the selected equipment.')
+    + ' The first run starts there \u2014 click along the route, then place each EVSE.';
+};
+
 function _l2StartPlacing(){
   _l2Sync();
   DCFC.level2=true;
@@ -61096,6 +61130,9 @@ function _l2StartPlacing(){
     if(typeof _cdElevFt   !=='undefined' && !_cdElevFt) _cdElevFt = 10;
   }catch(e){}
   DCFC.seq=['service','panel'];      /* no transformer on a Level 2 job */
+  /* The L2 modal is torn down before the shared start runs, so the choice
+     has to survive the dialog. Stashed rather than re-read. */
+  try{ window.__omegaTiePick=(document.getElementById('l2-tie')||{}).value||''; }catch(e){}
   var m=document.getElementById('l2-modal'); if(m) m.remove();
   _dcfcStartPlacing();               /* HUD, trench spine, stencils, conduit */
 }
@@ -140946,14 +140983,24 @@ function describe(id, seq){
     skipped.push(k);
     if (k === c.stage) hit = true;
   });
+  /* Say it in the words on the drawing, not the sequence's internal keys.
+     "The service, utilxfmr, mainswgr are already on the drawing" is a
+     sentence written for the code, not for the person reading it. */
+  var NAMES = { service:'service', poi:'service', utilxfmr:'transformer',
+                xfmr:'transformer', mainswgr:'switchgear', panel:'switchgear' };
+  var words = skipped.map(function (k) { return NAMES[k] || k; })
+                     .filter(function (v, i, a) { return a.indexOf(v) === i; });
+  var list = words.length <= 1 ? words[0]
+           : words.slice(0, -1).join(', ') + ' and ' + words[words.length - 1];
+
   return {
     cand: c,
     skipped: skipped,
     text: 'Ties into ' + c.label + '. ' +
-          (skipped.length
-            ? 'The ' + skipped.join(', ') + ' ' + (skipped.length === 1 ? 'is' : 'are') +
-              ' already on the drawing, so ' + (skipped.length === 1 ? 'it is' : 'they are') +
-              ' not drawn again \u2014 the run starts at the existing equipment. '
+          (words.length
+            ? 'The ' + list + ' ' + (words.length === 1 ? 'is' : 'are') +
+              ' already on the drawing, so ' + (words.length === 1 ? 'it is' : 'they are') +
+              ' not drawn again \u2014 the first run starts at the existing equipment. '
             : '') +
           'Check its spare capacity carries the new load before you commit to it.'
   };
