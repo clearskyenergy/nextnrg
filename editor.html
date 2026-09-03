@@ -133650,6 +133650,72 @@ function buildGround(site, span){
   var z0 = (0 - o.y)/p, z1 = (rect.height - o.y)/p;
   var w = x1-x0, h = z1-z0;
 
+  /* ── A CLEAN, WIDE GROUND ────────────────────────────────────────────
+     The frozen capture is a screenshot of the drawing viewport. It stops
+     at the edge of the canvas, so the 3D view runs out of imagery and
+     falls back to flat colour — and if html2canvas could not read every
+     tile it is holed as well, which is the blotching.
+
+     Static Maps returns ONE image, server-rendered, no tiles to miss and
+     no viewport to stop at. Asking for a wider span than the site means
+     the ground reaches past the buildings instead of ending under them.
+
+     Falls back to the frozen capture when there is no key, so nothing
+     gets worse for a deployment without Static Maps enabled. */
+  var wideSrc = null, wideSpanFt = 0;
+  try {
+    var _key = '';
+    try { _key = (window._CFG && _CFG.googleMapsKey) || localStorage.getItem('clearsky_maps_key') || ''; } catch(e){}
+    var _ms = (typeof _liveMapState === 'function') ? _liveMapState() : null;
+    if (!_ms) { try { _ms = window._savedMapState; } catch(e){} }
+    if (!_ms && site.lat != null) _ms = { lat: site.lat, lng: site.lng };
+
+    if (_key && _ms && _ms.lat != null) {
+      /* Cover roughly three times the site's long side, so the imagery
+         still reads at the edges of an orbit rather than cutting off. */
+      var _siteFt = Math.max(site.sizeFt ? site.sizeFt.w : 0, site.sizeFt ? site.sizeFt.h : 0, w, h);
+      var _wantFt = Math.max(600, _siteFt * 3);
+      var _wantM  = _wantFt * 0.3048;
+      /* Static Maps is 640x640 (x2 scale). Pick the zoom whose span is
+         closest to what we want without going under it. */
+      var _lat = _ms.lat;
+      var _z = 20;
+      while (_z > 12) {
+        var _mPerPx = 156543.03392 * Math.cos(_lat * Math.PI / 180) / Math.pow(2, _z);
+        if (_mPerPx * 640 >= _wantM) break;
+        _z--;
+      }
+      var _spanM = (156543.03392 * Math.cos(_lat * Math.PI / 180) / Math.pow(2, _z)) * 640;
+      wideSpanFt = _spanM / 0.3048;
+      wideSrc = 'https://maps.googleapis.com/maps/api/staticmap?center=' + _lat + ',' + _ms.lng
+              + '&zoom=' + _z + '&size=640x640&scale=2&maptype=satellite&format=jpg&key=' + _key;
+    }
+  } catch(e){}
+
+  if (wideSrc && wideSpanFt > 0) {
+    var wl = new THREE.TextureLoader();
+    wl.setCrossOrigin('anonymous');
+    wl.load(wideSrc, function(wt){
+      if(V.disposed) return;
+      try{ if(THREE.sRGBEncoding !== undefined) wt.encoding = THREE.sRGBEncoding; }catch(e){}
+      wt.anisotropy = (QUALITY[V.opts.quality] || QUALITY.high).aniso;
+      var wm = new THREE.MeshStandardMaterial({ map:wt, roughness:0.97, metalness:0.0 });
+      var wg = new THREE.Mesh(new THREE.PlaneGeometry(wideSpanFt, wideSpanFt), wm);
+      wg.rotation.x = -Math.PI/2;
+      /* Centred on the MAP centre in scene feet — the same arithmetic the
+         drawing uses, so it lands under the site rather than beside it. */
+      var _cx = (rect.width/2  - o.x)/p;
+      var _cz = (rect.height/2 - o.y)/p;
+      wg.position.set(_cx, 0.01, _cz);
+      wg.receiveShadow = true;
+      V.groundGrp.add(wg);
+      V.needsRender = true;
+    }, undefined, function(){
+      if(window.console) console.warn('[ground] Static Maps refused — enable "Maps Static API" on the key. '
+        + 'Falling back to the frozen capture, which only covers the drawing viewport.');
+    });
+  }
+
   var loader = new THREE.TextureLoader();
   loader.load(src, function(tex){
     if(V.disposed) return;
