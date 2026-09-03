@@ -122450,8 +122450,16 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     var keys = {};
     (m && m.rows ? m.rows : []).forEach(function (r) { keys[r.key] = r.id; });
     var rows = READINESS.map(function (x) {
+      /* n/a WINS. A requirement tied to a permit this project does not
+         trigger is not "missing" — there is nothing to close. Letting a
+         caller-supplied status override it puts work on the sheet that
+         nobody needs to do, which is how a readiness matrix stops being
+         read. The old order let any assessment, including one from an
+         assistant that was never told which permits fired, overwrite it. */
+      if (x.permit && !keys[x.permit]) return { no: x.no, requirement: x.req,
+        why: x.why, status: 'n/a', permitId: null, action: null,
+        source: x.auto || null };
       var st = have[x.no] || null;
-      if (!st && x.permit && !keys[x.permit]) st = 'n/a';
       return { no: x.no, requirement: x.req, why: x.why,
                status: st, permitId: x.permit ? (keys[x.permit] || null) : null,
                action: st === 'have' ? '' : null,
@@ -129539,6 +129547,14 @@ challengeRow(s) +
       [],
       ['Jurisdiction pack', m.pack || 'None \u2014 generic template'],
       ['Rate and fee source', m.packSource || 'Not verified for this jurisdiction'],
+      /* WHERE THE JURISDICTION CAME FROM.
+         A city and county typed by the person who visited the site, and a
+         city and county a language model inferred from an address, are not
+         the same claim and must not read the same on a cover. Everything
+         downstream \u2014 which pack matched, which agencies are named, whether
+         CEQA fires \u2014 hangs off these two words, so the reader is told how
+         firm they are. */
+      ['Jurisdiction source', cfg.jurisdictionSource || 'Entered by hand'],
       ['ESS threshold applied', m.essThresholdKwh + ' kWh'],
       ['Prepared', new Date().toISOString().slice(0, 10)],
       [],
@@ -129759,10 +129775,24 @@ challengeRow(s) +
        FILE. The point of the sheet is the Action to Close column. */
     rd = E().permit.readiness ? E().permit.readiness(m, cfg && cfg.readiness) : null;
     if (rd) {
+      /* ACTION TO CLOSE IS THE POINT OF THE SHEET, and readiness() cannot
+         write it: it knows which requirements exist and which permit each
+         one hangs off, but not what this project has to do next. That is a
+         caller fact, so the caller supplies it. Anything not supplied stays
+         blank rather than being filled with a generic instruction \u2014 a row
+         that says "obtain the document" is a row nobody actions. */
+      var rAct = (cfg.readiness && cfg.readiness.action) || {};
+      var rSrc = (cfg.readiness && cfg.readiness.source) || null;
       var rr2 = [['#', 'Requirement', 'Status', 'Action to Close', 'Precedent / Ref',
                   'Why it is on this list', 'Related permit']];
       rd.rows.forEach(function (x) {
-        rr2.push([x.no, x.requirement, x.status || '', x.action || '', '',
+        /* An n/a row has nothing to close, so it must not carry an action
+           either. Letting one through printed "File the NOI" beside a
+           stormwater requirement the project had just been shown not to
+           trigger \u2014 a contradiction inside a single row. */
+        var act = (x.status === 'n/a') ? '' : (rAct[x.no] || x.action || '');
+        rr2.push([x.no, x.requirement, x.status || '', act,
+                  x.source ? 'Read from the drawing (' + x.source + ')' : '',
                   x.why, x.permitId || '']);
       });
       rr2.push([]);
@@ -129771,7 +129801,104 @@ challengeRow(s) +
                 'drawing cannot answer them \u2014 filling one in as "have" ' +
                 'without checking is how a submission comes back rejected ' +
                 'rather than commented.']);
+      if (rSrc) rr2.push(['Status and action assessed by: ' + rSrc]);
       sheets.push({ name: 'Submission Readiness', rows: rr2 });
+    }
+
+    /* ---- Design basis ----
+       Every permit above was triggered by a quantity, and until now the
+       workbook never said where that quantity came from. A reviewer asking
+       "why is a fire construction permit on this list" had to take the row
+       on faith; a colleague picking the matrix up six weeks later could not
+       tell whether the 2,508 kW was drawn, typed or assumed.
+
+       THIS SHEET IS INTERNAL ONLY. It carries the BOM line count and the
+       electrical estimate, and an estimate IS the applicant's cost basis —
+       the third scrub rule exists for exactly this. It is dropped whole in
+       the agency-facing register rather than being emitted with the money
+       columns blanked, because a sheet titled Design Basis with holes in it
+       invites somebody to fill them back in. */
+    var di = cfg.designInputs;
+    if (di && !cfg.agencyFacing) {
+      var db = [['Input', 'Value', 'Read from', 'What it decides here']];
+      function dbRow(label, val, src, why) {
+        if (val == null || val === '') return;
+        db.push([label, val, src || 'Not stated', why || '']);
+      }
+      dbRow('Storage power', site.bessKw ? site.bessKw.toLocaleString() + ' kW' : '',
+            di.systemSource, 'Interconnection tier and study path');
+      dbRow('Storage energy', site.bessKwh ? site.bessKwh.toLocaleString() + ' kWh' : '',
+            di.systemSource,
+            'Fire-code threshold. This project is ' +
+            (site.bessKwh > m.essThresholdKwh ? 'over' : 'under') + ' the ' +
+            m.essThresholdKwh + ' kWh threshold in effect.');
+      dbRow('Cell chemistry', site.chemistry, di.chemistrySource,
+            'Whether the lithium inventory is reportable under a hazardous ' +
+            'materials filing');
+      dbRow('Solar', site.solarKwDc ? site.solarKwDc.toLocaleString() + ' kWdc' : '',
+            di.systemSource, 'Building permit and interconnection scope');
+      dbRow('Generation', site.gensetKw ? site.gensetKw.toLocaleString() + ' kW' : '',
+            di.systemSource, 'Air district authority to construct');
+      dbRow('Generator fuel', site.gensetFuel, di.systemSource,
+            'Whether the air permit is a combustion review');
+      dbRow('EV positions', site.evChargerCount || '', di.systemSource,
+            'Accessibility review under the building code');
+      dbRow('Parcel area', di.parcelAcres != null
+              ? di.parcelAcres.toLocaleString() + ' acres (' +
+                (di.parcelSqFt || 0).toLocaleString() + ' sq ft)' : '',
+            di.parcelSource, 'Context for setbacks and the buildable envelope');
+      dbRow('Disturbed area', site.disturbedAcres != null
+              ? site.disturbedAcres + ' acres' : '',
+            di.disturbedSource,
+            'Over one acre triggers construction stormwater (NPDES)');
+      dbRow('Impervious area', site.imperviousSqFt != null
+              ? site.imperviousSqFt.toLocaleString() + ' sq ft' : '',
+            di.imperviousSource,
+            'A 20,000 sq ft threshold is common for post-construction stormwater');
+      dbRow('Trench length', di.trenchFt ? di.trenchFt.toLocaleString() + ' ft' : '',
+            'Bill of materials', 'Scope of the electrical permit and any ' +
+            'right-of-way crossing');
+      dbRow('BOM lines', di.bomLines || '', 'Bill of materials',
+            'Equipment schedule backing the submitted plan set');
+      dbRow('Electrical estimate', di.estimateSell != null
+              ? '$' + Math.round(di.estimateSell).toLocaleString() : '',
+            'Electrical cost estimate',
+            'Construction valuation, which is how most building and ' +
+            'electrical permit fees are assessed');
+      dbRow('Estimated labour', di.estimateHrs
+              ? Math.round(di.estimateHrs).toLocaleString() + ' h' : '',
+            'Electrical cost estimate', 'Crew loading against the permit window');
+      db.push([]);
+      db.push(['INTERNAL REGISTER. This sheet carries the project cost basis and ' +
+               'is removed from the agency-facing workbook. Do not paste it into ' +
+               'a filing.']);
+      db.push(['Blank rows are quantities the drawing has not been asked for yet. ' +
+               'They are not zero. Where a threshold above says "not given", the ' +
+               'permit fired on the missing figure rather than on a measured one \u2014 ' +
+               'which is the conservative answer, not the correct one.']);
+      sheets.push({ name: 'Design Basis', rows: db });
+    }
+
+    /* ---- Project narrative ----
+       A discretionary application asks for one and the matrix already lists
+       it under required documents, so carrying a draft here keeps the
+       narrative and the capacities in the same file. Only written when the
+       caller supplies one; this module does not author prose about a project
+       it has only seen as numbers. */
+    if (cfg.narrative) {
+      var nr = [['Section', 'Draft']];
+      (cfg.narrative.sections || []).forEach(function (s) {
+        if (s && s.heading) nr.push([s.heading, s.body || '']);
+      });
+      if (nr.length > 1) {
+        nr.push([]);
+        nr.push(['DRAFT. ' + (cfg.narrative.source || 'Author unrecorded') + '. ' +
+                 'Every capacity, setback and code citation in this text has to be ' +
+                 'checked against the matrix and the plan set before it is filed \u2014 ' +
+                 'a narrative that disagrees with the site plan is the contradiction ' +
+                 'a reviewer finds first.']);
+        sheets.push({ name: 'Project Narrative', rows: nr });
+      }
     }
 
     /* ---- Open records gate ----
@@ -130284,12 +130411,218 @@ challengeRow(s) +
     return s;
   }
 
+  /* ------------------------------------------------------------------ *
+   *  WHAT THE PROJECT ALREADY KNOWS                                      *
+   *  ------------------------------------------------------------------  *
+   *  THE BUG THIS REPLACES. The prefill block ran BEFORE modal() put the  *
+   *  dialog in the document, so every el('omega-pm-…') came back null and *
+   *  every write landed on nothing. It was wrapped in try/catch, so it    *
+   *  failed in complete silence: the dialog opened blank on a project     *
+   *  that already carried the name, the address and the utility, and the  *
+   *  grey CA in the state box was the PLACEHOLDER — a wrong answer        *
+   *  dressed as a default, on the one field that decides whether CEQA     *
+   *  fires. It also called OmegaPrequal.jurisdiction, and there is no     *
+   *  OmegaPrequal in this build; the resolver is OmegaPQJurisdiction and  *
+   *  it takes (geo, addressText), not (lat, lng).                         *
+   *                                                                       *
+   *  Values are now resolved BEFORE the HTML is built and passed into     *
+   *  field(), so there is no window in which the boxes exist and are      *
+   *  empty, and nothing depends on DOM timing.                            *
+   *                                                                       *
+   *  Everything here is READ, not invented. Where a fact is absent the    *
+   *  field stays blank and says so, because the matrix is allowed to be   *
+   *  incomplete and is not allowed to be wrong.                           *
+   * ------------------------------------------------------------------ */
+  function permitFacts(s) {
+    var f = {
+      projectName: '', customer: '', address: '',
+      city: '', county: '', state: '', utility: '',
+      gensetFuel: '', chemistry: '',
+      disturbedAcres: null, imperviousSqFt: null,
+      parcelAcres: null, parcelSqFt: null,
+      lat: null, lng: null,
+      src: {},                 /* per-field provenance, shown to the user */
+      bomLines: 0, trenchFt: 0, estimateSell: null, estimateHrs: null,
+      offtaker: null
+    };
+    function set(k, v, src) {
+      if (v == null) return;
+      v = (typeof v === 'string') ? v.trim() : v;
+      if (v === '' || f[k]) return;
+      f[k] = v; f.src[k] = src;
+    }
+
+    /* ---- name, customer, address ---- */
+    try { var pn = document.getElementById('pname');
+          if (pn) set('projectName', pn.value, 'project title'); } catch (e) {}
+    try { set('projectName', window.S && S.projectName, 'saved project'); } catch (e) {}
+
+    try {
+      var St = window.S || {};
+      set('customer', St.customer || St.client || St.customerName, 'project record');
+      /* The guided build records an offtaker ARCHETYPE — "Data centre",
+         "Cold storage". That is a load class, not a company, and putting it
+         in the Customer box would print a category where a reviewer expects
+         a legal entity. It is offered as a hint under the field instead. */
+      if (St.offtaker && St.offtaker.name) f.offtaker = St.offtaker.name;
+    } catch (e) {}
+
+    try { var ai = document.getElementById('addr-in');
+          if (ai) set('address', ai.value, 'address bar'); } catch (e) {}
+    try { set('address', window.S && (S.siteAddr || S.address), 'geocoded site'); } catch (e) {}
+    /* A project is usually named for the site it sits on. Weaker than a
+       geocoded address, so it is taken last and labelled as what it is. */
+    if (!f.address && f.projectName) { f.address = f.projectName;
+                                       f.src.address = 'project title (not geocoded)'; }
+
+    /* ---- where it is ---- */
+    try { var g = (typeof omegaGeo === 'function') ? omegaGeo() : null;
+          if (g) { f.lat = g.lat; f.lng = g.lng; } } catch (e) {}
+    if (f.lat == null && s) { f.lat = s.lat; f.lng = s.lng; }
+
+    /* The state resolver reads a ZIP before it reads anything else, because
+       a sectional centre facility does not cross a state line and is the
+       single most reliable token in a US address.
+
+       IT ALSO NAMES UTILITIES, AND THAT PART IS A TRAP. The table lists the
+       investor-owned utilities most likely to serve a state, and taking the
+       first one is a coin flip wherever there is more than one: on a Vista
+       project it returned PG&E, which is the wrong end of California. A
+       wrong utility is worse than a blank one \u2014 it stops the SDG&E pack
+       matching, names the wrong interconnection authority, and reads on the
+       cover as though somebody checked. So a candidate is only offered where
+       the state has exactly ONE IOU and there is nothing to get wrong. */
+    try {
+      var J = window.OmegaPQJurisdiction;
+      if (J && typeof J.jurisdiction === 'function' && f.address) {
+        var jr = J.jurisdiction(null, f.address);
+        if (jr && jr.state && jr.state.length === 2) {
+          set('state', jr.state, 'resolved from ' + (jr.via || 'the address'));
+          f.utilityCandidates = (jr.known && jr.utils) ? jr.utils.slice(0, 4) : null;
+          if (jr.known && jr.utils && jr.utils.length === 1 &&
+              !/confirm/i.test(jr.utils[0])) {
+            set('utility', jr.utils[0], 'sole IOU in ' + jr.state + ' \u2014 confirm');
+          }
+        }
+      }
+    } catch (e) {}
+
+    /* "1901 Convention Ctr Dr, Miami Beach, FL 33139" is three fields
+       already; it is just not split. County is deliberately NOT guessed
+       from this — no part of a postal address names one. */
+    try {
+      var parts = String(f.address).split(',').map(function (x) { return x.trim(); })
+                    .filter(Boolean);
+      if (parts.length >= 2) {
+        var tail = parts[parts.length - 1].toUpperCase();
+        var sm = /\b([A-Z]{2})\b/.exec(tail);
+        if (sm) set('state', sm[1], 'address text');
+        var cityPart = parts[parts.length - 2];
+        /* the last-but-one segment is the city only when the tail looks
+           like a state or a state plus ZIP, not when it is a street */
+        if (sm || /^\d{5}/.test(tail)) set('city', cityPart, 'address text');
+      }
+    } catch (e) {}
+
+    /* Grid Atlas answers with the utility that actually serves the meter,
+       which beats a state-level shortlist wherever it has one. */
+    try {
+      if (window.S && S.grid && S.grid.utility) {
+        f.utility = String(S.grid.utility).trim();
+        f.src.utility = 'interconnection screen';
+      }
+    } catch (e) {}
+    try {
+      if (!f.county && window.S && S.grid && S.grid.county) {
+        set('county', S.grid.county, 'interconnection screen');
+      }
+    } catch (e) {}
+
+    /* ---- what is on the pad ---- */
+    if (s && s.gensetKw > 0) {
+      var fuel = '';
+      try {
+        (window.S && S.elements || []).forEach(function (el) {
+          if (fuel) return;
+          var role = String(el.bgbRole || el.evKind || el.eqId || '');
+          if (!/genset|generator/.test(role)) return;
+          var m = /(diesel|natural gas|nat gas|propane|lpg|hydrogen|bio)/i
+                    .exec(String(el.spec || el.label || el.note || ''));
+          if (m) fuel = m[1].toLowerCase();
+        });
+      } catch (e) {}
+      /* Diesel is the default only because it is the conservative one: it
+         pulls an air-district review that a gas engine may not. Labelled as
+         an assumption so nobody files on it. */
+      set('gensetFuel', fuel || 'diesel',
+          fuel ? 'generator on the sitemap' : 'assumed \u2014 confirm the engine');
+    }
+
+    if (s && s.bessKwh > 0) {
+      var chem = '';
+      try {
+        var txt = (window.S && S.bessList || []).map(function (b) {
+          return String(b.model || b.name || b.mfr || '');
+        }).join(' ');
+        var cm = /\b(LFP|LiFePO4|NMC|NCA|LTO|sodium|flow|vanadium)\b/i.exec(txt);
+        if (cm) chem = cm[1].toUpperCase() === 'LIFEPO4' ? 'LFP' : cm[1].toLowerCase();
+      } catch (e) {}
+      set('chemistry', chem || 'lithium',
+          chem ? 'battery catalogue' : 'assumed lithium \u2014 confirm the cell');
+    }
+
+    /* ---- the parcel, and the two areas that decide stormwater ---- */
+    try {
+      if (typeof _siteBoundaryInfo === 'function') {
+        var b = _siteBoundaryInfo();
+        if (b && b.present) {
+          f.parcelSqFt = b.sqft; f.parcelAcres = b.acres;
+          f.src.parcel = (b.derived ? 'largest shape on the drawing \u2014 NOT a ' +
+                          'designated property line' : 'designated property line') +
+                         ', measured from ' + b.source;
+          /* The parcel is NOT the disturbed area and must never be pasted in
+             as one. A 40-acre parcel with a half-acre pad on it would file a
+             construction stormwater permit it does not need, and a matrix
+             that over-permits is still a matrix that is wrong. The figure is
+             shown as context; the box below it stays empty until somebody
+             says what is actually being graded. */
+        }
+      }
+    } catch (e) {}
+
+    /* ---- the bill of materials and the electrical estimate ---- */
+    try {
+      var bom = window._BOM_CACHE ||
+                (typeof buildBOM === 'function' ? buildBOM() : null);
+      if (bom) {
+        f.bomLines = (bom.items || []).length;
+        f.trenchFt = +bom.trenchFt || 0;
+      }
+    } catch (e) {}
+    try {
+      var est = window._ELEC_EST;
+      if (est) { f.estimateSell = +est.sell || null; f.estimateHrs = +est.hrs || null; }
+    } catch (e) {}
+
+    return f;
+  }
+
+  /* Fields the model filled get an amber edge. A jurisdiction inferred from
+     an address and a jurisdiction somebody confirmed by phone are different
+     claims, and if they look identical in the box they will look identical
+     on the cover. */
+  var AI_MARK = 'border-color:#b7791f;box-shadow:inset 0 0 0 1px rgba(183,121,31,.35)';
+
   function openPermitMatrix() {
     var E = window.OmegaArchEngine;
     if (!E || !E.permit || !window.OmegaPermitReport) {
       alert('The permitting engine is not loaded in this build.'); return;
     }
     var s = readDrawnSystem();
+    var f = permitFacts(s);
+    var aiFilled = {};                 /* id -> true, for provenance on the cover */
+    var aiOut = null;                  /* readiness + narrative from the model */
+
     var found = (s.bessKwh > 0 || s.solarKwDc > 0 || s.gensetKw > 0 || s.evChargerKw > 0);
     var summary = found
       ? [(s.bessKw ? s.bessKw.toLocaleString() + ' kW / ' + s.bessKwh.toLocaleString() + ' kWh storage' : null),
@@ -130299,6 +130632,19 @@ challengeRow(s) +
         .filter(Boolean).join(' \u00B7 ')
       : null;
 
+    /* A second line under the capacities: what else the project has that
+       feeds this workbook. Silence here is the useful signal — a matrix
+       built with no BOM and no estimate is thinner than one built with
+       both, and the reader should be able to see which they are getting. */
+    var haveBits = [];
+    if (f.bomLines) haveBits.push(f.bomLines + ' BOM line(s)');
+    if (f.trenchFt) haveBits.push(f.trenchFt.toLocaleString() + ' ft trench');
+    if (f.estimateSell) haveBits.push('$' + Math.round(f.estimateSell).toLocaleString() +
+                                      ' electrical estimate');
+    if (f.parcelSqFt) haveBits.push(f.parcelAcres + ' acre parcel');
+
+    function prov(k) { return f.src[k] ? ' \u00B7 ' + f.src[k] : ''; }
+
     var body =
       '<div style="background:#0b1220;border:1px solid #1b2f45;border-radius:6px;' +
       'padding:10px;margin-bottom:12px">' +
@@ -130307,28 +130653,79 @@ challengeRow(s) +
         esc(summary || 'Nothing on the map triggers a permit yet.') + '</div>' +
         (s.source.length ? '<div style="font-size:10px;color:#8FA3B8;margin-top:4px">via ' +
           esc(s.source.join(', ')) + '</div>' : '') +
+        (haveBits.length ? '<div style="font-size:10px;color:#8FA3B8;margin-top:6px;' +
+          'padding-top:6px;border-top:1px solid #1b2f45">Also carried into the workbook: ' +
+          esc(haveBits.join(' \u00B7 ')) + '</div>'
+        : '<div style="font-size:10px;color:#f0883e;margin-top:6px;padding-top:6px;' +
+          'border-top:1px solid #1b2f45">No bill of materials or electrical estimate ' +
+          'on this project yet \u2014 the Design Basis sheet will be thin.</div>') +
       '</div>' +
       note('Which permits apply is worked out from the system above. The jurisdiction ' +
-           'cannot be — coordinates locate the site but do not name the city, county or ' +
-           'utility, and a matrix built for the wrong agency is worse than none. Fill ' +
-           'these in and any verified fee and timeline pack will be picked up; leave them ' +
-           'blank and the permits still appear with their triggers and code references, ' +
-           'marked for confirmation with the AHJ.') +
-      field('omega-pm-name', 'Project name', (window.S && window.S.projectName) || '') +
+           'cannot be \u2014 coordinates locate the site but do not name the city, county or ' +
+           'utility, and a matrix built for the wrong agency is worse than none. What the ' +
+           'project already knows has been filled in below, with where each value came ' +
+           'from. Anything still blank can be researched from the address, or typed. ' +
+           'Leave a field empty and the permits still appear with their triggers and code ' +
+           'references, marked for confirmation with the AHJ.') +
+
+      field('omega-pm-name', 'Project name' + prov('projectName'), f.projectName) +
       /* The cover's sub bar reads "Customer | Address | Utility". Without a
          customer field the dialog could not fill a third of it, so the
          workbook came out anonymous no matter what was typed. */
-      field('omega-pm-cust', 'Customer', (window.S && window.S.customer) || '') +
-      field('omega-pm-addr', 'Site address', '') +
+      field('omega-pm-cust', 'Customer' + prov('customer'), f.customer,
+            f.offtaker ? f.offtaker + '? \u2014 that is a load type, not a company' : '') +
+      field('omega-pm-addr', 'Site address' + prov('address'), f.address) +
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
-        field('omega-pm-city', 'City', '') +
-        field('omega-pm-county', 'County', '') +
-        field('omega-pm-state', 'State', '', 'CA') +
+        field('omega-pm-city', 'City' + prov('city'), f.city) +
+        field('omega-pm-county', 'County' + prov('county'), f.county) +
+        field('omega-pm-state', 'State' + prov('state'), f.state) +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
-        field('omega-pm-util', 'Utility', '') +
-        field('omega-pm-fuel', 'Generator fuel', s.gensetKw ? 'diesel' : '') +
+        field('omega-pm-util', 'Utility' + prov('utility'), f.utility,
+              f.utilityCandidates && f.utilityCandidates.length > 1
+                ? 'in this state: ' + f.utilityCandidates.join(' / ') : '') +
+        field('omega-pm-fuel', 'Generator fuel' + prov('gensetFuel'), f.gensetFuel) +
       '</div>' +
+
+      /* THE TWO AREAS. Both of these currently fire a permit BECAUSE THEY
+         ARE MISSING: applicable() treats a null disturbed area as "over an
+         acre" and a null impervious area as "over 20,000 sq ft", which is
+         the conservative reading and the right default. It is not the right
+         ANSWER, and on a small pad it puts two stormwater permits on the
+         matrix that the project does not need. */
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+        field('omega-pm-chem', 'Cell chemistry' + prov('chemistry'), f.chemistry) +
+        field('omega-pm-dist', 'Disturbed area (acres)', '', 'blank = assume >1') +
+        field('omega-pm-imp', 'Impervious (sq ft)', '', 'blank = assume >20k') +
+      '</div>' +
+      '<div style="font-size:10px;color:#8FA3B8;line-height:1.5;margin:-3px 0 10px">' +
+        (f.parcelSqFt
+          ? 'Parcel is ' + esc(String(f.parcelAcres)) + ' acres (' +
+            esc(f.parcelSqFt.toLocaleString()) + ' sq ft) \u2014 ' + esc(f.src.parcel || '') +
+            '. That is the parcel, not the graded footprint, so it is not filled in above. '
+          : 'No property line on the drawing. ') +
+        'Left blank, the stormwater permits fire on the missing figure rather than a ' +
+        'measured one \u2014 conservative, not correct.' +
+      '</div>' +
+
+      /* ---- research ---- */
+      '<div style="margin:12px 0 10px;padding:9px 11px;background:#0b1220;' +
+      'border:1px solid #24405e;border-radius:6px">' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+          '<button id="omega-pm-ai" style="background:#16233a;border:1px solid #24405e;' +
+          'color:#dbe6f2;border-radius:6px;padding:6px 11px;cursor:pointer;font-size:11px">' +
+          'Research the jurisdiction from the address</button>' +
+          '<span id="omega-pm-ai-status" style="font-size:10.5px;color:#8FA3B8"></span>' +
+        '</div>' +
+        '<div style="font-size:10px;color:#8FA3B8;line-height:1.5;margin-top:7px">' +
+        'Fills only the city, county, state, utility and fuel, plus a readiness ' +
+        'assessment and a narrative draft read against this BOM and estimate. It is ' +
+        'not asked for fees, durations or agency names: those are the three things ' +
+        'this workbook refuses to invent, and a model will produce all three on ' +
+        'request. Researched values are marked amber here and recorded on the cover ' +
+        'as researched, so nobody files on them by mistake.</div>' +
+      '</div>' +
+
       /* A permitting matrix is an agency-facing artifact. In most states
          everything sent to county planning, a fire marshal or a utility can
          be pulled through a public-records request, and competitors and
@@ -130340,34 +130737,109 @@ challengeRow(s) +
       '<span><b style="font-size:12px">Agency-facing register</b>' +
       '<span style="display:block;font-size:10.5px;color:#8FA3B8;line-height:1.5;' +
       'margin-top:3px">Strips the customer name, the buildout capacity beyond the ' +
-      'filed phase, the project cost basis and internal notes. Per-agency fees ' +
-      'stay \u2014 that agency published them. Use this for anything that goes to ' +
-      'a county, a fire marshal or a utility; keep the internal register for ' +
-      'what stays inside the company.</span></span></label></div>';
+      'filed phase, the project cost basis and internal notes, and drops the Design ' +
+      'Basis sheet whole \u2014 the electrical estimate on it IS the cost basis. ' +
+      'Per-agency fees stay \u2014 that agency published them. Use this for anything ' +
+      'that goes to a county, a fire marshal or a utility; keep the internal register ' +
+      'for what stays inside the company.</span></span></label></div>';
 
-    modal('Permitting Matrix', body, function (close) {
+    var dlg = modal('Permitting Matrix', body, function (close) {
+      function v(id) { var e = el(id); return e ? (e.value || '').trim() : ''; }
+      function num(id) { var x = parseFloat(v(id)); return isFinite(x) ? x : null; }
+
       var site = {
-        state: (el('omega-pm-state').value || '').trim().toUpperCase(),
-        county: (el('omega-pm-county').value || '').trim(),
-        city: (el('omega-pm-city').value || '').trim(),
-        utility: (el('omega-pm-util').value || '').trim(),
-        gensetFuel: (el('omega-pm-fuel').value || '').trim(),
+        state: v('omega-pm-state').toUpperCase(),
+        county: v('omega-pm-county'),
+        city: v('omega-pm-city'),
+        utility: v('omega-pm-util'),
+        gensetFuel: v('omega-pm-fuel'),
+        chemistry: v('omega-pm-chem') || 'lithium',
         bessKw: s.bessKw, bessKwh: s.bessKwh, solarKwDc: s.solarKwDc,
         gensetKw: s.gensetKw, evChargerKw: s.evChargerKw,
         evChargerCount: s.evChargerCount,
-        chemistry: 'lithium', gridParallel: true, outdoor: true
+        gridParallel: true, outdoor: true
       };
+      /* Only set when given. Writing 0 or null explicitly is not the same as
+         leaving it out: applicable() branches on `== null`, and a typed 0.4
+         has to be able to switch NPDES off. */
+      var da = num('omega-pm-dist'), ia = num('omega-pm-imp');
+      if (da != null) site.disturbedAcres = da;
+      if (ia != null) site.imperviousSqFt = ia;
+
+      /* Provenance for the cover, in the order a reader would trust them. */
+      var aiKeys = Object.keys(aiFilled);
+      var jurSrc = aiKeys.length
+        ? 'Researched from the address by the assistant (' +
+          aiKeys.join(', ') + ') \u2014 NOT confirmed with the AHJ'
+        : (f.src.state || f.src.city || f.src.utility
+            ? 'Read from the project (' +
+              [f.src.state && 'state: ' + f.src.state,
+               f.src.city && 'city: ' + f.src.city,
+               f.src.utility && 'utility: ' + f.src.utility]
+                .filter(Boolean).join('; ') + ')'
+            : 'Entered by hand');
+
+      /* Readiness. Two rows the drawing can answer on its own; the rest are
+         whatever the research step assessed, and blank if it never ran. */
+      var have = {}, action = {};
+      try {
+        if (f.lat != null && f.lng != null) {
+          have[12] = 'partial';
+          action[12] = 'Coordinates and an address are on the project. Check the ' +
+                       'parcel ID and the address against the county GIS before ' +
+                       'filing \u2014 they frequently disagree.';
+        }
+        var anchored = false;
+        try { var bi = (typeof _siteBoundaryInfo === 'function') ? _siteBoundaryInfo() : null;
+              anchored = !!(bi && bi.present && bi.anchored && !bi.derived); } catch (e2) {}
+        if (anchored) {
+          have[1] = 'partial';
+          action[1] = 'A ground-anchored property line exists on the drawing. Export ' +
+                      'the civil set to DXF in the county coordinate system and ' +
+                      'confirm it overlays the county GIS.';
+        }
+      } catch (e) {}
+      if (aiOut && aiOut.readiness) {
+        Object.keys(aiOut.readiness).forEach(function (k) {
+          var r = aiOut.readiness[k];
+          if (!r) return;
+          if (r.status && !have[k]) have[k] = r.status;
+          if (r.action && !action[k]) action[k] = r.action;
+        });
+      }
+
       window.OmegaPermitReport.exportXlsx({
-        projectName: el('omega-pm-name').value || 'Permitting Matrix',
-        customer: (el('omega-pm-cust').value || '').trim(),
+        projectName: v('omega-pm-name') || 'Permitting Matrix',
+        customer: v('omega-pm-cust'),
         agencyFacing: !!(el('omega-pm-agency') && el('omega-pm-agency').checked),
         systemLine: [
           s.bessKw ? String(+(s.bessKw / 1000).toFixed(2)) + ' MW / ' +
                      String(+((s.bessKwh || 0) / 1000).toFixed(2)) + ' MWh' : null,
           s.gensetKw ? s.gensetKw.toLocaleString() + ' kW generation' : null
         ].filter(Boolean).join(' + '),
-        address: el('omega-pm-addr').value || '',
+        address: v('omega-pm-addr'),
         site: site,
+        jurisdictionSource: jurSrc,
+        readiness: { have: have, action: action,
+                     source: aiOut ? 'the drawing, plus an assistant reading the BOM ' +
+                                     'and the electrical estimate'
+                                   : 'the drawing only' },
+        designInputs: {
+          systemSource: (s.source && s.source.length)
+                          ? s.source.join(', ') : 'the sitemap',
+          chemistrySource: f.src.chemistry || null,
+          parcelAcres: f.parcelAcres, parcelSqFt: f.parcelSqFt,
+          parcelSource: f.src.parcel || null,
+          disturbedSource: da != null ? 'entered in the matrix dialog' : null,
+          imperviousSource: ia != null ? 'entered in the matrix dialog' : null,
+          bomLines: f.bomLines, trenchFt: f.trenchFt,
+          estimateSell: f.estimateSell, estimateHrs: f.estimateHrs
+        },
+        narrative: aiOut && aiOut.narrative && aiOut.narrative.length
+          ? { sections: aiOut.narrative,
+              source: 'Drafted by the assistant from the drawn system, the bill of ' +
+                      'materials and the electrical estimate' }
+          : null,
         filename: 'permitting-matrix'
       }).then(function (r) {
         if (r && r.ok) {
@@ -130380,6 +130852,154 @@ challengeRow(s) +
         }
       });
     }, 'Generate workbook');
+
+    /* ---- research, wired after the dialog is in the document ---------- */
+    var btn = el('omega-pm-ai'), st = el('omega-pm-ai-status');
+    if (btn) btn.onclick = function () { researchJurisdiction(btn, st); };
+
+    function say(node, txt, colour) {
+      if (node) node.innerHTML = '<span style="color:' + (colour || '#8FA3B8') + '">' +
+        esc(txt) + '</span>';
+    }
+
+    function researchJurisdiction(btn, st) {
+      var addr = (el('omega-pm-addr') || {}).value || '';
+      if (!addr || addr.trim().length < 8) {
+        say(st, 'Enter the site address first.', '#f0883e'); return;
+      }
+      btn.disabled = true;
+      say(st, '\u23F3 Reading ' + addr.trim() + '\u2026', '#f0883e');
+
+      /* WHAT IS AND IS NOT ASKED FOR.
+         Asked: the names of the authorities, which are public facts about a
+         place and are exactly what this dialog otherwise makes somebody type
+         from memory. Also a readiness read and a narrative draft, both of
+         which are judgements about THIS project and are marked as drafts.
+         Not asked: fees, durations, and the agency string that goes in the
+         matrix's Agency column. Those come from a verified pack or they read
+         "Confirm with AHJ" — a plausible fee range in a permitting matrix is
+         the same defect as a made-up IRR in a pro forma, and the model will
+         produce one cheerfully if the question leaves room for it. */
+      var sys = [];
+      if (s.bessKw) sys.push(s.bessKw + ' kW / ' + s.bessKwh + ' kWh battery storage');
+      if (s.solarKwDc) sys.push(s.solarKwDc + ' kWdc solar');
+      if (s.gensetKw) sys.push(s.gensetKw + ' kW ' +
+        ((el('omega-pm-fuel') || {}).value || 'unspecified fuel') + ' generation');
+      if (s.evChargerCount) sys.push(s.evChargerCount + ' EV charging positions');
+
+      var ctx = [];
+      if (f.parcelSqFt) ctx.push('Parcel: ' + f.parcelAcres + ' acres.');
+      if (f.trenchFt) ctx.push('Trenching drawn: ' + f.trenchFt + ' ft.');
+      if (f.bomLines) ctx.push('Bill of materials: ' + f.bomLines + ' line items.');
+      if (f.estimateSell) ctx.push('Electrical construction estimate: $' +
+        Math.round(f.estimateSell).toLocaleString() + '.');
+      if (f.lat != null) ctx.push('Coordinates: ' + (+f.lat).toFixed(5) + ', ' +
+        (+f.lng).toFixed(5) + '.');
+
+      var prompt =
+        'A commercial energy project at "' + addr.trim() + '" in the United States.\n' +
+        'System as drawn: ' + (sys.join('; ') || 'nothing placed yet') + '.\n' +
+        (ctx.length ? ctx.join(' ') + '\n' : '') +
+        '\nReturn ONLY JSON, no markdown fence, no prose outside it.\n' +
+        'Use null for anything you cannot determine with reasonable confidence. ' +
+        'Do NOT guess. Do NOT return permit fees, permit durations, or the names ' +
+        'of specific permit-issuing divisions \u2014 those are handled elsewhere and a ' +
+        'plausible-looking wrong number is worse than a blank.\n' +
+        '{\n' +
+        '"city": "incorporated city or town, or null if the parcel is unincorporated",\n' +
+        '"unincorporated": true if the parcel appears to be in unincorporated county land, else false or null,\n' +
+        '"county": "county (or parish/borough) name, without the word County",\n' +
+        '"state": "two-letter state code",\n' +
+        '"utility": "the electric utility serving this address",\n' +
+        '"confidence": "high | medium | low \u2014 how sure you are of city and county",\n' +
+        '"ahjNotes": "one or two sentences on anything a permitting team should know ' +
+        'about this jurisdiction for battery storage: whether it is an unlisted use, ' +
+        'known moratoria, which body hears a conditional use permit. Say so plainly if ' +
+        'you do not know.",\n' +
+        '"readiness": {"2": {"status": "have|partial|missing", "action": "one concrete next step"}, ' +
+        '"3": {...}}  // keys are requirement numbers 2 to 11 from a standard industrial ' +
+        'civil submission: 2 NPDES stormwater notice of intent, 3 concrete washout shown on ' +
+        'plan, 4 utility standard note blocks, 5 water line details (tap, valve, meter, ' +
+        'backflow), 6 fire access and fire flow, 7 grading and erosion control, 8 ' +
+        'construction staging and laydown, 9 utility tie-in details, 10 as-built ' +
+        'commitment, 11 environmental constraint overlay. Judge status from the system ' +
+        'and site context above; use "missing" where the project plainly has not done it ' +
+        'yet and omit the key entirely where you cannot tell.\n' +
+        '"narrative": [{"heading": "Project description", "body": "..."}, ' +
+        '{"heading": "Site and setting", "body": "..."}, ' +
+        '{"heading": "Fire and life safety approach", "body": "..."}, ' +
+        '{"heading": "Decommissioning", "body": "..."}]  // a short draft project ' +
+        'narrative for a conditional use permit application, 3 to 5 sentences per ' +
+        'section, using ONLY the capacities given above. Do not state a fee, a ' +
+        'schedule, or a code section you are not certain applies.\n' +
+        '}';
+
+      fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 2000,
+          messages: [{ role: 'user', content: prompt }] })
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        var txt = (data.content || []).map(function (c) { return c.text || ''; })
+                    .join('').trim();
+        txt = txt.replace(/^```json\s*/i, '').replace(/^```\s*/i, '')
+                 .replace(/```\s*$/, '').trim();
+        var a = txt.indexOf('{'), b = txt.lastIndexOf('}');
+        if (a >= 0 && b > a) txt = txt.slice(a, b + 1);
+        var r = JSON.parse(txt);
+
+        /* Never overwrite something already in the box. A value read from the
+           project, or typed by the person who rang the county, outranks a
+           value inferred from a postal address every time. */
+        var filled = [];
+        function fill(id, val, key) {
+          var e = el(id);
+          if (!e || val == null || !String(val).trim()) return;
+          if (String(e.value || '').trim()) return;
+          e.value = String(val).trim();
+          e.style.cssText += ';' + AI_MARK;
+          aiFilled[key] = true; filled.push(key);
+        }
+        fill('omega-pm-state', r.state, 'state');
+        fill('omega-pm-county', r.county, 'county');
+        fill('omega-pm-util', r.utility, 'utility');
+        /* An unincorporated parcel has no city, and writing one in would
+           point the whole matrix at an authority with no say over it. */
+        if (r.unincorporated === true) {
+          var ce = el('omega-pm-city');
+          if (ce && !ce.value.trim()) {
+            ce.placeholder = 'unincorporated \u2014 the county is the authority';
+          }
+        } else {
+          fill('omega-pm-city', r.city, 'city');
+        }
+
+        aiOut = { readiness: r.readiness || null,
+                  narrative: Array.isArray(r.narrative) ? r.narrative : null,
+                  ahjNotes: r.ahjNotes || null };
+
+        var bits = [];
+        bits.push(filled.length ? '\u2713 Filled ' + filled.join(', ')
+                                : 'Nothing to fill \u2014 those boxes were already set');
+        if (r.confidence) bits.push('confidence: ' + r.confidence);
+        if (aiOut.readiness) bits.push(Object.keys(aiOut.readiness).length +
+          ' readiness row(s) assessed');
+        if (aiOut.narrative) bits.push('narrative drafted');
+        say(st, bits.join(' \u00B7 '), filled.length ? '#7ee787' : '#8FA3B8');
+        if (r.ahjNotes) {
+          st.innerHTML += '<div style="color:#8FA3B8;font-size:10px;margin-top:5px;' +
+            'line-height:1.5;max-width:460px">' + esc(r.ahjNotes) + '</div>';
+        }
+        st.innerHTML += '<div style="color:#b7791f;font-size:10px;margin-top:5px;' +
+          'line-height:1.5;max-width:460px">Researched, not confirmed. Ring the ' +
+          'planning department before this goes anywhere near a filing \u2014 the ' +
+          'workbook cover will say the same thing.</div>';
+        btn.disabled = false;
+      }).catch(function (e) {
+        say(st, 'Could not research that address \u2014 fill the fields by hand. ' +
+                'The matrix still builds without them.', '#f0883e');
+        btn.disabled = false;
+      });
+    }
   }
 
   /* ------------------------------------------------------------------ *
@@ -133666,9 +134286,27 @@ function buildGround(site, span){
   try {
     var _key = '';
     try { _key = (window._CFG && _CFG.googleMapsKey) || localStorage.getItem('clearsky_maps_key') || ''; } catch(e){}
-    var _ms = (typeof _liveMapState === 'function') ? _liveMapState() : null;
-    if (!_ms) { try { _ms = window._savedMapState; } catch(e){} }
-    if (!_ms && site.lat != null) _ms = { lat: site.lat, lng: site.lng };
+    /* WHERE IS THIS SITE?
+
+       _liveMapState() is null whenever the map is not locked, and the panel
+       says so plainly — "No map centre yet". Stopping there meant the wide
+       ground never loaded on exactly the projects that had not been locked,
+       which is most of them mid-design.
+
+       There are four places the coordinate can come from and they are tried
+       from most authoritative down. omegaGeo() is the one that works on an
+       unlocked map, which is the case that was failing. */
+    var _ms = null;
+    try { if (typeof _liveMapState === 'function') _ms = _liveMapState(); } catch(e){}
+    if (!_ms) { try { _ms = window._savedMapState || null; } catch(e){} }
+    if (!_ms || _ms.lat == null) {
+      try {
+        var _g = (typeof omegaGeo === 'function') ? omegaGeo() : null;
+        if (_g && _g.lat != null) _ms = { lat:_g.lat, lng:_g.lng };
+      } catch(e){}
+    }
+    if ((!_ms || _ms.lat == null) && site.lat != null) _ms = { lat: site.lat, lng: site.lng };
+    if (_ms && _ms.lat == null) _ms = null;
 
     if (_key && _ms && _ms.lat != null) {
       /* Cover roughly three times the site's long side, so the imagery
@@ -133714,6 +134352,47 @@ function buildGround(site, span){
       if(window.console) console.warn('[ground] Static Maps refused — enable "Maps Static API" on the key. '
         + 'Falling back to the frozen capture, which only covers the drawing viewport.');
     });
+
+    /* ── AND A WIDER ONE BEHIND IT ──────────────────────────────────────
+       One image cannot do both jobs. Static Maps returns 1280 px however
+       much ground it covers, so a single plane is either SHARP over the
+       site or WIDE enough to fill the view — never both. At 3x the site
+       that was 4,500 ft against a 14,800 ft base plane: a tenth of the
+       visible ground by area, which is the island of imagery in a green
+       sea.
+
+       So: two planes. This one zooms out far enough to reach past the
+       base plane and sits fractionally lower, with the sharp one laid on
+       top. It is soft — about 14 ft per pixel — but it is distant ground
+       that only has to read as the right city, and fog takes the far
+       edge anyway. */
+    var _ctxFt = span * 14;
+    var _ctxZ = 20;
+    while (_ctxZ > 10) {
+      var _cm2 = 156543.03392 * Math.cos(_lat * Math.PI / 180) / Math.pow(2, _ctxZ);
+      if (_cm2 * 640 >= _ctxFt * 0.3048) break;
+      _ctxZ--;
+    }
+    var _ctxSpanFt = ((156543.03392 * Math.cos(_lat * Math.PI / 180) / Math.pow(2, _ctxZ)) * 640) / 0.3048;
+    var _ctxUrl = 'https://maps.googleapis.com/maps/api/staticmap?center=' + _lat + ',' + _ms.lng
+                + '&zoom=' + _ctxZ + '&size=640x640&scale=2&maptype=satellite&format=jpg&key=' + _key;
+
+    var cl = new THREE.TextureLoader();
+    cl.setCrossOrigin('anonymous');
+    cl.load(_ctxUrl, function(ct){
+      if(V.disposed) return;
+      try{ if(THREE.sRGBEncoding !== undefined) ct.encoding = THREE.sRGBEncoding; }catch(e){}
+      ct.anisotropy = (QUALITY[V.opts.quality] || QUALITY.high).aniso;
+      var cmat = new THREE.MeshStandardMaterial({ map:ct, roughness:0.99, metalness:0.0 });
+      var cg = new THREE.Mesh(new THREE.PlaneGeometry(_ctxSpanFt, _ctxSpanFt), cmat);
+      cg.rotation.x = -Math.PI/2;
+      var _ccx = (rect.width/2  - o.x)/p;
+      var _ccz = (rect.height/2 - o.y)/p;
+      cg.position.set(_ccx, 0.005, _ccz);   /* under the sharp plane, over the base */
+      cg.receiveShadow = true;
+      V.groundGrp.add(cg);
+      V.needsRender = true;
+    }, undefined, function(){});
   }
 
   var loader = new THREE.TextureLoader();
