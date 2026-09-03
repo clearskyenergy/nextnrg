@@ -143537,11 +143537,44 @@ if (root.console && console.info) {
 (function (root) {
 'use strict';
 
+/* ══════════════════════════════════════════════════════════════════════
+ *  THE ONE LINE TO EDIT PER DEPLOYMENT
+ *
+ *  The render service does not belong in every tenant repo. It is one
+ *  endpoint holding one Google credential; duplicating it across tenants
+ *  means N copies of a secret and N places to rotate it when one leaks.
+ *
+ *  So deploy api/render.js ONCE — to the portal — and set the host below.
+ *  Every tenant repo that ships this file then works with no further
+ *  configuration: no console command, no per-tenant setting.
+ *
+ *  Resolution order:
+ *    1  an endpoint set by hand in the dialog        (overrides everything)
+ *    2  /api/render on this host                     (tenant carries its own)
+ *    3  OMEGA_RENDER_SERVICE                         (the shared portal)
+ *
+ *  Same-origin comes before the portal so a tenant that DOES carry its own
+ *  copy keeps using it — one tenant can be moved without touching the rest.
+ * ══════════════════════════════════════════════════════════════════════ */
+var OMEGA_RENDER_SERVICE = 'https://clearsky-portal.vercel.app/api/render';
+
 function cfg(){
-  var url = '';
-  try { url = localStorage.getItem('omega.render.endpoint') || ''; } catch (e) {}
-  return { url: url || '/api/render' };
+  var explicit = '';
+  try { explicit = localStorage.getItem('omega.render.endpoint') || ''; } catch (e) {}
+  var remembered = '';
+  try { remembered = localStorage.getItem('omega.render.worked') || ''; } catch (e) {}
+
+  var list = [];
+  if (explicit) list.push(explicit);
+  else {
+    if (remembered) list.push(remembered);
+    ['/api/render', OMEGA_RENDER_SERVICE].forEach(function (u) {
+      if (u && list.indexOf(u) < 0) list.push(u);
+    });
+  }
+  return { url: list[0], candidates: list };
 }
+function remember(u){ try { localStorage.setItem('omega.render.worked', u); } catch (e) {} }
 
 /* The snapshot, as a data URL, without triggering a download. */
 /* THE CONTROL IMAGE HAS TO FIT IN A REQUEST.
@@ -143736,7 +143769,11 @@ function render(style, cb, aspect){
   var f = siteFacts(), C = cfg();
   var prompt = buildPrompt(f, style);
 
-  fetch(C.url, {
+  var list = C.candidates || [C.url];
+  var idx = 0, target = list[0];
+
+  function attempt(){
+  fetch(target, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       image: view, prompt: prompt, style: style || 'day', aspectRatio: aspect || '16:9',
@@ -143761,10 +143798,23 @@ function render(style, cb, aspect){
   .then(function (j) {
     var out = j && (j.image || j.dataUrl || j.url);
     if (!out) throw new Error('the service returned no image');
+    remember(target);
     return label(out, f);
   })
   .then(function (finalUrl) { cb(finalUrl, null); })
-  .catch(function (e) { cb(null, (e && e.message) || 'render failed'); });
+  .catch(function (e) {
+    /* A same-origin 404 just means this tenant does not carry its own copy.
+       That is not an error worth showing anybody — it is the reason the
+       portal fallback exists. Try the next one first. */
+    var m = (e && e.message) || '';
+    if (idx + 1 < list.length && /404|no render service|failed to fetch/i.test(m)) {
+      idx++; target = list[idx];
+      return attempt();
+    }
+    cb(null, m || 'render failed');
+  });
+  }
+  attempt();
 }
 
 /* ── ENHANCE, WITH NO SERVICE AT ALL ──────────────────────────────────
