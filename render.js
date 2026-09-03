@@ -45,8 +45,12 @@
    reason this file exists rather than the editor calling OpenAI directly.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const BUILD    = '2026-09-02.gpt-image-1';
-const PROVIDER = (process.env.RENDER_PROVIDER || 'openai').toLowerCase();
+const BUILD    = '2026-09-02.vertex-default';
+/* Google by default. It needs no organisation verification, it bills to the
+   Cloud project the Maps key already runs on, and it is therefore the one
+   that can be working tonight. Set RENDER_PROVIDER=openai to switch once
+   OpenAI verification clears. */
+const PROVIDER = (process.env.RENDER_PROVIDER || 'vertex').toLowerCase();
 const QUALITY  = process.env.RENDER_QUALITY || 'high';
 
 const ALLOWED_ORIGINS = (process.env.RENDER_ORIGINS

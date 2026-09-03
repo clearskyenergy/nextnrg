@@ -143596,27 +143596,56 @@ function buildPrompt(f, style){
   }).join(' and ') || 'solar arrays';
 
   var hour = (f.hour != null) ? f.hour : 13;
-  var light = hour < 9  ? 'early morning light, long soft shadows'
-            : hour > 17 ? 'late afternoon golden light, long shadows'
-            : 'midday sun, short crisp shadows';
+  var light = hour < 9  ? 'early morning light with long soft shadows'
+            : hour > 17 ? 'late afternoon golden light with long shadows'
+            : 'high midday sun with short crisp shadows';
 
   /* The control image fixes geometry; the prompt only supplies material
      and atmosphere. Anything here that describes LAYOUT would fight the
      control image and is deliberately absent. */
-  var base =
-    'Architectural visualisation of an existing commercial site. Match the '
-    + 'provided image exactly for building massing, roof outlines, road layout, '
-    + 'parking, and the position, orientation and extent of every solar array. '
-    + 'Do not add, move, resize or re-orient any solar array or equipment. '
-    + 'Render ' + mount + ' with realistic dark blue-black photovoltaic modules, '
-    + 'visible module framing and racking. '
-    + (f.storage ? 'Render the battery enclosures as clean white industrial containers. ' : '')
-    + 'Add realistic materials, ' + light + ', mature landscaping, a few parked cars, '
-    + 'and a clear sky. Photoreal, aerial three-quarter view, high detail, '
-    + 'professional real-estate rendering quality.';
+  /* TUNED AGAINST A REFERENCE.
 
-  if (style === 'dusk')    base += ' Dusk, warm interior lighting, deep blue sky.';
-  if (style === 'diagram') base += ' Clean daylight, minimal landscaping, neutral and technical.';
+     The look being asked for is the architectural-competition render: clean
+     untextured white massing, mature street trees, sparse traffic, a clear
+     sky with a little haze on the horizon, and soft midday light. Naming
+     those specifics gets far closer than "photoreal, high detail", which
+     every model interprets differently and usually as "add more stuff".
+
+     The buildings stay WHITE and untextured on purpose. Asking for brick
+     and glass invites the model to redesign facades it cannot see, and a
+     neighbour rendered as the wrong building is the kind of error a client
+     spots immediately. Clean massing reads as a study, which is honest
+     about what it is. */
+  var base =
+    'Photorealistic architectural visualisation, aerial oblique view, of an existing '
+    + 'commercial site. Match the provided image exactly for building massing, roof '
+    + 'outlines, road layout, parking geometry, and the position, orientation and '
+    + 'extent of every solar array. Do not add, move, resize or re-orient any solar '
+    + 'array, building or piece of equipment. '
+    + 'Render ' + mount + ' as dark blue-black photovoltaic modules in neat rows with '
+    + 'visible module framing, thin racking and clean edges. '
+    + (f.storage ? 'Render battery enclosures as clean white industrial containers. ' : '')
+    + 'Surrounding buildings: smooth matte white and light grey massing, minimal facade '
+    + 'detail, crisp edges, no signage. '
+    + 'Ground: dark asphalt roads with clean lane markings, light concrete sidewalks, '
+    + 'manicured green lawns, mature deciduous street trees with full canopies, a few '
+    + 'ornamental flowering trees. Sparse traffic, a scattering of parked cars. '
+    + light + ', clear blue sky with light atmospheric haze toward the horizon. '
+    + 'Clean, calm, high-end property-marketing render. Sharp focus throughout, no '
+    + 'people, no lens flare. '
+    /* The satellite ground carries Google's and Airbus's attribution baked
+       into the pixels, and the model WILL try to reproduce it as lettering
+       across the site. Saying "no text" alone does not help — it is looking
+       at text and being told there is none. Naming it as an artefact to
+       replace works far better than denying it exists. */
+    + 'Any map attribution lettering or watermark visible on the ground in the source '
+    + 'is an artefact: replace it with the surface underneath. No text, no signage, '
+    + 'no logos anywhere in the final image.';
+
+  if (style === 'dusk')    base += ' Dusk: warm low sun, long shadows, deep blue gradient sky, '
+                                  + 'warm light in building windows.';
+  if (style === 'diagram') base += ' Restrained: minimal planting, muted palette, even light, '
+                                  + 'closer to a technical study than a marketing image.';
   return base;
 }
 
@@ -143846,7 +143875,14 @@ function openDialog(){
       + 'font-weight:700;margin-bottom:5px">What gets sent</div>'
       + '<img id="omr-src" src="' + view + '" style="width:100%;border-radius:8px;border:1px solid #1E3A5F;display:block">'
       + '<div style="font-size:10px;color:#64748B;margin-top:6px;line-height:1.5">'
-      + 'The geometry in this image is held. Materials, planting and surroundings are added.</div></div>'
+      + 'The geometry in this image is held. Materials, planting and surroundings are added.'
+      /* A near-horizon camera foreshortens the site into a sliver and gives the
+         model mostly empty ground to fill — which is where it invents most
+         freely. The reference look is a high oblique, so say so here rather
+         than letting somebody spend a render finding out. */
+      + '<br><b style="color:#8FA3B8">Best results:</b> a high oblique looking down on the '
+      + 'site, like the <b>Aerial</b> view. A near-horizon camera flattens the site and '
+      + 'leaves the model a lot of empty ground to invent.</div></div>'
       + '<div>'
       + '<label style="display:block;font-size:9px;color:#64748B;text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:4px">Look</label>'
       + '<select id="omr-style" style="width:100%;padding:8px;background:#0B1626;border:1px solid #1E3A5F;'
