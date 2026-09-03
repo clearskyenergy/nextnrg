@@ -143577,6 +143577,12 @@ function siteFacts(){
     if (V && V.opts) { f.month = V.opts.day; f.hour = V.opts.hour; }
   } catch (e) {}
   try { f.addr = (S && (S.siteAddr || S.address)) || ''; } catch (e) {}
+  /* The dialog said "This site" on a project plainly titled 1901 Convention
+     Ctr Dr, because siteAddr is only set once an address has been geocoded.
+     The project name is right there and is what the user calls this job. */
+  if (!f.addr) {
+    try { var pn = document.getElementById('pname'); if (pn && pn.value) f.addr = pn.value; } catch (e) {}
+  }
   try { var g = omegaGeo(); if (g) { f.lat = g.lat; f.lng = g.lng; } } catch (e) {}
   return f;
 }
@@ -143769,6 +143775,21 @@ function openDialog(){
       + '<button id="omr-go" style="width:100%;background:#B45309;border:none;color:#FFF7E6;'
       + 'border-radius:7px;padding:11px;font-size:13px;font-weight:800;cursor:pointer">\u2726 Render</button>'
       + '<div id="omr-msg" style="font-size:10.5px;color:#64748B;margin-top:9px;line-height:1.5"></div>'
+      /* Settable HERE. Telling somebody to open the console and type a
+         function call is not configuration, it is a scavenger hunt. */
+      + '<details id="omr-cfg" style="margin-top:10px">'
+      +   '<summary style="font-size:10px;color:#64748B;cursor:pointer;outline:none">Render service</summary>'
+      +   '<input id="omr-ep" type="text" spellcheck="false" value="' + esc(C.url) + '" '
+      +   'placeholder="https://\u2026/api/render" style="width:100%;margin-top:6px;padding:7px;'
+      +   'background:#0B1626;border:1px solid #1E3A5F;border-radius:6px;color:#E2EEF9;font-size:11px">'
+      +   '<div style="display:flex;gap:6px;margin-top:6px">'
+      +     '<button id="omr-save" style="flex:1;background:#1E3A5F;border:none;color:#E2EEF9;'
+      +     'border-radius:5px;padding:6px;font-size:10.5px;font-weight:700;cursor:pointer">Save</button>'
+      +     '<button id="omr-test" style="flex:1;background:rgba(255,255,255,.06);border:1px solid #1E3A5F;'
+      +     'color:#8FA3B8;border-radius:5px;padding:6px;font-size:10.5px;font-weight:700;cursor:pointer">Test</button>'
+      +   '</div>'
+      +   '<div id="omr-cfgmsg" style="font-size:9.5px;color:#64748B;margin-top:6px;line-height:1.5"></div>'
+      + '</details>'
       + '</div></div>'
       + '<div id="omr-out" style="margin-top:16px"></div>';
   }
@@ -143784,6 +143805,36 @@ function openDialog(){
   document.body.appendChild(m);
   document.getElementById('omr-x').onclick = function(){ m.remove(); };
 
+  var epIn = document.getElementById('omr-ep');
+  var cfgMsg = document.getElementById('omr-cfgmsg');
+  var saveB = document.getElementById('omr-save');
+  var testB = document.getElementById('omr-test');
+  if (saveB) saveB.onclick = function(){
+    root.OmegaRender.setEndpoint(epIn.value.trim());
+    cfgMsg.innerHTML = '<span style="color:#4ADE80">Saved \u2014 remembered for next time.</span>';
+  };
+  if (testB) testB.onclick = function(){
+    var u = epIn.value.trim();
+    cfgMsg.textContent = 'Checking\u2026';
+    /* GET, because the health check answers without spending a render. */
+    fetch(u, { method: 'GET' })
+      .then(function (r) { return r.json().catch(function(){ return null; }).then(function (j) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        cfgMsg.innerHTML = '<span style="color:#4ADE80">Reachable</span> \u2014 '
+          + esc((j && j.provider) || '?') + ' \u00b7 ' + esc((j && j.model) || '?')
+          + '<br>' + esc((j && j.credential) || '');
+      }); })
+      .catch(function (){
+        /* Same discriminator as the Grid Atlas panel: reached-but-blocked is
+           a different fix from nothing-is-there. */
+        fetch(u, { mode: 'no-cors', method: 'GET' })
+          .then(function(){ cfgMsg.innerHTML = '<span style="color:#F97316">Answered, but blocked by CORS.</span> '
+            + 'Add ' + esc(location.origin) + ' to RENDER_ORIGINS on the service.'; })
+          .catch(function(){ cfgMsg.innerHTML = '<span style="color:#F97316">Nothing is answering there.</span> '
+            + 'Deploy api/render.js and set OPENAI_API_KEY.'; });
+      });
+  };
+
   var go = document.getElementById('omr-go');
   if (!go) return;
   go.onclick = function(){
@@ -143796,6 +143847,12 @@ function openDialog(){
       go.disabled = false; go.style.opacity = '1'; go.textContent = '\u2726 Render';
       if (err) {
         msg.innerHTML = '<span style="color:#FDBA74">' + esc(err) + '</span>';
+        /* If the endpoint is the problem, open the box that fixes it rather
+           than leaving it folded under a summary nobody clicks. */
+        if (/no render service|not answering|404|endpoint/i.test(err)) {
+          var dt = document.getElementById('omr-cfg');
+          if (dt) dt.open = true;
+        }
         return;
       }
       msg.textContent = 'Done.';
