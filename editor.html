@@ -133610,7 +133610,7 @@ function buildGround(site, span){
     var g0 = V.groundGrp.children[0];
     /* The satellite plane owns its own texture and material (unlike the
        MAT.* shared set), so those are ours to free here. */
-    if(g0.material && g0.material !== MAT.ground){
+    if(g0.material && (g0.material !== MAT.ground || g0._ownMat)){
       try{ if(g0.material.map) g0.material.map.dispose(); }catch(e){}
       try{ g0.material.dispose(); }catch(e){}
     }
@@ -133661,6 +133661,65 @@ function buildGround(site, span){
     g.position.set(x0 + w/2, 0.02, z0 + h/2);
     g.receiveShadow = true;
     V.groundGrp.add(g);
+
+    /* ── WHAT SURROUNDS THE IMAGERY ──────────────────────────────────
+       The satellite plane only covers the area that was captured. Beyond
+       it sat MAT.ground — a flat lawn green — so a site on asphalt or
+       desert ended up as a photograph pasted onto a golf course, with a
+       hard edge where one became the other.
+
+       Stretching the imagery to fill the view would be worse: it would
+       claim to show ground that was never photographed. Instead the
+       surround is tinted to the imagery's own EDGE colour, so the site
+       reads as sitting in continuous terrain of the right kind — pale
+       concrete stays pale, desert stays sand, grass stays green —
+       without inventing detail that is not there.
+
+       Sampled from the border rather than the whole image, because the
+       middle is the site itself: a dark array or a white roof would drag
+       the average somewhere the surrounding ground is not. */
+    try{
+      var im = tex.image;
+      if(im && im.width > 8 && im.height > 8){
+        var sc = document.createElement('canvas');
+        var SW = 48, SH = 48;
+        sc.width = SW; sc.height = SH;
+        var sg = sc.getContext('2d');
+        sg.drawImage(im, 0, 0, SW, SH);
+        var px = sg.getImageData(0, 0, SW, SH).data;
+        var rs = [], gs = [], bs = [];
+        var band = 6;                       /* border thickness in samples */
+        for(var yy = 0; yy < SH; yy++){
+          for(var xx = 0; xx < SW; xx++){
+            var edge = (xx < band || yy < band || xx >= SW-band || yy >= SH-band);
+            if(!edge) continue;
+            var k = (yy*SW + xx)*4;
+            if(px[k+3] < 8) continue;       /* transparent: not imagery */
+            rs.push(px[k]); gs.push(px[k+1]); bs.push(px[k+2]);
+          }
+        }
+        if(rs.length > 40){
+          /* Median, not mean — one bright rooftop or a black road at the
+             edge should not move the whole surround. */
+          var med = function(a){ a.sort(function(p,q){return p-q;}); return a[a.length>>1]; };
+          var cr = med(rs), cg = med(gs), cb = med(bs);
+          /* Slightly darker than the imagery so the captured area still
+             reads as the subject rather than dissolving into the surround. */
+          var mix = 0.88;
+          var col = new THREE.Color(
+            (cr/255)*mix, (cg/255)*mix, (cb/255)*mix);
+          if(V.groundGrp.children[0] && V.groundGrp.children[0].material === MAT.ground){
+            /* MAT.ground is shared; give this scene its own so tinting one
+               site cannot recolour the green on every other render. */
+            var ownMat = MAT.ground.clone();
+            ownMat.color.copy(col);
+            V.groundGrp.children[0].material = ownMat;
+            V.groundGrp.children[0]._ownMat = true;
+          }
+        }
+      }
+    }catch(e){ /* tainted or unreadable: the green stands, which is honest */ }
+
     V.needsRender = true;
   }, undefined, function(){ /* image unavailable — the base plane stands in */ });
 }
@@ -143435,5 +143494,222 @@ if (root.console && console.info) {
 }
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
+<script id="omega-ai-render-js">
+/* ══════════════════════════════════════════════════════════════════════════
+ *  PRESENTATION RENDER
+ *
+ *  Turns the 3D view into a photoreal image for a proposal or a council
+ *  meeting, the way an architect's visualiser would.
+ *
+ *  ── WHY THIS CAN BE HONEST ─────────────────────────────────────────
+ *
+ *  It is IMAGE-TO-IMAGE, not text-to-image. The 3D snapshot goes across as
+ *  a control image, so the massing, the array footprint, the row pitch,
+ *  the equipment positions and the sun angle are all fixed by the geometry
+ *  the model already computed. The image model is asked to add materials,
+ *  light and context \u2014 not to invent a site.
+ *
+ *  Asking a model for "a solar farm in Miami" would produce a picture of
+ *  nothing in particular. Handing it your actual massing produces a
+ *  picture of YOUR site.
+ *
+ *  ── AND WHY IT STILL HAS TO BE LABELLED ────────────────────────────
+ *
+ *  It will still invent. Trees, cars, cladding, people, reflections \u2014 and
+ *  it may quietly restyle a panel row or soften a setback. That is fine
+ *  for a cover image and unacceptable as a drawing. So every render comes
+ *  back with the label burned in, not as an overlay somebody can crop off
+ *  in a screenshot. A pretty picture mistaken for a design is the same
+ *  failure as a fabricated score mistaken for a measurement.
+ *
+ *  ── WHAT YOU NEED ──────────────────────────────────────────────────
+ *
+ *  An image endpoint. Claude does not generate images, so this posts to a
+ *  server-side proxy you control \u2014 same shape as /api/grid-atlas, and for
+ *  the same reason: the key stays on the server and CORS stays sane.
+ *  Point it at whichever image model you prefer.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+
+function cfg(){
+  var url = '';
+  try { url = localStorage.getItem('omega.render.endpoint') || ''; } catch (e) {}
+  return { url: url || '/api/render' };
+}
+
+/* The snapshot, as a data URL, without triggering a download. */
+function grabView(){
+  try {
+    var V = root.OmegaSiteVis && root.OmegaSiteVis._V && root.OmegaSiteVis._V();
+    if (!V || !V.renderer) return null;
+    V.renderer.render(V.scene, V.camera);
+    return V.renderer.domElement.toDataURL('image/png');
+  } catch (e) { return null; }
+}
+
+/* What the model needs to know that the picture cannot tell it.
+
+   Pulled from the model rather than typed, so the prompt and the design
+   cannot disagree \u2014 the same reason the deck reads its numbers from the
+   yield engine instead of from a form. */
+function siteFacts(){
+  var f = { arrays: 0, kwdc: 0, storage: 0, mount: [], addr: '', lat: null, lng: null,
+            month: null, hour: null };
+  try {
+    var V = root.OmegaSiteVis && root.OmegaSiteVis._V && root.OmegaSiteVis._V();
+    if (V && V.site && V.site.items) {
+      V.site.items.forEach(function (it) {
+        if (it.hidden) return;
+        if (/^solar-/.test(it.arch)) {
+          f.arrays++; f.kwdc += (+it.kw || 0);
+          var m = it.arch.replace('solar-', '');
+          if (f.mount.indexOf(m) < 0) f.mount.push(m);
+        }
+        if (/^bess-/.test(it.arch)) f.storage++;
+      });
+    }
+    if (V && V.opts) { f.month = V.opts.day; f.hour = V.opts.hour; }
+  } catch (e) {}
+  try { f.addr = (S && (S.siteAddr || S.address)) || ''; } catch (e) {}
+  try { var g = omegaGeo(); if (g) { f.lat = g.lat; f.lng = g.lng; } } catch (e) {}
+  return f;
+}
+
+function buildPrompt(f, style){
+  var mount = f.mount.map(function (m) {
+    return m === 'carport' ? 'solar carport canopies'
+         : m === 'roof'    ? 'flush rooftop solar'
+         : m === 'tracker' ? 'single-axis tracker rows'
+         : 'fixed-tilt ground-mount rows';
+  }).join(' and ') || 'solar arrays';
+
+  var hour = (f.hour != null) ? f.hour : 13;
+  var light = hour < 9  ? 'early morning light, long soft shadows'
+            : hour > 17 ? 'late afternoon golden light, long shadows'
+            : 'midday sun, short crisp shadows';
+
+  /* The control image fixes geometry; the prompt only supplies material
+     and atmosphere. Anything here that describes LAYOUT would fight the
+     control image and is deliberately absent. */
+  var base =
+    'Architectural visualisation of an existing commercial site. Match the '
+    + 'provided image exactly for building massing, roof outlines, road layout, '
+    + 'parking, and the position, orientation and extent of every solar array. '
+    + 'Do not add, move, resize or re-orient any solar array or equipment. '
+    + 'Render ' + mount + ' with realistic dark blue-black photovoltaic modules, '
+    + 'visible module framing and racking. '
+    + (f.storage ? 'Render the battery enclosures as clean white industrial containers. ' : '')
+    + 'Add realistic materials, ' + light + ', mature landscaping, a few parked cars, '
+    + 'and a clear sky. Photoreal, aerial three-quarter view, high detail, '
+    + 'professional real-estate rendering quality.';
+
+  if (style === 'dusk')    base += ' Dusk, warm interior lighting, deep blue sky.';
+  if (style === 'diagram') base += ' Clean daylight, minimal landscaping, neutral and technical.';
+  return base;
+}
+
+/* Burn the label into the pixels. An overlay div can be cropped out of a
+   screenshot in two seconds; this cannot. */
+function label(dataUrl, f){
+  return new Promise(function (resolve) {
+    try {
+      var img = new Image();
+      img.onload = function(){
+        var c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        var g = c.getContext('2d');
+        g.drawImage(img, 0, 0);
+        var pad = Math.round(c.width * 0.012);
+        var fs  = Math.max(11, Math.round(c.width * 0.0135));
+        var txt = 'ARTIST\u2019S IMPRESSION \u2014 not a construction document. '
+                + 'Massing and array layout from the site model; materials, planting and '
+                + 'surroundings are illustrative.';
+        g.font = '600 ' + fs + 'px system-ui, -apple-system, Segoe UI, sans-serif';
+        var lines = [], words = txt.split(' '), line = '';
+        var maxW = c.width - pad * 4;
+        words.forEach(function (w) {
+          if (g.measureText(line + ' ' + w).width > maxW && line) { lines.push(line); line = w; }
+          else line = line ? line + ' ' + w : w;
+        });
+        if (line) lines.push(line);
+        var bh = pad * 2 + lines.length * fs * 1.35;
+        g.fillStyle = 'rgba(8,12,20,0.82)';
+        g.fillRect(0, c.height - bh, c.width, bh);
+        g.fillStyle = '#FFFFFF';
+        g.textBaseline = 'top';
+        lines.forEach(function (l, i) {
+          g.fillText(l, pad * 2, c.height - bh + pad + i * fs * 1.35);
+        });
+        resolve(c.toDataURL('image/png'));
+      };
+      img.onerror = function(){ resolve(dataUrl); };
+      img.src = dataUrl;
+    } catch (e) { resolve(dataUrl); }
+  });
+}
+
+function render(style, cb){
+  cb = cb || function(){};
+  var view = grabView();
+  if (!view) { cb(null, 'Open the Site Visualizer first \u2014 the render is built from that view.'); return; }
+  var f = siteFacts(), C = cfg();
+  var prompt = buildPrompt(f, style);
+
+  fetch(C.url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      image: view, prompt: prompt, style: style || 'day',
+      site: { address: f.addr, lat: f.lat, lng: f.lng,
+              arrays: f.arrays, kwdc: Math.round(f.kwdc), storage: f.storage }
+    })
+  })
+  .then(function (r) {
+    return r.json().catch(function(){ return null; }).then(function (j) {
+      if (!r.ok) {
+        var m = (j && (j.error || j.detail)) || ('render service returned ' + r.status);
+        if (r.status === 404) m = 'No render service at ' + C.url + '. Set one with '
+          + 'OmegaRender.setEndpoint(\'https://\u2026/api/render\').';
+        throw new Error(m);
+      }
+      return j;
+    });
+  })
+  .then(function (j) {
+    var out = j && (j.image || j.dataUrl || j.url);
+    if (!out) throw new Error('the service returned no image');
+    return label(out, f);
+  })
+  .then(function (finalUrl) { cb(finalUrl, null); })
+  .catch(function (e) { cb(null, (e && e.message) || 'render failed'); });
+}
+
+root.OmegaRender = {
+  render: render, prompt: buildPrompt, facts: siteFacts, view: grabView, label: label,
+  setEndpoint: function (u) {
+    try { u ? localStorage.setItem('omega.render.endpoint', u)
+            : localStorage.removeItem('omega.render.endpoint'); } catch (e) {}
+    return cfg().url;
+  },
+  /* See exactly what would be sent, without spending a call. */
+  preview: function(){
+    var f = siteFacts();
+    if (root.console) {
+      console.log('[render] endpoint :', cfg().url);
+      console.log('[render] site     :', JSON.stringify(f));
+      console.log('[render] prompt   :', buildPrompt(f));
+      console.log('[render] control  :', grabView() ? 'snapshot captured' : 'NO VIEW \u2014 open the visualizer');
+    }
+    return { endpoint: cfg().url, site: f, prompt: buildPrompt(f) };
+  }
+};
+
+if (root.console && console.info) {
+  console.info('[render] OmegaRender.preview() / OmegaRender.render()');
+}
+
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
 </body>
 </html>
