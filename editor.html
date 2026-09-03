@@ -7487,6 +7487,49 @@ async function _freezeLiveView(okMsg){
       }
     });
     if(!cvs || !cvs.width) return false;
+
+    /* HOW MUCH OF THE MAP DID html2canvas ACTUALLY GET?
+
+       html2canvas draws only the tiles the page is allowed to read. Any tile
+       it cannot touch is left transparent, so a partly-blocked capture comes
+       back as satellite in patches with holes between them. The only guard
+       was `b64.length < 2000`, which a mostly-empty PNG passes easily — so
+       the holed image was accepted, cached to localStorage, and then used as
+       the ground texture in the 3D view. That is the staircase tearing: not
+       a renderer fault, a texture with most of it missing.
+
+       Coverage is measured on a coarse grid of the alpha channel. Cheap, and
+       it is the number that decides whether this capture is usable. */
+    var COVER_MIN = 0.85;
+    var cover = 1;
+    try{
+      var gc = cvs.getContext('2d');
+      var GX = 40, GY = 40, seen = 0, tot = 0;
+      var sx = cvs.width / GX, sy = cvs.height / GY;
+      for(var gy=0; gy<GY; gy++){
+        for(var gx=0; gx<GX; gx++){
+          var px = Math.min(cvs.width-1,  Math.floor((gx+0.5)*sx));
+          var py = Math.min(cvs.height-1, Math.floor((gy+0.5)*sy));
+          var d = gc.getImageData(px, py, 1, 1).data;
+          tot++;
+          if(d[3] > 8) seen++;          /* alpha: was anything drawn here */
+        }
+      }
+      cover = tot ? seen/tot : 0;
+    }catch(e){ cover = 1; }             /* tainted read: do not block on it */
+
+    if(cover < COVER_MIN){
+      console.warn('[freeze] html2canvas captured only ' + Math.round(cover*100)
+        + '% of the map \u2014 refusing it. A holed capture becomes a torn ground '
+        + 'texture in the 3D view. Use Static Maps for the freeze instead '
+        + '(enable "Maps Static API" on the key), or zoom out and retry once '
+        + 'the tiles have finished loading.');
+      var stW=document.getElementById('gmap-status');
+      if(stW) stW.textContent = '  Freeze refused \u2014 only '+Math.round(cover*100)
+        +'% of the map could be captured. Enable Maps Static API for a clean lock.';
+      return false;
+    }
+
     var b64 = cvs.toDataURL('image/png');
     if(!b64 || b64.length < 2000) return false;   // blank/black capture guard
     window._frozenMapImg = b64;
@@ -24149,7 +24192,20 @@ async function _loadProject(id){
     if (ms.hasFrozen && id) {
       try {
         frozenImg = localStorage.getItem('cs_frozen_map_' + id) || null;
-        if (frozenImg) console.log('OK Frozen map loaded from localStorage', Math.round(frozenImg.length/1024) + 'KB');
+        if (frozenImg) {
+          var _kb = Math.round(frozenImg.length/1024);
+          console.log('OK Frozen map loaded from localStorage', _kb + 'KB');
+          /* A capture that came back mostly holes is small, because most of
+             the PNG is one transparent colour. A full satellite view of a
+             site this size does not compress to 80 KB. Flag it rather than
+             letting it become a torn ground texture that reads as a broken
+             3D renderer — which is exactly the trail this left last time. */
+          if (_kb < 120) {
+            console.warn('[freeze] the cached frozen map is only ' + _kb + ' KB, which usually '
+              + 'means the capture was mostly empty. If the 3D ground looks torn, run '
+              + 'OmegaFreeze.clear() and lock the map again.');
+          }
+        }
       } catch(e) { console.warn('Could not read frozen map:', e); }
     }
     if (ms.hasStencil && id) {
@@ -132067,6 +132123,15 @@ function mkItem(ref, src, c, geo){
     it.wf=Math.max(0.4,geo.wf); it.lf=Math.max(0.4,geo.lf);
     it.rot=geo.rot; it.approx=!!geo.approx; it.boxSrc=geo.boxSrc||'';
   }
+  /* HEIGHT ABOVE GRADE rides on the drawing object, not on the item.
+
+     readSite rebuilds every item from scratch on each refresh, so a value
+     held only here would be discarded the moment anything else changed —
+     the rooftop array would drop back to grade on the next redraw. Both
+     shapes and elements come through this one funnel, so carrying it here
+     covers both rather than needing the same line in two places. */
+  if(ref && ref.elevFt != null && isFinite(+ref.elevFt)) it.elevFt = +ref.elevFt;
+
   if(!it.label) it.label = ARCH[it.arch] ? ARCH[it.arch].label : it.arch;
   return it;
 }
@@ -133690,8 +133755,33 @@ function populate(site){
 
        A wrapper carries position and the item's own rotation, and the
        builder keeps whatever internal transform it needs. */
+    /* ── ELEVATION ────────────────────────────────────────────────────
+       Everything was placed at y=0 — on the ground, always. Only
+       solar-roof could get off the deck, and only because buildSolarRoof
+       raises its own geometry internally.
+
+       That is wrong for any equipment that is not at grade: a rooftop
+       inverter, a BESS on a podium, a charger on the second level of a
+       parking structure, an array on a warehouse roof. It renders inside
+       the building instead of on it.
+
+       elevFt is the height of the piece's BASE above site grade, in feet,
+       and it applies to every archetype. Set by hand where the designer
+       knows the number; inferred from the building underneath where they
+       do not. */
+    var elev = 0;
+    if(it.elevFt != null && isFinite(+it.elevFt)) {
+      elev = +it.elevFt;
+    } else if(it.arch !== 'solar-roof' && it.onRoof) {
+      /* Flagged as rooftop but not a roof array — sit it on whatever
+         building it overlaps rather than at grade. */
+      var ru2 = roofUnder(it, buildings);
+      elev = ru2.y;
+    }
+    it._elevApplied = elev;
+
     var wrap = new THREE.Group();
-    wrap.position.set(it.x, 0, it.z);
+    wrap.position.set(it.x, elev, it.z);
     wrap.rotation.y = -(it.rot||0) * Math.PI/180;   /* screen-clockwise -> -Y */
     wrap.add(g);
     wrap.userData.itemId = it.id;
@@ -134184,6 +134274,22 @@ function paintSide(){
     h += '</select>'
       +  '<div class="ov-im" style="margin-top:4px">' + Math.round(it.wf) + '\u00d7'
       +  Math.round(it.lf) + ' ft' + (it.kw ? ' \u00b7 ' + Math.round(it.kw) + ' kW' : '') + '</div>';
+
+    /* HEIGHT ABOVE GRADE.
+
+       Everything used to render at ground level, so a rooftop inverter or
+       a podium-mounted BESS drew inside the building it is standing on.
+       This is the base height in feet; blank means at grade, and the
+       placeholder shows what the model worked out on its own. */
+    h += '<div class="ov-el" style="display:flex;align-items:center;gap:6px;margin-top:5px">'
+      +  '<label style="font-size:9px;color:#8E8E93;white-space:nowrap">Height above grade</label>'
+      +  '<input type="number" step="1" min="0" data-elev="' + esc(it.id) + '" '
+      +  'value="' + (it.elevFt != null ? it.elevFt : '') + '" '
+      +  'placeholder="' + Math.round(it._elevApplied || 0) + '" '
+      +  'style="width:56px;background:#1C1C1E;border:1px solid #3A3A3C;color:#fff;'
+      +  'border-radius:4px;padding:2px 5px;font-size:10px" title="Base height in feet above site grade. '
+      +  'Leave blank to sit on the ground.">'
+      +  '<span style="font-size:9px;color:#8E8E93">ft</span></div>';
     /* Say WHICH drawing choice produced this, so a classification can be
        checked against the site map without opening the shape. */
     if(it.approx){
@@ -134405,6 +134511,36 @@ function wireSide(){
     reload();
     try{ if(typeof pushHist === 'function') pushHist(); }catch(e){}
   };
+
+  side.querySelectorAll('input[data-elev]').forEach(function(inp){
+    inp.onchange = function(){
+      var id = inp.getAttribute('data-elev');
+      var it = null;
+      for(var i=0;i<V.site.items.length;i++){
+        if(V.site.items[i].id === id){ it = V.site.items[i]; break; }
+      }
+      if(!it) return;
+      var v = inp.value.trim();
+      /* Written back to the SHAPE, not just the read model — readSite
+         rebuilds items on every refresh, so a value kept only on the item
+         would vanish the next time anything changed. */
+      var tgt = null;
+      try{
+        tgt = (S.shapes||[]).filter(function(s){ return s && s.id===id; })[0]
+           || (S.elements||[]).filter(function(e){ return e && e.id===id; })[0];
+      }catch(e){}
+      if(v === ''){ delete it.elevFt; if(tgt) delete tgt.elevFt; }
+      else {
+        var n = Math.max(0, parseFloat(v) || 0);
+        it.elevFt = n; if(tgt) tgt.elevFt = n;
+      }
+      populate(V.site);
+      paintSide();
+      V.needsRender = true;
+      try{ if(typeof _setSaved === 'function') _setSaved('unsaved'); }catch(e){}
+      try{ if(typeof pushHist === 'function') pushHist(); }catch(e){}
+    };
+  });
 
   side.querySelectorAll('select[data-item]').forEach(function(sel){
     sel.onchange = function(){
@@ -143239,5 +143375,65 @@ root.OmegaPlotPPT = { build: build, svgToPng: svgToPng, rasterise: rasterise };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 
+<script id="omega-freeze-tools-js">
+/* ══════════════════════════════════════════════════════════════════════
+ *  FROZEN MAP — CLEAR AND RE-CAPTURE
+ *
+ *  The frozen map is cached in localStorage per project. A bad capture is
+ *  therefore permanent until something removes it: reloading re-reads the
+ *  same holed image, and the 3D view keeps drawing a torn ground with no
+ *  indication that the cache is the cause.
+ *
+ *  There was no way to clear it. Now there is.
+ * ══════════════════════════════════════════════════════════════════════ */
+(function (root) {
+'use strict';
+function pid(){
+  try { return new URLSearchParams(location.search).get('id') || ''; } catch (e) { return ''; }
+}
+root.OmegaFreeze = {
+  /* What is cached, and does it look complete? */
+  status: function(){
+    var id = pid(), out = { projectId: id };
+    try {
+      var f = localStorage.getItem('cs_frozen_map_' + id);
+      out.frozenKb = f ? Math.round(f.length / 1024) : 0;
+      out.stencilKb = (localStorage.getItem('cs_stencil_map_' + id) || '').length / 1024 | 0;
+      out.looksHoled = out.frozenKb > 0 && out.frozenKb < 120;
+    } catch (e) { out.error = e.message; }
+    if (root.console) {
+      console.log('[freeze] project ' + (id || '(none)') + ' — frozen ' + out.frozenKb + ' KB'
+        + (out.looksHoled ? '  ⚠ suspiciously small, probably a partial capture' : ''));
+    }
+    return out;
+  },
+  /* Drop the cached capture and the in-memory copy, and hide the overlay so
+     the live map shows through again. Does NOT touch the drawing. */
+  clear: function(){
+    var id = pid();
+    try { localStorage.removeItem('cs_frozen_map_' + id); } catch (e) {}
+    try { localStorage.removeItem('cs_stencil_map_' + id); } catch (e) {}
+    root._frozenMapImg = null;
+    try {
+      var f = document.getElementById('frozen-map-img');
+      if (f) { f.removeAttribute('src'); f.style.display = 'none'; }
+      var b = document.getElementById('backdrop');
+      if (b) b.removeAttribute('src');
+    } catch (e) {}
+    try { if (typeof _setSaved === 'function') _setSaved('unsaved'); } catch (e) {}
+    if (root.console) {
+      console.log('[freeze] cleared. The live map is showing again — lock the map to '
+        + 'capture a fresh one. If the new capture is refused for low coverage, '
+        + 'enable "Maps Static API" on the key: that path returns one clean image '
+        + 'rather than compositing tiles the page may not be allowed to read.');
+    }
+    return true;
+  }
+};
+if (root.console && console.info) {
+  console.info('[freeze] OmegaFreeze.status() / OmegaFreeze.clear()');
+}
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
 </body>
 </html>
