@@ -143762,6 +143762,70 @@ function label(dataUrl, f){
   });
 }
 
+/* ── DIRECT, WITH THE TENANT'S OWN KEY ────────────────────────────────
+   The editor already stores a Gemini key per tenant under
+   'clearsky_gemini_key' — the "Image AI token" in Settings › AI Keys — and
+   the map-stencil feature already calls Gemini 2.5 Flash Image with it,
+   image in and image out, exactly as this needs to.
+
+   So a tenant with that token set needs no service at all. Their key,
+   their bill, their render, nothing to deploy. And a tenant WITHOUT one
+   still falls through to the shared portal service, so nothing breaks
+   for anybody who has not set it.
+
+   The trade is real and worth naming: a key in localStorage is readable
+   by anything running on the page. That is already true of the Maps key,
+   the NREL key and this same Gemini token, so it is the app's existing
+   posture rather than a new hole — but the server path is still the
+   better one, and stays the default when it is available. */
+function tenantKey(){
+  try {
+    if (typeof _getGeminiKey === 'function') { var k = _getGeminiKey(); if (k) return k; }
+    return localStorage.getItem('clearsky_gemini_key') || '';
+  } catch (e) { return ''; }
+}
+
+function viaTenantKey(view, prompt, cb){
+  var key = tenantKey();
+  if (!key) { cb(null, 'no-key'); return; }
+  var m = /^data:(image\/\w+);base64,(.*)$/.exec(view || '');
+  if (!m) { cb(null, 'bad-image'); return; }
+
+  fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [
+        { text: prompt },
+        { inline_data: { mime_type: m[1], data: m[2] } }
+      ]}],
+      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
+    })
+  })
+  .then(function (r) {
+    if (!r.ok) {
+      return r.text().then(function(){
+        throw new Error(r.status === 400 ? 'The Image AI token was rejected. Re-save it in Settings \u203a AI Keys.'
+                      : r.status === 429 ? 'Rate limited on your Image AI token \u2014 try again shortly.'
+                      : 'Google returned ' + r.status);
+      });
+    }
+    return r.json();
+  })
+  .then(function (d) {
+    var parts = (((d.candidates || [])[0] || {}).content || {}).parts || [];
+    for (var i = 0; i < parts.length; i++) {
+      var inl = parts[i].inlineData || parts[i].inline_data;
+      if (inl && inl.data) {
+        cb('data:' + (inl.mimeType || inl.mime_type || 'image/png') + ';base64,' + inl.data, null);
+        return;
+      }
+    }
+    throw new Error('Google returned no image \u2014 usually a safety filter.');
+  })
+  .catch(function (e) { cb(null, (e && e.message) || 'direct call failed'); });
+}
+
 function render(style, cb, aspect){
   cb = cb || function(){};
   var view = grabView();
@@ -143771,6 +143835,19 @@ function render(style, cb, aspect){
 
   var list = C.candidates || [C.url];
   var idx = 0, target = list[0];
+
+  /* Tenant key first when they have one: no service, no shared budget,
+     and it is the credential they already manage in Settings. */
+  if (tenantKey()) {
+    viaTenantKey(view, prompt, function (url, err) {
+      if (url) { label(url, f).then(function (u) { cb(u, null); }); return; }
+      if (err === 'no-key' || err === 'bad-image') { attempt(); return; }
+      /* A real failure on their own key is theirs to see, not something to
+         silently bill to the shared service. */
+      cb(null, err);
+    });
+    return;
+  }
 
   function attempt(){
   fetch(target, {
