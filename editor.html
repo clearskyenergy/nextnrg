@@ -143707,6 +143707,102 @@ function render(style, cb, aspect){
   .catch(function (e) { cb(null, (e && e.message) || 'render failed'); });
 }
 
+/* ── ENHANCE, WITH NO SERVICE AT ALL ──────────────────────────────────
+   A key cannot be hardcoded here. Anything in this file is readable by
+   every user in view-source, billable by anyone who finds it, and would
+   be the one credential most worth stealing from a codebase somebody was
+   worried about people stealing.
+
+   So this is the other half: a grade applied to the snapshot in the
+   browser. Not photoreal — it cannot invent a tree — but it turns a flat
+   WebGL grab into something that belongs on a proposal cover, and it
+   works right now with nothing deployed.
+
+   Four passes, in the order a colourist would do them:
+     1  lift the sky and deepen the ground, so the image has a range
+     2  warm the highlights, cool the shadows — the split-tone that makes
+        architectural photography read as photography
+     3  a soft bloom on the brightest surfaces, which is what a lens does
+        and a rasteriser does not
+     4  a vignette, so the eye lands on the site rather than the corners
+*/
+function enhance(dataUrl){
+  return new Promise(function (resolve) {
+    var done = false;
+    var to = setTimeout(function(){ if(!done){ done = true; resolve(dataUrl); } }, 6000);
+    var img = new Image();
+    img.onload = function(){
+      if (done) return; done = true; clearTimeout(to);
+      try {
+        var W = img.width, H = img.height;
+        var c = document.createElement('canvas'); c.width = W; c.height = H;
+        var g = c.getContext('2d');
+        g.drawImage(img, 0, 0);
+
+        var d = g.getImageData(0, 0, W, H), px = d.data;
+        for (var i = 0; i < px.length; i += 4) {
+          var r = px[i] / 255, gr = px[i+1] / 255, b = px[i+2] / 255;
+          var lum = 0.2126*r + 0.7152*gr + 0.0722*b;
+
+          /* 1 — contrast about mid grey, gentle enough not to clip a white roof */
+          var K = 1.18;
+          r = (r - 0.5) * K + 0.5; gr = (gr - 0.5) * K + 0.5; b = (b - 0.5) * K + 0.5;
+
+          /* 2 — split tone: warm highs, cool lows */
+          var t = lum;
+          r += 0.045 * t - 0.020 * (1 - t);
+          gr += 0.018 * t - 0.004 * (1 - t);
+          b += -0.030 * t + 0.055 * (1 - t);
+
+          /* a touch of saturation, so panels and planting read */
+          var mean = (r + gr + b) / 3, S = 1.14;
+          r = mean + (r - mean) * S; gr = mean + (gr - mean) * S; b = mean + (b - mean) * S;
+
+          px[i]   = r < 0 ? 0 : r > 1 ? 255 : r * 255;
+          px[i+1] = gr < 0 ? 0 : gr > 1 ? 255 : gr * 255;
+          px[i+2] = b < 0 ? 0 : b > 1 ? 255 : b * 255;
+        }
+        g.putImageData(d, 0, 0);
+
+        /* 3 — bloom: the bright pass, blurred, added back. A lens does this
+               and a rasteriser does not, which is most of why raw WebGL
+               reads as "computer graphics". */
+        try {
+          var bw = Math.max(1, Math.round(W / 6)), bh = Math.max(1, Math.round(H / 6));
+          var bc = document.createElement('canvas'); bc.width = bw; bc.height = bh;
+          var bg = bc.getContext('2d');
+          bg.drawImage(c, 0, 0, bw, bh);
+          var bd = bg.getImageData(0, 0, bw, bh), bp = bd.data;
+          for (var j = 0; j < bp.length; j += 4) {
+            var L = (0.2126*bp[j] + 0.7152*bp[j+1] + 0.0722*bp[j+2]) / 255;
+            var keep = L > 0.72 ? (L - 0.72) / 0.28 : 0;
+            bp[j] *= keep; bp[j+1] *= keep; bp[j+2] *= keep;
+          }
+          bg.putImageData(bd, 0, 0);
+          g.save();
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = 0.34;
+          try { g.filter = 'blur(' + Math.round(W/220) + 'px)'; } catch (e) {}
+          g.drawImage(bc, 0, 0, W, H);
+          g.restore();
+        } catch (e) {}
+
+        /* 4 — vignette */
+        try {
+          var vg = g.createRadialGradient(W/2, H/2, Math.min(W,H)*0.28, W/2, H/2, Math.max(W,H)*0.75);
+          vg.addColorStop(0, 'rgba(0,0,0,0)');
+          vg.addColorStop(1, 'rgba(0,0,0,0.34)');
+          g.fillStyle = vg; g.fillRect(0, 0, W, H);
+        } catch (e) {}
+
+        resolve(c.toDataURL('image/png'));
+      } catch (e) { resolve(dataUrl); }
+    };
+    img.onerror = function(){ if(!done){ done = true; clearTimeout(to); resolve(dataUrl); } };
+    img.src = dataUrl;
+  });
+}
+
 /* ── THE DIALOG ───────────────────────────────────────────────────────
    Console methods are fine for me and useless to anybody else. This is
    the thing on the toolbar.
@@ -143773,14 +143869,22 @@ function openDialog(){
       + (f.storage ? ' \u00b7 <b style="color:#E2EEF9">' + f.storage + '</b> storage' : '')
       + '<br>These are read from the model, so the prompt cannot disagree with the design.</div>'
       + '<button id="omr-go" style="width:100%;background:#B45309;border:none;color:#FFF7E6;'
-      + 'border-radius:7px;padding:11px;font-size:13px;font-weight:800;cursor:pointer">\u2726 Render</button>'
+      + 'border-radius:7px;padding:11px;font-size:13px;font-weight:800;cursor:pointer">\u2726 AI Render</button>'
+      + '<button id="omr-enh" title="Colour grade, bloom and vignette applied here in the browser. '
+      + 'No service, no key, no cost \u2014 and no invented detail." '
+      + 'style="width:100%;background:rgba(255,255,255,.07);border:1px solid #1E3A5F;color:#E2EEF9;'
+      + 'border-radius:7px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;margin-top:8px">'
+      + '\u25D0 Enhance this view \u2014 no service needed</button>'
       + '<div id="omr-msg" style="font-size:10.5px;color:#64748B;margin-top:9px;line-height:1.5"></div>'
       /* Settable HERE. Telling somebody to open the console and type a
          function call is not configuration, it is a scavenger hunt. */
       + '<details id="omr-cfg" style="margin-top:10px">'
-      +   '<summary style="font-size:10px;color:#64748B;cursor:pointer;outline:none">Render service</summary>'
+      +   '<summary style="font-size:10px;color:#64748B;cursor:pointer;outline:none">Render service address</summary>'
+      +   '<div style="font-size:9.5px;color:#64748B;margin-top:5px;line-height:1.5">'
+      +   'The URL of your own endpoint. Not a key \u2014 the key lives in that '
+      +   'deployment\u2019s environment as OPENAI_API_KEY.</div>'
       +   '<input id="omr-ep" type="text" spellcheck="false" value="' + esc(C.url) + '" '
-      +   'placeholder="https://\u2026/api/render" style="width:100%;margin-top:6px;padding:7px;'
+      +   'placeholder="https://your-host/api/render" style="width:100%;margin-top:6px;padding:7px;'
       +   'background:#0B1626;border:1px solid #1E3A5F;border-radius:6px;color:#E2EEF9;font-size:11px">'
       +   '<div style="display:flex;gap:6px;margin-top:6px">'
       +     '<button id="omr-save" style="flex:1;background:#1E3A5F;border:none;color:#E2EEF9;'
@@ -143810,7 +143914,36 @@ function openDialog(){
   var saveB = document.getElementById('omr-save');
   var testB = document.getElementById('omr-test');
   if (saveB) saveB.onclick = function(){
-    root.OmegaRender.setEndpoint(epIn.value.trim());
+    var v = epIn.value.trim();
+
+    /* A FIELD THAT ACCEPTS A KEY WILL BE GIVEN ONE.
+
+       This asks for the address of your own service, but "render service"
+       next to a text box reads as "put the thing that makes renders here",
+       and the thing that makes renders is, to most people, the key. So it
+       refuses one outright rather than storing a live credential in
+       localStorage where every script on the page can read it.
+
+       Refusing is the easy half. The message has to say where the key
+       actually goes, or the person is left with a rejection and no route
+       forward. */
+    if (/^sk-|^sk-ant-|^AIza|api[_-]?key/i.test(v)) {
+      cfgMsg.innerHTML = '<span style="color:#F97316"><b>That is an API key, not an address.</b></span><br>'
+        + 'Keys never go in the browser \u2014 anything here is readable by every script on '
+        + 'the page and is saved to this device.<br><br>'
+        + 'This box wants the URL of your own service, e.g. '
+        + '<code style="color:#E2EEF9">' + esc(location.origin) + '/api/render</code>.<br>'
+        + 'The key belongs in that deployment\u2019s environment variables as '
+        + '<code style="color:#E2EEF9">OPENAI_API_KEY</code>, where api/render.js reads it.<br><br>'
+        + '<b>If you just pasted a real key, revoke it.</b> It is in this page\u2019s memory now.';
+      return;
+    }
+    if (v && !/^https?:\/\/|^\//.test(v)) {
+      cfgMsg.innerHTML = '<span style="color:#F97316">That does not look like a URL.</span> '
+        + 'Expected something like <code style="color:#E2EEF9">' + esc(location.origin) + '/api/render</code>.';
+      return;
+    }
+    root.OmegaRender.setEndpoint(v);
     cfgMsg.innerHTML = '<span style="color:#4ADE80">Saved \u2014 remembered for next time.</span>';
   };
   if (testB) testB.onclick = function(){
@@ -143833,6 +143966,29 @@ function openDialog(){
           .catch(function(){ cfgMsg.innerHTML = '<span style="color:#F97316">Nothing is answering there.</span> '
             + 'Deploy api/render.js and set OPENAI_API_KEY.'; });
       });
+  };
+
+  var enh = document.getElementById('omr-enh');
+  if (enh) enh.onclick = function(){
+    var msg = document.getElementById('omr-msg');
+    var out = document.getElementById('omr-out');
+    enh.disabled = true; enh.style.opacity = '.65'; enh.textContent = 'Grading\u2026';
+    msg.textContent = '';
+    enhance(grabView()).then(function (url) {
+      enh.disabled = false; enh.style.opacity = '1';
+      enh.textContent = '\u25D0 Enhance this view \u2014 no service needed';
+      out.innerHTML = '<div style="font-size:9px;color:#64748B;text-transform:uppercase;'
+        + 'letter-spacing:.8px;font-weight:700;margin-bottom:6px">Graded \u2014 every pixel is your model, '
+        + 'nothing invented</div>'
+        + '<img src="' + url + '" style="width:100%;border-radius:8px;border:1px solid #1E3A5F;display:block">';
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = (f.addr ? f.addr.replace(/[^\w\-]+/g,'-').toLowerCase().slice(0,50) : 'site') + '-graded.png';
+      a.textContent = '\u2193 Download';
+      a.style.cssText = 'display:inline-block;margin-top:10px;background:#1E3A5F;color:#E2EEF9;'
+        + 'text-decoration:none;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:700';
+      out.appendChild(a);
+    });
   };
 
   var go = document.getElementById('omr-go');
@@ -143877,7 +144033,7 @@ function esc(s){
 }
 
 root.OmegaRender = {
-  openDialog: openDialog,
+  openDialog: openDialog, enhance: enhance,
   render: render, prompt: buildPrompt, facts: siteFacts, view: grabView, label: label,
   setEndpoint: function (u) {
     try { u ? localStorage.setItem('omega.render.endpoint', u)
