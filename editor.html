@@ -2068,6 +2068,7 @@ window.onerror = function(msg, src, line, col, err) {
         <button class="rbtn" onclick="rbRun(openNonExportCalc)" title="How much additional solar fits under a never-export ceiling for a given BESS size, simulated hour-by-hour against your 8760 load"><span class="rb-ico" style="color:#4ADE80">☀</span><span class="rb-lbl">Non-Export<br>Headroom</span></button>
         <button class="rbtn" onclick="rbRun(openPriceDecks)" title="Price Decks &mdash; import nodal DA/RT energy and ancillary (RegUp/RegDn/RRS/ECRS/Non-Spin) price series, bound to a settlement point. Reusable across scenarios."><span class="rb-ico" style="color:#60A5FA">&#9783;</span><span class="rb-lbl">Price<br>Decks</span></button>
         <button class="rbtn" onclick="rbRun(openEnergyBalance)" title="Site energy balance: generation vs. consumption vs. grid reliance across all placed systems"><span class="rb-ico">⚖</span><span class="rb-lbl">Energy<br>Balance</span></button>
+        <button class="rbtn" id="btn-joules-opt" onclick="omegaJoulesSoon('optimizer')" title="Joules Optimizer — in development." style="position:relative;opacity:.55"><span class="rb-ico" style="color:#A78BFA">◈</span><span class="rb-lbl">Joules<br>Optimizer</span><span id="btn-joules-opt-soon" style="position:absolute;top:2px;right:2px;background:#F59E0B;color:#0A1628;font-size:7px;font-weight:800;letter-spacing:.4px;line-height:1;padding:2px 3px;border-radius:2px;pointer-events:none">SOON</span></button>
       </div>
       <div class="rpanel-cap">Assessment</div>
     </div>
@@ -2091,6 +2092,7 @@ window.onerror = function(msg, src, line, col, err) {
       <div class="rpanel-body">
         <button class="rbtn" onclick="openRpPanel('cost')" title="Construction cost estimator — equipment, install, incentives, revenue, ROI"><span class="rb-ico">$</span><span class="rb-lbl">Construction<br>Cost</span></button>
         <button class="rbtn" onclick="rbRun(openSolarBessSizer)" title="Estimate the BESS needed for the solar drawn on the sitemap — input / throughput / output"><span class="rb-ico" style="color:#FBBF24">☀</span><span class="rb-lbl">Solar →<br>BESS</span></button>
+        <button class="rbtn" id="btn-joules-rpt" onclick="omegaJoulesSoon('report')" title="Joules.ai Report — in development." style="position:relative;opacity:.55"><span class="rb-ico" style="color:#A78BFA">◈</span><span class="rb-lbl">Joules.ai<br>Report</span><span id="btn-joules-rpt-soon" style="position:absolute;top:2px;right:2px;background:#F59E0B;color:#0A1628;font-size:7px;font-weight:800;letter-spacing:.4px;line-height:1;padding:2px 3px;border-radius:2px;pointer-events:none">SOON</span></button>
       </div>
       <div class="rpanel-cap">Cost &amp; ROI</div>
     </div>
@@ -23839,6 +23841,12 @@ async function saveProject(){
       wizDone:   [...wizDone],
       wizMode:   (typeof _wizMode !== 'undefined') ? _wizMode : 'BTM',
       offtaker:  S.offtaker || null,
+      /* The researched AHJ profile is project data. It costs a web-search
+         round trip to produce and it is the thing a team corrects by hand
+         after ringing the county \u2014 losing it on reload meant paying for
+         a slightly different answer every time and throwing the correction
+         away with it. */
+      permitAhj: S.permitAhj || null,
       pxPerFt:   S.pxPerFt  || null,
       unitLabel: S.unitLabel || 'ft',
       /* Entered equipment prices are project data. Without this the cost
@@ -23978,6 +23986,7 @@ async function _loadProject(id){
     if(d.wizMode){ _wizMode = d.wizMode; }
     if(typeof _valHydrateFromProject==='function') _valHydrateFromProject(d);
     if(d.offtaker){ S.offtaker = (typeof d.offtaker==='string') ? {name:d.offtaker} : d.offtaker; }
+    if(d.permitAhj){ S.permitAhj = d.permitAhj; }
     /* Restore entered equipment prices, and clear any left over from the
        previously open project so prices cannot leak across projects. */
     S.vendorOverride = (d.vendorOverride && typeof d.vendorOverride==='object')
@@ -60316,6 +60325,62 @@ function omegaDigitalTwinSoon(){
   return false;
 }
 window.omegaDigitalTwinSoon = omegaDigitalTwinSoon;
+
+/* ── Joules placeholders ───────────────────────────────────────────────
+   Two buttons that are on the ribbon before the tools behind them exist.
+   Modelled on the Digital Twin button above rather than invented fresh:
+   dimmed, SOON badged, and they say so when pressed instead of doing
+   nothing. A ribbon button that swallows a click reads as broken, and a
+   user who decides one button is broken stops trusting the row.
+
+   OmegaJoules.enable('report'|'optimizer'|'all') flips them live once the
+   work lands, so shipping the real tool does not mean editing markup. */
+var OMEGA_JOULES = { report:false, optimizer:false };
+var _JOULES_MSG = {
+  report:    { btn:'btn-joules-rpt',
+               msg:'Joules.ai Report \u2014 coming soon. Until then the Construction '
+                 + 'Cost and Electrical Estimate panels beside it carry the numbers '
+                 + 'it will read from.' },
+  optimizer: { btn:'btn-joules-opt',
+               msg:'Joules Optimizer \u2014 coming soon. Until then Energy Balance and '
+                 + 'Non-Export Headroom cover the sizing questions it will answer.' }
+};
+function omegaJoulesSoon(which){
+  var e = _JOULES_MSG[which];
+  if(!e) return false;
+  if(OMEGA_JOULES[which]){
+    var fn = window['openJoules' + (which === 'report' ? 'Report' : 'Optimizer')];
+    if(typeof fn === 'function'){ try{ fn(); }catch(err){} }
+    return false;
+  }
+  if(typeof showBanner === 'function') showBanner('cal', e.msg);
+  return false;
+}
+window.omegaJoulesSoon = omegaJoulesSoon;
+
+window.OmegaJoules = {
+  enable:function(which){
+    var keys = (which === 'all' || !which) ? ['report','optimizer'] : [which];
+    keys.forEach(function(k){
+      if(!_JOULES_MSG[k]) return;
+      OMEGA_JOULES[k] = true;
+      var s = document.getElementById(_JOULES_MSG[k].btn + '-soon'); if(s) s.style.display = 'none';
+      var b = document.getElementById(_JOULES_MSG[k].btn);           if(b) b.style.opacity = '';
+    });
+    return true;
+  },
+  disable:function(which){
+    var keys = (which === 'all' || !which) ? ['report','optimizer'] : [which];
+    keys.forEach(function(k){
+      if(!_JOULES_MSG[k]) return;
+      OMEGA_JOULES[k] = false;
+      var s = document.getElementById(_JOULES_MSG[k].btn + '-soon'); if(s) s.style.display = '';
+      var b = document.getElementById(_JOULES_MSG[k].btn);           if(b) b.style.opacity = '.55';
+    });
+    return true;
+  },
+  status:function(){ return { report:OMEGA_JOULES.report, optimizer:OMEGA_JOULES.optimizer }; }
+};
 
 window.OmegaTwin = {
   enable:function(){
@@ -121674,6 +121739,78 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     'figure for this jurisdiction. Confirm every one with the AHJ before it is ' +
     'relied on for a schedule, a budget or a financing milestone.';
 
+  /* ------------------------------------------------------------------ *
+   *  THREE TIERS OF KNOWING, NOT TWO                                     *
+   *  ------------------------------------------------------------------  *
+   *  Until now a jurisdiction was either in PACKS or it was nothing, and  *
+   *  with one pack in the table that meant almost every project got a     *
+   *  matrix with "Confirm with AHJ" in every agency cell. That is honest  *
+   *  and it is also useless: the whole point of naming the authority is   *
+   *  that somebody can ring it.                                           *
+   *                                                                       *
+   *  VERIFIED   transcribed from a named source. Agencies, fees,          *
+   *             durations, thresholds, contacts. Always wins.             *
+   *  RESEARCHED looked up for this project and recorded on the document.  *
+   *             Agencies, code editions, thresholds, hearing body and     *
+   *             contacts only.                                            *
+   *  UNKNOWN    the permit, its trigger and its code reference still      *
+   *             apply. Everything local reads Confirm with AHJ.           *
+   *                                                                       *
+   *  A RESEARCHED PACK CARRIES NO FEES AND NO DURATIONS, and the merge    *
+   *  below drops them if they are present rather than trusting the        *
+   *  caller not to send them. A fee is the number somebody budgets        *
+   *  against; the moment one arrives from a source that cannot be cited,  *
+   *  the document has stopped being a permitting matrix and become a      *
+   *  guess with a letterhead. Durations come from the planning band       *
+   *  instead, which is at least labelled as a band.                       *
+   * ------------------------------------------------------------------ */
+  /* KEYED BY TEMPLATE KEY, NEVER BY PERMIT ID.
+     P-06 is a position in a list. Add a generator to the design and the
+     CUP stops being P-06 and something else becomes it, so a profile saved
+     against IDs would quietly hand the planning department's name to the
+     air district on the next run. The template key (CUP, BUILDING,
+     FIRE_CONSTRUCTION) is stable for the life of the project and is what a
+     stored profile keys on. An ID-shaped key is dropped and reported
+     rather than half-applied. */
+  function mergeResearched(pack, rp) {
+    if (!rp) return { pack: pack, researched: null };
+    var badKeys = [];
+    function byTemplateKey(o) {
+      var out = {};
+      Object.keys(o || {}).forEach(function (k) {
+        if (/^P-\d+$/i.test(k)) { badKeys.push(k); return; }
+        if (!TEMPLATES[k]) { badKeys.push(k); return; }
+        out[k] = o[k];
+      });
+      return out;
+    }
+    /* Strip anything the researched tier is not allowed to carry, whatever
+       the caller sent. */
+    var safe = {
+      agencies: byTemplateKey(rp.agencies),
+      codes: byTemplateKey(rp.codes),
+      contacts: Array.isArray(rp.contacts) ? rp.contacts : [],
+      essThresholdKwh: (rp.essThresholdKwh != null && isFinite(+rp.essThresholdKwh))
+                         ? +rp.essThresholdKwh : null,
+      thresholdNote: rp.thresholdNote || null,
+      hearingBody: rp.hearingBody || null,
+      unincorporated: rp.unincorporated === true,
+      notes: rp.notes || null,
+      source: rp.source || 'Researched for this project',
+      researchedAt: rp.researchedAt || null,
+      dropped: []
+    };
+    if (rp.fees) safe.dropped.push('fees');
+    if (rp.weeks) safe.dropped.push('durations');
+    if (badKeys.length) {
+      safe.dropped.push(badKeys.length + ' entr(y/ies) keyed by permit ID or an ' +
+        'unknown template: ' + badKeys.join(', '));
+      if (root.console) root.console.warn('[OmegaPermit] researched profile keyed by ' +
+        'permit ID rather than template key; dropped: ' + badKeys.join(', '));
+    }
+    return { pack: pack, researched: safe };
+  }
+
   function findPack(site) {    var keys = Object.keys(PACKS);
     for (var i = 0; i < keys.length; i++) {
       var m = PACKS[keys[i]].match, ok = true;
@@ -121727,7 +121864,12 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     site = site || {}; opts = opts || {};
     var found = findPack(site);
     var pack = found ? found.pack : null;
+    var rp = mergeResearched(pack, opts.researchedPack).researched;
+    /* A verified threshold wins; a researched one beats the 20 kWh code
+       default, because the adopted edition is a published fact about the
+       jurisdiction and the default is a guess about every jurisdiction. */
     var thr = (pack && pack.essThresholdKwh) != null ? pack.essThresholdKwh
+            : (rp && rp.essThresholdKwh != null) ? rp.essThresholdKwh
             : (opts.essThresholdKwh == null ? 20 : opts.essThresholdKwh);
 
     var want = {}, why = {};
@@ -121864,6 +122006,10 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
       seq++;
       var id = 'P-' + (seq < 10 ? '0' : '') + seq;
       var agency = pack && pack.agencies[key] ? pack.agencies[key] : null;
+      var agencyResearched = false;
+      if (!agency && rp && rp.agencies[key]) {
+        agency = rp.agencies[key]; agencyResearched = true;
+      }
       var wk = pack && pack.weeks[key] ? pack.weeks[key].slice() : null;
       var fee = pack && pack.fees[key] ? pack.fees[key].slice() : null;
       /* A pack figure always wins. The band only fills a blank, and the row
@@ -121879,13 +122025,17 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
         key: key, id: id,
         feeNote: (pack && pack.feeNotes && pack.feeNotes[key]) || null,
         name: (key === 'INCENTIVE' && pack && pack.incentiveName) ? pack.incentiveName : t.name,
-        agency: agency, agencyConfirm: !agency,
+        agency: agency, agencyConfirm: !agency || agencyResearched,
+        agencyResearched: agencyResearched,
         review: t.review || 'ministerial',
         discretionary: t.review === 'discretionary',
         hearing: !!t.hearing,
         party: t.party, trigger: t.trigger, firedBy: why[key],
         note: t.note || null,
-        code: t.code || null, docs: t.docs,
+        code: t.code || null,
+        localCode: (rp && rp.codes[key]) || null,
+        localCodeResearched: !!(rp && rp.codes[key]),
+        docs: t.docs,
         weeks: wk, weeksConfirm: !wk || wkAssumed, weeksAssumed: wkAssumed,
         fees: fee, feesConfirm: !fee,
         dependsOnKeys: (t.dependsOn || []).filter(function (d) { return !!want[d]; }),
@@ -121911,15 +122061,27 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
       packSource: pack ? pack.source : null,
       essThresholdKwh: thr,
       thresholdNote: pack && pack.thresholdNote ? pack.thresholdNote
+        : (rp && rp.thresholdNote ? rp.thresholdNote + '  (researched, not verified \u2014 ' +
+             'confirm the adopted code edition with the AHJ.)'
         : 'ESS permit threshold assumed at ' + thr + ' kWh (IFC/CFC §1207). Confirm ' +
-          'the adopted code edition and threshold with the AHJ.',
+          'the adopted code edition and threshold with the AHJ.'),
+      researched: rp,
+      researchedAgencies: rows.filter(function (r) { return r.agencyResearched; })
+                              .map(function (r) { return r.id; }),
       gaps: gaps,
       assumedDurations: rows.filter(function (r) { return r.weeksAssumed; })
                             .map(function (r) { return r.id; }),
       assumedDurationSource: rows.some(function (r) { return r.weeksAssumed; })
                                ? TYPICAL_SOURCE : null,
-      contacts: (pack && pack.contacts) || [],
+      contacts: (pack && pack.contacts && pack.contacts.length)
+                  ? pack.contacts
+                  : ((rp && rp.contacts.length)
+                      ? rp.contacts.map(function (c) {
+                          var o = {}; Object.keys(c).forEach(function (k) { o[k] = c[k]; });
+                          o.researched = true; return o; })
+                      : []),
       exclusions: (pack && pack.exclusions) || [],
+      tier: pack ? 'verified' : (rp ? 'researched' : 'unknown'),
       unverified: !pack
     };
   }
@@ -122402,10 +122564,23 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     var checks = [];
     checks.push({ id: 'jurisdiction', ok: !m.unverified,
       label: 'Verified jurisdiction pack',
-      detail: m.unverified
-        ? 'No verified pack for this jurisdiction. Permits and code references ' +
-          'apply; agencies, fees and durations do not and read Confirm with AHJ.'
-        : 'Agencies, fees and durations from ' + (m.packSource || m.pack) + '.' });
+      detail: !m.unverified
+        ? 'Agencies, fees and durations from ' + (m.packSource || m.pack) + '.'
+        : (m.tier === 'researched'
+            ? 'No verified pack. An AHJ profile was RESEARCHED for this project and ' +
+              'names the agencies and code editions; it is not a substitute for one ' +
+              'and this check still fails. Fees and durations remain unverified.'
+            : 'No verified pack for this jurisdiction. Permits and code references ' +
+              'apply; agencies, fees and durations do not and read Confirm with AHJ.') });
+    /* A researched profile is worth its own line, because "provisional" on the
+       stamp does not tell a reader whether anyone has looked at all. */
+    if (m.tier === 'researched') {
+      checks.push({ id: 'ahj-confirmed', ok: false,
+        label: 'AHJ profile confirmed by contact',
+        detail: 'Nothing here has been confirmed by ringing the authority. That call ' +
+                'is the cheapest step in this entire programme and the one that ' +
+                'decides whether the rest of it is real.' });
+    }
     var withDur = m.rows.filter(function (r) { return !!r.weeks && !r.weeksAssumed; }).length;
     var assumed = m.rows.filter(function (r) { return r.weeksAssumed; }).length;
     checks.push({ id: 'durations', ok: withDur === m.rows.length,
@@ -129615,8 +129790,21 @@ challengeRow(s) +
         : '$' + feeLo.toLocaleString() + '\u2013$' + feeHi.toLocaleString() +
           (unknownFees ? '  (excludes ' + unknownFees + ' with no published fee)' : '')],
       [],
-      ['Jurisdiction pack', m.pack || 'None \u2014 generic template'],
+      ['Jurisdiction pack', m.pack ||
+        (m.tier === 'researched' ? 'Researched AHJ profile \u2014 no verified pack'
+                                 : 'None \u2014 generic template')],
       ['Rate and fee source', m.packSource || 'Not verified for this jurisdiction'],
+      ['AHJ profile', m.tier === 'verified'
+        ? 'Verified. Agencies, fees, durations and contacts transcribed from the ' +
+          'source named above.'
+        : (m.tier === 'researched'
+            ? 'RESEARCHED, not verified. ' +
+              (m.researchedAgencies || []).length + ' of ' + m.rows.length +
+              ' agencies, plus code editions and contacts, were looked up for this ' +
+              'project and are marked in the matrix. No fee on this workbook comes ' +
+              'from that lookup \u2014 fees are the number a project budgets ' +
+              'against and are left blank instead.'
+            : 'None. Agencies, fees and durations read Confirm with AHJ.')],
       /* WHERE THE JURISDICTION CAME FROM.
          A city and county typed by the person who visited the site, and a
          city and county a language model inferred from an address, are not
@@ -129660,9 +129848,19 @@ challengeRow(s) +
                'Critical Path', 'Float (wks)', 'Status', 'Note']];
     m.rows.forEach(function (r) {
       var t = byId[r.id];
+      /* An agency somebody transcribed from a published fee schedule and an
+         agency looked up for this project are different claims. They sat in
+         the same column reading identically, which is precisely how a
+         researched name ends up on a filing. */
+      var agencyCell = r.agency
+        ? (r.agencyResearched ? r.agency + '  (researched \u2014 confirm)' : r.agency)
+        : 'Confirm with AHJ';
+      var codeCell = [r.code || '', r.localCode
+        ? r.localCode + (r.localCodeResearched ? '  (researched \u2014 confirm)' : '')
+        : ''].filter(Boolean).join('; ');
       mm.push([r.id, r.review || 'ministerial', r.hearing ? 'YES' : '',
-               r.name, r.agency || 'Confirm with AHJ', r.party, r.trigger,
-               (r.firedBy || []).join('; '), r.docs, r.code || '',
+               r.name, agencyCell, r.party, r.trigger,
+               (r.firedBy || []).join('; '), r.docs, codeCell,
                wk(r.weeks, r.weeksAssumed), money(r.fees),
                r.dependsOn.join('; ') || 'None', r.unlocks.join('; ') || 'None',
                t.critical ? 'YES' : 'NO', t.floatWeeks, r.status, r.note || '']);
@@ -129744,7 +129942,10 @@ challengeRow(s) +
     rg.criticalPath.forEach(function (id, i) {
       var t = byId[id];
       var row = m.rows.filter(function (r) { return r.id === id; })[0];
-      cp.push([i + 1, id, t.name, (row && row.agency) || 'Confirm with AHJ',
+      cp.push([i + 1, id, t.name,
+               row && row.agency
+                 ? row.agency + (row.agencyResearched ? '  (researched)' : '')
+                 : 'Confirm with AHJ',
                t.earliestStart, t.earliestFinish, t.durationWeeks]);
     });
     cp.push([]);
@@ -129848,7 +130049,13 @@ challengeRow(s) +
     var ct = [['Agency', 'Division', 'Phone', 'Website', 'Key notes']];
     if (m.contacts && m.contacts.length) {
       m.contacts.forEach(function (c) {
-        ct.push([c.agency, c.division || '', c.phone || '', c.web || '', c.note || '']);
+        ct.push([c.agency + (c.researched ? '  (researched)' : ''), c.division || '',
+                 c.phone || '', c.web || '',
+                 (c.note || '') + (c.researched
+                   ? (c.note ? '  ' : '') + 'Looked up for this project. Verify the ' +
+                     'number and the division before you rely on it \u2014 a wrong ' +
+                     'phone number costs a week and a wrong division costs a ' +
+                     'resubmission.' : '')]);
       });
     } else {
       ct.push(['No verified contact list for this jurisdiction.', '', '', '',
@@ -130731,7 +130938,13 @@ challengeRow(s) +
     var s = readDrawnSystem();
     var f = permitFacts(s);
     var aiFilled = {};                 /* id -> true, for provenance on the cover */
+    var aiFilledNames = [];
     var aiOut = null;                  /* readiness + narrative from the model */
+    /* A profile researched on an earlier run is reloaded rather than
+       re-fetched. It is project data, like the bill import or the load
+       profile, not a session artifact. */
+    var ahjPack = null;
+    try { if (window.S && S.permitAhj) ahjPack = S.permitAhj; } catch (e) {}
 
     var found = (s.bessKwh > 0 || s.solarKwDc > 0 || s.gensetKw > 0 || s.evChargerKw > 0);
     var summary = found
@@ -130824,16 +131037,20 @@ challengeRow(s) +
         '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
           '<button id="omega-pm-ai" style="background:#16233a;border:1px solid #24405e;' +
           'color:#dbe6f2;border-radius:6px;padding:6px 11px;cursor:pointer;font-size:11px">' +
-          'Research the jurisdiction from the address</button>' +
+          'Research the AHJ from the address</button>' +
           '<span id="omega-pm-ai-status" style="font-size:10.5px;color:#8FA3B8"></span>' +
         '</div>' +
         '<div style="font-size:10px;color:#8FA3B8;line-height:1.5;margin-top:7px">' +
-        'Fills only the city, county, state, utility and fuel, plus a readiness ' +
-        'assessment and a narrative draft read against this BOM and estimate. It is ' +
-        'not asked for fees, durations or agency names: those are the three things ' +
-        'this workbook refuses to invent, and a model will produce all three on ' +
-        'request. Researched values are marked amber here and recorded on the cover ' +
-        'as researched, so nobody files on them by mistake.</div>' +
+        'Two passes, both with web search. The first resolves the jurisdiction \u2014 ' +
+        'chiefly whether the parcel is inside a municipality or on unincorporated ' +
+        'county land, which decides who the authority is. The second takes that ' +
+        'answer and the permits this project has actually triggered, and names the ' +
+        'office that issues each one plus the local ordinance section and a contact. ' +
+        'It is never asked for a fee or a review duration: those are the numbers a ' +
+        'project budgets against, and a plausible wrong one is worse than a blank. ' +
+        'Everything it returns is marked researched, here and in the workbook.</div>' +
+        '<div id="omega-pm-ahj" style="display:none;margin-top:9px;padding:9px 10px;' +
+        'background:#141d2e;border:1px solid #b7791f;border-radius:6px"></div>' +
       '</div>' +
 
       /* ---- programme basis ---- */
@@ -130868,10 +131085,14 @@ challengeRow(s) +
       'that goes to a county, a fire marshal or a utility; keep the internal register ' +
       'for what stays inside the company.</span></span></label></div>';
 
-    var dlg = modal('Permitting Matrix', body, function (close) {
-      function v(id) { var e = el(id); return e ? (e.value || '').trim() : ''; }
-      function num(id) { var x = parseFloat(v(id)); return isFinite(x) ? x : null; }
+    function v(id) { var e = el(id); return e ? (e.value || '').trim() : ''; }
+    function num(id) { var x = parseFloat(v(id)); return isFinite(x) ? x : null; }
 
+    /* The site object is read by BOTH the generate button and the research
+       step \u2014 the second pass has to know which permits actually fired
+       before it can ask who issues them. Building it in two places is how
+       the two drift apart, so it is built once. */
+    function readSite() {
       var site = {
         state: v('omega-pm-state').toUpperCase(),
         county: v('omega-pm-county'),
@@ -130890,6 +131111,12 @@ challengeRow(s) +
       var da = num('omega-pm-dist'), ia = num('omega-pm-imp');
       if (da != null) site.disturbedAcres = da;
       if (ia != null) site.imperviousSqFt = ia;
+      return site;
+    }
+
+    var dlg = modal('Permitting Matrix', body, function (close) {
+      var site = readSite();
+      var da = site.disturbedAcres, ia = site.imperviousSqFt;
 
       /* Provenance for the cover, in the order a reader would trust them. */
       var aiKeys = Object.keys(aiFilled);
@@ -130945,6 +131172,7 @@ challengeRow(s) +
         address: v('omega-pm-addr'),
         site: site,
         assumeDurations: !!(el('omega-pm-assume') && el('omega-pm-assume').checked),
+        researchedPack: ahjPack,
         jurisdictionSource: jurSrc,
         readiness: { have: have, action: action,
                      source: aiOut ? 'the drawing, plus an assistant reading the BOM ' +
@@ -130973,119 +131201,190 @@ challengeRow(s) +
           if (typeof window.toast === 'function') {
             window.toast(r.matrix.rows.length + ' permit(s), ' +
               r.range.lowWeeks + '\u2013' + r.range.highWeeks + ' weeks' +
-              (r.matrix.unverified ? ' \u2014 no verified pack for this jurisdiction' : ''));
+              (r.matrix.tier === 'verified' ? ''
+                : r.matrix.tier === 'researched'
+                  ? ' \u2014 researched AHJ profile, not verified'
+                  : ' \u2014 no verified pack for this jurisdiction'));
           }
         }
       });
-    }, 'Generate workbook');
+    }, 'Generate workbook', true);
 
     /* ---- research, wired after the dialog is in the document ---------- */
-    var btn = el('omega-pm-ai'), st = el('omega-pm-ai-status');
-    if (btn) btn.onclick = function () { researchJurisdiction(btn, st); };
+    var btn = el('omega-pm-ai'), st = el('omega-pm-ai-status'),
+        panel = el('omega-pm-ahj');
+    if (btn) btn.onclick = function () { research(btn, st); };
+    if (ahjPack) renderAhj();          /* a profile saved on a previous run */
 
     function say(node, txt, colour) {
       if (node) node.innerHTML = '<span style="color:' + (colour || '#8FA3B8') + '">' +
         esc(txt) + '</span>';
     }
 
-    function researchJurisdiction(btn, st) {
-      var addr = (el('omega-pm-addr') || {}).value || '';
-      if (!addr || addr.trim().length < 8) {
+    /* ------------------------------------------------------------------ *
+     *  THE CALL                                                           *
+     *  ------------------------------------------------------------------ *
+     *  WITH WEB SEARCH, because the question is "who issues an energy      *
+     *  storage permit in Miami-Dade County" and that is a lookup, not a    *
+     *  recollection. A model answering it from memory produces a           *
+     *  department name that sounds exactly like the real one and is two    *
+     *  reorganisations out of date, which is the worst possible failure    *
+     *  here: it is wrong and it is confident and nobody checks a name      *
+     *  that looks right.                                                  *
+     * ------------------------------------------------------------------ */
+    function ask(prompt, maxTokens) {
+      if (typeof window._claudeFetch !== 'function') {
+        return Promise.reject(new Error('The Claude helper is not loaded in this build.'));
+      }
+      return window._claudeFetch({
+        model: 'claude-sonnet-4-5', max_tokens: maxTokens || 2000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
+        messages: [{ role: 'user', content: prompt }]
+      }).then(function (data) {
+        /* With a tool in play the reply is a MIXED list of blocks: the
+           model's text, its search calls, and the results. Reading
+           content[0] would have picked up a tool-use block and parsed
+           nothing, so every text block is collected and the JSON taken
+           from the whole. */
+        var txt = (data.content || []).map(function (c) {
+          return (c && c.type === 'text') ? (c.text || '') : '';
+        }).join('\n').trim();
+        var cites = [];
+        (data.content || []).forEach(function (c) {
+          if (c && c.type === 'web_search_tool_result' && Array.isArray(c.content)) {
+            c.content.forEach(function (r) {
+              if (r && r.url && cites.indexOf(r.url) < 0) cites.push(r.url);
+            });
+          }
+        });
+        txt = txt.replace(/^```json\s*/im, '').replace(/^```\s*/im, '')
+                 .replace(/```\s*$/m, '').trim();
+        var a = txt.indexOf('{'), b = txt.lastIndexOf('}');
+        if (a >= 0 && b > a) txt = txt.slice(a, b + 1);
+        var out = JSON.parse(txt);
+        out.__sources = cites;
+        return out;
+      });
+    }
+
+    function sysLine() {
+      var sys = [];
+      if (s.bessKw) sys.push(s.bessKw + ' kW / ' + s.bessKwh + ' kWh battery energy storage');
+      if (s.solarKwDc) sys.push(s.solarKwDc + ' kWdc solar PV');
+      if (s.gensetKw) sys.push(s.gensetKw + ' kW ' + (v('omega-pm-fuel') || 'unspecified fuel') +
+        ' generation');
+      if (s.evChargerCount) sys.push(s.evChargerCount + ' EV charging positions');
+      return sys.join('; ') || 'nothing placed yet';
+    }
+
+    /* ---- PASS 1: where is this, and who decides ---------------------- */
+    function pass1(addr) {
+      return ask(
+        'Search the web, then answer about the permitting jurisdiction for a ' +
+        'commercial energy project at "' + addr + '" in the United States.\n' +
+        'System as drawn: ' + sysLine() + '.\n\n' +
+        'The single most important thing to get right is whether the parcel is ' +
+        'inside an incorporated municipality or on unincorporated county land, ' +
+        'because those are different land-use authorities and a matrix aimed at ' +
+        'the wrong one is worthless.\n\n' +
+        'Return ONLY JSON, no fence, no prose outside it. Use null where you ' +
+        'cannot determine something. Do NOT return permit fees or permit review ' +
+        'durations under any key \u2014 they are handled elsewhere and a ' +
+        'plausible wrong number is worse than a blank.\n' +
+        '{\n' +
+        '"city": "incorporated municipality, or null if unincorporated",\n' +
+        '"unincorporated": true or false,\n' +
+        '"county": "county, parish or borough name without the word County",\n' +
+        '"state": "two-letter code",\n' +
+        '"utility": "the electric utility serving this address",\n' +
+        '"landUseAuthority": "the body with land-use jurisdiction over this parcel",\n' +
+        '"hearingBody": "the body that hears and votes on a conditional or special ' +
+        'use permit here",\n' +
+        '"fireAuthority": "the fire department or district with jurisdiction",\n' +
+        '"airDistrict": "the air quality authority, or null if the state agency ' +
+        'handles it directly",\n' +
+        '"buildingCode": "the adopted building code edition, e.g. 2023 Florida ' +
+        'Building Code",\n' +
+        '"fireCode": "the adopted fire code edition, e.g. 2023 Florida Fire ' +
+        'Prevention Code / NFPA 1",\n' +
+        '"essThresholdKwh": the energy storage permit threshold in kWh under the ' +
+        'adopted fire code, or null,\n' +
+        '"thresholdNote": "one sentence on where that threshold comes from",\n' +
+        '"bessPosture": "what is publicly known about how this jurisdiction treats ' +
+        'battery storage: unlisted use, conditional use, any moratorium, any ' +
+        'adopted ESS ordinance. Say plainly if nothing is published.",\n' +
+        '"confidence": "high | medium | low",\n' +
+        '"notes": "anything a permitting team should know before the first call"\n' +
+        '}', 2200);
+    }
+
+    /* ---- PASS 2: who issues each permit that actually fired ----------- */
+    /* Grounded on pass 1's answer AND on the real triggered row list, so the
+       model is naming issuers for permits this project genuinely needs
+       rather than inventing a department for every template in the file. */
+    function pass2(addr, j, rows) {
+      var list = rows.map(function (r) {
+        return '- ' + r.key + ' | ' + r.name + ' | trigger: ' + r.trigger +
+               (r.code ? ' | model code: ' + r.code : '');
+      }).join('\n');
+      return ask(
+        'Search the web, then answer for a commercial energy project at "' + addr +
+        '".\nJurisdiction: ' +
+        [j.unincorporated ? 'unincorporated ' + (j.county || '') + ' County'
+                          : (j.city || v('omega-pm-city')),
+         j.county || v('omega-pm-county'), j.state || v('omega-pm-state')]
+          .filter(Boolean).join(', ') +
+        '. Serving utility: ' + (j.utility || v('omega-pm-util') || 'unknown') + '.\n' +
+        'System: ' + sysLine() + '.\n\n' +
+        'These are the permits and reviews this project has triggered. The first ' +
+        'field on each line is its KEY, and the keys are what you must use in the ' +
+        'JSON below \u2014 not a number, not the permit name:\n' + list +
+        '\n\nFor each one, name the SPECIFIC office, department, division or ' +
+        'company that issues or performs it in THIS jurisdiction, and the LOCAL ' +
+        'code or ordinance section it is issued under where one is published.\n\n' +
+        'Rules:\n' +
+        '- Omit any permit you cannot place with a real office. A missing entry ' +
+        'is fine; an invented department is not.\n' +
+        '- Where the parcel is unincorporated, the county issues it, not a city.\n' +
+        '- Do NOT return fees or review durations under any key.\n' +
+        '- Contacts must be real published numbers and URLs. Omit rather than guess.\n\n' +
+        'Return ONLY JSON, no fence:\n' +
+        '{\n' +
+        '"agencies": {"CUP": "office name", "BUILDING": "office name"},   // keys ' +
+        'from the list above, verbatim\n' +
+        '"codes": {"CUP": "local ordinance section"},\n' +
+        '"contacts": [{"agency":"...","division":"...","phone":"...","web":"...",' +
+        '"note":"what this office wants to see first"}],\n' +
+        '"readiness": {"2": {"status":"have|partial|missing","action":"one concrete ' +
+        'next step"}},  // requirement numbers 2-11 of a standard industrial civil ' +
+        'submission: 2 NPDES stormwater NOI, 3 concrete washout on plan, 4 utility ' +
+        'standard note blocks, 5 water line details, 6 fire access and fire flow, ' +
+        '7 grading and erosion control, 8 construction staging, 9 utility tie-in ' +
+        'details, 10 as-built commitment, 11 environmental constraint overlay. ' +
+        'Omit any you cannot judge.\n' +
+        '"narrative": [{"heading":"Project description","body":"..."},' +
+        '{"heading":"Site and setting","body":"..."},' +
+        '{"heading":"Fire and life safety approach","body":"..."},' +
+        '{"heading":"Decommissioning","body":"..."}]  // draft CUP application ' +
+        'narrative, 3-5 sentences each, using ONLY the capacities above\n' +
+        '}', 4000);
+    }
+
+    function research(btn, st) {
+      var addr = v('omega-pm-addr');
+      if (!addr || addr.length < 8) {
         say(st, 'Enter the site address first.', '#f0883e'); return;
       }
       btn.disabled = true;
-      say(st, '\u23F3 Reading ' + addr.trim() + '\u2026', '#f0883e');
+      say(st, '\u23F3 1 of 2 \u2014 resolving the jurisdiction for ' + addr + '\u2026',
+          '#f0883e');
 
-      /* WHAT IS AND IS NOT ASKED FOR.
-         Asked: the names of the authorities, which are public facts about a
-         place and are exactly what this dialog otherwise makes somebody type
-         from memory. Also a readiness read and a narrative draft, both of
-         which are judgements about THIS project and are marked as drafts.
-         Not asked: fees, durations, and the agency string that goes in the
-         matrix's Agency column. Those come from a verified pack or they read
-         "Confirm with AHJ" — a plausible fee range in a permitting matrix is
-         the same defect as a made-up IRR in a pro forma, and the model will
-         produce one cheerfully if the question leaves room for it. */
-      var sys = [];
-      if (s.bessKw) sys.push(s.bessKw + ' kW / ' + s.bessKwh + ' kWh battery storage');
-      if (s.solarKwDc) sys.push(s.solarKwDc + ' kWdc solar');
-      if (s.gensetKw) sys.push(s.gensetKw + ' kW ' +
-        ((el('omega-pm-fuel') || {}).value || 'unspecified fuel') + ' generation');
-      if (s.evChargerCount) sys.push(s.evChargerCount + ' EV charging positions');
-
-      var ctx = [];
-      if (f.parcelSqFt) ctx.push('Parcel: ' + f.parcelAcres + ' acres.');
-      if (f.trenchFt) ctx.push('Trenching drawn: ' + f.trenchFt + ' ft.');
-      if (f.bomLines) ctx.push('Bill of materials: ' + f.bomLines + ' line items.');
-      if (f.estimateSell) ctx.push('Electrical construction estimate: $' +
-        Math.round(f.estimateSell).toLocaleString() + '.');
-      if (f.lat != null) ctx.push('Coordinates: ' + (+f.lat).toFixed(5) + ', ' +
-        (+f.lng).toFixed(5) + '.');
-
-      var prompt =
-        'A commercial energy project at "' + addr.trim() + '" in the United States.\n' +
-        'System as drawn: ' + (sys.join('; ') || 'nothing placed yet') + '.\n' +
-        (ctx.length ? ctx.join(' ') + '\n' : '') +
-        '\nReturn ONLY JSON, no markdown fence, no prose outside it.\n' +
-        'Use null for anything you cannot determine with reasonable confidence. ' +
-        'Do NOT guess. Do NOT return permit fees, permit durations, or the names ' +
-        'of specific permit-issuing divisions \u2014 those are handled elsewhere and a ' +
-        'plausible-looking wrong number is worse than a blank.\n' +
-        '{\n' +
-        '"city": "incorporated city or town, or null if the parcel is unincorporated",\n' +
-        '"unincorporated": true if the parcel appears to be in unincorporated county land, else false or null,\n' +
-        '"county": "county (or parish/borough) name, without the word County",\n' +
-        '"state": "two-letter state code",\n' +
-        '"utility": "the electric utility serving this address",\n' +
-        '"confidence": "high | medium | low \u2014 how sure you are of city and county",\n' +
-        '"ahjNotes": "one or two sentences on anything a permitting team should know ' +
-        'about this jurisdiction for battery storage: whether it is an unlisted use, ' +
-        'known moratoria, which body hears a conditional use permit. Say so plainly if ' +
-        'you do not know.",\n' +
-        '"readiness": {"2": {"status": "have|partial|missing", "action": "one concrete next step"}, ' +
-        '"3": {...}}  // keys are requirement numbers 2 to 11 from a standard industrial ' +
-        'civil submission: 2 NPDES stormwater notice of intent, 3 concrete washout shown on ' +
-        'plan, 4 utility standard note blocks, 5 water line details (tap, valve, meter, ' +
-        'backflow), 6 fire access and fire flow, 7 grading and erosion control, 8 ' +
-        'construction staging and laydown, 9 utility tie-in details, 10 as-built ' +
-        'commitment, 11 environmental constraint overlay. Judge status from the system ' +
-        'and site context above; use "missing" where the project plainly has not done it ' +
-        'yet and omit the key entirely where you cannot tell.\n' +
-        '"narrative": [{"heading": "Project description", "body": "..."}, ' +
-        '{"heading": "Site and setting", "body": "..."}, ' +
-        '{"heading": "Fire and life safety approach", "body": "..."}, ' +
-        '{"heading": "Decommissioning", "body": "..."}]  // a short draft project ' +
-        'narrative for a conditional use permit application, 3 to 5 sentences per ' +
-        'section, using ONLY the capacities given above. Do not state a fee, a ' +
-        'schedule, or a code section you are not certain applies.\n' +
-        '}';
-
-      /* THE CALL THIS GOT WRONG FIRST TIME. It was copied from
-         vwAutoFillFromAddress, which posts to api.anthropic.com with no
-         key, no anthropic-version and no dangerous-direct-browser-access
-         header. That shape works inside a sandboxed artifact and fails
-         outright from a deployed origin, which is why the button said
-         "could not research that address" on a perfectly good Miami Beach
-         address. _claudeFetch is the helper this app already uses
-         everywhere else; it carries all three and throws a message worth
-         showing. */
-      var call = (typeof window._claudeFetch === 'function')
-        ? window._claudeFetch({ model: 'claude-sonnet-4-5', max_tokens: 2000,
-            messages: [{ role: 'user', content: prompt }] })
-        : Promise.reject(new Error('The Claude helper is not loaded in this build.'));
-
-      call.then(function (data) {
-        var txt = (data.content || []).map(function (c) { return c.text || ''; })
-                    .join('').trim();
-        txt = txt.replace(/^```json\s*/i, '').replace(/^```\s*/i, '')
-                 .replace(/```\s*$/, '').trim();
-        var a = txt.indexOf('{'), b = txt.lastIndexOf('}');
-        if (a >= 0 && b > a) txt = txt.slice(a, b + 1);
-        var r = JSON.parse(txt);
-
+      var jur = null, idToKey = {};
+      pass1(addr).then(function (r) {
+        jur = r;
         /* Never overwrite something already in the box. A value read from the
            project, or typed by the person who rang the county, outranks a
-           value inferred from a postal address every time. */
+           value researched from a postal address every time. */
         var filled = [];
         function fill(id, val, key) {
           var e = el(id);
@@ -131108,27 +131407,83 @@ challengeRow(s) +
         } else {
           fill('omega-pm-city', r.city, 'city');
         }
+        aiFilledNames = filled;
 
-        aiOut = { readiness: r.readiness || null,
-                  narrative: Array.isArray(r.narrative) ? r.narrative : null,
-                  ahjNotes: r.ahjNotes || null };
+        say(st, '\u23F3 2 of 2 \u2014 naming the issuing office for each permit\u2026',
+            '#f0883e');
 
-        var bits = [];
-        bits.push(filled.length ? '\u2713 Filled ' + filled.join(', ')
-                                : 'Nothing to fill \u2014 those boxes were already set');
-        if (r.confidence) bits.push('confidence: ' + r.confidence);
-        if (aiOut.readiness) bits.push(Object.keys(aiOut.readiness).length +
-          ' readiness row(s) assessed');
-        if (aiOut.narrative) bits.push('narrative drafted');
-        say(st, bits.join(' \u00B7 '), filled.length ? '#7ee787' : '#8FA3B8');
-        if (r.ahjNotes) {
-          st.innerHTML += '<div style="color:#8FA3B8;font-size:10px;margin-top:5px;' +
-            'line-height:1.5;max-width:460px">' + esc(r.ahjNotes) + '</div>';
+        /* Which permits actually fired, on the jurisdiction we now have. */
+        var rows = [];
+        try {
+          var m0 = E.permit.applicable(readSite(), {});
+          rows = m0.rows.map(function (x) {
+            return { key: x.key, id: x.id, name: x.name, trigger: x.trigger,
+                     code: x.code };
+          });
+          idToKey = {}; m0.rows.forEach(function (x) { idToKey[x.id] = x.key; });
+        } catch (e) {}
+        if (!rows.length) throw new Error('Nothing is triggered yet, so there is ' +
+          'nothing to name an issuer for. Place the equipment first.');
+        return pass2(addr, r, rows);
+      }).then(function (r2) {
+        /* Asked for template keys, and told twice. Models still answer with
+           the identifier that reads most like a label, so an ID-keyed reply
+           is translated rather than dropped \u2014 the mapping is known
+           here, from the same applicable() call that produced the list. */
+        function toKeys(o) {
+          var out = {};
+          Object.keys(o || {}).forEach(function (k) {
+            out[idToKey[k] || k] = o[k];
+          });
+          return out;
         }
-        st.innerHTML += '<div style="color:#b7791f;font-size:10px;margin-top:5px;' +
-          'line-height:1.5;max-width:460px">Researched, not confirmed. Ring the ' +
-          'planning department before this goes anywhere near a filing \u2014 the ' +
-          'workbook cover will say the same thing.</div>';
+        ahjPack = {
+          agencies: toKeys(r2.agencies),
+          codes: toKeys(r2.codes),
+          contacts: Array.isArray(r2.contacts) ? r2.contacts : [],
+          essThresholdKwh: (jur && jur.essThresholdKwh != null)
+                             ? jur.essThresholdKwh : null,
+          thresholdNote: (jur && jur.thresholdNote) || null,
+          hearingBody: (jur && jur.hearingBody) || null,
+          unincorporated: !!(jur && jur.unincorporated),
+          notes: [jur && jur.bessPosture, jur && jur.notes].filter(Boolean).join(' '),
+          confidence: (jur && jur.confidence) || null,
+          buildingCode: (jur && jur.buildingCode) || null,
+          fireCode: (jur && jur.fireCode) || null,
+          fireAuthority: (jur && jur.fireAuthority) || null,
+          airDistrict: (jur && jur.airDistrict) || null,
+          sources: (jur && jur.__sources || []).concat(r2.__sources || [])
+                     .filter(function (x, i, a2) { return a2.indexOf(x) === i; }),
+          source: 'Researched with web search on ' +
+                  new Date().toISOString().slice(0, 10),
+          researchedAt: Date.now()
+        };
+        aiOut = { readiness: r2.readiness || null,
+                  narrative: Array.isArray(r2.narrative) ? r2.narrative : null };
+
+        /* PERSISTED ON THE PROJECT. Research costs a minute and a token
+           spend, and without this it was thrown away the moment the dialog
+           closed \u2014 so the second person to open it paid for it again and
+           got a subtly different answer. Saved, it is also correctable:
+           somebody rings the county, fixes one line, and the fix sticks. */
+        try {
+          if (window.S) {
+            S.permitAhj = ahjPack;
+            if (typeof window.saveProject === 'function') { try { saveProject(); } catch (e) {} }
+          }
+        } catch (e) {}
+
+        renderAhj();
+        var bits = [];
+        bits.push(aiFilledNames && aiFilledNames.length
+          ? '\u2713 Filled ' + aiFilledNames.join(', ')
+          : '\u2713 Jurisdiction confirmed');
+        bits.push(Object.keys(ahjPack.agencies).length + ' agencies named');
+        if (ahjPack.contacts.length) bits.push(ahjPack.contacts.length + ' contacts');
+        if (aiOut.readiness) bits.push(Object.keys(aiOut.readiness).length + ' readiness rows');
+        if (aiOut.narrative) bits.push('narrative drafted');
+        if (ahjPack.confidence) bits.push('confidence: ' + ahjPack.confidence);
+        say(st, bits.join(' \u00B7 '), '#7ee787');
         btn.disabled = false;
       }).catch(function (e) {
         /* The old handler swallowed everything into one sentence, so a
@@ -131142,6 +131497,67 @@ challengeRow(s) +
             '#f0883e');
         btn.disabled = false;
       });
+    }
+
+    /* ---- what came back, shown before it is committed ---------------- */
+    /* A research step whose output only appears inside a downloaded
+       spreadsheet is a research step nobody audits. It goes on screen, in
+       the dialog, next to the button that produced it, while there is still
+       somebody looking who knows the project. */
+    function renderAhj() {
+      if (!panel || !ahjPack) return;
+      var rows = [];
+      function kv(k, val) {
+        if (!val) return;
+        rows.push('<div style="display:flex;gap:8px;padding:3px 0;' +
+          'border-bottom:1px solid rgba(36,64,94,.5)">' +
+          '<span style="flex:0 0 118px;color:#8FA3B8">' + esc(k) + '</span>' +
+          '<span style="flex:1;color:#dbe6f2">' + esc(val) + '</span></div>');
+      }
+      kv('Land-use authority', ahjPack.unincorporated
+        ? 'County \u2014 the parcel is unincorporated' : (v('omega-pm-city') || null));
+      kv('Hearing body', ahjPack.hearingBody);
+      kv('Fire authority', ahjPack.fireAuthority);
+      kv('Air district', ahjPack.airDistrict);
+      kv('Building code', ahjPack.buildingCode);
+      kv('Fire code', ahjPack.fireCode);
+      kv('ESS threshold', ahjPack.essThresholdKwh != null
+        ? ahjPack.essThresholdKwh + ' kWh' : null);
+      kv('Agencies named', Object.keys(ahjPack.agencies).length + ' of the triggered permits');
+      kv('Contacts', ahjPack.contacts.length ? ahjPack.contacts.map(function (c) {
+        return c.agency + (c.phone ? ' \u00B7 ' + c.phone : '');
+      }).join(' \u2014 ') : null);
+      kv('Posture', ahjPack.notes);
+
+      panel.style.display = 'block';
+      panel.innerHTML =
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;' +
+        'gap:8px;margin-bottom:6px">' +
+          '<b style="font-size:11.5px;color:#b7791f">Researched AHJ profile</b>' +
+          '<button id="omega-pm-ahj-clear" style="background:none;border:0;' +
+          'color:#8FA3B8;font-size:10px;cursor:pointer;text-decoration:underline">' +
+          'discard</button>' +
+        '</div>' +
+        '<div style="font-size:10.5px;line-height:1.5">' + rows.join('') + '</div>' +
+        (ahjPack.sources && ahjPack.sources.length
+          ? '<div style="font-size:9.5px;color:#8FA3B8;margin-top:6px;line-height:1.5">' +
+            'Sources consulted: ' + ahjPack.sources.slice(0, 6).map(function (u) {
+              try { return esc(new URL(u).hostname.replace(/^www\./, '')); }
+              catch (e) { return esc(String(u).slice(0, 40)); }
+            }).join(', ') + '</div>'
+          : '') +
+        '<div style="font-size:10px;color:#b7791f;margin-top:6px;line-height:1.5">' +
+        'Researched, not confirmed. Every agency here reads "(researched \u2014 confirm)" ' +
+        'in the workbook and the basis gate still fails until somebody rings them. ' +
+        'No fee on the matrix comes from this lookup. Saved to the project, so a ' +
+        'correction you make sticks.</div>';
+      var cl = el('omega-pm-ahj-clear');
+      if (cl) cl.onclick = function () {
+        ahjPack = null;
+        try { if (window.S) { S.permitAhj = null; } } catch (e) {}
+        panel.style.display = 'none'; panel.innerHTML = '';
+        say(st, 'Researched profile discarded. The matrix will read Confirm with AHJ.');
+      };
     }
   }
 
