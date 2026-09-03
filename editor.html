@@ -143544,12 +143544,40 @@ function cfg(){
 }
 
 /* The snapshot, as a data URL, without triggering a download. */
+/* THE CONTROL IMAGE HAS TO FIT IN A REQUEST.
+
+   The WebGL canvas renders at devicePixelRatio, so on a retina screen at
+   High quality it is 3000+ px wide. A satellite-textured 3D view is
+   photographic, which is exactly what PNG compresses worst — several
+   megabytes — and a serverless function refuses the body outright with
+   413 before a single token is spent.
+
+   Sending more than 1536 px does not help either: that is the output
+   size, so anything beyond it is detail the model discards. The model
+   reads massing, array footprint and sun angle, none of which need
+   pixel-perfect edges. */
+var CONTROL_MAX = 1536;
+
 function grabView(){
   try {
     var V = root.OmegaSiteVis && root.OmegaSiteVis._V && root.OmegaSiteVis._V();
     if (!V || !V.renderer) return null;
     V.renderer.render(V.scene, V.camera);
-    return V.renderer.domElement.toDataURL('image/png');
+    var src = V.renderer.domElement;
+    var w = src.width, hh = src.height;
+    if (!w || !hh) return null;
+
+    if (Math.max(w, hh) <= CONTROL_MAX) {
+      try { return src.toDataURL('image/jpeg', 0.92); }
+      catch (e) { return src.toDataURL('image/png'); }
+    }
+    var s = CONTROL_MAX / Math.max(w, hh);
+    var c = document.createElement('canvas');
+    c.width = Math.round(w * s); c.height = Math.round(hh * s);
+    var g = c.getContext('2d');
+    try { g.imageSmoothingQuality = 'high'; } catch (e) {}
+    g.drawImage(src, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.92);
   } catch (e) { return null; }
 }
 
@@ -143720,6 +143748,9 @@ function render(style, cb, aspect){
     return r.json().catch(function(){ return null; }).then(function (j) {
       if (!r.ok) {
         var m = (j && (j.error || j.detail)) || ('render service returned ' + r.status);
+        if (r.status === 413) m = 'The view was too large for the render service. It is '
+          + 'scaled before sending now \u2014 reload the editor and try again. If it persists, '
+          + 'drop Quality from High to Medium in the visualizer.';
         if (r.status === 404) m = 'No render service at ' + C.url + '. Set one with '
           + 'OmegaRender.setEndpoint(\'https://\u2026/api/render\').';
         throw new Error(m);
