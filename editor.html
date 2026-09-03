@@ -76280,15 +76280,92 @@ if (_omPrevOmegaSite) { Object.keys(_omPrevOmegaSite).forEach(function (k) {
       return { c: c, g: g };
     }
 
+    /* HOW MUCH OF THE GROUND DID WE ACTUALLY GET?
+
+       The old test was `ok >= 2`: two tiles out of forty counted as success,
+       and the composite was handed back as if it were the whole ground. That
+       is the torn image — strips of satellite with the void showing through,
+       which reads as a broken 3D engine rather than a missing texture, and
+       sends you looking in entirely the wrong place.
+
+       Coverage is measured as the fraction of the viewport the placed tiles
+       actually paint, on a coarse grid. Cheap, and it is the number that
+       decides whether this texture is usable. */
+    function coverage(list){
+      var GX = 32, GY = 32, hit = 0;
+      var cw = W / GX, ch = H / GY;
+      for (var gy = 0; gy < GY; gy++) {
+        for (var gx = 0; gx < GX; gx++) {
+          var px = (gx + 0.5) * cw, py = (gy + 0.5) * ch;
+          for (var i = 0; i < list.length; i++) {
+            var t = list[i];
+            if (px >= t.x && px < t.x + t.w && py >= t.y && py < t.y + t.h) { hit++; break; }
+          }
+        }
+      }
+      return hit / (GX * GY);
+    }
+
+    /* A tile that has not finished decoding is skipped by the filter above,
+       and skipping it is what leaves the hole. Give the in-flight ones a
+       moment before deciding the ground is incomplete. */
+    async function settleTiles(){
+      var pending = Array.prototype.slice.call(md.querySelectorAll('img')).filter(function (im) {
+        return im.src && !im.complete && /googleapis|ggpht|gstatic|google\.com\/maps/.test(im.src);
+      });
+      if (!pending.length) return;
+      await Promise.race([
+        Promise.all(pending.map(function (im) {
+          return new Promise(function (res) {
+            im.addEventListener('load', res, { once: true });
+            im.addEventListener('error', res, { once: true });
+          });
+        })),
+        new Promise(function (res) { setTimeout(res, 2500); })
+      ]);
+    }
+
+    var MIN_COVER = 0.82;   /* below this the sheet is holed and unusable */
+    var cover = coverage(placed);
+    if (cover < MIN_COVER) {
+      /* Some tiles were still decoding when we looked. Wait, then re-read. */
+      await settleTiles();
+      tiles = Array.prototype.slice.call(md.querySelectorAll('img')).filter(function (im) {
+        if (!im.src || !im.complete || !im.naturalWidth) return false;
+        if (!/googleapis|ggpht|gstatic|google\.com\/maps/.test(im.src)) return false;
+        var r = im.getBoundingClientRect();
+        return r.width > 1 && r.height > 1 &&
+          r.right > host.left && r.left < host.right &&
+          r.bottom > host.top && r.top < host.bottom;
+      });
+      placed = tiles.map(function (im) {
+        var r = im.getBoundingClientRect();
+        return { el: im, src: im.src,
+                 x: Math.round(r.left - host.left), y: Math.round(r.top - host.top),
+                 w: Math.round(r.width), h: Math.round(r.height) };
+      });
+      cover = coverage(placed);
+    }
+    if (cover < MIN_COVER) {
+      warn(TAG, 'tile composite covers only ' + Math.round(cover * 100) + '% of the view \u2014 '
+        + 'refusing it. A holed ground texture looks like a broken renderer. '
+        + 'Falling through; enable the Maps Static API on this key for a clean single image.');
+      return null;
+    }
+
     /* fast path — works when the tiles happen to be CORS-clean already */
     var a = freshCanvas(), drawn = 0;
     placed.forEach(function (p) {
       try { a.g.drawImage(p.el, p.x, p.y, p.w, p.h); drawn++; } catch (e) {}
     });
-    if (drawn >= 2) {
+    if (drawn >= placed.length * 0.9) {
       try {
         var d = a.c.toDataURL('image/jpeg', 0.86);
-        if (d && d.length > 3000 && !looksBlank(a.c)) { log(TAG, 'tiles composited directly'); return d; }
+        if (d && d.length > 3000 && !looksBlank(a.c)) {
+          log(TAG, 'tiles composited directly (' + drawn + '/' + placed.length + ', '
+                + Math.round(cover * 100) + '% cover)');
+          return d;
+        }
       } catch (e) { /* tainted — fall through to the re-fetch */ }
     }
 
@@ -76313,10 +76390,18 @@ if (_omPrevOmegaSite) { Object.keys(_omPrevOmegaSite).forEach(function (k) {
         ok++;
       } catch (e) { /* one lost tile must not lose the sheet */ }
     }
-    if (ok < 2) return null;
+    /* Same rule on the re-fetch path: most of the tiles, not two of them. */
+    if (ok < placed.length * 0.9) {
+      warn(TAG, 're-fetched only ' + ok + ' of ' + placed.length + ' tiles \u2014 refusing a holed sheet.');
+      return null;
+    }
     try {
       var d2 = b.c.toDataURL('image/jpeg', 0.86);
-      if (d2 && d2.length > 3000 && !looksBlank(b.c)) { log(TAG, 'tiles re-fetched CORS-clean (' + ok + ')'); return d2; }
+      if (d2 && d2.length > 3000 && !looksBlank(b.c)) {
+        log(TAG, 'tiles re-fetched CORS-clean (' + ok + '/' + placed.length + ', '
+              + Math.round(cover * 100) + '% cover)');
+        return d2;
+      }
     } catch (e) {}
     return null;
   }
