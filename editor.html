@@ -143614,6 +143614,57 @@ function grabView(){
   } catch (e) { return null; }
 }
 
+/* THE SATELLITE PHOTO, AS GROUND TRUTH.
+
+   Sending only the 3D view asks the model to invent everything the massing
+   does not describe — and it does. White blocks become an anonymous
+   campus, flat roof arrays sprout carport legs, and a park with cherry
+   blossoms appears on what is actually a parking apron. Every one of those
+   is the model filling a gap we left.
+
+   The gap closes by sending the aerial photograph as well. It already
+   exists: it is the ground texture under the 3D scene. Two images go
+   across with different jobs:
+
+     PHOTO   what the place actually looks like — roads, roofs, planting,
+             parking, materials. Nothing here may be invented or moved.
+     MASSING where the solar and equipment go, and nothing else.
+
+   That is the difference between a picture of a solar site and a picture
+   of THIS solar site. */
+function grabSatellite(){
+  try {
+    var src = null;
+    var fz = document.getElementById('frozen-map-img');
+    var bd = document.getElementById('backdrop');
+    if (fz && fz.src && fz.style.display !== 'none') src = fz.src;
+    else if (bd && bd.src) src = bd.src;
+    if (!src && root._frozenMapImg) src = root._frozenMapImg;
+    if (!src || src.indexOf('data:') !== 0) return null;
+
+    /* Same size discipline as the control image — two large images in one
+       request is the fastest way back to a 413. */
+    return new Promise(function (resolve) {
+      var img = new Image();
+      var done = false;
+      var to = setTimeout(function(){ if(!done){ done=true; resolve(null); } }, 6000);
+      img.onload = function(){
+        if (done) return; done = true; clearTimeout(to);
+        try {
+          var W = img.width, H = img.height;
+          var s = Math.min(1, CONTROL_MAX / Math.max(W, H));
+          var c = document.createElement('canvas');
+          c.width = Math.round(W * s); c.height = Math.round(H * s);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL('image/jpeg', 0.9));
+        } catch (e) { resolve(null); }
+      };
+      img.onerror = function(){ if(!done){ done=true; clearTimeout(to); resolve(null); } };
+      img.src = src;
+    });
+  } catch (e) { return null; }
+}
+
 /* What the model needs to know that the picture cannot tell it.
 
    Pulled from the model rather than typed, so the prompt and the design
@@ -143648,7 +143699,29 @@ function siteFacts(){
   return f;
 }
 
-function buildPrompt(f, style){
+function buildPrompt(f, style, twoImage){
+  /* THE CARPORT-LEGS FAILURE.
+
+     A flush roof array came back on stilts over a plaza, because "solar
+     array" without a mounting type invites the model to pick the one it
+     has seen most. Each mount gets an explicit instruction about what it
+     sits ON, which is the thing that was ambiguous. */
+  function mountRule(ff){
+    var r = [];
+    if (ff.mount.indexOf('roof') >= 0)
+      r.push('Rooftop arrays lie FLAT ON THE ROOF SURFACE in low tilted rows — '
+           + 'no posts, no legs, no canopy, no shade structure, nothing raised above '
+           + 'the parapet.');
+    if (ff.mount.indexOf('carport') >= 0)
+      r.push('Carport arrays are raised canopies on steel columns over parking bays, '
+           + 'with cars beneath.');
+    if (ff.mount.indexOf('ground') >= 0)
+      r.push('Ground arrays are tilted rows on low racking set on the ground.');
+    if (ff.mount.indexOf('tracker') >= 0)
+      r.push('Tracker arrays are long single-axis rows on a torque tube.');
+    return r.join(' ') + (r.length ? ' ' : '');
+  }
+
   var mount = f.mount.map(function (m) {
     return m === 'carport' ? 'solar carport canopies'
          : m === 'roof'    ? 'flush rooftop solar'
@@ -143677,31 +143750,53 @@ function buildPrompt(f, style){
      neighbour rendered as the wrong building is the kind of error a client
      spots immediately. Clean massing reads as a study, which is honest
      about what it is. */
-  var base =
-    'Photorealistic architectural visualisation, aerial oblique view, of an existing '
-    + 'commercial site. Match the provided image exactly for building massing, roof '
-    + 'outlines, road layout, parking geometry, and the position, orientation and '
-    + 'extent of every solar array. Do not add, move, resize or re-orient any solar '
-    + 'array, building or piece of equipment. '
-    + 'Render ' + mount + ' as dark blue-black photovoltaic modules in neat rows with '
-    + 'visible module framing, thin racking and clean edges. '
-    + (f.storage ? 'Render battery enclosures as clean white industrial containers. ' : '')
-    + 'Surrounding buildings: smooth matte white and light grey massing, minimal facade '
-    + 'detail, crisp edges, no signage. '
-    + 'Ground: dark asphalt roads with clean lane markings, light concrete sidewalks, '
-    + 'manicured green lawns, mature deciduous street trees with full canopies, a few '
-    + 'ornamental flowering trees. Sparse traffic, a scattering of parked cars. '
-    + light + ', clear blue sky with light atmospheric haze toward the horizon. '
-    + 'Clean, calm, high-end property-marketing render. Sharp focus throughout, no '
-    + 'people, no lens flare. '
-    /* The satellite ground carries Google's and Airbus's attribution baked
-       into the pixels, and the model WILL try to reproduce it as lettering
-       across the site. Saying "no text" alone does not help — it is looking
-       at text and being told there is none. Naming it as an artefact to
-       replace works far better than denying it exists. */
-    + 'Any map attribution lettering or watermark visible on the ground in the source '
-    + 'is an artefact: replace it with the surface underneath. No text, no signage, '
-    + 'no logos anywhere in the final image.';
+  /* TWO IMAGES, TWO JOBS.
+
+     Written for a pair: the aerial photograph is the site, the massing
+     render says only where the solar goes. Every failure in the first
+     attempt was the model inventing something the massing did not
+     describe — so the prompt now names those failures directly. Telling a
+     model "be accurate" does nothing; telling it "do not put legs under a
+     roof array" does. */
+  var base = twoImage
+    ? ('You are given TWO images of the SAME site.\n\n'
+     + 'IMAGE 1 is a real aerial photograph. It is the ground truth for the '
+     + 'place: keep every building, road, kerb line, parking bay, tree and '
+     + 'open area exactly where it is, at the same size and shape. Do not add '
+     + 'buildings. Do not add trees, planters or parkland. Do not turn '
+     + 'pavement into lawn. Do not restyle any roof.\n\n'
+     + 'IMAGE 2 is a massing model of the SAME view showing the proposed '
+     + 'solar. The white blocks in it are the buildings already visible in '
+     + 'image 1 — they are placeholders, NOT new structures. Take only ONE '
+     + 'thing from image 2: the position, orientation, extent and mounting of '
+     + 'the solar arrays'
+     + (f.storage ? ' and the battery enclosures' : '') + '.\n\n'
+     + 'Produce image 1, photographically unchanged, with the solar from '
+     + 'image 2 added on top. '
+     + mountRule(f)
+     + (f.storage ? 'Battery enclosures: white industrial containers at ground level. ' : '')
+     + 'Modules are dark blue-black with thin visible framing, in neat rows.\n\n'
+     + 'Keep the original lighting, shadow direction and season from image 1. '
+     + 'Photoreal, sharp, no people, no text, no logos, no new landscaping.')
+
+    : ('Photorealistic architectural visualisation, aerial oblique view, of an '
+     + 'existing commercial site. Match the provided image exactly for building '
+     + 'massing, roof outlines, road layout, parking geometry, and the position, '
+     + 'orientation and extent of every solar array. Do not add, move, resize or '
+     + 're-orient any solar array, building or piece of equipment. '
+     + mountRule(f)
+     + (f.storage ? 'Render battery enclosures as clean white industrial containers. ' : '')
+     + 'Surrounding buildings: smooth matte white and light grey massing, minimal '
+     + 'facade detail, crisp edges, no signage. '
+     + 'Ground: dark asphalt roads with clean lane markings, light concrete '
+     + 'sidewalks, manicured green lawns, mature deciduous street trees. Sparse '
+     + 'traffic, a scattering of parked cars. '
+     + light + ', clear blue sky with light atmospheric haze toward the horizon. '
+     + 'Clean, calm, high-end property-marketing render. Sharp focus throughout, '
+     + 'no people, no lens flare. '
+     + 'Any map attribution lettering or watermark visible on the ground in the '
+     + 'source is an artefact: replace it with the surface underneath. No text, '
+     + 'no signage, no logos anywhere in the final image.');
 
   if (style === 'dusk')    base += ' Dusk: warm low sun, long shadows, deep blue gradient sky, '
                                   + 'warm light in building windows.';
@@ -143785,7 +143880,7 @@ function tenantKey(){
   } catch (e) { return ''; }
 }
 
-function viaTenantKey(view, prompt, cb){
+function viaTenantKey(view, prompt, cb, satellite){
   var key = tenantKey();
   if (!key) { cb(null, 'no-key'); return; }
   var m = /^data:(image\/\w+);base64,(.*)$/.exec(view || '');
@@ -143795,10 +143890,15 @@ function viaTenantKey(view, prompt, cb){
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
-      contents: [{ role: 'user', parts: [
-        { text: prompt },
-        { inline_data: { mime_type: m[1], data: m[2] } }
-      ]}],
+      contents: [{ role: 'user', parts: (function(){
+        var parts = [{ text: prompt }];
+        /* Photo FIRST, then massing — the prompt calls them image 1 and
+           image 2, so the order is load-bearing, not cosmetic. */
+        var sm = satellite && /^data:(image\/\w+);base64,(.*)$/.exec(satellite);
+        if (sm) parts.push({ inline_data: { mime_type: sm[1], data: sm[2] } });
+        parts.push({ inline_data: { mime_type: m[1], data: m[2] } });
+        return parts;
+      })() }],
       generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
     })
   })
@@ -143831,7 +143931,10 @@ function render(style, cb, aspect){
   var view = grabView();
   if (!view) { cb(null, 'Open the Site Visualizer first \u2014 the render is built from that view.'); return; }
   var f = siteFacts(), C = cfg();
-  var prompt = buildPrompt(f, style);
+  /* Resolve the satellite first — everything downstream depends on whether
+     we have it, including which prompt gets built. */
+  Promise.resolve(grabSatellite()).then(function (satellite) {
+  var prompt = buildPrompt(f, style, !!satellite);
 
   var list = C.candidates || [C.url];
   var idx = 0, target = list[0];
@@ -143845,7 +143948,7 @@ function render(style, cb, aspect){
       /* A real failure on their own key is theirs to see, not something to
          silently bill to the shared service. */
       cb(null, err);
-    });
+    }, satellite);
     return;
   }
 
@@ -143853,7 +143956,8 @@ function render(style, cb, aspect){
   fetch(target, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      image: view, prompt: prompt, style: style || 'day', aspectRatio: aspect || '16:9',
+      image: view, satellite: satellite || null,
+      prompt: prompt, style: style || 'day', aspectRatio: aspect || '16:9',
       site: { address: f.addr, lat: f.lat, lng: f.lng,
               arrays: f.arrays, kwdc: Math.round(f.kwdc), storage: f.storage }
     })
@@ -143892,6 +143996,7 @@ function render(style, cb, aspect){
   });
   }
   attempt();
+  });
 }
 
 /* ── ENHANCE, WITH NO SERVICE AT ALL ──────────────────────────────────
