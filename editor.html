@@ -111592,7 +111592,12 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
             BAR_CRIT: 23, BAR_SOFT: 24, BAR_EMPTY: 25,
             NOTE: 26, WEEKNO: 27, MONTHHDR: 28,
             CRIT_NUM: 29, CRIT_MONEY: 30, BAND_A_MONEY: 31, BAND_B_MONEY: 32,
-            HAVE: 33, PARTIAL: 34, MISSING: 35 };
+            HAVE: 33, PARTIAL: 34, MISSING: 35,
+            /* An assumed duration must not draw the same bar as a confirmed
+               one. Same hue so the chart still reads at a glance, washed out
+               so a reader can see which half of the programme nobody has
+               actually confirmed. */
+            BAR_CRIT_ASSUM: 36, BAR_SOFT_ASSUM: 37 };
 
   /* Palette lifted from the reference workbook so the two are the same
      document, not two documents that look similar. */
@@ -111603,7 +111608,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
     CRIT: 'FFCCCC', BARCRIT: 'FF0000', BARSOFT: 'FF8C00',
     NOTE: 'FFF2CC', WARN: 'FFEB9C',
     /* readiness status: have / partial / missing */
-    HAVE: 'D9EAD3', PART: 'FFF2CC', MISS: 'F4CCCC'
+    HAVE: 'D9EAD3', PART: 'FFF2CC', MISS: 'F4CCCC',
+    BARCRIT_A: 'F4A9A9', BARSOFT_A: 'FFD9A6'
   };
 
   function stylesXml(opts) {
@@ -111625,7 +111631,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 /*6*/ '<font><b/><color rgb="FF' + C.NAVY + '"/><sz val="10"/><name val="Calibri"/></font>' +
 /*7*/ '<font><i/><sz val="9"/><name val="Calibri"/></font>' +
 '</fonts>' +
-'<fills count="16">' +
+'<fills count="18">' +
 '<fill><patternFill patternType="none"/></fill>' +
 '<fill><patternFill patternType="gray125"/></fill>' +
 '<fill><patternFill patternType="solid"><fgColor rgb="FF' + headerBg + '"/><bgColor indexed="64"/></patternFill></fill>' +
@@ -111642,6 +111648,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 '<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.NOTE + '"/><bgColor indexed="64"/></patternFill></fill>' +
 '<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.HAVE + '"/><bgColor indexed="64"/></patternFill></fill>' +
 '<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.MISS + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.BARCRIT_A + '"/><bgColor indexed="64"/></patternFill></fill>' +
+'<fill><patternFill patternType="solid"><fgColor rgb="FF' + C.BARSOFT_A + '"/><bgColor indexed="64"/></patternFill></fill>' +
 '</fills>' +
 '<borders count="2">' +
 '<border><left/><right/><top/><bottom/><diagonal/></border>' +
@@ -111651,7 +111659,7 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 '<bottom style="thin"><color rgb="FFD9D9D9"/></bottom><diagonal/></border>' +
 '</borders>' +
 '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-'<cellXfs count="36">' +
+'<cellXfs count="38">' +
 /* 0 normal   */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="0" borderId="0"/>' +
 /* 1 header   */ '<xf xfId="0" numFmtId="0" fontId="1" fillId="2" borderId="1" applyFont="1" ' +
                  'applyFill="1" applyBorder="1" applyAlignment="1">' +
@@ -111700,6 +111708,8 @@ var __OMEGA_clipper=(()=>{var Je=Object.defineProperty;var ms=Object.getOwnPrope
 /*33 have     */ '<xf xfId="0" numFmtId="0" fontId="2" fillId="14" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
 /*34 partial  */ '<xf xfId="0" numFmtId="0" fontId="2" fillId="13" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
 /*35 missing  */ '<xf xfId="0" numFmtId="0" fontId="2" fillId="15" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+/*36 bar crit assumed */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="16" borderId="0" applyFill="1"/>' +
+/*37 bar soft assumed */ '<xf xfId="0" numFmtId="0" fontId="0" fillId="17" borderId="0" applyFill="1"/>' +
 '</cellXfs>' +
 '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
 '</styleSheet>';
@@ -121627,8 +121637,44 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     }
   };
 
-  function findPack(site) {
-    var keys = Object.keys(PACKS);
+  /* ------------------------------------------------------------------ *
+   *  PLANNING BANDS  —  what to do when there is no pack                 *
+   *  ------------------------------------------------------------------  *
+   *  A Gantt with nineteen "?" rows and a zero-week total is not a        *
+   *  schedule. It is technically honest and practically useless: nobody   *
+   *  can budget against it, resource against it, or tell a lender when    *
+   *  the project energises, so the workbook gets rebuilt by hand in       *
+   *  Excel and the discipline is lost anyway.                             *
+   *                                                                       *
+   *  These are NATIONAL PLANNING BANDS for US commercial storage. They    *
+   *  are not a jurisdiction's figures and must never be presented as      *
+   *  such. Every row that uses one is flagged assumed, reads "assumed"    *
+   *  in the timeline column, draws a different bar on the Gantt, and      *
+   *  fails the durations check in the basis gate. A pack figure always    *
+   *  wins; these only fill blanks.                                        *
+   *                                                                       *
+   *  The bands are deliberately WIDE, and widest on the two rows that     *
+   *  actually decide the programme — the discretionary approval and the   *
+   *  interconnection study. A narrow band on a hearing process is a lie   *
+   *  with a decimal point on it.                                          *
+   * ------------------------------------------------------------------ */
+  var TYPICAL = {
+    FATAL_FLAW:[2,6], PHASE_I_ESA:[3,8], HABITAT:[3,10],
+    OEM_FIRE_BASIS:[4,12], SOUND_STUDY:[3,8],
+    CUP:[16,52], CEQA:[4,26],
+    FIRE_CONSTRUCTION:[4,12],
+    BUILDING:[4,12], ELECTRICAL:[3,8], GRADING:[4,10],
+    NPDES:[2,6], STORMWATER:[4,12], SPCC:[2,6], HMBP:[2,8], TRANSPORT:[2,8],
+    AIR_ATC:[8,26], AIR_PTO:[4,12], EV_ACCESSIBILITY:[2,6],
+    INTERCONNECTION:[16,52],
+    FINAL_INSPECTION:[2,6], FIRE_OPERATIONAL:[2,6],
+    INTERCONNECTION_AGREEMENT:[4,12], DECOMMISSIONING:[2,8], INCENTIVE:[4,12]
+  };
+  var TYPICAL_SOURCE = 'Generic US commercial-storage planning band \u2014 NOT a ' +
+    'figure for this jurisdiction. Confirm every one with the AHJ before it is ' +
+    'relied on for a schedule, a budget or a financing milestone.';
+
+  function findPack(site) {    var keys = Object.keys(PACKS);
     for (var i = 0; i < keys.length; i++) {
       var m = PACKS[keys[i]].match, ok = true;
       Object.keys(m).forEach(function (k) {
@@ -121820,8 +121866,14 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
       var agency = pack && pack.agencies[key] ? pack.agencies[key] : null;
       var wk = pack && pack.weeks[key] ? pack.weeks[key].slice() : null;
       var fee = pack && pack.fees[key] ? pack.fees[key].slice() : null;
+      /* A pack figure always wins. The band only fills a blank, and the row
+         carries a flag saying so, so nothing downstream can mistake the two. */
+      var wkAssumed = false;
+      if (!wk && opts.assumeDurations && TYPICAL[key]) {
+        wk = TYPICAL[key].slice(); wkAssumed = true;
+      }
       if (!agency) gaps.push(key + ': agency');
-      if (!wk) gaps.push(key + ': duration');
+      if (!wk || wkAssumed) gaps.push(key + ': duration');
       if (!fee) gaps.push(key + ': fee');
       rows.push({
         key: key, id: id,
@@ -121834,7 +121886,7 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
         party: t.party, trigger: t.trigger, firedBy: why[key],
         note: t.note || null,
         code: t.code || null, docs: t.docs,
-        weeks: wk, weeksConfirm: !wk,
+        weeks: wk, weeksConfirm: !wk || wkAssumed, weeksAssumed: wkAssumed,
         fees: fee, feesConfirm: !fee,
         dependsOnKeys: (t.dependsOn || []).filter(function (d) { return !!want[d]; }),
         renewable: !!t.renewable, status: 'Not started'
@@ -121862,6 +121914,10 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
         : 'ESS permit threshold assumed at ' + thr + ' kWh (IFC/CFC §1207). Confirm ' +
           'the adopted code edition and threshold with the AHJ.',
       gaps: gaps,
+      assumedDurations: rows.filter(function (r) { return r.weeksAssumed; })
+                            .map(function (r) { return r.id; }),
+      assumedDurationSource: rows.some(function (r) { return r.weeksAssumed; })
+                               ? TYPICAL_SOURCE : null,
       contacts: (pack && pack.contacts) || [],
       exclusions: (pack && pack.exclusions) || [],
       unverified: !pack
@@ -122350,12 +122406,17 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
         ? 'No verified pack for this jurisdiction. Permits and code references ' +
           'apply; agencies, fees and durations do not and read Confirm with AHJ.'
         : 'Agencies, fees and durations from ' + (m.packSource || m.pack) + '.' });
-    var withDur = m.rows.filter(function (r) { return !!r.weeks; }).length;
+    var withDur = m.rows.filter(function (r) { return !!r.weeks && !r.weeksAssumed; }).length;
+    var assumed = m.rows.filter(function (r) { return r.weeksAssumed; }).length;
     checks.push({ id: 'durations', ok: withDur === m.rows.length,
       label: 'Durations stated', 
-      detail: withDur + ' of ' + m.rows.length + ' permits carry a duration.' +
-        (withDur < m.rows.length
-          ? ' The programme total is a floor, not an estimate.' : '') });
+      detail: withDur + ' of ' + m.rows.length + ' permits carry a verified duration.' +
+        (assumed
+          ? ' ' + assumed + ' more run on a generic planning band, which is a ' +
+            'placeholder for a figure nobody has confirmed \u2014 the programme ' +
+            'below is a shape, not a commitment.'
+          : (withDur < m.rows.length
+              ? ' The programme total is a floor, not an estimate.' : '')) });
     var withFees = m.rows.filter(function (r) { return !!r.fees; }).length;
     checks.push({ id: 'fees', ok: withFees === m.rows.length,
       label: 'Fees stated',
@@ -122569,6 +122630,7 @@ SEL.split(', ').map(function (s) { return s + ' label, ' + s + ' td, ' + s + ' t
     STATE_SITING: STATE_SITING, sitingPath: sitingPath,
     DISCRETIONARY: DISCRETIONARY, MINISTERIAL: MINISTERIAL,
     TEMPLATES: TEMPLATES, PACKS: PACKS, RISK_RULES: RISK_RULES,
+    TYPICAL: TYPICAL, TYPICAL_SOURCE: TYPICAL_SOURCE,
     findPack: findPack, applicable: applicable,
     schedule: schedule, range: range, audit: audit, risks: risks, fromSite: fromSite
   };
@@ -129476,7 +129538,10 @@ challengeRow(s) +
     if (r[0] === 0 && r[1] === 0) return 'Included';
     return '$' + r[0].toLocaleString() + '\u2013$' + r[1].toLocaleString();
   }
-  function wk(r) { return r ? r[0] + '\u2013' + r[1] : 'Confirm with AHJ'; }
+  function wk(r, assumed) {
+    if (!r) return 'Confirm with AHJ';
+    return r[0] + '\u2013' + r[1] + (assumed ? ' (assumed)' : '');
+  }
 
   /* Anything that could reach an agency or a utility defaults to the
      scrubbed register. The caller opts INTO the internal one. */
@@ -129526,6 +129591,13 @@ challengeRow(s) +
       site.evChargerCount ? site.evChargerCount + ' EV position(s)' : null
     ].filter(Boolean);
 
+    var nAssumed = (m.assumedDurations || []).length;
+    var durNote = nAssumed
+      ? '  (' + nAssumed + ' of ' + m.rows.length + ' durations assumed from a ' +
+        'generic planning band, not confirmed for this jurisdiction)'
+      : (rg.totalIsFloor ? '  (a floor \u2014 ' + rg.unknownDurations.length +
+                           ' permit(s) have no duration)' : '');
+
     sheets.push({ name: 'Cover', rows: [
       ['Item', 'Value'],
       ['Project', cfg.projectName || 'Permitting Matrix'],
@@ -129537,9 +129609,7 @@ challengeRow(s) +
       [],
       ['Permits triggered', m.rows.length],
       ['Duration, optimistic', rg.lowWeeks + ' weeks'],
-      ['Duration, conservative', rg.highWeeks + ' weeks' +
-        (rg.totalIsFloor ? '  (a floor \u2014 ' + rg.unknownDurations.length +
-                           ' permit(s) have no duration)' : '')],
+      ['Duration, conservative', rg.highWeeks + ' weeks' + durNote],
       ['Critical path', rg.criticalPath.join(' \u2192 ')],
       ['Permit fees', unknownFees === m.rows.length ? 'Confirm with AHJ'
         : '$' + feeLo.toLocaleString() + '\u2013$' + feeHi.toLocaleString() +
@@ -129562,7 +129632,10 @@ challengeRow(s) +
       ['Critical path = NO', 'Has float; the Dependencies sheet says how many weeks.'],
       ['Confirm with AHJ', 'No verified figure for this jurisdiction. Not guessed.'],
       [],
-      ['Duration', 'Computed from the dependency graph, not typed.'],
+      ['Duration', nAssumed
+        ? 'Computed from the dependency graph. ' + nAssumed + ' duration(s) are ' +
+          'assumed \u2014 see the Gantt legend and the Master Matrix timeline column.'
+        : 'Computed from the dependency graph, not typed.'],
       ['Threshold', m.thresholdNote],
       ['Fees', 'Estimates for planning. Agency schedules and queue positions change; ' +
                'confirm each with the authority having jurisdiction.'],
@@ -129590,7 +129663,7 @@ challengeRow(s) +
       mm.push([r.id, r.review || 'ministerial', r.hearing ? 'YES' : '',
                r.name, r.agency || 'Confirm with AHJ', r.party, r.trigger,
                (r.firedBy || []).join('; '), r.docs, r.code || '',
-               wk(r.weeks), money(r.fees),
+               wk(r.weeks, r.weeksAssumed), money(r.fees),
                r.dependsOn.join('; ') || 'None', r.unlocks.join('; ') || 'None',
                t.critical ? 'YES' : 'NO', t.floatWeeks, r.status, r.note || '']);
     });
@@ -129630,14 +129703,28 @@ challengeRow(s) +
         /* a bar wherever the task overlaps the month at all, so a two-week
            permit does not vanish between month boundaries */
         var on = t.earliestStart < mEnd && t.earliestFinish > mStart;
-        row.push(on ? (t.critical ? '\u2588' : '\u2591') : '');
+        /* An assumed duration draws a DIFFERENT bar. Same glyph as a
+           confirmed one and the whole flag is decorative \u2014 a reader scans
+           the chart, not the timeline column beside it. */
+        row.push(on ? (r.weeksAssumed ? '\u2592'
+                                      : (t.critical ? '\u2588' : '\u2591')) : '');
       }
       gr.push(row);
     });
     gr.push([]);
     gr.push(['\u2588 on the critical path (zero float)   \u2591 has float   ' +
+             '\u2592 duration ASSUMED from a generic planning band   ' +
              '? duration not yet confirmed']);
     gr.push(['Months are 4.345 weeks. Exact weeks are in the Start and Finish columns.']);
+    if (m.assumedDurations && m.assumedDurations.length) {
+      gr.push([m.assumedDurations.length + ' of ' + m.rows.length + ' durations are ' +
+               'ASSUMED (\u2592): ' + m.assumedDurations.join(', ') + '.']);
+      gr.push([m.assumedDurationSource]);
+      gr.push(['Treat this chart as the SHAPE of the programme \u2014 the order, the ' +
+               'dependencies and which rows have float. Do not treat the dates as ' +
+               'commitments, and do not put them in front of a lender or an ' +
+               'offtaker until the AHJ has confirmed them.']);
+    }
     if (rg.totalIsFloor) {
       gr.push([rg.floorNote]);
       gr.push(['A ? row is placed at the month it could start. It has no bar ' +
@@ -130191,24 +130278,47 @@ challengeRow(s) +
           } else {
             var on = t.earliestStart < w && t.earliestFinish >= w - 0.0001;
             row.push('');
-            srow[LEAD + w - 1] = on ? (t.critical ? S.BAR_CRIT : S.BAR_SOFT) : S.BAR_EMPTY;
+            /* Confirmed and assumed bars are the same hue and different
+               strength. A reader scanning the chart has to be able to see
+               where the programme is measured and where it is a placeholder,
+               and a footnote under the legend does not do that. */
+            srow[LEAD + w - 1] = on
+              ? (rr.weeksAssumed ? (t.critical ? S.BAR_CRIT_ASSUM : S.BAR_SOFT_ASSUM)
+                                 : (t.critical ? S.BAR_CRIT : S.BAR_SOFT))
+              : S.BAR_EMPTY;
           }
         }
         rows.push(row); st[i + 2] = srow; ht[i + 2] = 16;
       });
 
+      var nAssum = (m.assumedDurations || []).length;
       var n = rows.length;
       rows.push([]); ht[n] = 8;
       rows.push(['LEGEND      RED = critical path (zero float)      ' +
-                 'ORANGE = has float      YELLOW ? = duration not yet confirmed']);
+                 'ORANGE = has float      PALE = duration ASSUMED, not confirmed      ' +
+                 'YELLOW ? = duration not yet confirmed']);
       st[n + 1] = { 0: S.SECTION }; ht[n + 1] = 20;
       mg.push('A' + (n + 2) + ':' + X.colName(W - 1) + (n + 2));
+      var tail = n + 2;
+      if (nAssum) {
+        rows.push([nAssum + ' of ' + m.rows.length + ' durations are ASSUMED from a ' +
+                   'generic US commercial-storage planning band, not from a figure ' +
+                   'confirmed for this jurisdiction: ' +
+                   m.assumedDurations.join(', ') + '. Read this chart for the SHAPE ' +
+                   'of the programme \u2014 the order, the dependencies, which rows have ' +
+                   'float. Do not read the dates as commitments and do not put them ' +
+                   'in front of a lender or an offtaker until the AHJ has confirmed ' +
+                   'them.']);
+        st[tail] = { 0: S.NOTE }; ht[tail] = 46;
+        mg.push('A' + (tail + 1) + ':' + X.colName(W - 1) + (tail + 1));
+        tail++;
+      }
       if (rg.totalIsFloor) {
         rows.push([rg.floorNote + ' A ? sits at the week the task could start; it has no ' +
                    'bar because nobody has stated how long it takes, not because nothing ' +
                    'happens.']);
-        st[n + 2] = { 0: S.NOTE }; ht[n + 2] = 34;
-        mg.push('A' + (n + 3) + ':' + X.colName(W - 1) + (n + 3));
+        st[tail] = { 0: S.NOTE }; ht[tail] = 34;
+        mg.push('A' + (tail + 1) + ':' + X.colName(W - 1) + (tail + 1));
       }
 
       var cw = [8, 30]; for (k = 0; k < weeks; k++) cw.push(2.8);
@@ -130726,6 +130836,21 @@ challengeRow(s) +
         'as researched, so nobody files on them by mistake.</div>' +
       '</div>' +
 
+      /* ---- programme basis ---- */
+      '<div style="margin-top:10px;padding:9px 11px;background:#141d2e;' +
+      'border:1px solid #24405e;border-radius:6px">' +
+      '<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">' +
+      '<input type="checkbox" id="omega-pm-assume" checked style="margin-top:2px">' +
+      '<span><b style="font-size:12px">Fill blank durations from a planning band</b>' +
+      '<span style="display:block;font-size:10.5px;color:#8FA3B8;line-height:1.5;' +
+      'margin-top:3px">Without this, a jurisdiction with no verified pack produces a ' +
+      'Gantt of question marks and a zero-week total \u2014 honest, and useless to ' +
+      'anyone trying to budget or resource the work. With it, every blank duration ' +
+      'takes a generic US commercial-storage band, the bar draws as \u2592 instead of ' +
+      '\u2588, the timeline column reads "assumed", the cover counts them and the basis ' +
+      'gate still fails. A verified pack figure always wins; this only fills ' +
+      'blanks.</span></span></label></div>' +
+
       /* A permitting matrix is an agency-facing artifact. In most states
          everything sent to county planning, a fire marshal or a utility can
          be pulled through a public-records request, and competitors and
@@ -130819,6 +130944,7 @@ challengeRow(s) +
         ].filter(Boolean).join(' + '),
         address: v('omega-pm-addr'),
         site: site,
+        assumeDurations: !!(el('omega-pm-assume') && el('omega-pm-assume').checked),
         jurisdictionSource: jurSrc,
         readiness: { have: have, action: action,
                      source: aiOut ? 'the drawing, plus an assistant reading the BOM ' +
@@ -130934,11 +131060,21 @@ challengeRow(s) +
         'schedule, or a code section you are not certain applies.\n' +
         '}';
 
-      fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 2000,
-          messages: [{ role: 'user', content: prompt }] })
-      }).then(function (r) { return r.json(); }).then(function (data) {
+      /* THE CALL THIS GOT WRONG FIRST TIME. It was copied from
+         vwAutoFillFromAddress, which posts to api.anthropic.com with no
+         key, no anthropic-version and no dangerous-direct-browser-access
+         header. That shape works inside a sandboxed artifact and fails
+         outright from a deployed origin, which is why the button said
+         "could not research that address" on a perfectly good Miami Beach
+         address. _claudeFetch is the helper this app already uses
+         everywhere else; it carries all three and throws a message worth
+         showing. */
+      var call = (typeof window._claudeFetch === 'function')
+        ? window._claudeFetch({ model: 'claude-sonnet-4-5', max_tokens: 2000,
+            messages: [{ role: 'user', content: prompt }] })
+        : Promise.reject(new Error('The Claude helper is not loaded in this build.'));
+
+      call.then(function (data) {
         var txt = (data.content || []).map(function (c) { return c.text || ''; })
                     .join('').trim();
         txt = txt.replace(/^```json\s*/i, '').replace(/^```\s*/i, '')
@@ -130995,8 +131131,15 @@ challengeRow(s) +
           'workbook cover will say the same thing.</div>';
         btn.disabled = false;
       }).catch(function (e) {
-        say(st, 'Could not research that address \u2014 fill the fields by hand. ' +
-                'The matrix still builds without them.', '#f0883e');
+        /* The old handler swallowed everything into one sentence, so a
+           missing API token, a rejected token and a malformed reply all
+           read the same and none of them told anybody what to do. */
+        var msg = (e && e.message) ? String(e.message) : '';
+        say(st, (msg && !/JSON|Unexpected token/i.test(msg)
+                  ? msg
+                  : 'The model did not return usable JSON.') +
+                ' Fill the fields by hand \u2014 the matrix still builds without them.',
+            '#f0883e');
         btn.disabled = false;
       });
     }
