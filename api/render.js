@@ -45,12 +45,12 @@
    reason this file exists rather than the editor calling OpenAI directly.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const BUILD    = '2026-09-02.vertex-default';
+const BUILD    = '2026-09-02.googleai-default';
 /* Google by default. It needs no organisation verification, it bills to the
    Cloud project the Maps key already runs on, and it is therefore the one
    that can be working tonight. Set RENDER_PROVIDER=openai to switch once
    OpenAI verification clears. */
-const PROVIDER = (process.env.RENDER_PROVIDER || 'vertex').toLowerCase();
+const PROVIDER = (process.env.RENDER_PROVIDER || 'googleai').toLowerCase();
 const QUALITY  = process.env.RENDER_QUALITY || 'high';
 
 const ALLOWED_ORIGINS = (process.env.RENDER_ORIGINS
@@ -125,6 +125,77 @@ async function viaOpenAI(b64img, prompt, aspect) {
   return { image: 'data:image/png;base64,' + out, model: 'gpt-image-1' };
 }
 
+/* ── GOOGLE AI STUDIO ──────────────────────────────────────────────────
+   The path that needs no service account.
+
+   Google now enforces iam.disableServiceAccountKeyCreation on new
+   organisations by default, so the Vertex route below can be blocked
+   before it starts — and getting it unblocked means an Organization
+   Policy Administrator changing an org-wide security setting to make one
+   render button work. That is the wrong trade.
+
+   AI Studio issues a plain API key against the same Google account, with
+   no service account, no JSON, and no org policy involved. The model is
+   Gemini 2.5 Flash Image, which takes an image IN and returns an image
+   OUT — so the control-image approach is intact, which is the part that
+   actually matters.
+
+     GOOGLE_AI_KEY   from aistudio.google.com/apikey
+
+   The key stays here, exactly as with the others. */
+async function viaGoogleAI(b64img, prompt) {
+  const key = process.env.GOOGLE_AI_KEY;
+  if (!key) throw Object.assign(new Error('GOOGLE_AI_KEY is not set on this deployment.'), { code: 500 });
+
+  const model = process.env.GOOGLE_AI_MODEL || 'gemini-2.5-flash-image';
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/'
+            + model + ':generateContent?key=' + encodeURIComponent(key);
+
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{
+        role: 'user',
+        parts: [
+          { inline_data: { mime_type: 'image/jpeg', data: b64img } },
+          { text: prompt }
+        ]
+      }],
+      generationConfig: { responseModalities: ['IMAGE'] }
+    })
+  });
+
+  const j = await r.json().catch(() => null);
+  if (!r.ok) {
+    const msg = (j && j.error && j.error.message) || ('Google AI returned ' + r.status);
+    let hint = '';
+    if (r.status === 400 && /API key/i.test(msg)) hint = ' Check GOOGLE_AI_KEY.';
+    if (r.status === 403) hint = ' Enable the Generative Language API on the key\u2019s project, '
+      + 'or the key is restricted to other APIs.';
+    if (r.status === 429) hint = ' Rate limited \u2014 the free tier is a few images a minute.';
+    throw Object.assign(new Error(msg + hint), { code: r.status });
+  }
+
+  /* The image comes back as an inline_data part among the candidate's
+     parts; there may be a text part alongside it, so find it by type
+     rather than by position. */
+  let out = null;
+  try {
+    const parts = j.candidates[0].content.parts || [];
+    for (const p of parts) {
+      const d = p.inlineData || p.inline_data;
+      if (d && d.data) { out = d.data; break; }
+    }
+  } catch (e) {}
+  if (!out) {
+    const why = (j && j.candidates && j.candidates[0] && j.candidates[0].finishReason) || '';
+    throw Object.assign(new Error('Google AI returned no image'
+      + (why ? ' (' + why + ')' : '') + '. Usually a safety filter.'), { code: 502 });
+  }
+  return { image: 'data:image/png;base64,' + out, model: model };
+}
+
 /* ── VERTEX (alternative) ──────────────────────────────────────────────── */
 let _tok = null, _tokExp = 0;
 async function vertexToken() {
@@ -187,12 +258,16 @@ module.exports = async function handler(req, res) {
     let cred = 'not attempted';
     if (PROVIDER === 'openai') {
       cred = process.env.OPENAI_API_KEY ? 'OPENAI_API_KEY present' : 'FAILED: OPENAI_API_KEY not set';
-    } else {
+    } else if (PROVIDER === 'vertex') {
       try { await vertexToken(); cred = 'ok'; } catch (e) { cred = 'FAILED: ' + e.message; }
+    } else {
+      cred = process.env.GOOGLE_AI_KEY ? 'GOOGLE_AI_KEY present' : 'FAILED: GOOGLE_AI_KEY not set';
     }
     return res.status(200).json({
       ok: true, build: BUILD, provider: PROVIDER,
-      model: PROVIDER === 'openai' ? 'gpt-image-1' : (process.env.IMAGEN_MODEL || 'imagen-3.0-capability-001'),
+      model: PROVIDER === 'openai' ? 'gpt-image-1'
+           : PROVIDER === 'vertex' ? (process.env.IMAGEN_MODEL || 'imagen-3.0-capability-001')
+           : (process.env.GOOGLE_AI_MODEL || 'gemini-2.5-flash-image'),
       quality: QUALITY, credential: cred, origins: ALLOWED_ORIGINS.length,
       note: 'Image edit, not generation. The 3D snapshot is the source; the prompt supplies '
           + 'materials and light only. Every result is labelled ARTIST\u2019S IMPRESSION in the '
@@ -212,9 +287,9 @@ module.exports = async function handler(req, res) {
   if (!prompt) return res.status(400).json({ build: BUILD, error: 'No prompt supplied.' });
 
   try {
-    const out = PROVIDER === 'vertex'
-      ? await viaVertex(img, prompt, body.aspectRatio)
-      : await viaOpenAI(img, prompt, body.aspectRatio);
+    const out = PROVIDER === 'vertex'  ? await viaVertex(img, prompt, body.aspectRatio)
+              : PROVIDER === 'openai'  ? await viaOpenAI(img, prompt, body.aspectRatio)
+              :                          await viaGoogleAI(img, prompt);
     return res.status(200).json({ build: BUILD, provider: PROVIDER, model: out.model,
                                   image: out.image, prompt: prompt });
   } catch (e) {
