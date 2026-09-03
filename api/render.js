@@ -143,7 +143,7 @@ async function viaOpenAI(b64img, prompt, aspect) {
      GOOGLE_AI_KEY   from aistudio.google.com/apikey
 
    The key stays here, exactly as with the others. */
-async function viaGoogleAI(b64img, prompt) {
+async function viaGoogleAI(b64img, prompt, b64sat) {
   const key = process.env.GOOGLE_AI_KEY;
   if (!key) throw Object.assign(new Error('GOOGLE_AI_KEY is not set on this deployment.'), { code: 500 });
 
@@ -157,10 +157,14 @@ async function viaGoogleAI(b64img, prompt) {
     body: JSON.stringify({
       contents: [{
         role: 'user',
-        parts: [
-          { inline_data: { mime_type: 'image/jpeg', data: b64img } },
-          { text: prompt }
-        ]
+        /* Text, then photo, then massing. The prompt refers to them as
+           image 1 and image 2, so the order carries meaning. */
+        parts: (function(){
+          const parts = [{ text: prompt }];
+          if (b64sat) parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64sat } });
+          parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64img } });
+          return parts;
+        })()
       }],
       generationConfig: { responseModalities: ['IMAGE'] }
     })
@@ -279,6 +283,9 @@ module.exports = async function handler(req, res) {
 
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
   const img = stripDataUrl(body.image);
+  /* The aerial photograph, when the editor has one. It is what stops the
+     model inventing a neighbourhood around the massing. */
+  const sat = stripDataUrl(body.satellite);
   const prompt = String(body.prompt || '').slice(0, 3000);
 
   if (!img) return res.status(400).json({ build: BUILD,
@@ -289,7 +296,7 @@ module.exports = async function handler(req, res) {
   try {
     const out = PROVIDER === 'vertex'  ? await viaVertex(img, prompt, body.aspectRatio)
               : PROVIDER === 'openai'  ? await viaOpenAI(img, prompt, body.aspectRatio)
-              :                          await viaGoogleAI(img, prompt);
+              :                          await viaGoogleAI(img, prompt, sat);
     return res.status(200).json({ build: BUILD, provider: PROVIDER, model: out.model,
                                   image: out.image, prompt: prompt });
   } catch (e) {
