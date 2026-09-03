@@ -134139,6 +134139,7 @@ function shell(){
   +   '<button class="ov-b" id="ov-present" title="Hide the panel for a clean image">&#9635; Presentation</button>'
   +   '<button class="ov-b" id="ov-refresh" title="Re-read the site map">&#8635; Refresh</button>'
   +   '<button class="ov-b" id="ov-snap" title="Save this view as a PNG">&#9112; Snapshot</button>'
+  +   '<button class="ov-b" id="ov-airender" title="Turn this exact view into a photoreal image for a proposal. The geometry is held to what is drawn; materials, planting and surroundings are illustrative.">&#10022; AI Render</button>'
   +   '<button class="ov-b ov-x" id="ov-close" title="Close">&times;</button>'
   + '</div>'
   + '<div class="ov-body">'
@@ -134172,6 +134173,10 @@ function shell(){
   el('ov-close').onclick   = close;
   el('ov-refresh').onclick = function(){ reload(); };
   el('ov-snap').onclick    = snapshot;
+  el('ov-airender').onclick = function(){
+    if(window.OmegaRender && OmegaRender.openDialog) OmegaRender.openDialog();
+    else alert('The render module is not loaded on this build.');
+  };
   document.addEventListener('keydown', function(e){
     if(e.key === 'Escape' && d.classList.contains('on')) close();
   });
@@ -143613,6 +143618,18 @@ function buildPrompt(f, style){
    screenshot in two seconds; this cannot. */
 function label(dataUrl, f){
   return new Promise(function (resolve) {
+    /* If the decode never settles, the render is lost — the user paid for a
+       call and got a spinner. Hand back the unlabelled image instead; the
+       dialog carries the same wording in text, so the caveat still reaches
+       them even when it could not be burned in. */
+    var done = false;
+    var to = setTimeout(function(){
+      if (done) return; done = true;
+      if (root.console) console.warn('[render] could not burn in the label — returning the raw image. '
+        + 'The ARTIST’S IMPRESSION caveat is in the dialog text.');
+      resolve(dataUrl);
+    }, 8000);
+    var fin = function (v) { if (done) return; done = true; clearTimeout(to); resolve(v); };
     try {
       var img = new Image();
       img.onload = function(){
@@ -143641,15 +143658,15 @@ function label(dataUrl, f){
         lines.forEach(function (l, i) {
           g.fillText(l, pad * 2, c.height - bh + pad + i * fs * 1.35);
         });
-        resolve(c.toDataURL('image/png'));
+        fin(c.toDataURL('image/png'));
       };
-      img.onerror = function(){ resolve(dataUrl); };
+      img.onerror = function(){ fin(dataUrl); };
       img.src = dataUrl;
-    } catch (e) { resolve(dataUrl); }
+    } catch (e) { fin(dataUrl); }
   });
 }
 
-function render(style, cb){
+function render(style, cb, aspect){
   cb = cb || function(){};
   var view = grabView();
   if (!view) { cb(null, 'Open the Site Visualizer first \u2014 the render is built from that view.'); return; }
@@ -143659,7 +143676,7 @@ function render(style, cb){
   fetch(C.url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      image: view, prompt: prompt, style: style || 'day',
+      image: view, prompt: prompt, style: style || 'day', aspectRatio: aspect || '16:9',
       site: { address: f.addr, lat: f.lat, lng: f.lng,
               arrays: f.arrays, kwdc: Math.round(f.kwdc), storage: f.storage }
     })
@@ -143684,7 +143701,126 @@ function render(style, cb){
   .catch(function (e) { cb(null, (e && e.message) || 'render failed'); });
 }
 
+/* ── THE DIALOG ───────────────────────────────────────────────────────
+   Console methods are fine for me and useless to anybody else. This is
+   the thing on the toolbar.
+
+   It shows the control image before spending anything, because the render
+   is only as good as the view it is given — if the camera is badly placed
+   or the ground texture is torn, that is worth seeing BEFORE a paid call,
+   not after. */
+function openDialog(){
+  var old = document.getElementById('omega-render-modal');
+  if (old) old.remove();
+
+  var view = grabView();
+  var f = siteFacts();
+  var C = cfg();
+
+  var m = document.createElement('div');
+  m.id = 'omega-render-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(6,10,18,.86);z-index:100060;'
+    + 'display:flex;align-items:center;justify-content:center;padding:20px';
+  m.onclick = function(e){ if(e.target === m) m.remove(); };
+
+  var body = ''
+    + '<div style="background:#0F1D30;border:1px solid #1E3A5F;border-radius:12px;max-width:900px;'
+    + 'width:100%;max-height:92vh;overflow:auto;font-family:system-ui,-apple-system,Segoe UI,sans-serif;'
+    + 'box-shadow:0 24px 70px rgba(0,0,0,.7)">'
+    + '<div style="padding:15px 20px;border-bottom:1px solid #1E3A5F;display:flex;justify-content:space-between;align-items:center">'
+    +   '<div><div style="font-size:9px;font-weight:700;letter-spacing:1.6px;color:#FBBF24;text-transform:uppercase">Presentation render</div>'
+    +   '<div style="font-size:16px;font-weight:800;color:#E2EEF9">' + esc(f.addr || 'This site') + '</div></div>'
+    +   '<button id="omr-x" style="background:none;border:none;color:#64748B;font-size:22px;cursor:pointer">\u00d7</button></div>'
+    + '<div style="padding:18px 20px">';
+
+  if (!view) {
+    body += '<div style="background:#1A1210;border:1px solid #7C2D12;border-radius:8px;padding:14px;'
+      + 'color:#FDBA74;font-size:12px;line-height:1.6">The 3D view is not ready. Open the Site '
+      + 'Visualizer and let it draw, then try again \u2014 the render is built FROM that view, so '
+      + 'there is nothing to send without it.</div>';
+  } else {
+    body += '<div style="display:grid;grid-template-columns:1.2fr 1fr;gap:16px">'
+      + '<div><div style="font-size:9px;color:#64748B;text-transform:uppercase;letter-spacing:.8px;'
+      + 'font-weight:700;margin-bottom:5px">What gets sent</div>'
+      + '<img id="omr-src" src="' + view + '" style="width:100%;border-radius:8px;border:1px solid #1E3A5F;display:block">'
+      + '<div style="font-size:10px;color:#64748B;margin-top:6px;line-height:1.5">'
+      + 'The geometry in this image is held. Materials, planting and surroundings are added.</div></div>'
+      + '<div>'
+      + '<label style="display:block;font-size:9px;color:#64748B;text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:4px">Look</label>'
+      + '<select id="omr-style" style="width:100%;padding:8px;background:#0B1626;border:1px solid #1E3A5F;'
+      + 'border-radius:6px;color:#E2EEF9;font-size:12px;margin-bottom:12px">'
+      +   '<option value="day">Daylight \u2014 proposal cover</option>'
+      +   '<option value="dusk">Dusk \u2014 warm, dramatic</option>'
+      +   '<option value="diagram">Clean \u2014 technical, minimal planting</option>'
+      + '</select>'
+      + '<label style="display:block;font-size:9px;color:#64748B;text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:4px">Shape</label>'
+      + '<select id="omr-aspect" style="width:100%;padding:8px;background:#0B1626;border:1px solid #1E3A5F;'
+      + 'border-radius:6px;color:#E2EEF9;font-size:12px;margin-bottom:12px">'
+      +   '<option value="16:9">Wide \u2014 slide or cover</option>'
+      +   '<option value="1:1">Square \u2014 social</option>'
+      +   '<option value="9:16">Tall \u2014 portrait</option>'
+      + '</select>'
+      + '<div style="background:#0B1626;border:1px solid #1E3A5F;border-radius:8px;padding:10px;'
+      + 'font-size:10.5px;color:#8FA3B8;line-height:1.55;margin-bottom:12px">'
+      + '<b style="color:#E2EEF9">' + f.arrays + '</b> array' + (f.arrays===1?'':'s')
+      + (f.kwdc ? ' \u00b7 <b style="color:#E2EEF9">' + Math.round(f.kwdc) + ' kW-DC</b>' : '')
+      + (f.storage ? ' \u00b7 <b style="color:#E2EEF9">' + f.storage + '</b> storage' : '')
+      + '<br>These are read from the model, so the prompt cannot disagree with the design.</div>'
+      + '<button id="omr-go" style="width:100%;background:#B45309;border:none;color:#FFF7E6;'
+      + 'border-radius:7px;padding:11px;font-size:13px;font-weight:800;cursor:pointer">\u2726 Render</button>'
+      + '<div id="omr-msg" style="font-size:10.5px;color:#64748B;margin-top:9px;line-height:1.5"></div>'
+      + '</div></div>'
+      + '<div id="omr-out" style="margin-top:16px"></div>';
+  }
+
+  body += '<div style="margin-top:14px;padding-top:12px;border-top:1px solid #1E3A5F;'
+    + 'font-size:9.5px;color:#475569;line-height:1.55">Every render is labelled '
+    + '<b>ARTIST\u2019S IMPRESSION</b> in the image itself. It is a picture for a client, '
+    + 'not a construction document \u2014 the model will invent planting, vehicles and '
+    + 'materials. \u00b7 ' + esc(C.url) + '</div>'
+    + '</div></div>';
+
+  m.innerHTML = body;
+  document.body.appendChild(m);
+  document.getElementById('omr-x').onclick = function(){ m.remove(); };
+
+  var go = document.getElementById('omr-go');
+  if (!go) return;
+  go.onclick = function(){
+    var msg = document.getElementById('omr-msg');
+    var out = document.getElementById('omr-out');
+    go.disabled = true; go.style.opacity = '.65'; go.textContent = 'Rendering\u2026';
+    msg.textContent = 'This takes 20\u201360 seconds at high quality.';
+    out.innerHTML = '';
+    render(document.getElementById('omr-style').value, function (url, err) {
+      go.disabled = false; go.style.opacity = '1'; go.textContent = '\u2726 Render';
+      if (err) {
+        msg.innerHTML = '<span style="color:#FDBA74">' + esc(err) + '</span>';
+        return;
+      }
+      msg.textContent = 'Done.';
+      out.innerHTML = '<div style="font-size:9px;color:#64748B;text-transform:uppercase;'
+        + 'letter-spacing:.8px;font-weight:700;margin-bottom:6px">Result</div>'
+        + '<img src="' + url + '" style="width:100%;border-radius:8px;border:1px solid #1E3A5F;display:block">';
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = (f.addr ? f.addr.replace(/[^\w\-]+/g,'-').toLowerCase().slice(0,50) : 'site') + '-render.png';
+      a.textContent = '\u2193 Download';
+      a.style.cssText = 'display:inline-block;margin-top:10px;background:#1E3A5F;color:#E2EEF9;'
+        + 'text-decoration:none;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:700';
+      out.appendChild(a);
+    }, document.getElementById('omr-aspect').value);
+  };
+}
+
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+
 root.OmegaRender = {
+  openDialog: openDialog,
   render: render, prompt: buildPrompt, facts: siteFacts, view: grabView, label: label,
   setEndpoint: function (u) {
     try { u ? localStorage.setItem('omega.render.endpoint', u)
