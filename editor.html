@@ -54554,7 +54554,7 @@ function openDcfcBuild(){
       +'</div>'
       +'<div id="dcfc-summary" style="font-size:10px;color:#8FA3B8;background:rgba(245,166,35,.06);border:1px solid rgba(245,166,35,.2);border-radius:7px;padding:9px 11px;margin-bottom:14px;line-height:1.6"></div>'
       +'<div style="margin-bottom:12px">'
-        +'<label style="display:block;font-size:9px;color:#8FA3B8;text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px">Start from</label>'
+        +'<label style="display:block;font-size:9px;color:#8FA3B8;text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px">Service</label>'
         +'<select id="dcfc-tie" onchange="_dcfcTieNote()" style="width:100%;padding:9px;background:#0A1628;border:1px solid rgba(255,255,255,.15);border-radius:6px;color:#E8F0FE;font-size:12px">'
         + (window.OmegaTieIn ? OmegaTieIn.optionsHtml('Utility POI \u2014 draw a new service and transformer') : '<option value="">Utility POI</option>')
         +'</select></div>'
@@ -60439,7 +60439,7 @@ function _dcfcGuideRender(){
   var phase=DCFC.phase||'poi';
   // Build the step list: POI, Trench, then components.
   var lines=[];
-  lines.push({ label:(DCFC.level2?'Existing Meter Bank':'Utility Service (POI)'), color:'#F59E0B', state: DCFC.placed.service?'done':(phase==='poi'?'active':'todo') });
+  lines.push({ label:(DCFC.level2?_l2Svc().node:'Utility Service (POI)'), color:'#F59E0B', state: DCFC.placed.service?'done':(phase==='poi'?'active':'todo') });
   lines.push({ label:'Main trench run', color:'#F5A623', state: DCFC.trenchConfirmed?'done':(phase==='trench'?'active':(DCFC.placed.service?'todo':'todo')) });
   var nodeLabels={ xfmr:'Transformer', panel:_dcfcNodeLabel('panel') };
   var nodeColors={ xfmr:'#F59E0B', panel:'#EF4444' };
@@ -60773,7 +60773,7 @@ function _evAdd(kind, cx, cy, label, spec, img, fp){
 try{ window._evAdd=_evAdd; window._evPx=_evPx; }catch(e){}
 
 function _dcfcPrompt(){
-  if(DCFC.phase==='poi'){ _evBanner('\u2b1c Click the map to place the '+(DCFC.level2?'Existing Meter Bank':'Utility Service (POI)')+'.'); }
+  if(DCFC.phase==='poi'){ _evBanner('\u2b1c Click the map to place the '+(DCFC.level2?_l2Svc().node:'Utility Service (POI)')+'.'); }
   else if(DCFC.phase==='trench'){ _evBanner('\u2b1c Suggested trench shown \u2014 drag the end handle to adjust, then click \u201cConfirm Trench\u201d.'); }
   else if(DCFC.phase==='place'){
     if(DCFC.stepIx < DCFC.seq.length){ var n=DCFC_NODES[DCFC.seq[DCFC.stepIx]]; _evBanner('\u2b1c Click along the trench to place '+n.label+'. It snaps to the trench \u2014 use F to flip side, R to rotate.'); }
@@ -60803,7 +60803,7 @@ function placeDcfcAt(p){
   if(DCFC.phase==='poi'){
     var d=_evPx('service');
     var poi=_evAdd('service', p.x, p.y,
-      DCFC.level2 ? 'Existing Meter Bank' : 'Utility Service (POI)',
+      DCFC.level2 ? _l2Svc().node : 'Utility Service (POI)',
       DCFC.level2 ? '240/120V 1\u00D8 3-wire \u2014 existing, verify available capacity'
                   : 'Existing service / point of interconnection');
     DCFC.placed.service=poi;
@@ -61028,6 +61028,51 @@ function _l2Sync(){
 }
 window._l2Sync=_l2Sync;
 
+/* ── LEVEL 2 SERVICE SCENARIO ─────────────────────────────────────────
+   A Level 2 job does not tie into a transformer or a switchgear lineup;
+   those are not on a multifamily or small-commercial site. The only
+   question actually asked is what happens at the METER, and there are
+   three answers.
+
+   The distinction is not cosmetic. It changes what the load check is
+   measured against and what the estimate has to carry:
+
+     existing   no utility work. The job lives inside the spare capacity of
+                what is there, so the check is against the EXISTING rating
+                and a shortfall is a stop.
+     upgrade    the service is being raised. The check is against the NEW
+                rating, and the estimate has to carry utility coordination
+                and the upgrade itself — usually the largest single line on
+                a Level 2 job and the one most often left out.
+     new        a separate service for the chargers. Own meter, own account,
+                and the building's existing load does not constrain sizing.
+
+   Seven places hardcoded "Existing Meter Bank" — the guide list, the
+   banner, the node label and the stencil caption, twice each because the
+   multi-run flow overrides the single-spine one. All of them now ask. */
+var L2_SERVICE = {
+  existing: { key:'existing', label:'Existing meter — tap the service that is there',
+              node:'Existing Meter Bank',
+              spec:'240/120V 1Ø 3-wire — existing, verify available capacity',
+              note:'No utility work. Everything has to fit in the spare capacity of the '
+                 + 'existing service — the load check is against its present rating, and if '
+                 + 'it does not fit, it does not fit.' },
+  upgrade:  { key:'upgrade',  label:'Upgraded meter — service is being raised',
+              node:'Upgraded Meter Bank',
+              spec:'Service upgrade — new rating, utility coordination required',
+              note:'The load check is against the NEW rating, not the old one. Carry the '
+                 + 'utility coordination and the service upgrade in the estimate — on a Level 2 '
+                 + 'job that is usually the largest single line and the one most often left out.' },
+  'new':    { key:'new',      label:'New meter — separate service for the chargers',
+              node:'New Meter Bank',
+              spec:'New service — dedicated EVSE meter and account',
+              note:'A dedicated service for the chargers. The building’s existing load does not '
+                 + 'constrain the sizing, and the chargers get their own account — which is what '
+                 + 'makes a separate EV rate possible.' }
+};
+function _l2Svc(){ return L2_SERVICE[DCFC.l2Service] || L2_SERVICE.existing; }
+window._l2Svc=_l2Svc;
+
 function openLevel2Build(){
   DCFC.active=true; DCFC.stepIx=0; DCFC.placed={}; DCFC.chargerEls=[];
   DCFC.level2=true; DCFC.siteType='multifamily';
@@ -61068,8 +61113,10 @@ function openLevel2Build(){
       +'<div id="l2-summary" style="font-size:10px;color:#8FA3B8;background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.22);border-radius:7px;padding:9px 11px;line-height:1.6;margin-bottom:14px"></div>'
       +'<div style="margin-bottom:12px">'
         +'<label style="display:block;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#8FA3B8;margin-bottom:6px">Start from</label>'
-        +'<select id="l2-tie" onchange="_l2TieNote()" style="width:100%;padding:9px;background:#0A1628;border:1px solid rgba(255,255,255,.15);border-radius:6px;color:#E8F0FE;font-size:12px">'
-        + (window.OmegaTieIn ? OmegaTieIn.optionsHtml('Existing meter bank \u2014 place a new one') : '<option value="">Existing meter bank</option>')
+        +'<select id="l2-svc" onchange="_l2TieNote()" style="width:100%;padding:9px;background:#0A1628;border:1px solid rgba(255,255,255,.15);border-radius:6px;color:#E8F0FE;font-size:12px">'
+        + ['existing','upgrade','new'].map(function(k){
+            return '<option value="'+k+'"'+(DCFC.l2Service===k?' selected':'')+'>'+L2_SERVICE[k].label+'</option>';
+          }).join('')
         +'</select></div>'
       +'<div id="l2-tie-note" style="font-size:9px;color:#8FA3B8;background:rgba(0,0,0,.2);border-radius:6px;padding:8px 10px;line-height:1.5;margin-bottom:14px">'
         +'<span style="color:#22D3EE;font-weight:700">You\u2019ll place:</span> '
@@ -61103,19 +61150,15 @@ window._l2ModelChanged=_l2ModelChanged;
 
 window._l2TieNote=function(){
   var n=document.getElementById('l2-tie-note');
-  var v=(document.getElementById('l2-tie')||{}).value||'';
+  var sel=document.getElementById('l2-svc');
+  if(sel) DCFC.l2Service=sel.value;
   if(!n) return;
-  if(!v || !window.OmegaTieIn){
-    n.innerHTML='<span style="color:#22D3EE;font-weight:700">You\u2019ll place:</span> '
-      +'<span style="color:#F59E0B">\u2b24 Existing Meter Bank</span> \u2192 draw the trench \u2192 '
-      +'<span style="color:#EF4444">\u2b24 Outdoor Panel</span> \u2192 <span style="color:#22D3EE">\u2b24 EVSE</span>'
-      +'<br>Conduit auto-routes: interior feed in yellow, trenched branch in cyan.';
-    return;
-  }
-  var d=OmegaTieIn.describe(v, ['service','utilxfmr','mainswgr']);
-  n.innerHTML='<span style="color:#22D3EE;font-weight:700">Tie-in:</span> '
-    + (d ? String(d.text).replace(/[<>]/g,'') : 'starts at the selected equipment.')
-    + ' The first run starts there \u2014 click along the route, then place each EVSE.';
+  var S2=_l2Svc();
+  n.innerHTML='<span style="color:#22D3EE;font-weight:700">You\u2019ll place:</span> '
+    +'<span style="color:#F59E0B">\u2b24 '+S2.node+'</span> \u2192 draw the trench \u2192 '
+    +'<span style="color:#EF4444">\u2b24 Outdoor Panel</span> \u2192 <span style="color:#22D3EE">\u2b24 EVSE</span>'
+    +'<br>'+S2.note
+    +'<br>Conduit auto-routes: interior feed in yellow, trenched branch in cyan.';
 };
 
 function _l2StartPlacing(){
@@ -61132,7 +61175,11 @@ function _l2StartPlacing(){
   DCFC.seq=['service','panel'];      /* no transformer on a Level 2 job */
   /* The L2 modal is torn down before the shared start runs, so the choice
      has to survive the dialog. Stashed rather than re-read. */
-  try{ window.__omegaTiePick=(document.getElementById('l2-tie')||{}).value||''; }catch(e){}
+  try{
+    var _sv=(document.getElementById('l2-svc')||{}).value;
+    if(_sv) DCFC.l2Service=_sv;
+  }catch(e){}
+  window.__omegaTiePick='';
   var m=document.getElementById('l2-modal'); if(m) m.remove();
   _dcfcStartPlacing();               /* HUD, trench spine, stencils, conduit */
 }
@@ -61182,7 +61229,7 @@ var _DCFC_LEG_NAME = { xfmr:'Main trench (service\u2192xfmr)', panel:'Feeder tre
 function _dcfcNodeLabel(kind){
   if(DCFC.level2){
     if(kind==='panel')   return 'Outdoor Panel / Disconnect';
-    if(kind==='service') return 'Existing Meter Bank';
+    if(kind==='service') return _l2Svc().node;
   }
   var n=DCFC_NODES[kind];
   return (n&&n.label)||kind;
@@ -61408,7 +61455,7 @@ placeDcfcAt=function(p){
   if(!DCFC.active){ S.mode='select'; return; }
   if(DCFC.phase==='poi'){
     var poi=_evAdd('service', p.x, p.y,
-      DCFC.level2 ? 'Existing Meter Bank' : 'Utility Service (POI)',
+      DCFC.level2 ? _l2Svc().node : 'Utility Service (POI)',
       DCFC.level2 ? '240/120V 1\u00D8 3-wire \u2014 existing, verify available capacity'
                   : 'Existing service / point of interconnection');
     DCFC.placed.service=poi;
@@ -61511,7 +61558,7 @@ _dcfcGuideRender=function(){
   var nodeLabels={ xfmr:'Transformer', panel:_dcfcNodeLabel('panel') };
 
   var lines=[];
-  lines.push({ label:(DCFC.level2?'Existing Meter Bank':'Utility Service (POI)'), color:'#F59E0B', state: DCFC.placed.service?'done':(phase==='poi'?'active':'todo') });
+  lines.push({ label:(DCFC.level2?_l2Svc().node:'Utility Service (POI)'), color:'#F59E0B', state: DCFC.placed.service?'done':(phase==='poi'?'active':'todo') });
   var placeSeq=DCFC.seq.filter(function(k){return k!=='service';});
   for(var i=0;i<placeSeq.length;i++){
     var k=placeSeq[i]; var placed=!!DCFC.placed[k];
@@ -61579,7 +61626,7 @@ _dcfcGuideRender=function(){
 window._dcfcGuideRender=_dcfcGuideRender;
 
 _dcfcPrompt=function(){
-  if(DCFC.phase==='poi'){ _evBanner('\u2b1c Click the map to place the '+(DCFC.level2?'Existing Meter Bank':'Utility Service (POI)')+'.'); }
+  if(DCFC.phase==='poi'){ _evBanner('\u2b1c Click the map to place the '+(DCFC.level2?_l2Svc().node:'Utility Service (POI)')+'.'); }
   else if(DCFC.phase==='drawtrench'){ var k=_dcfcCurKind(); var nm=(k==='xfmr'?'MAIN':k==='panel'?'FEEDER':'BRANCH'); _evBanner('\u270f\ufe0f Draw the '+nm+' trench: click points to route it, then Enter. Backspace undoes a point.'); }
   else if(DCFC.phase==='placeon'){ var k2=_dcfcCurKind();
     if(k2==='charger'){ _evBanner('\u2b1c Click on the branch trench to drop each charger ('+DCFC.chargersLeft+' left). Enter finishes.'); }
